@@ -81,6 +81,22 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .nav a.active { background: var(--info-bg); color: var(--primary); font-weight: 600; }
 .nav a .cnt { margin-left: auto; background: var(--bad); color: #fff; font-size: 11px; padding: 0 7px; border-radius: 10px; }
 .main { min-width: 0; }
+/* barra lateral recolhida: so icones, tooltips com o nome */
+.nav-ico { width: 20px; text-align: center; flex: 0 0 20px; }
+.sidebar-toggle { margin-left: auto; padding: 2px 8px; }
+.app.recolhida { grid-template-columns: 64px 1fr; }
+.app.recolhida .sidebar { padding: 12px 8px; overflow: visible; }
+.app.recolhida .brand { flex-direction: column; gap: 6px; padding: 4px 0 10px; }
+.app.recolhida .brand .sidebar-toggle { margin: 0; }
+.app.recolhida .nav-label, .app.recolhida .nav h3 { display: none; }
+.app.recolhida .nav a { justify-content: center; padding: 9px 0; }
+.app.recolhida .nav a .cnt { position: absolute; margin: 0; transform: translate(14px, -12px); font-size: 10px; padding: 0 5px; }
+.app.recolhida .nav a { position: relative; }
+.app.recolhida .content { max-width: none; }
+@media (max-width: 800px) {
+  .app.recolhida { grid-template-columns: 1fr; }
+  .app.recolhida .sidebar { display: none; }
+}
 .topbar {
   display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: var(--surface);
   border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; flex-wrap: wrap;

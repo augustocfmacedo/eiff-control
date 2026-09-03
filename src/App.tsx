@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { dashboard } from './core/engine';
 import { actions, inicializar, pode, useStore } from './data/store';
 import { Badge, StatusBadge, dataHora } from './ui/components';
@@ -49,9 +49,19 @@ export default function App() {
   const tarefas = ds.tarefas.filter((t) => t.status === 'Aberta' && t.responsavel === usuario.id).length;
   const bancos = pode(usuario, 'ver_bancos');
 
+  const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
+  const alternarSidebar = () => {
+    const v = !recolhida;
+    setRecolhida(v);
+    try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ }
+  };
+  const ICONES: Record<string, string> = {
+    '/': '📊', '/inbox': '📥', '/central': '🏗️', '/obras': '📁', '/equipe': '👷', '/campo': '📱', '/pagar': '📤', '/receber': '📥', '/lancamentos': '📒', '/aprovacoes': '✅',
+    '/posicao': '🏦', '/fluxo13': '📈', '/fluxo24': '📆', '/conciliacao': '🔗', '/dividas': '💳', '/dre': '🧮', '/checks': '🛡️', '/cadastros': '⚙️', '/auditoria': '🔍',
+  };
   const nav = (to: string, label: string, cnt?: number) => (
-    <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && rota.path.startsWith(to)) ? 'active' : ''}>
-      {label}{cnt ? <span className="cnt">{cnt}</span> : null}
+    <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && rota.path.startsWith(to)) ? 'active' : ''} title={label}>
+      <span className="nav-ico" aria-hidden="true">{ICONES[to] ?? '•'}</span><span className="nav-label">{label}</span>{cnt ? <span className="cnt">{cnt}</span> : null}
     </a>
   );
 
@@ -97,9 +107,13 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${recolhida ? 'recolhida' : ''}`}>
       <aside className="sidebar">
-        <div className="brand"><div className="logo">E</div><div><b>EIFF Control</b><span>Do orçamento ao caixa</span></div></div>
+        <div className="brand">
+          <div className="logo">E</div>
+          <div className="nav-label"><b>EIFF Control</b><span>Do orçamento ao caixa</span></div>
+          <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}>{recolhida ? '»' : '«'}</button>
+        </div>
         <nav className="nav">
           {nav('/', 'Painel executivo')}
           {nav('/inbox', 'Minha caixa de entrada', pend + tarefas)}
@@ -129,6 +143,7 @@ export default function App() {
       </aside>
       <div className="main">
         <header className="topbar">
+          <button className="btn sm" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label="Alternar menu">☰</button>
           <div className="ctx">
             <span><b>{ds.params.empresa}</b></span>
             <span>· data-base <b>{ds.params.dataBase.split('-').reverse().join('/')}</b></span>
