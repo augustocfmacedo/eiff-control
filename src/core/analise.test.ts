@@ -13,7 +13,8 @@ const med = (numero: string, mes: number, constr: number, status: Medicao['statu
 function cenario(custos: number[], medidos: boolean): Dataset {
   const medicoes = [med('E1', 1, 50000, medidos ? 'Faturado' : 'Pendente', '2026-07-31', '2026-07-31'), med('E2', 2, 50000, medidos ? 'Faturado' : 'Pendente', '2026-08-31', '2026-08-31'), med('E3', 3, 11111.11, 'Pendente', '2026-10-31')];
   const lancs: Lancamento[] = custos.map((v, i) => ({ ...base.lancamentos[17], id: `PAG-C${i}`, categoria: 'Aço e perfis', codigoObra: 'OB-SF-CL-01', servicoId: 'S1', competencia: '2026-08-10', vencimento: '2026-09-10', valorBruto: v, retencoes: 0, desconto: 0, multaJuros: 0, status: 'Aprovado' }));
-  return { ...base, servicos: [srv], medicoes, obras: [{ ...base.obras[0], margemAlvo: 0.25 }], lancamentos: [...base.lancamentos, ...lancs] };
+  // contrato coerente com o unico servico (100k), para a margem projetada da obra refletir o cenario
+  return { ...base, servicos: [srv], medicoes, obras: [{ ...base.obras[0], margemAlvo: 0.25, valorContrato: 100000, aditivos: 0, medidoFaturado: 0 }], lancamentos: [...base.lancamentos, ...lancs] };
 }
 
 describe('analise da obra', () => {
