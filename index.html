@@ -13,6 +13,37 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>O EIFF Control precisa de JavaScript habilitado no navegador.</noscript>
+    <script>
+      // Rede de seguranca: se o aplicativo nao renderizar em 8 s (cache antigo, arquivo ausente, navegador
+      // antigo ou erro de script), mostra uma mensagem legivel com o erro e um botao que limpa o cache e recarrega.
+      (function () {
+        var erro = '';
+        window.addEventListener('error', function (e) { erro = (e && e.message) || String(e); mostrar(); });
+        window.addEventListener('unhandledrejection', function (e) { erro = (e && e.reason && e.reason.message) || String(e.reason || e); });
+        function mostrar() {
+          var root = document.getElementById('root');
+          if (!root || root.children.length > 0) return;
+          root.innerHTML =
+            '<div style="font-family:Segoe UI,system-ui,sans-serif;max-width:520px;margin:80px auto;padding:24px;border:1px solid #cbd5e1;border-radius:12px;color:#0f172a;background:#fff">' +
+            '<h2 style="margin:0 0 8px">EIFF Control não carregou</h2>' +
+            '<p style="margin:0 0 12px;font-size:14px;color:#475569">Pode ser uma versão antiga guardada no navegador ou um bloqueio de rede. Clique abaixo para limpar e recarregar.</p>' +
+            (erro ? '<pre style="white-space:pre-wrap;font-size:12px;background:#f1f5f9;padding:8px;border-radius:8px">' + erro.replace(/</g, '&lt;') + '</pre>' : '') +
+            '<button id="eiff-recarregar" style="padding:10px 16px;border-radius:8px;border:0;background:#0b3d91;color:#fff;font-weight:600;cursor:pointer">Limpar e recarregar</button>' +
+            '<p style="margin:12px 0 0;font-size:12px;color:#64748b">Se continuar, abra em janela anônima ou envie esta tela ao suporte.</p></div>';
+          document.getElementById('eiff-recarregar').onclick = function () {
+            var fim = function () { location.replace(location.pathname + '?v=' + Date.now() + location.hash); };
+            try {
+              var p = [];
+              if (window.caches && caches.keys) p.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+              if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) p.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+              Promise.all(p).then(fim, fim);
+            } catch (x) { fim(); }
+          };
+        }
+        setTimeout(mostrar, 8000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
