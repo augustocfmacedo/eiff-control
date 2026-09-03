@@ -27,6 +27,8 @@ export default function App() {
   const rota = useRota();
   const { ds, usuario, modo, carregando, sessao, sync, erroInicial } = useStore();
   useEffect(() => { void inicializar(); }, []);
+  // todos os hooks antes de qualquer saida antecipada (regra dos hooks)
+  const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
   if (modo === 'remoto' && carregando) return <div className="empty" style={{ paddingTop: 120 }}>Carregando dados do Supabase…</div>;
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
@@ -49,7 +51,6 @@ export default function App() {
   const tarefas = ds.tarefas.filter((t) => t.status === 'Aberta' && t.responsavel === usuario.id).length;
   const bancos = pode(usuario, 'ver_bancos');
 
-  const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
   const alternarSidebar = () => {
     const v = !recolhida;
     setRecolhida(v);
