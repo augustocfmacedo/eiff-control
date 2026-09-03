@@ -163,8 +163,11 @@ export async function inicializar(): Promise<void> {
       emit();
       ajustarDataBase();
     } catch (e) {
-      state = { ...state, carregando: false, sessao: false, erroInicial: (e as Error).message };
-      await logoutRemoto();
+      // falha ao carregar nao derruba a sessao: a tela oferece "tentar de novo" e "sair"
+      const msg = (e as Error).message;
+      const semSessao = /Sem sessão|sem perfil/i.test(msg);
+      state = { ...state, carregando: false, sessao: !semSessao, erroInicial: msg };
+      if (semSessao) await logoutRemoto();
     }
     emit();
   };
@@ -353,10 +356,19 @@ export const actions = {
 
   async recarregar() {
     if (state.modo !== 'remoto') return;
-    const { ds, usuario } = await carregarRemoto();
-    baseSincronizada = ds;
-    state = { ...state, ds, usuario, sync: { status: 'ok', em: new Date().toISOString() } };
+    state = { ...state, carregando: true, erroInicial: undefined };
     emit();
+    try {
+      const { ds, usuario } = await carregarRemoto();
+      baseSincronizada = ds;
+      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: { status: 'ok', em: new Date().toISOString() } };
+    } catch (e) {
+      state = { ...state, carregando: false, erroInicial: (e as Error).message };
+      emit();
+      throw e;
+    }
+    emit();
+    ajustarDataBase();
   },
 
   novoLancamento(parcial: Partial<Lancamento> = {}): Lancamento {

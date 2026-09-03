@@ -25,10 +25,25 @@ import Campo from './screens/Campo';
 
 export default function App() {
   const rota = useRota();
-  const { ds, usuario, modo, carregando, sessao, sync } = useStore();
+  const { ds, usuario, modo, carregando, sessao, sync, erroInicial } = useStore();
   useEffect(() => { void inicializar(); }, []);
   if (modo === 'remoto' && carregando) return <div className="empty" style={{ paddingTop: 120 }}>Carregando dados do Supabase…</div>;
   if (modo === 'remoto' && !sessao) return <Login />;
+  if (modo === 'remoto' && erroInicial) {
+    return (
+      <div className="empty" style={{ paddingTop: 100 }}>
+        <div className="card" style={{ maxWidth: 560, margin: '0 auto', textAlign: 'left' }}>
+          <h2>Não foi possível carregar os dados</h2>
+          <div className="alert bad">{erroInicial}</div>
+          <p className="small muted">A sessão continua válida. Verifique a conexão e tente de novo; se persistir, saia e entre novamente.</p>
+          <div className="actions">
+            <button className="btn primary" onClick={() => void actions.recarregar().catch(() => undefined)}>Tentar de novo</button>
+            <button className="btn" onClick={() => void actions.sair()}>Sair</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const d = dashboard(ds);
   const pend = ds.aprovacoes.filter((a) => a.status === 'Pendente' && a.etapas.find((e) => e.status === 'Pendente')?.papel === usuario.papel && a.solicitante !== usuario.nome).length;
   const tarefas = ds.tarefas.filter((t) => t.status === 'Aberta' && t.responsavel === usuario.id).length;
