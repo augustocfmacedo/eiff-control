@@ -1,0 +1,23 @@
+# Publicacao automatica: o Netlify roda o build a cada push no repositorio conectado.
+# As variaveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY devem ser definidas no painel do Netlify
+# (Site configuration > Environment variables), porque o arquivo .env nao vai para o repositorio.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--no-audit --no-fund"
+
+# SPA com roteamento por hash: nada a reescrever; cabecalhos de seguranca basicos
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
