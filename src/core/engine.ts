@@ -16,7 +16,7 @@ import type {
   Registro,
   TransacaoBancaria,
 } from './types';
-import { calcDemanda, resumoProducao, resumoServicos, type DemandaCalc, type ResumoProducao, type ServicoCalc } from './obras';
+import { MARGEM_ALVO_PADRAO, calcDemanda, resumoMedicoes, resumoProducao, resumoServicos, type DemandaCalc, type ResumoMedicoes, type ResumoProducao, type ServicoCalc } from './obras';
 
 // ---------------------------------------------------------------------------
 // Datas (sempre em UTC para evitar deslocamento de fuso)
@@ -502,9 +502,12 @@ export interface Obra360 {
   ativa: boolean;
   entradas: LancamentoCalc[];
   saidas: LancamentoCalc[];
-  // operacao (servicos, demandas e producao)
+  // operacao (servicos, demandas, medicoes e producao)
   temServicos: boolean;
   execucaoFisica: number;
+  custoPrevisto: number; // orcado informado ou derivado da margem alvo (soma dos servicos)
+  margemAlvo: number;
+  medicoes: ResumoMedicoes;
   servicos: ServicoCalc[];
   servicosAtrasados: number;
   servicosEmRisco: number;
@@ -528,9 +531,11 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
   const comprometidoAberto = Math.max(0, custoComprometido - custoPago);
 
   // servicos: quando existem, sao a fonte detalhada de orcamento, ETC e avanco fisico
-  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db);
+  const margemAlvo = obra.margemAlvo ?? MARGEM_ALVO_PADRAO;
+  const medicoesObra = (ds.medicoes ?? []).filter((m) => m.codigoObra === obra.codigo);
+  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo);
   const temServicos = rs.servicos.length > 0;
-  const custoOrcado = temServicos ? rs.custoOrcado : obra.custoOrcado;
+  const custoOrcado = temServicos ? rs.custoPrevisto : obra.custoOrcado;
   let eac: number;
   let etc: number;
   let etcNaoComprometido: number;
@@ -578,6 +583,9 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
     saidas,
     temServicos,
     execucaoFisica: temServicos ? rs.execucaoFisica : obra.execucaoFisica,
+    custoPrevisto: temServicos ? rs.custoPrevisto : obra.custoOrcado,
+    margemAlvo,
+    medicoes: resumoMedicoes(medicoesObra, db),
     servicos: rs.servicos,
     servicosAtrasados: rs.atrasados,
     servicosEmRisco: rs.emRisco,

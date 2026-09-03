@@ -28,7 +28,8 @@ export function ObraForm({ obra, onClose, onErro }: { obra: Obra; onClose: () =>
         <Field label="Fim contratual"><Input type="date" value={o.fimContratual ?? ''} onChange={(e) => up({ fimContratual: e.target.value || undefined })} /></Field>
         <Field label="Valor do contrato" req><NumberInput value={o.valorContrato} onChange={(v) => up({ valorContrato: v })} /></Field>
         <Field label="Aditivos aprovados"><NumberInput value={o.aditivos} onChange={(v) => up({ aditivos: v })} /></Field>
-        <Field label="Custo orçado (versão-base)"><NumberInput value={o.custoOrcado} onChange={(v) => up({ custoOrcado: v })} /></Field>
+        <Field label="Custo orçado (versão-base)" hint="Ignorado quando a obra tem serviços cadastrados"><NumberInput value={o.custoOrcado} onChange={(v) => up({ custoOrcado: v })} /></Field>
+        <Field label="Margem alvo (%)" hint="Custo previsto dos serviços sem orçamento = receita × (1 − margem)"><input type="number" step="1" value={o.margemAlvo === undefined ? '' : Math.round(o.margemAlvo * 100)} onChange={(e) => up({ margemAlvo: e.target.value === '' ? undefined : Number(e.target.value) / 100 })} /></Field>
         <Field label="Medido / faturado"><NumberInput value={o.medidoFaturado} onChange={(v) => up({ medidoFaturado: v })} /></Field>
         <Field label="Execução física (%)"><NumberInput value={Math.round(o.execucaoFisica * 10000) / 100} onChange={(v) => up({ execucaoFisica: v / 100 })} /></Field>
         <Field label="Estimativa a concluir (ETC)" hint="Todo o custo ainda necessário para terminar, contratado ou não"><NumberInput value={o.estimativaConcluir} onChange={(v) => up({ estimativaConcluir: v })} /></Field>

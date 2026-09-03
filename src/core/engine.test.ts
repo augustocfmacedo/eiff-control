@@ -114,7 +114,8 @@ describe('DRE gerencial', () => {
 });
 
 describe('obra 360 (OBRAS)', () => {
-  const o = obra360(ds, ds.obras[0]);
+  // paridade com a planilha: sem servicos cadastrados, a obra usa os campos manuais (custo orcado e ETC)
+  const o = obra360({ ...ds, servicos: [] }, ds.obras[0]);
   it('reproduz colunas M, T, U, V, W, Y, Z, AB', () => {
     expect(o.receitaTotal).toBe(1291500);
     expect(o.saldoAMedir).toBe(1133525);
@@ -156,7 +157,9 @@ describe('painel executivo (DASHBOARD)', () => {
     expect(d.pagamentosVencidos).toBe(0);
     expect(d.realizadosSemConciliacao).toBe(0);
     expect(d.obrasMargemNegativa).toBe(0);
-    expect(d.margemCarteira).toBe(1);
+    // com servicos derivados da planilha (saldo 1.133.525 com margem alvo 25%), EAC = 850.143,75
+    expect(d.custoTotalProjetado).toBeCloseTo(1133525 * 0.75, 0);
+    expect(d.margemCarteira).toBeCloseTo((1291500 - 1133525 * 0.75) / 1291500, 4);
   });
   it('aging a receber classifica o atrasado em 8-30 dias', () => {
     expect(d.agingReceber[2].valor).toBe(193975);

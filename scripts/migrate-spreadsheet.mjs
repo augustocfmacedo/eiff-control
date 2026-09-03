@@ -209,6 +209,17 @@ for (const l of lancamentos) {
   if (!s.fimPrevisto || l.vencimento > s.fimPrevisto) s.fimPrevisto = l.vencimento;
   l.servicoId = s.id;
 }
+// as receitas previstas da planilha somam mais que o saldo do contrato; o preco de cada servico e o saldo
+// a medir (contrato + aditivos - medido) distribuido na proporcao dessas receitas
+for (const o of obras) {
+  const meus = servicos.filter((s) => s.codigoObra === o.codigo);
+  const soma = meus.reduce((a, s) => a + s.precoVenda, 0);
+  const saldo = Math.max(0, o.valorContrato + o.aditivos - o.medidoFaturado);
+  if (soma > 0 && saldo > 0 && Math.abs(soma - saldo) > 0.5) {
+    report.avisos.push(`${o.codigo}: receitas previstas (${soma.toFixed(2)}) diferem do saldo do contrato (${saldo.toFixed(2)}); precos dos servicos redistribuidos proporcionalmente.`);
+    for (const s of meus) s.precoVenda = (s.precoVenda / soma) * saldo;
+  }
+}
 for (const s of servicos) s.precoVenda = Math.round(s.precoVenda * 100) / 100;
 report.aceitos.servicos = servicos.length;
 
@@ -240,7 +251,7 @@ const dataset = {
   planoContas, contas, obras, lancamentos, liquidacoes: [], transacoes, dividas,
   aprovacoes: [], auditoria: [{ id: 'aud-0001', ts: now, usuario: 'migracao', acao: 'carga_planilha', entidade: 'dataset', entidadeId: path.basename(src), depois: report.aceitos }],
   comentarios: [], tarefas: [], usuarios, fechamentos: [],
-  servicos, demandas: [], ordens: [], colaboradores: [], apontamentos: [],
+  servicos, demandas: [], ordens: [], colaboradores: [], apontamentos: [], medicoes: [],
 };
 
 fs.mkdirSync(path.join(root, 'src', 'data'), { recursive: true });

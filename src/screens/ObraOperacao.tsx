@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { Obra360 } from '../core/engine';
-import { ETAPAS_FABRICACAO, ETAPAS_MONTAGEM, type DemandaCalc, type OrdemCalc, type ServicoCalc } from '../core/obras';
-import type { Demanda, EtapaObra, OrdemProducao, Periodicidade, Servico, StatusEtapa, StatusServico, TipoOrdem } from '../core/types';
+import { ETAPAS_FABRICACAO, ETAPAS_MONTAGEM, type DemandaCalc, type MedicaoCalc, type OrdemCalc, type ServicoCalc } from '../core/obras';
+import type { Demanda, EtapaObra, Medicao, OrdemProducao, Periodicidade, Servico, StatusEtapa, StatusMedicao, StatusServico, TipoOrdem } from '../core/types';
 import { actions, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Input, Link, Modal, Money, NumberInput, Select, money, pct, tentar, type Tone } from '../ui/components';
 
@@ -29,7 +29,9 @@ function ServicoForm({ servico, onClose, onErro }: { servico: Servico; onClose: 
         <Field label="Quantidade orçada"><NumberInput value={s.quantidadeOrcada} onChange={(v) => up({ quantidadeOrcada: v })} /></Field>
         <Field label="Quantidade executada"><NumberInput value={s.quantidadeExecutada} onChange={(v) => up({ quantidadeExecutada: v })} /></Field>
         <Field label="Custo orçado" hint="Versão-base do orçamento deste serviço"><NumberInput value={s.custoOrcado} onChange={(v) => up({ custoOrcado: v })} /></Field>
-        <Field label="Preço de venda" hint="Parcela da receita do contrato"><NumberInput value={s.precoVenda} onChange={(v) => up({ precoVenda: v })} /></Field>
+        <Field label="Receita EIFF (líquida de retenção)" hint="Parte da construtora nos eventos deste serviço"><NumberInput value={s.precoVenda} onChange={(v) => up({ precoVenda: v })} /></Field>
+        <Field label="Faturamento direto do cliente" hint="Materiais pagos pelo cliente; fora da receita e do custo"><NumberInput value={s.faturamentoDireto ?? 0} onChange={(v) => up({ faturamentoDireto: v })} /></Field>
+        <Field label="Margem alvo (%)" hint="Usada quando o custo orçado está em zero; vazio = margem da obra"><input type="number" step="1" value={s.margemAlvo === undefined ? '' : Math.round(s.margemAlvo * 100)} onChange={(e) => up({ margemAlvo: e.target.value === '' ? undefined : Number(e.target.value) / 100 })} /></Field>
         <Field label="ETC informado" hint="Vazio = derivado (orçado − comprometido)"><input type="number" step="0.01" value={s.estimativaConcluir ?? ''} onChange={(e) => up({ estimativaConcluir: e.target.value === '' ? undefined : Number(e.target.value) })} /></Field>
         <Field label="Início previsto"><Input type="date" value={s.inicioPrevisto ?? ''} onChange={(e) => up({ inicioPrevisto: e.target.value || undefined })} /></Field>
         <Field label="Fim previsto"><Input type="date" value={s.fimPrevisto ?? ''} onChange={(e) => up({ fimPrevisto: e.target.value || undefined })} /></Field>
@@ -78,28 +80,29 @@ export function ServicosTab({ o, onErro }: { o: Obra360; onErro: (m: string) => 
       {o.servicos.length === 0 ? <Empty>Nenhum serviço cadastrado. Com serviços, orçamento, ETC e avanço físico da obra passam a ser calculados a partir deles.</Empty> : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Código</th><th>Serviço</th><th>Etapa</th><th>Prazo</th><th>Situação</th><th>Físico</th><th>Preço venda</th><th>Custo orçado</th><th>Comprometido</th><th>Pago</th><th>ETC</th><th>EAC</th><th>Margem</th><th>Desvio orç.</th><th></th></tr></thead>
+            <thead><tr><th>Código</th><th>Serviço</th><th>Prazo</th><th>Situação</th><th>Físico</th><th>Receita EIFF</th><th>Faturado</th><th>Custo previsto</th><th>Previsto p/ faturado</th><th>Comprometido</th><th>Pago</th><th>Desvio × faturado</th><th>ETC</th><th>EAC</th><th>Margem proj.</th><th></th></tr></thead>
             <tbody>
               {o.servicos.map((s) => (
                 <tr key={s.id}>
-                  <td><b>{s.codigo}</b></td>
-                  <td>{s.nome}<div className="muted small">{s.lancamentos.length} lançamento(s)</div></td>
-                  <td>{s.etapa}</td>
+                  <td><b>{s.codigo}</b><div className="muted small">{s.etapa}</div></td>
+                  <td>{s.nome}<div className="muted small">{s.medicoes.length} evento(s) · {s.lancamentos.length} lançamento(s){s.faturamentoDireto ? ` · direto cliente ${money(s.faturamentoDireto, true)}` : ''}</div></td>
                   <td className="small">{d(s.inicioPrevisto)} → {d(s.fimPrevisto)}{s.diasParaFim !== undefined && s.status !== 'Concluído' && <div className={s.diasParaFim < 0 ? 'neg' : 'muted'}>{s.diasParaFim} d</div>}</td>
                   <td><Badge tone={tonePrazo(s.situacaoPrazo)}>{s.situacaoPrazo}</Badge></td>
-                  <td><div className="progress" style={{ width: 70 }}><i style={{ width: `${s.pctExecucao * 100}%` }} /></div><span className="small">{pct(s.pctExecucao)}</span></td>
+                  <td><div className="progress" style={{ width: 60 }}><i style={{ width: `${s.pctExecucao * 100}%` }} /></div><span className="small">{pct(s.pctExecucao)}</span></td>
                   <td><Money v={s.precoVenda} compact /></td>
-                  <td><Money v={s.custoOrcado} compact /></td>
+                  <td><Money v={s.faturado} compact /><div className="muted small">{pct(s.pctFaturado)}</div></td>
+                  <td><Money v={s.custoPrevisto} compact />{s.custoPrevistoDerivado && <div className="muted small">margem {pct(s.margemAlvoEfetiva)}</div>}</td>
+                  <td><Money v={s.custoPrevistoProporcional} compact /></td>
                   <td><Money v={s.custoComprometido} compact /></td>
                   <td><Money v={s.custoPago} compact /></td>
+                  <td className={s.desvioVsFaturado > 0.5 ? 'neg' : ''} title="Comprometido − custo previsto proporcional ao faturado. Positivo = gastando à frente do faturamento"><Money v={s.desvioVsFaturado} compact sign /></td>
                   <td><Money v={s.etc} compact />{s.etcDerivado && <div className="muted small">derivado</div>}</td>
                   <td><Money v={s.eac} compact /></td>
                   <td className={`num ${s.margemProjetada < 0 ? 'neg' : ''}`}>{money(s.margemProjetada, true)}<div className="muted small">{pct(s.pctMargem)}</div></td>
-                  <td><Money v={s.desvioOrcamento} compact sign /></td>
                   <td className="actions">{podeEditar && <><button className="btn sm" onClick={() => setAvanco(s)}>Avanço</button><button className="btn sm" onClick={() => setEdit(s)}>Editar</button></>}</td>
                 </tr>
               ))}
-              <tr className="total"><td colSpan={5}>TOTAL</td><td>{pct(o.execucaoFisica)}</td><td><Money v={tot((s) => s.precoVenda)} compact /></td><td><Money v={tot((s) => s.custoOrcado)} compact /></td><td><Money v={tot((s) => s.custoComprometido)} compact /></td><td><Money v={tot((s) => s.custoPago)} compact /></td><td><Money v={tot((s) => s.etc)} compact /></td><td><Money v={tot((s) => s.eac)} compact /></td><td><Money v={tot((s) => s.margemProjetada)} compact sign /></td><td><Money v={tot((s) => s.desvioOrcamento)} compact sign /></td><td /></tr>
+              <tr className="total"><td colSpan={4}>TOTAL</td><td>{pct(o.execucaoFisica)}</td><td><Money v={tot((s) => s.precoVenda)} compact /></td><td><Money v={tot((s) => s.faturado)} compact /></td><td><Money v={tot((s) => s.custoPrevisto)} compact /></td><td><Money v={tot((s) => s.custoPrevistoProporcional)} compact /></td><td><Money v={tot((s) => s.custoComprometido)} compact /></td><td><Money v={tot((s) => s.custoPago)} compact /></td><td><Money v={tot((s) => s.desvioVsFaturado)} compact sign /></td><td><Money v={tot((s) => s.etc)} compact /></td><td><Money v={tot((s) => s.eac)} compact /></td><td><Money v={tot((s) => s.margemProjetada)} compact sign /></td><td /></tr>
             </tbody>
           </table>
           {Math.abs(tot((s) => s.precoVenda) - o.receitaTotal) > 0.5 && <div className="alert info" style={{ marginTop: 8 }}>Soma dos preços de venda dos serviços ({money(tot((s) => s.precoVenda))}) difere da receita total do contrato ({money(o.receitaTotal)}). Ajuste os serviços ou os aditivos.</div>}
@@ -268,6 +271,121 @@ export function ProducaoTab({ o, tipo, onErro }: { o: Obra360; tipo: TipoOrdem; 
         </div>
       </div>
       {edit && <OrdemForm ordem={edit} onClose={() => setEdit(null)} onErro={onErro} />}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Medicoes / cronograma fisico-financeiro
+// ---------------------------------------------------------------------------
+const STATUS_MED: StatusMedicao[] = ['Pendente', 'Medido', 'Faturado', 'Recebido', 'Cancelado'];
+const toneMed = (s: string, atrasada: boolean): Tone => (s === 'Recebido' ? 'ok' : s === 'Faturado' ? 'ok' : s === 'Medido' ? 'info' : s === 'Cancelado' ? 'muted' : atrasada ? 'bad' : 'warn');
+
+function MedicaoForm({ medicao, onClose, onErro }: { medicao: Medicao; onClose: () => void; onErro: (m: string) => void }) {
+  const { ds } = useStore();
+  const [m, setM] = useState<Medicao>(medicao);
+  const up = (p: Partial<Medicao>) => setM({ ...m, ...p });
+  return (
+    <Modal title={`Evento ${m.numero}`} onClose={onClose} wide>
+      <div className="form">
+        <Field label="Número" req><Input value={m.numero} onChange={(e) => up({ numero: e.target.value.toUpperCase() })} /></Field>
+        <Field label="Mês contratual"><NumberInput value={m.mes} onChange={(v) => up({ mes: v })} /></Field>
+        <Field label="Data prevista"><Input type="date" value={m.dataPrevista ?? ''} onChange={(e) => up({ dataPrevista: e.target.value || undefined })} /></Field>
+        <Field label="Serviço"><Select value={m.servicoId ?? ''} onChange={(v) => up({ servicoId: v || undefined })} options={ds.servicos.filter((s) => s.codigoObra === m.codigoObra && s.ativo).map((s) => ({ value: s.id, label: `${s.codigo} · ${s.nome}` }))} allowEmpty="—" /></Field>
+        <Field label="Etapa do orçamento"><Input value={m.etapa} onChange={(e) => up({ etapa: e.target.value })} /></Field>
+        <Field label="Evento" req full><Input value={m.evento} onChange={(e) => up({ evento: e.target.value })} /></Field>
+        <Field label="Escopo / atividades" full><textarea rows={2} value={m.escopo} onChange={(e) => up({ escopo: e.target.value })} /></Field>
+        <Field label="Critério de medição / aceite" full><textarea rows={2} value={m.criterio} onChange={(e) => up({ criterio: e.target.value })} /></Field>
+        <Field label="Documentos obrigatórios" full><textarea rows={2} value={m.documentos} onChange={(e) => up({ documentos: e.target.value })} /></Field>
+        <Field label="Valor bruto do evento" req><NumberInput value={m.valorBruto} onChange={(v) => up({ valorBruto: v })} /></Field>
+        <Field label="Faturamento direto (cliente)"><NumberInput value={m.faturamentoDireto} onChange={(v) => up({ faturamentoDireto: v, faturamentoConstrutora: Math.max(0, m.valorBruto - v) })} /></Field>
+        <Field label="Faturamento construtora (EIFF)"><NumberInput value={m.faturamentoConstrutora} onChange={(v) => up({ faturamentoConstrutora: v, faturamentoDireto: Math.max(0, m.valorBruto - v) })} /></Field>
+        <Field label="Retenção contratual"><NumberInput value={m.retencao} onChange={(v) => up({ retencao: v })} /></Field>
+        <Field label="Tipo de medição"><Input value={m.tipoMedicao} onChange={(e) => up({ tipoMedicao: e.target.value })} /></Field>
+        <Field label="Responsável pela aprovação"><Input value={m.responsavelAprovacao} onChange={(e) => up({ responsavelAprovacao: e.target.value })} /></Field>
+        <Field label="% evolução planejada"><NumberInput value={Math.round(m.pctEvolucaoPlanejada * 10000) / 100} onChange={(v) => up({ pctEvolucaoPlanejada: v / 100 })} /></Field>
+        <Field label="Observações" full><textarea rows={2} value={m.observacoes} onChange={(e) => up({ observacoes: e.target.value })} /></Field>
+      </div>
+      <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.salvarMedicao(m), onErro, onClose)}>Salvar</button></div>
+    </Modal>
+  );
+}
+
+function RegistrarMedicaoForm({ m, onClose, onErro, onOk }: { m: MedicaoCalc; onClose: () => void; onErro: (m: string) => void; onOk: (msg: string) => void }) {
+  const { ds } = useStore();
+  const [f, setF] = useState({ status: (m.status === 'Pendente' ? 'Medido' : m.status) as StatusMedicao, dataMedicao: m.dataMedicao ?? ds.params.dataBase, valorMedido: m.valorMedido ?? m.faturamentoConstrutora, lancamentoId: m.lancamentoId ?? '', gerarRecebivel: !m.lancamentoId && m.faturamentoConstrutora > 0, vencimento: '', observacoes: m.observacoes });
+  const pctRet = m.valorBruto > 0 ? m.retencao / m.valorBruto : 0;
+  const liquido = f.valorMedido * (1 - pctRet);
+  const recebiveis = ds.lancamentos.filter((l) => l.codigoObra === m.codigoObra && l.status !== 'Cancelado' && ds.planoContas.find((p) => p.categoria === l.categoria)?.tipo === 'Entrada');
+  return (
+    <Modal title={`Registrar medição · ${m.numero} ${m.evento}`} onClose={onClose}>
+      <div className="alert info">Parte da construtora prevista {money(m.faturamentoConstrutora)} · retenção {Math.round(pctRet * 100)}% · líquido a receber <b>{money(liquido)}</b>. Faturamento direto do cliente ({money(m.faturamentoDireto)}) não entra no caixa da EIFF.</div>
+      <div className="form">
+        <Field label="Status"><Select value={f.status} onChange={(v) => setF({ ...f, status: v as StatusMedicao })} options={STATUS_MED} /></Field>
+        <Field label="Data da medição" req><Input type="date" value={f.dataMedicao} onChange={(e) => setF({ ...f, dataMedicao: e.target.value })} /></Field>
+        <Field label="Valor medido (parte construtora, bruto)"><NumberInput value={f.valorMedido} onChange={(v) => setF({ ...f, valorMedido: v })} /></Field>
+        <Field label="Recebível" hint="Vincule um lançamento existente ou gere um novo"><Select value={f.lancamentoId} onChange={(v) => setF({ ...f, lancamentoId: v, gerarRecebivel: !v && f.gerarRecebivel })} options={recebiveis.map((l) => ({ value: l.id, label: `${l.id} · ${l.descricao} · ${money(l.valorBruto)}` }))} allowEmpty="— nenhum —" /></Field>
+        {!f.lancamentoId && <Field label="Gerar recebível"><Select value={f.gerarRecebivel ? 'Sim' : 'Não'} onChange={(v) => setF({ ...f, gerarRecebivel: v === 'Sim' })} options={['Sim', 'Não']} /></Field>}
+        {!f.lancamentoId && f.gerarRecebivel && <Field label="Vencimento do recebível" hint="Vazio = 30 dias após a medição"><Input type="date" value={f.vencimento} onChange={(e) => setF({ ...f, vencimento: e.target.value })} /></Field>}
+        <Field label="Observações" full><textarea rows={2} value={f.observacoes} onChange={(e) => setF({ ...f, observacoes: e.target.value })} /></Field>
+      </div>
+      <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => { const r = actions.registrarMedicao(m.id, { status: f.status, dataMedicao: f.dataMedicao, valorMedido: f.valorMedido, lancamentoId: f.lancamentoId || undefined, gerarRecebivel: f.gerarRecebivel, vencimento: f.vencimento || undefined, observacoes: f.observacoes }); onOk(r.lancamentoId ? `${m.numero} registrado; recebível ${r.lancamentoId}.` : `${m.numero} registrado.`); }, onErro, onClose)}>Registrar</button></div>
+    </Modal>
+  );
+}
+
+export function MedicoesTab({ o, onErro, onOk }: { o: Obra360; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { usuario } = useStore();
+  const [edit, setEdit] = useState<Medicao | null>(null);
+  const [reg, setReg] = useState<MedicaoCalc | null>(null);
+  const r = o.medicoes;
+  const podeEditar = pode(usuario, 'editar_obra', o.obra.codigo);
+  return (
+    <>
+      <div className="grid cols-4" style={{ marginBottom: 12 }}>
+        <div className="kpi"><div className="label">Contrato (bruto)</div><div className="value">{money(r.valorBruto, true)}</div><div className="hint">direto cliente {money(r.faturamentoDireto, true)} · construtora {money(r.faturamentoConstrutora, true)}</div></div>
+        <div className="kpi"><div className="label">Receita líquida EIFF</div><div className="value">{money(r.liquidoConstrutora, true)}</div><div className="hint">construtora − retenção {money(r.retencaoConstrutora, true)}</div></div>
+        <div className={`kpi ${r.atrasadas ? 'bad' : ''}`}><div className="label">Faturado</div><div className="value">{money(r.faturado, true)} · {pct(r.pctFaturado)}</div><div className="hint">a faturar {money(r.aFaturar, true)} · {r.pendentes} evento(s) pendente(s), {r.atrasadas} atrasado(s)</div></div>
+        <div className="kpi"><div className="label">Retenção acumulada a receber</div><div className="value">{money(r.retencaoAcumulada, true)}</div><div className="hint">liberação no encerramento, conforme contrato</div></div>
+      </div>
+      <div className="actions" style={{ marginBottom: 8 }}>
+        <span className="muted small">Eventos do cronograma físico-financeiro. "Registrar" muda o status e gera ou vincula o recebível da parte da construtora.</span>
+        <span style={{ flex: 1 }} />
+        {podeEditar && <button className="btn primary sm" onClick={() => setEdit(actions.novaMedicao(o.obra.codigo))}>+ Evento</button>}
+      </div>
+      {r.medicoes.length === 0 ? <Empty>Sem eventos. Cadastre os marcos do cronograma físico-financeiro do contrato.</Empty> : (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Nº</th><th>Mês</th><th>Evento</th><th>Serviço</th><th>Previsto</th><th>Bruto</th><th>Direto</th><th>Construtora</th><th>Líquido EIFF</th><th>Tipo</th><th>Status</th><th>Medição</th><th>Recebível</th><th /></tr></thead>
+            <tbody>
+              {[...r.medicoes].sort((a, b) => a.mes - b.mes || a.numero.localeCompare(b.numero)).map((m) => (
+                <tr key={m.id}>
+                  <td><b>{m.numero}</b></td><td className="num">{m.mes}</td>
+                  <td>{m.evento}<div className="muted small">{m.etapa}</div></td>
+                  <td className="small">{o.servicos.find((s) => s.id === m.servicoId)?.codigo ?? '—'}</td>
+                  <td className={m.atrasada ? 'neg' : ''}>{d(m.dataPrevista)}</td>
+                  <td><Money v={m.valorBruto} compact /></td><td><Money v={m.faturamentoDireto} compact /></td><td><Money v={m.faturamentoConstrutora} compact /></td>
+                  <td><b><Money v={m.valorLiquidoConstrutora} compact /></b></td>
+                  <td className="small">{m.tipoMedicao}</td>
+                  <td><Badge tone={toneMed(m.status, m.atrasada)}>{m.status}{m.atrasada ? ' · atrasada' : ''}</Badge></td>
+                  <td className="small">{m.dataMedicao ? d(m.dataMedicao) : '—'}{m.valorMedido !== undefined && m.valorMedido !== m.faturamentoConstrutora && <div className="muted">{money(m.valorMedido, true)}</div>}</td>
+                  <td className="small">{m.lancamentoId ? <Link to={`/lancamentos/${m.lancamentoId}`}>{m.lancamentoId}</Link> : '—'}</td>
+                  <td className="actions">{podeEditar && m.status !== 'Cancelado' && <button className="btn sm primary" onClick={() => setReg(m)}>Registrar</button>}{podeEditar && <button className="btn sm" onClick={() => setEdit(m)}>…</button>}</td>
+                </tr>
+              ))}
+              <tr className="total"><td colSpan={5}>TOTAL</td><td><Money v={r.valorBruto} compact /></td><td><Money v={r.faturamentoDireto} compact /></td><td><Money v={r.faturamentoConstrutora} compact /></td><td><Money v={r.liquidoConstrutora} compact /></td><td colSpan={5} /></tr>
+            </tbody>
+          </table>
+          <h3 style={{ marginTop: 14 }}>Curva mensal da parte da construtora (líquida)</h3>
+          <div className="table-wrap"><table><thead><tr><th>Mês</th>{r.porMes.map((x) => <th key={x.mes} className="num">M{String(x.mes).padStart(2, '0')}<div className="muted small">{d(x.dataPrevista)}</div></th>)}</tr></thead>
+            <tbody>
+              <tr><td>Previsto</td>{r.porMes.map((x) => <td key={x.mes}><Money v={x.liquido} compact /></td>)}</tr>
+              <tr><td>Faturado</td>{r.porMes.map((x) => <td key={x.mes}><Money v={x.faturado || undefined} compact /></td>)}</tr>
+            </tbody></table></div>
+        </div>
+      )}
+      {edit && <MedicaoForm medicao={edit} onClose={() => setEdit(null)} onErro={onErro} />}
+      {reg && <RegistrarMedicaoForm m={reg} onClose={() => setReg(null)} onErro={onErro} onOk={onOk} />}
     </>
   );
 }

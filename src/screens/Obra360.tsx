@@ -5,12 +5,12 @@ import { Bars, Empty, Field, Kpi, Link, Modal, Money, NumberInput, PageHead, Sta
 import { Timeline } from '../ui/Timeline';
 import { ObraForm } from './Obras';
 import { LancamentoForm } from './LancamentoForm';
-import { DemandasTab, ProducaoTab, ServicosTab } from './ObraOperacao';
+import { DemandasTab, MedicoesTab, ProducaoTab, ServicosTab } from './ObraOperacao';
 
 export default function Obra360({ codigo }: { codigo: string }) {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'resumo' | 'servicos' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
+  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'servicos' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
   const [editando, setEditando] = useState(false);
   const [novoLanc, setNovoLanc] = useState(false);
   const [exec, setExec] = useState<{ execucaoFisica: number; medidoFaturado: number; estimativaConcluir: number; justificativa: string } | null>(null);
@@ -37,7 +37,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
         <Kpi label="Medido / faturado" value={money(o.medidoFaturado)} hint={`saldo a medir ${money(o.saldoAMedir, true)}`} />
         <Kpi label="Recebido" value={money(o.recebido)} hint={`contas a receber ${money(o.contasAReceber, true)}`} to={`/receber?obra=${codigo}`} />
         <Kpi label="Caixa da obra" value={money(o.caixaGerado)} hint="entradas realizadas − saídas realizadas" tone={o.caixaGerado < 0 ? 'warn' : undefined} />
-        <Kpi label="Custo orçado" value={money(o.custoOrcado)} hint={`margem orçada ${pct(o.pctMargemOrcada)}`} />
+        <Kpi label={o.temServicos ? 'Custo previsto (serviços)' : 'Custo orçado'} value={money(o.custoOrcado)} hint={o.temServicos ? `margem alvo ${pct(o.margemAlvo)} onde não há orçamento · faturado ${money(o.medicoes.faturado, true)} de ${money(o.medicoes.liquidoConstrutora, true)}` : `margem orçada ${pct(o.pctMargemOrcada)}`} />
         <Kpi label="Comprometido" value={money(o.custoComprometido)} hint={`pago ${money(o.custoPago, true)} · em aberto ${money(o.comprometidoAberto, true)}`} to={`/pagar?obra=${codigo}`} />
         <Kpi label="EAC (custo projetado)" value={money(o.eac)} hint={`ETC ${money(o.etc, true)} · não comprometido ${money(o.etcNaoComprometido, true)}`} />
         <Kpi label="Margem projetada" value={`${money(o.margemProjetada)} · ${pct(o.pctMargemProjetada)}`} tone={o.margemProjetada < 0 ? 'bad' : o.pctMargemProjetada < 0.1 ? 'warn' : 'ok'} />
@@ -46,6 +46,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
       <div className="card" style={{ marginTop: 16 }}>
         <Tabs value={aba} onChange={setAba} items={[
           { id: 'resumo', label: 'Resumo econômico' },
+          { id: 'medicoes', label: `Cronograma e medições (${o.medicoes.medicoes.filter((m) => m.medida).length}/${o.medicoes.medicoes.length})` },
           { id: 'servicos', label: `Serviços (${o.servicos.length})` },
           { id: 'demandas', label: `Demandas (${o.demandasPendentes + o.demandasAtrasadas} pend.)` },
           { id: 'fabricacao', label: `Fabricação (${o.fabricacao.emAndamento}/${o.fabricacao.ordens.length})` },
@@ -54,6 +55,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
           { id: 'execucao', label: 'Execução e prazo' },
           { id: 'timeline', label: 'Documentos e comunicação' },
         ]} />
+        {aba === 'medicoes' && <MedicoesTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'servicos' && <ServicosTab o={o} onErro={toast} />}
         {aba === 'demandas' && <DemandasTab o={o} onErro={toast} />}
         {aba === 'fabricacao' && <ProducaoTab o={o} tipo="Fabricação" onErro={toast} />}

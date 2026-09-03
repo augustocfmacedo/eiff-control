@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import seed from '../data/seed.json';
-import type { Dataset, Demanda, Lancamento, OrdemProducao, Servico } from './types';
+import type { Dataset, Demanda, Lancamento, Medicao, OrdemProducao, Servico } from './types';
 import { calcLancamentos, obra360 } from './engine';
-import { calcDemanda, calcOrdem, calcServico, chavePeriodo, etapasPadrao, resumoProducao, resumoServicos } from './obras';
+import { calcDemanda, calcMedicao, calcOrdem, calcServico, chavePeriodo, etapasPadrao, resumoMedicoes, resumoProducao, resumoServicos } from './obras';
 
 const ds = seed as unknown as Dataset;
 const DB = ds.params.dataBase; // 2026-09-01
@@ -12,16 +12,15 @@ describe('servicos derivados da planilha', () => {
     expect(ds.servicos.length).toBe(6);
     const est = ds.servicos.find((s) => s.nome.toLowerCase().includes('estrutura met'))!;
     expect(est.etapa).toBe('Fabricação');
-    expect(est.precoVenda).toBeCloseTo(61818.99 + 71091.84 + 103546.81 + 16828.5, 2);
+    // precos redistribuidos: saldo do contrato (1.291.500 - 157.975 = 1.133.525) na proporcao das receitas previstas (1.803.231,52)
+    expect(est.precoVenda).toBeCloseTo(((61818.99 + 71091.84 + 103546.81 + 16828.5) / 1803231.52) * 1133525, 1);
     expect(est.inicioPrevisto).toBe('2026-09-01');
     expect(est.fimPrevisto).toBe('2026-12-10');
     expect(ds.lancamentos.filter((l) => l.servicoId === est.id)).toHaveLength(4);
     // soma dos precos de venda = soma das receitas previstas da planilha (1.803.231,52), que excede o
     // saldo do contrato (1.291.500 - 157.975 = 1.133.525): inconsistencia real da planilha, sinalizada na tela
     const totalVenda = ds.servicos.reduce((a, s) => a + s.precoVenda, 0);
-    const receitasPrevistas = ds.lancamentos.filter((l) => l.servicoId).reduce((a, l) => a + l.valorBruto - l.retencoes - l.desconto + l.multaJuros, 0);
-    expect(totalVenda).toBeCloseTo(receitasPrevistas, 2);
-    expect(totalVenda).toBeCloseTo(1803231.52, 2);
+    expect(totalVenda).toBeCloseTo(1133525, 1);
   });
 });
 
@@ -74,6 +73,49 @@ describe('obra 360 com servicos', () => {
     expect(o.custoComprometido).toBe(20000);
     expect(o.etc).toBe(620000); // tudo que falta: 20k comprometido em aberto + 600k nao comprometido
     expect(o.margemProjetada).toBe(1291500 - 620000);
+  });
+});
+
+describe('medicoes do cronograma e custo previsto por margem alvo', () => {
+  const srv: Servico = { id: 'S-EM', codigoObra: 'OB-SF-CL-01', codigo: 'SFCL-06', nome: 'Estrutura metálica', etapa: 'Fabricação', unidade: 'vb', quantidadeOrcada: 1, quantidadeExecutada: 0, custoOrcado: 0, precoVenda: 162000, faturamentoDireto: 620000, status: 'Não iniciado', observacoes: '', ativo: true };
+  const med = (numero: string, mes: number, bruto: number, direto: number, constr: number, status: Medicao['status'] = 'Pendente', dataPrevista?: string): Medicao => ({ id: `M-${numero}`, codigoObra: 'OB-SF-CL-01', servicoId: 'S-EM', numero, mes, etapa: 'Estrutura Metálica', evento: numero, escopo: '', criterio: '', documentos: '', tipoMedicao: 'Fabricação', responsavelAprovacao: '', dataPrevista, valorBruto: bruto, faturamentoDireto: direto, faturamentoConstrutora: constr, retencao: bruto * 0.1, pctEvolucaoPlanejada: 0, status, observacoes: '' });
+  const medicoes = [med('E10', 4, 175000, 175000, 0, 'Pendente', '2026-08-31'), med('E11', 4, 185000, 145000, 40000, 'Faturado', '2026-09-30'), med('E12', 5, 230000, 200000, 30000), med('E13', 5, 210000, 100000, 110000)];
+  it('liquido da construtora desconta a retencao proporcional; faturado soma os eventos medidos', () => {
+    const c = calcMedicao(medicoes[1], DB);
+    expect(c.retencaoConstrutora).toBeCloseTo(4000, 2);
+    expect(c.valorLiquidoConstrutora).toBeCloseTo(36000, 2);
+    expect(c.medida).toBe(true);
+    expect(calcMedicao(medicoes[0], DB).atrasada).toBe(true);
+    const r = resumoMedicoes(medicoes, DB);
+    expect(r.valorBruto).toBe(800000);
+    expect(r.faturamentoDireto).toBe(620000);
+    expect(r.liquidoConstrutora).toBeCloseTo(162000, 2);
+    expect(r.faturado).toBeCloseTo(36000, 2);
+    expect(r.pctFaturado).toBeCloseTo(36000 / 162000, 4);
+    expect(r.retencaoAcumulada).toBeCloseTo(4000, 2);
+    expect(r.atrasadas).toBe(1);
+    expect(r.porMes.map((x) => x.mes)).toEqual([4, 5]);
+  });
+  it('custo previsto = receita x (1 - margem alvo); desvio compara comprometido com o custo proporcional ao faturado', () => {
+    const custo: Lancamento = { ...ds.lancamentos[17], id: 'PAG-EM', categoria: 'Aço e perfis', codigoObra: 'OB-SF-CL-01', servicoId: 'S-EM', valorBruto: 40000, retencoes: 0, desconto: 0, multaJuros: 0, status: 'Aprovado' };
+    const ds2: Dataset = { ...ds, servicos: [srv], medicoes, lancamentos: [...ds.lancamentos, custo] };
+    const s = calcServico(srv, calcLancamentos(ds2), DB, medicoes, 0.25);
+    expect(s.custoPrevistoDerivado).toBe(true);
+    expect(s.custoPrevisto).toBeCloseTo(162000 * 0.75, 2);
+    expect(s.faturado).toBeCloseTo(36000, 2);
+    expect(s.pctFaturado).toBeCloseTo(36000 / 162000, 4);
+    expect(s.custoPrevistoProporcional).toBeCloseTo(121500 * (36000 / 162000), 2);
+    expect(s.desvioVsFaturado).toBeCloseTo(40000 - 27000, 2); // gastou 40k contra 27k previstos para o faturado
+    expect(s.etc).toBeCloseTo(121500 - 40000, 2);
+    expect(s.eac).toBeCloseTo(121500, 2);
+    expect(s.margemProjetada).toBeCloseTo(40500, 2);
+    expect(s.pctExecucao).toBeCloseTo(s.pctFaturado, 6); // sem quantidades, o fisico segue o faturado
+    // margem alvo do servico prevalece sobre a da obra; custo orcado informado prevalece sobre a margem
+    expect(calcServico({ ...srv, margemAlvo: 0.4 }, [], DB, medicoes, 0.25).custoPrevisto).toBeCloseTo(97200, 2);
+    expect(calcServico({ ...srv, custoOrcado: 100000 }, [], DB, medicoes, 0.25).custoPrevisto).toBe(100000);
+    const o = obra360({ ...ds2, obras: [{ ...ds2.obras[0], margemAlvo: 0.25 }] }, { ...ds2.obras[0], margemAlvo: 0.25 });
+    expect(o.custoPrevisto).toBeCloseTo(121500, 2);
+    expect(o.medicoes.faturado).toBeCloseTo(36000, 2);
   });
 });
 

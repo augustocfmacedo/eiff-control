@@ -78,6 +78,7 @@ interface Refs {
   ordens: Map<string, string>;
   colaboradores: Map<string, string>;
   apontamentos: Map<string, string>;
+  medicoes: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -132,12 +133,13 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('production_order', '*', (q) => q.order('code')),
     sel('production_stage', '*', (q) => q.order('stage_order')),
   ]);
-  const [workers, timesheets, tsLines, tsOutputs, tsIncidents] = await Promise.all([
+  const [workers, timesheets, tsLines, tsOutputs, tsIncidents, medicoesRows] = await Promise.all([
     sel('worker', '*', (q) => q.order('name')),
     sel('timesheet', '*', (q) => q.order('work_date', { ascending: false }).limit(2000)),
     sel('timesheet_line'),
     sel('timesheet_output'),
     sel('timesheet_incident'),
+    sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
   const linhasPor = new Map<string, Row[]>();
   for (const l of tsLines) linhasPor.set(l.timesheet_id, [...(linhasPor.get(l.timesheet_id) ?? []), l]);
@@ -168,6 +170,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     ordens: new Map(ordensRows.map((o) => [o.id, o.id])),
     colaboradores: new Map(workers.map((w) => [w.id, w.id])),
     apontamentos: new Map(timesheets.map((t) => [t.id, t.id])),
+    medicoes: new Map(medicoesRows.map((m) => [m.id, m.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -220,7 +223,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       codigo: o.code, registro: o.record_kind, nome: o.name, cliente: o.client_name ?? '', cidadeUf: o.city_state ?? '', status: o.status, escopo: o.scope ?? '',
       assinatura: o.signed_at ?? undefined, inicio: o.starts_at ?? undefined, fimContratual: o.contractual_end ?? undefined,
       valorContrato: Number(o.contract_value), aditivos: Number(o.addenda_value), custoOrcado: Number(o.budgeted_cost), execucaoFisica: Number(o.physical_progress),
-      medidoFaturado: Number(o.measured_invoiced), estimativaConcluir: Number(o.estimate_to_complete), observacoes: o.notes ?? '', responsavel: o.manager_id ?? undefined,
+      medidoFaturado: Number(o.measured_invoiced), estimativaConcluir: Number(o.estimate_to_complete), margemAlvo: o.target_margin === null || o.target_margin === undefined ? undefined : Number(o.target_margin), observacoes: o.notes ?? '', responsavel: o.manager_id ?? undefined,
     })),
     lancamentos: lancs.map((l) => ({
       id: l.code, registro: l.record_kind, categoria: r.planoInv.get(l.chart_account_id) ?? '', subcategoria: l.sub_category ?? '', centroCusto: l.cost_center_label ?? (l.project_id ? 'Obra' : 'Corporativo'),
@@ -251,7 +254,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     fechamentos: closes.map((c) => ({ periodo: c.period, fechadoEm: c.closed_at, fechadoPor: nome(c.closed_by), reaberto: c.reopened_at ? { em: c.reopened_at, por: nome(c.reopened_by), motivo: c.reopen_reason ?? '' } : undefined })),
     servicos: servicosRows.map((s) => ({
       id: s.id, codigoObra: r.obrasInv.get(s.project_id) ?? '', codigo: s.code, nome: s.name, etapa: s.phase, unidade: s.unit, quantidadeOrcada: Number(s.budgeted_qty), quantidadeExecutada: Number(s.executed_qty),
-      custoOrcado: Number(s.budgeted_cost), precoVenda: Number(s.sale_price), estimativaConcluir: s.estimate_to_complete === null ? undefined : Number(s.estimate_to_complete),
+      custoOrcado: Number(s.budgeted_cost), precoVenda: Number(s.sale_price), faturamentoDireto: s.sale_direct === null || s.sale_direct === undefined ? undefined : Number(s.sale_direct), valorBaseOrcamento: s.budget_base === null || s.budget_base === undefined ? undefined : Number(s.budget_base), margemAlvo: s.target_margin === null || s.target_margin === undefined ? undefined : Number(s.target_margin), estimativaConcluir: s.estimate_to_complete === null ? undefined : Number(s.estimate_to_complete),
       inicioPrevisto: s.planned_start ?? undefined, fimPrevisto: s.planned_end ?? undefined, inicioReal: s.actual_start ?? undefined, fimReal: s.actual_end ?? undefined,
       status: s.status, responsavel: s.manager_id ?? undefined, categoriaPadrao: s.default_category ?? undefined, observacoes: s.notes ?? '', ativo: s.active,
     })),
@@ -274,6 +277,11 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       linhas: (linhasPor.get(t.id) ?? []).map((l) => ({ colaboradorId: l.worker_id, presenca: l.attendance, horas: Number(l.hours), horasExtras: Number(l.overtime_hours), servicoId: l.service_id ?? undefined, ordemId: l.order_id ?? undefined, observacao: l.note ?? undefined })),
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
+    })),
+    medicoes: medicoesRows.map((m) => ({
+      id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
+      tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
+      pctEvolucaoPlanejada: Number(m.planned_progress ?? 0), status: m.status, dataMedicao: m.measured_on ?? undefined, valorMedido: m.measured_amount === null || m.measured_amount === undefined ? undefined : Number(m.measured_amount), lancamentoId: m.entry_id ? r.lancsInv.get(m.entry_id) : undefined, observacoes: m.notes ?? '',
     })),
   };
   const usuario = usuarios.find((u) => u.id === meu.id)!;
@@ -500,6 +508,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const s of mudou(antes.servicos ?? [], depois.servicos ?? [], 'id')) {
     const row = {
       code: s.codigo, name: s.nome, phase: s.etapa, unit: s.unidade, budgeted_qty: s.quantidadeOrcada, executed_qty: s.quantidadeExecutada, budgeted_cost: s.custoOrcado, sale_price: s.precoVenda,
+      sale_direct: s.faturamentoDireto ?? null, budget_base: s.valorBaseOrcamento ?? null, target_margin: s.margemAlvo ?? null,
       estimate_to_complete: s.estimativaConcluir ?? null, planned_start: s.inicioPrevisto ?? null, planned_end: s.fimPrevisto ?? null, actual_start: s.inicioReal ?? null, actual_end: s.fimReal ?? null,
       status: s.status, manager_id: uuidOuNulo(s.responsavel), default_category: s.categoriaPadrao ?? null, notes: s.observacoes, active: s.ativo,
     };
@@ -540,6 +549,17 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     }
   }
 
+  // medicoes / cronograma
+  for (const m of mudou(antes.medicoes ?? [], depois.medicoes ?? [], 'id')) {
+    const row = {
+      service_id: m.servicoId ? r.servicos.get(m.servicoId) ?? null : null, number: m.numero, month_no: m.mes, stage: m.etapa, title: m.evento, scope: m.escopo, criteria: m.criterio, documents: m.documentos,
+      kind: m.tipoMedicao, approver: m.responsavelAprovacao, planned_on: m.dataPrevista ?? null, amount: m.faturamentoConstrutora, gross_amount: m.valorBruto, direct_amount: m.faturamentoDireto, contractor_amount: m.faturamentoConstrutora, retention_amount: m.retencao,
+      planned_progress: m.pctEvolucaoPlanejada, status: m.status, measured_on: m.dataMedicao ?? null, measured_amount: m.valorMedido ?? null, entry_id: m.lancamentoId ? r.lancs.get(m.lancamentoId) ?? null : null, notes: m.observacoes,
+    };
+    const data = await gravar('measurement', { id: r.medicoes.get(m.id) }, row, { organization_id: r.orgId, project_id: r.obras.get(m.codigoObra) });
+    if (data) r.medicoes.set(m.id, data.id);
+  }
+
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)
   const audAntes = new Set(antes.auditoria.map((a) => a.id));
   const novas = depois.auditoria.filter((a) => !audAntes.has(a.id) && !/^\d+$/.test(a.id));
@@ -553,7 +573,7 @@ function obraRow(o: Obra, r: Refs, atorId: string): Row {
   return {
     organization_id: r.orgId, company_id: r.companyId, code: o.codigo, record_kind: o.registro, name: o.nome, client_name: o.cliente, city_state: o.cidadeUf, status: o.status, scope: o.escopo,
     signed_at: o.assinatura ?? null, starts_at: o.inicio ?? null, contractual_end: o.fimContratual ?? null, contract_value: o.valorContrato, addenda_value: o.aditivos, budgeted_cost: o.custoOrcado,
-    physical_progress: o.execucaoFisica, measured_invoiced: o.medidoFaturado, estimate_to_complete: o.estimativaConcluir, notes: o.observacoes, manager_id: uuidOuNulo(o.responsavel), updated_by: atorId,
+    physical_progress: o.execucaoFisica, measured_invoiced: o.medidoFaturado, estimate_to_complete: o.estimativaConcluir, target_margin: o.margemAlvo ?? null, notes: o.observacoes, manager_id: uuidOuNulo(o.responsavel), updated_by: atorId,
   };
 }
 

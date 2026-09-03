@@ -2,7 +2,7 @@
 // (linha de fabricacao / linha de montagem). Tudo calculado sobre a base unica de lancamentos,
 // para que orcamento, compra, medicao e caixa compartilhem os mesmos codigos (Blueprint, secao 2).
 
-import type { Demanda, EtapaOrdem, OrdemProducao, Periodicidade, Servico, TipoOrdem } from './types';
+import type { Demanda, EtapaOrdem, Medicao, OrdemProducao, Periodicidade, Servico, TipoOrdem } from './types';
 import type { LancamentoCalc } from './engine';
 
 // ---------------------------------------------------------------------------
@@ -29,19 +29,31 @@ export function etapasPadrao(tipo: TipoOrdem): EtapaOrdem[] {
 // ---------------------------------------------------------------------------
 export type SituacaoPrazo = 'Concluído' | 'Atrasado' | 'Em risco' | 'No prazo' | 'Não iniciado' | 'Suspenso' | 'Sem prazo';
 
+export const MARGEM_ALVO_PADRAO = 0.25;
+
 export interface ServicoCalc extends Servico {
   custoComprometido: number;
   custoPago: number;
   comprometidoAberto: number;
+  custoPrevisto: number; // custo orcado informado ou precoVenda x (1 - margem alvo)
+  custoPrevistoDerivado: boolean;
+  margemAlvoEfetiva: number;
   etc: number;
   etcDerivado: boolean;
   eac: number;
   margemProjetada: number;
   pctMargem: number;
-  desvioOrcamento: number; // eac - custoOrcado
+  desvioOrcamento: number; // eac - custoPrevisto
   receitaPrevista: number;
   receitaRealizada: number;
-  pctExecucao: number; // quantidade executada / orcada
+  // medicoes do cronograma
+  medicoes: MedicaoCalc[];
+  faturado: number; // parte construtora liquida dos eventos medidos/faturados/recebidos
+  aFaturar: number;
+  pctFaturado: number; // faturado / precoVenda
+  custoPrevistoProporcional: number; // custo previsto x % faturado
+  desvioVsFaturado: number; // comprometido - custo previsto proporcional (>0 gastando acima do ritmo de faturamento)
+  pctExecucao: number; // quantidade executada / orcada (ou % faturado quando nao ha quantidades)
   pctFinanceiro: number; // pago / eac
   diasParaFim?: number;
   duracaoPrevista?: number;
@@ -49,20 +61,28 @@ export interface ServicoCalc extends Servico {
   lancamentos: LancamentoCalc[];
 }
 
-export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string): ServicoCalc {
+export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO): ServicoCalc {
   const meus = lancs.filter((l) => l.servicoId === s.id && l.oficial);
   const custos = meus.filter((l) => l.tipo === 'Saída' && l.status !== 'Cancelado');
   const custoComprometido = custos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
   const custoPago = custos.filter((l) => l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
   const comprometidoAberto = Math.max(0, custoComprometido - custoPago);
+  const margemAlvoEfetiva = s.margemAlvo ?? margemAlvoObra;
+  const custoPrevistoDerivado = !(s.custoOrcado > 0);
+  const custoPrevisto = custoPrevistoDerivado ? s.precoVenda * (1 - margemAlvoEfetiva) : s.custoOrcado;
   const etcDerivado = s.estimativaConcluir === undefined || s.estimativaConcluir === null;
-  const etcInformado = etcDerivado ? Math.max(0, s.custoOrcado - custoComprometido) : s.estimativaConcluir!;
+  const etcInformado = etcDerivado ? Math.max(0, custoPrevisto - custoComprometido) : s.estimativaConcluir!;
   const etcNaoComprometido = etcDerivado ? etcInformado : Math.max(0, etcInformado - comprometidoAberto);
   const eac = s.status === 'Concluído' ? custoComprometido : custoPago + comprometidoAberto + etcNaoComprometido;
   const entradas = meus.filter((l) => l.tipo === 'Entrada' && l.status !== 'Cancelado');
   const receitaPrevista = entradas.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
   const receitaRealizada = entradas.filter((l) => l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
-  const pctExecucao = s.status === 'Concluído' ? 1 : s.quantidadeOrcada > 0 ? Math.min(1, s.quantidadeExecutada / s.quantidadeOrcada) : 0;
+  const meds = medicoes.filter((m) => m.servicoId === s.id && m.status !== 'Cancelado').map((m) => calcMedicao(m, dataBase));
+  const faturado = meds.filter((m) => m.medida).reduce((a, m) => a + m.valorLiquidoConstrutora, 0);
+  const totalMed = meds.reduce((a, m) => a + m.valorLiquidoConstrutora, 0);
+  const pctFaturado = s.precoVenda > 0 ? Math.min(1, faturado / s.precoVenda) : totalMed > 0 ? faturado / totalMed : 0;
+  // fisico: quantidades executadas quando apontadas; senao acompanha o faturado do cronograma
+  const pctExecucao = s.status === 'Concluído' ? 1 : s.quantidadeOrcada > 0 && s.quantidadeExecutada > 0 ? Math.min(1, s.quantidadeExecutada / s.quantidadeOrcada) : pctFaturado;
   const diasParaFim = s.fimPrevisto ? diffDays(s.fimPrevisto, dataBase) : undefined;
   const duracaoPrevista = s.inicioPrevisto && s.fimPrevisto ? diffDays(s.fimPrevisto, s.inicioPrevisto) : undefined;
   let situacaoPrazo: SituacaoPrazo;
@@ -75,19 +95,95 @@ export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: strin
     const decorrido = Math.min(1, Math.max(0, diffDays(dataBase, s.inicioPrevisto) / Math.max(1, duracaoPrevista)));
     situacaoPrazo = decorrido - pctExecucao > 0.15 ? 'Em risco' : s.status === 'Não iniciado' && decorrido > 0 ? 'Em risco' : s.status === 'Não iniciado' ? 'Não iniciado' : 'No prazo';
   } else situacaoPrazo = s.status === 'Não iniciado' ? 'Não iniciado' : 'No prazo';
+  const custoPrevistoProporcional = custoPrevisto * pctFaturado;
   return {
     ...s,
-    custoComprometido, custoPago, comprometidoAberto, etc: etcInformado, etcDerivado, eac,
+    custoComprometido, custoPago, comprometidoAberto, custoPrevisto, custoPrevistoDerivado, margemAlvoEfetiva, etc: etcInformado, etcDerivado, eac,
     margemProjetada: s.precoVenda - eac, pctMargem: s.precoVenda ? (s.precoVenda - eac) / s.precoVenda : 0,
-    desvioOrcamento: eac - s.custoOrcado, receitaPrevista, receitaRealizada, pctExecucao, pctFinanceiro: eac ? custoPago / eac : 0,
+    desvioOrcamento: eac - custoPrevisto, receitaPrevista, receitaRealizada,
+    medicoes: meds, faturado, aFaturar: Math.max(0, (s.precoVenda || totalMed) - faturado), pctFaturado, custoPrevistoProporcional,
+    desvioVsFaturado: custoComprometido - custoPrevistoProporcional,
+    pctExecucao, pctFinanceiro: eac ? custoPago / eac : 0,
     diasParaFim, duracaoPrevista, situacaoPrazo, lancamentos: meus,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Medicoes / cronograma fisico-financeiro
+// ---------------------------------------------------------------------------
+export interface MedicaoCalc extends Medicao {
+  retencaoConstrutora: number; // retencao proporcional a parte da construtora
+  valorLiquidoConstrutora: number; // faturamentoConstrutora - retencao da construtora (recebivel da EIFF)
+  medida: boolean; // Medido, Faturado ou Recebido
+  atrasada: boolean; // prevista antes da data-base e ainda pendente
+  diasParaPrevista?: number;
+}
+
+export function calcMedicao(m: Medicao, dataBase: string): MedicaoCalc {
+  const pctRet = m.valorBruto > 0 ? m.retencao / m.valorBruto : 0;
+  const retencaoConstrutora = m.faturamentoConstrutora * pctRet;
+  const medida = m.status === 'Medido' || m.status === 'Faturado' || m.status === 'Recebido';
+  return {
+    ...m,
+    retencaoConstrutora,
+    valorLiquidoConstrutora: (m.valorMedido ?? m.faturamentoConstrutora) - (m.valorMedido !== undefined ? m.valorMedido * pctRet : retencaoConstrutora),
+    medida,
+    atrasada: m.status === 'Pendente' && !!m.dataPrevista && m.dataPrevista < dataBase,
+    diasParaPrevista: m.dataPrevista ? diffDays(m.dataPrevista, dataBase) : undefined,
+  };
+}
+
+export interface ResumoMedicoes {
+  medicoes: MedicaoCalc[];
+  valorBruto: number;
+  faturamentoDireto: number;
+  faturamentoConstrutora: number;
+  retencaoConstrutora: number;
+  liquidoConstrutora: number;
+  faturado: number; // liquido construtora dos eventos medidos+
+  aFaturar: number;
+  pctFaturado: number;
+  retencaoAcumulada: number; // retencao sobre o que ja foi medido (a receber no fim)
+  pendentes: number;
+  atrasadas: number;
+  proximas: MedicaoCalc[]; // pendentes ordenadas por data prevista
+  porMes: { mes: number; dataPrevista?: string; bruto: number; construtora: number; liquido: number; faturado: number }[];
+}
+
+export function resumoMedicoes(medicoes: Medicao[], dataBase: string, codigoObra?: string): ResumoMedicoes {
+  const calc = medicoes.filter((m) => (!codigoObra || m.codigoObra === codigoObra) && m.status !== 'Cancelado').map((m) => calcMedicao(m, dataBase));
+  const soma = (f: (m: MedicaoCalc) => number, filtro: (m: MedicaoCalc) => boolean = () => true) => calc.filter(filtro).reduce((a, m) => a + f(m), 0);
+  const liquidoConstrutora = soma((m) => m.faturamentoConstrutora - m.retencaoConstrutora);
+  const faturado = soma((m) => m.valorLiquidoConstrutora, (m) => m.medida);
+  const meses = [...new Set(calc.map((m) => m.mes))].sort((a, b) => a - b);
+  return {
+    medicoes: calc,
+    valorBruto: soma((m) => m.valorBruto),
+    faturamentoDireto: soma((m) => m.faturamentoDireto),
+    faturamentoConstrutora: soma((m) => m.faturamentoConstrutora),
+    retencaoConstrutora: soma((m) => m.retencaoConstrutora),
+    liquidoConstrutora,
+    faturado,
+    aFaturar: Math.max(0, liquidoConstrutora - faturado),
+    pctFaturado: liquidoConstrutora ? faturado / liquidoConstrutora : 0,
+    retencaoAcumulada: soma((m) => (m.valorMedido !== undefined ? m.valorMedido * (m.valorBruto ? m.retencao / m.valorBruto : 0) : m.retencaoConstrutora), (m) => m.medida),
+    pendentes: calc.filter((m) => m.status === 'Pendente').length,
+    atrasadas: calc.filter((m) => m.atrasada).length,
+    proximas: calc.filter((m) => m.status === 'Pendente').sort((a, b) => ((a.dataPrevista ?? '9') < (b.dataPrevista ?? '9') ? -1 : 1)),
+    porMes: meses.map((mes) => {
+      const ms = calc.filter((m) => m.mes === mes);
+      return { mes, dataPrevista: ms[0].dataPrevista, bruto: ms.reduce((a, m) => a + m.valorBruto, 0), construtora: ms.reduce((a, m) => a + m.faturamentoConstrutora, 0), liquido: ms.reduce((a, m) => a + m.faturamentoConstrutora - m.retencaoConstrutora, 0), faturado: ms.filter((m) => m.medida).reduce((a, m) => a + m.valorLiquidoConstrutora, 0) };
+    }),
   };
 }
 
 export interface ResumoServicos {
   servicos: ServicoCalc[];
   custoOrcado: number;
+  custoPrevisto: number;
   precoVenda: number;
+  faturado: number;
+  custoPrevistoProporcional: number;
   custoComprometido: number;
   custoPago: number;
   etc: number;
@@ -98,14 +194,17 @@ export interface ResumoServicos {
   concluidos: number;
 }
 
-export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string): ResumoServicos {
-  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase));
+export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO): ResumoServicos {
+  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo));
   const soma = (f: (s: ServicoCalc) => number) => calc.reduce((a, s) => a + f(s), 0);
   const pesoTotal = soma((s) => s.custoOrcado || s.precoVenda);
   return {
     servicos: calc,
     custoOrcado: soma((s) => s.custoOrcado),
+    custoPrevisto: soma((s) => s.custoPrevisto),
     precoVenda: soma((s) => s.precoVenda),
+    faturado: soma((s) => s.faturado),
+    custoPrevistoProporcional: soma((s) => s.custoPrevistoProporcional),
     custoComprometido: soma((s) => s.custoComprometido),
     custoPago: soma((s) => s.custoPago),
     etc: soma((s) => s.etc),

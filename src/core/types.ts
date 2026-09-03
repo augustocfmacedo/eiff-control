@@ -94,6 +94,7 @@ export interface Obra {
   execucaoFisica: number; // 0-1
   medidoFaturado: number;
   estimativaConcluir: number;
+  margemAlvo?: number; // 0-1; padrao dos servicos sem custo orcado
   observacoes: string;
   responsavel?: string;
 }
@@ -115,8 +116,11 @@ export interface Servico {
   quantidadeOrcada: number;
   quantidadeExecutada: number;
   custoOrcado: number;
-  precoVenda: number; // parcela da receita do contrato atribuida ao servico
-  estimativaConcluir?: number; // ETC informado; se ausente, derivado do orcamento - comprometido
+  precoVenda: number; // parcela da receita do contrato atribuida ao servico (faturamento da construtora, liquido de retencao)
+  faturamentoDireto?: number; // materiais/servicos faturados direto pelo cliente (fora da receita e do custo da EIFF)
+  valorBaseOrcamento?: number; // valor do grupo no orcamento original da proposta (informativo)
+  margemAlvo?: number; // 0-1; quando custoOrcado = 0, custo previsto = precoVenda x (1 - margemAlvo)
+  estimativaConcluir?: number; // ETC informado; se ausente, derivado do custo previsto - comprometido
   inicioPrevisto?: string;
   fimPrevisto?: string;
   inicioReal?: string;
@@ -126,6 +130,35 @@ export interface Servico {
   categoriaPadrao?: string; // categoria do plano de contas sugerida para os custos
   observacoes: string;
   ativo: boolean;
+}
+
+export type StatusMedicao = 'Pendente' | 'Medido' | 'Faturado' | 'Recebido' | 'Cancelado';
+
+/** Evento do cronograma fisico-financeiro: marco de medicao/faturamento do contrato (Blueprint MED). */
+export interface Medicao {
+  id: string;
+  codigoObra: string;
+  servicoId?: string;
+  numero: string; // E01, E07b...
+  mes: number; // mes contratual (1 = primeiro mes)
+  etapa: string; // etapa do orcamento (texto do cronograma)
+  evento: string; // titulo
+  escopo: string;
+  criterio: string; // criterio de medicao / aceite
+  documentos: string; // documentos obrigatorios
+  tipoMedicao: string; // Entrega tecnica, Evento fisico, Percentual fisico, Fabricacao, Fornecimento direto...
+  responsavelAprovacao: string;
+  dataPrevista?: string;
+  valorBruto: number; // valor total do evento no contrato
+  faturamentoDireto: number; // parte faturada direto pelo cliente aos fornecedores
+  faturamentoConstrutora: number; // parte faturada pela EIFF (bruta)
+  retencao: number; // retencao contratual sobre a parte da construtora
+  pctEvolucaoPlanejada: number; // 0-1
+  status: StatusMedicao;
+  dataMedicao?: string;
+  valorMedido?: number; // valor efetivamente medido/aprovado da parte construtora (bruto)
+  lancamentoId?: string; // recebivel gerado ou vinculado
+  observacoes: string;
 }
 
 export type Periodicidade = 'Diária' | 'Semanal' | 'Mensal' | 'Única';
@@ -457,4 +490,5 @@ export interface Dataset {
   ordens: OrdemProducao[];
   colaboradores: Colaborador[];
   apontamentos: Apontamento[];
+  medicoes: Medicao[];
 }

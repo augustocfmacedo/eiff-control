@@ -17,6 +17,7 @@ import type {
   Divida,
   Lancamento,
   Liquidacao,
+  Medicao,
   Obra,
   OrdemProducao,
   Papel,
@@ -29,7 +30,7 @@ import type {
   TransacaoBancaria,
   Usuario,
 } from '../core/types';
-import { calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
+import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
@@ -744,6 +745,62 @@ export const actions = {
     const atual = state.ds.tarefas.find((x) => x.id === id);
     if (!atual) throw new RegraDeNegocioError('Tarefa não encontrada.');
     this.salvarTarefa({ ...atual, status, bloqueio: status === 'Bloqueada' ? bloqueio ?? atual.bloqueio : undefined });
+  },
+
+  // ---------------------------------------------------------------------------
+  // Medicoes / cronograma fisico-financeiro
+  // ---------------------------------------------------------------------------
+  novaMedicao(codigoObra: string): Medicao {
+    const n = state.ds.medicoes.filter((m) => m.codigoObra === codigoObra).length + 1;
+    return { id: seq('MED', state.ds.medicoes.map((m) => m.id)), codigoObra, numero: `E${String(n).padStart(2, '0')}`, mes: 1, etapa: '', evento: '', escopo: '', criterio: '', documentos: '', tipoMedicao: 'Percentual físico', responsavelAprovacao: 'Fiscalização', valorBruto: 0, faturamentoDireto: 0, faturamentoConstrutora: 0, retencao: 0, pctEvolucaoPlanejada: 0, status: 'Pendente', observacoes: '' };
+  },
+
+  salvarMedicao(m: Medicao) {
+    let ds = state.ds;
+    exigir('editar_obra', m.codigoObra);
+    if (!m.evento.trim() || !m.numero.trim()) throw new RegraDeNegocioError('Número e evento são obrigatórios.');
+    if (m.valorBruto < 0 || m.faturamentoDireto < 0 || m.faturamentoConstrutora < 0 || m.retencao < 0) throw new RegraDeNegocioError('Valores devem ser positivos.');
+    if (Math.abs(m.faturamentoDireto + m.faturamentoConstrutora - m.valorBruto) > 0.5) throw new RegraDeNegocioError('Faturamento direto + construtora deve ser igual ao valor bruto.');
+    if (m.servicoId && !ds.servicos.some((s) => s.id === m.servicoId)) throw new RegraDeNegocioError('Serviço inválido.');
+    const atual = ds.medicoes.find((x) => x.id === m.id);
+    const medicoes = atual ? ds.medicoes.map((x) => (x.id === m.id ? m : x)) : [...ds.medicoes, m];
+    ds = registrar({ ...ds, medicoes }, atual ? 'alterar_medicao' : 'criar_medicao', 'medicao', m.id, atual, m);
+    commit(ds);
+  },
+
+  /**
+   * Registra a medicao de um evento: muda o status, guarda data e valor medido e, opcionalmente, gera o
+   * recebivel (parte da construtora liquida de retencao) ou vincula um recebivel existente.
+   */
+  registrarMedicao(id: string, dados: { status: Medicao['status']; dataMedicao?: string; valorMedido?: number; lancamentoId?: string; gerarRecebivel?: boolean; vencimento?: string; observacoes?: string }) {
+    let ds = state.ds;
+    const atual = ds.medicoes.find((x) => x.id === id);
+    if (!atual) throw new RegraDeNegocioError('Medição não encontrada.');
+    exigir('editar_obra', atual.codigoObra);
+    if (dados.status !== 'Pendente' && dados.status !== 'Cancelado' && !dados.dataMedicao) throw new RegraDeNegocioError('Informe a data da medição.');
+    if (dados.lancamentoId && !ds.lancamentos.some((l) => l.id === dados.lancamentoId)) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    let lancamentoId = dados.lancamentoId ?? atual.lancamentoId;
+    let lancamentos = ds.lancamentos;
+    if (dados.gerarRecebivel && !lancamentoId) {
+      const pctRet = atual.valorBruto > 0 ? atual.retencao / atual.valorBruto : 0;
+      const bruto = dados.valorMedido ?? atual.faturamentoConstrutora;
+      if (!(bruto > 0)) throw new RegraDeNegocioError('Sem valor da construtora para gerar recebível.');
+      const obra = ds.obras.find((o) => o.codigo === atual.codigoObra);
+      const l: Lancamento = {
+        ...this.novoLancamento({ categoria: 'Medições de obras' }),
+        categoria: 'Medições de obras', centroCusto: 'Obra', codigoObra: atual.codigoObra, servicoId: atual.servicoId, contraparte: obra?.cliente ?? '', documento: atual.numero,
+        descricao: `Medição ${atual.numero} · ${atual.evento}`, competencia: dados.dataMedicao ?? ds.params.dataBase, vencimento: dados.vencimento ?? addDays(dados.dataMedicao ?? ds.params.dataBase, 30),
+        status: 'Programado', confiabilidade: 'Confirmado', probabilidade: 1, valorBruto: bruto, retencoes: Math.round(bruto * pctRet * 100) / 100, observacoes: `Gerado da medição ${atual.numero}. Retenção contratual ${Math.round(pctRet * 100)}% a receber no encerramento.`, origem: 'medicao', idExterno: `${atual.codigoObra}/${atual.numero}`,
+      };
+      const erros = validarLancamento(ds, l);
+      if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+      lancamentos = [...lancamentos, l];
+      lancamentoId = l.id;
+    }
+    const novo: Medicao = { ...atual, status: dados.status, dataMedicao: dados.dataMedicao ?? atual.dataMedicao, valorMedido: dados.valorMedido ?? atual.valorMedido, lancamentoId, observacoes: dados.observacoes ?? atual.observacoes };
+    ds = registrar({ ...ds, lancamentos, medicoes: ds.medicoes.map((x) => (x.id === id ? novo : x)) }, 'registrar_medicao', 'medicao', id, atual, novo);
+    commit(ds);
+    return novo;
   },
 
   salvarObra(obra: Obra) {
