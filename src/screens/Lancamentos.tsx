@@ -125,7 +125,7 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
                 <td><Money v={l.valorCaixaProjetado} sign /></td>
                 <td><StatusBadge s={l.status} /></td>
                 <td><StatusBadge s={l.situacao} /></td>
-                {verBancos && <td>{l.conciliado ? '✓' : ''}</td>}
+                {verBancos && <td title={l.vinculoBancario ? 'Vinculado ao extrato' : ''}>{l.vinculoBancario ? '✓' : ''}</td>}
               </tr>
             ))}
             {lista.length === 0 && <tr><td colSpan={14} className="empty">Nenhum lançamento com esses filtros.</td></tr>}

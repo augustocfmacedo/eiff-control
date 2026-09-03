@@ -101,6 +101,7 @@ export interface LancamentoCalc extends Lancamento {
   oficial: boolean; // incluir e fora de Rascunho/Pendente
   situacao: Situacao;
   diasAtraso: number;
+  vinculoBancario: boolean; // existe transacao do extrato vinculada (fonte da verdade da conciliacao)
 }
 
 export function mapaPlano(ds: Dataset): Map<string, PlanoConta> {
@@ -176,6 +177,7 @@ export function calcLancamento(
     oficial,
     situacao,
     diasAtraso,
+    vinculoBancario: ds.transacoes.some((t) => t.lancamentoIds.includes(l.id)),
   };
 }
 
@@ -743,7 +745,7 @@ export function executarChecks(ds: Dataset): Check[] {
     // Alertas gerenciais (nao afetam o status do modelo)
     { id: 'ALT-01', nome: 'Dados demonstrativos ativos', atual: ds.params.incluirDemo ? 'Sim' : 'Não', esperado: 'Não', tolerancia: 0, status: ds.params.incluirDemo ? 'ATENÇÃO' : 'OK', tipo: 'alerta', onde: 'Parâmetros', nota: 'Desative ao iniciar a carga real' },
     { id: 'ALT-02', nome: 'Caixa mínimo abaixo da reserva (13 semanas)', atual: round2(f13.menorSaldo), esperado: ds.params.reservaMinima, tolerancia: 0, status: f13.menorSaldo >= ds.params.reservaMinima ? 'OK' : 'ATENÇÃO', tipo: 'alerta', onde: 'Fluxo 13S', nota: 'Avaliar cobrança, postergação, capital de giro ou redução de desembolsos' },
-    { id: 'ALT-03', nome: 'Realizados sem conciliação bancária', atual: ativos.filter((l) => l.status === 'Realizado' && !l.conciliado).length, esperado: 0, tolerancia: 0, status: ativos.some((l) => l.status === 'Realizado' && !l.conciliado) ? 'ATENÇÃO' : 'OK', tipo: 'alerta', onde: 'Conciliação', nota: 'Conciliar com extrato', ids: ativos.filter((l) => l.status === 'Realizado' && !l.conciliado).map((l) => l.id) },
+    { id: 'ALT-03', nome: 'Realizados sem conciliação bancária', atual: ativos.filter((l) => l.status === 'Realizado' && !l.vinculoBancario).length, esperado: 0, tolerancia: 0, status: ativos.some((l) => l.status === 'Realizado' && !l.vinculoBancario) ? 'ATENÇÃO' : 'OK', tipo: 'alerta', onde: 'Conciliação', nota: 'Conciliar com extrato', ids: ativos.filter((l) => l.status === 'Realizado' && !l.vinculoBancario).map((l) => l.id) },
     { id: 'ALT-04', nome: 'Aprovações com SLA vencido', atual: slaVenc.length, esperado: 0, tolerancia: 0, status: slaVenc.length ? 'ATENÇÃO' : 'OK', tipo: 'alerta', onde: 'Aprovações', nota: 'Lembrar, delegar ou escalar conforme política', ids: slaVenc },
     { id: 'ALT-05', nome: 'Obras com margem projetada negativa', atual: carteiraObras(ds).filter((o) => o.ativa && o.margemProjetada < 0).length, esperado: 0, tolerancia: 0, status: carteiraObras(ds).some((o) => o.ativa && o.margemProjetada < 0) ? 'ATENÇÃO' : 'OK', tipo: 'alerta', onde: 'Obras', nota: 'Reorçar e travar novos compromissos' },
     { id: 'ALT-06', nome: 'Estimativa a concluir não informada em obra ativa', atual: carteiraObras(ds).filter((o) => o.ativa && !o.etc && !o.custoComprometido).length, esperado: 0, tolerancia: 0, status: carteiraObras(ds).some((o) => o.ativa && !o.etc && !o.custoComprometido) ? 'ATENÇÃO' : 'OK', tipo: 'alerta', onde: 'Obras', nota: 'Sem ETC a margem projetada fica superestimada' },
@@ -825,7 +827,7 @@ export function dashboard(ds: Dataset): Dashboard {
     margemCarteira: receitaContratada ? carteira.reduce((a, o) => a + o.margemProjetada, 0) / receitaContratada : 0,
     recebiveisVencidos: somaSit('Entrada', 'Atrasado'),
     pagamentosVencidos: somaSit('Saída', 'Atrasado'),
-    realizadosSemConciliacao: lancs.filter((l) => l.oficial && l.status === 'Realizado' && !l.conciliado).length,
+    realizadosSemConciliacao: lancs.filter((l) => l.oficial && l.status === 'Realizado' && !l.vinculoBancario).length,
     obrasMargemNegativa: ativas.filter((o) => o.margemProjetada < 0).length,
     aprovacoesPendentes: ds.aprovacoes.filter((a) => a.status === 'Pendente').length,
     aprovacoesSlaVencido: ds.aprovacoes.filter((a) => slaVencido(a, agora)).length,

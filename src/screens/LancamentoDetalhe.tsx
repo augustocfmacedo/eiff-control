@@ -24,7 +24,7 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
 
   return (
     <>
-      <PageHead title={`${l.id}`} subtitle={<>{l.descricao} · <StatusBadge s={l.status} /> <StatusBadge s={l.situacao} /> {l.conciliado && <StatusBadge s="Conciliado" />}</>}>
+      <PageHead title={`${l.id}`} subtitle={<>{l.descricao} · <StatusBadge s={l.status} /> <StatusBadge s={l.situacao} /> {l.vinculoBancario && <StatusBadge s="Conciliado" />}</>}>
         <button className="btn" onClick={() => navegar(l.tipo === 'Entrada' ? '/receber' : '/pagar')}>← Lista</button>
         {editavel && <button className="btn" onClick={() => setEditando(true)}>Editar</button>}
         {podeLiquidar && <button className="btn primary" onClick={() => setLiq({ data: ds.params.dataBase, valor: l.saldoAberto, conta: l.contaFinanceira, documento: '' })}>Liquidar</button>}
