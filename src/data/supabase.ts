@@ -215,7 +215,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const ds: Dataset = {
     params: dsParams,
     planoContas: plano.map((x) => ({ categoria: x.category, tipo: x.entry_type, grupoFluxo: x.cash_group, grupoDre: x.dre_group, classe: x.account_class, orientacao: x.guidance ?? '', ativa: x.active })),
-    contas: contas.map((c) => ({ id: c.code, registro: c.record_kind, instituicao: c.institution, conta: c.account_label, tipo: c.account_type, saldoInicial: Number(c.opening_balance), reservaVinculada: Number(c.linked_reserve), ativa: c.active })),
+    contas: contas.map((c) => ({ id: c.code, registro: c.record_kind, instituicao: c.institution, conta: c.account_label, tipo: c.account_type, saldoInicial: Number(c.opening_balance), saldoInicialData: c.opening_balance_date ?? undefined, reservaVinculada: Number(c.linked_reserve), ativa: c.active })),
     obras: obras.map((o) => ({
       codigo: o.code, registro: o.record_kind, nome: o.name, cliente: o.client_name ?? '', cidadeUf: o.city_state ?? '', status: o.status, escopo: o.scope ?? '',
       assinatura: o.signed_at ?? undefined, inicio: o.starts_at ?? undefined, fimContratual: o.contractual_end ?? undefined,
@@ -339,7 +339,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
 
   // contas financeiras
   for (const c of mudou(antes.contas, depois.contas, 'id')) {
-    const data = await gravar('bank_account', { organization_id: r.orgId, code: c.id }, { record_kind: c.registro, institution: c.instituicao, account_label: c.conta, account_type: c.tipo, opening_balance: c.saldoInicial, opening_balance_date: depois.params.dataBase, linked_reserve: c.reservaVinculada, active: c.ativa }, { organization_id: r.orgId, company_id: r.companyId, code: c.id });
+    const data = await gravar('bank_account', { organization_id: r.orgId, code: c.id }, { record_kind: c.registro, institution: c.instituicao, account_label: c.conta, account_type: c.tipo, opening_balance: c.saldoInicial, opening_balance_date: c.saldoInicialData ?? depois.params.dataBase, linked_reserve: c.reservaVinculada, active: c.ativa }, { organization_id: r.orgId, company_id: r.companyId, code: c.id });
     if (data) { r.contas.set(c.instituicao, data.id); r.contasInv.set(data.id, c.instituicao); }
   }
 

@@ -187,10 +187,26 @@ export function calcLancamentos(ds: Dataset, cenario: Cenario = ds.params.cenari
 // ---------------------------------------------------------------------------
 // Saldo inicial consolidado (CONFIG!B13)
 // ---------------------------------------------------------------------------
-export function saldoInicial(ds: Dataset): number {
-  return ds.contas
-    .filter((c) => c.ativa && incluirRegistro(c.registro, ds.params))
-    .reduce((a, c) => a + c.saldoInicial, 0);
+/** Data a partir da qual os movimentos da conta sao somados sobre o saldo de abertura. */
+export const dataAbertura = (c: { saldoInicialData?: string }, ds: Dataset): string => c.saldoInicialData ?? ds.params.dataBase;
+
+/**
+ * Saldo inicial do fluxo na data-base: abertura de cada conta rolada pelos lancamentos realizados
+ * entre a data de abertura e o dia anterior a data-base (roll-forward). Com data-base = data de abertura,
+ * e o proprio saldo de abertura (CONFIG!B13).
+ */
+export function saldoInicial(ds: Dataset, lancs?: LancamentoCalc[]): number {
+  const contas = ds.contas.filter((c) => c.ativa && incluirRegistro(c.registro, ds.params));
+  const db = ds.params.dataBase;
+  const precisaRolar = contas.some((c) => dataAbertura(c, ds) < db);
+  const calc = precisaRolar ? lancs ?? calcLancamentos(ds) : [];
+  return contas.reduce((a, c) => {
+    const ini = dataAbertura(c, ds);
+    const rolado = calc
+      .filter((l) => l.oficial && l.status === 'Realizado' && l.contaFinanceira === c.instituicao && (l.dataCaixa ?? '') >= ini && (l.dataCaixa ?? '') < db)
+      .reduce((s, l) => s + l.valorCaixaProjetado, 0);
+    return a + c.saldoInicial + rolado;
+  }, 0);
 }
 
 export function reservaVinculadaTotal(ds: Dataset): number {
@@ -216,16 +232,16 @@ export interface PosicaoConta {
 }
 
 export function posicaoBancaria(ds: Dataset, lancs: LancamentoCalc[] = calcLancamentos(ds)): PosicaoConta[] {
-  const db = ds.params.dataBase;
   return ds.contas
     .filter((c) => c.ativa && incluirRegistro(c.registro, ds.params))
     .map((c) => {
-      const trans = ds.transacoes.filter((t) => t.conta === c.instituicao && incluirRegistro(t.registro, ds.params) && t.data >= db);
+      const ini = dataAbertura(c, ds); // movimentos contam a partir da data do saldo de abertura, nao da data-base
+      const trans = ds.transacoes.filter((t) => t.conta === c.instituicao && incluirRegistro(t.registro, ds.params) && t.data >= ini);
       const creditosBanco = trans.reduce((a, t) => a + t.credito, 0);
       const debitosBanco = trans.reduce((a, t) => a + t.debito, 0);
       const pend = trans.filter((t) => !t.lancamentoIds.length);
       const realizadoLancamentos = lancs
-        .filter((l) => l.oficial && l.status === 'Realizado' && l.contaFinanceira === c.instituicao && (l.dataCaixa ?? '') >= db)
+        .filter((l) => l.oficial && l.status === 'Realizado' && l.contaFinanceira === c.instituicao && (l.dataCaixa ?? '') >= ini)
         .reduce((a, l) => a + l.valorCaixaProjetado, 0);
       return {
         conta: c,

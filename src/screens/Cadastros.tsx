@@ -125,7 +125,8 @@ export default function Cadastros({ aba0 }: { aba0?: string }) {
             <Field label="Instituição" req><Input value={conta.instituicao} onChange={(e) => setConta({ ...conta, instituicao: e.target.value })} /></Field>
             <Field label="Conta"><Input value={conta.conta} onChange={(e) => setConta({ ...conta, conta: e.target.value })} /></Field>
             <Field label="Tipo"><Select value={conta.tipo} onChange={(v) => setConta({ ...conta, tipo: v })} options={['Caixa', 'Conta corrente', 'Aplicação', 'Cartão', 'Outra']} /></Field>
-            <Field label="Saldo de abertura" hint={`Saldo no dia anterior à data-base (${ds.params.dataBase.split('-').reverse().join('/')})`}><NumberInput value={conta.saldoInicial} onChange={(v) => setConta({ ...conta, saldoInicial: v })} /></Field>
+            <Field label="Saldo de abertura" hint="Saldo no início do dia informado ao lado"><NumberInput value={conta.saldoInicial} onChange={(v) => setConta({ ...conta, saldoInicial: v })} /></Field>
+            <Field label="Data do saldo de abertura" req hint="Os movimentos do extrato e os lançamentos contam a partir deste dia"><Input type="date" value={conta.saldoInicialData ?? ds.params.dataBase} onChange={(e) => setConta({ ...conta, saldoInicialData: e.target.value || undefined })} /></Field>
             <Field label="Reserva vinculada"><NumberInput value={conta.reservaVinculada} onChange={(v) => setConta({ ...conta, reservaVinculada: v })} /></Field>
             <Field label="Ativa"><Select value={conta.ativa ? 'Sim' : 'Não'} onChange={(v) => setConta({ ...conta, ativa: v === 'Sim' })} options={['Sim', 'Não']} /></Field>
           </div>

@@ -72,6 +72,7 @@ export interface ContaFinanceira {
   conta: string;
   tipo: string;
   saldoInicial: number;
+  saldoInicialData?: string; // dia a partir do qual os movimentos sao somados (abertura = saldo no inicio deste dia)
   reservaVinculada: number;
   ativa: boolean;
 }

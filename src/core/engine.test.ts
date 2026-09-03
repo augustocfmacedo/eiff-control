@@ -198,6 +198,23 @@ describe('aprovacoes e impacto', () => {
   });
 });
 
+describe('roll-forward do saldo inicial com data-base a frente da abertura', () => {
+  it('saldo inicial do fluxo = abertura + realizados entre a abertura e o dia anterior a data-base', () => {
+    const pago: Lancamento = { ...ds.lancamentos[17], id: 'PAG-T1', status: 'Realizado', realizacao: '2026-09-02', vencimento: '2026-09-02', valorBruto: 1000, retencoes: 0, desconto: 0, multaJuros: 0, valorRealizado: 1000, contaFinanceira: 'Caixa' };
+    const hoje: Lancamento = { ...pago, id: 'PAG-T2', realizacao: '2026-09-03', vencimento: '2026-09-03', valorBruto: 50, valorRealizado: 50 };
+    const ds2: Dataset = { ...ds, params: { ...ds.params, dataBase: '2026-09-03' }, contas: [{ ...ds.contas[0], saldoInicial: 44012.24, saldoInicialData: '2026-09-01' }], lancamentos: [...ds.lancamentos, pago, hoje] };
+    expect(saldoInicial(ds2)).toBeCloseTo(44012.24 - 1000, 2); // o de hoje entra na semana 1, nao no saldo inicial
+    const f = fluxo13Semanas(ds2);
+    expect(f.saldoInicial).toBeCloseTo(43012.24, 2);
+    expect(f.periodos[0].ini).toBe('2026-09-03');
+    expect(f.totalSaidas[0]).toBeCloseTo(50 + 63220.04, 2); // pago hoje + folha de 07/09 na mesma semana
+    // posicao bancaria continua ancorada na data de abertura, nao na data-base
+    const [p] = posicaoBancaria({ ...ds2, transacoes: [{ id: 'X', registro: 'Real', data: '2026-09-01', conta: 'Caixa', historico: 'x', documento: '', debito: 700, credito: 0, lancamentoIds: [], origem: 'ofx' }] });
+    expect(p.debitosBanco).toBe(700);
+    expect(p.realizadoLancamentos).toBeCloseTo(-1050, 2);
+  });
+});
+
 describe('posicao bancaria', () => {
   it('saldo bancario = abertura + extrato; saldo por lancamentos = abertura + realizados; diferenca = nao lancado', () => {
     const t = (id: string, data: string, debito: number, credito: number, lancamentoIds: string[] = []) => ({ id, registro: 'Real' as const, data, conta: 'Caixa', historico: id, documento: '', debito, credito, lancamentoIds, origem: 'ofx' });

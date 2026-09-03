@@ -60,7 +60,7 @@ for (const r of cfg) {
   if (registro === 'Exemplo') { report.exemplosExcluidos.contas = (report.exemplosExcluidos.contas || 0) + 1; continue; }
   contas.push({
     id: str(r[1]), registro, instituicao: str(r[2]), conta: str(r[3]), tipo: str(r[4]),
-    saldoInicial: num(r[5]), reservaVinculada: num(r[6]), ativa: str(r[7]) !== 'Não',
+    saldoInicial: num(r[5]), saldoInicialData: dataBase, reservaVinculada: num(r[6]), ativa: str(r[7]) !== 'Não',
   });
 }
 report.aceitos.contas = contas.length;
