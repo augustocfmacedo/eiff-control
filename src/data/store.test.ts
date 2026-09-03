@@ -1,8 +1,8 @@
 // Jornadas criticas do MVP (Blueprint secao 9) exercitadas na camada de dados:
 // registrar compromisso -> aprovar -> liquidar -> conciliar -> fechar mes; cancelamento e segregacao.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { RegraDeNegocioError, actions, getState, pode } from './store';
-import { calcLancamento } from '../core/engine';
+import { RegraDeNegocioError, actions, getState, inicializar, pode } from './store';
+import { calcLancamento, hojeLocal } from '../core/engine';
 
 const u = (id: string) => actions.trocarUsuario(id);
 
@@ -184,6 +184,24 @@ describe('extrato OFX: dedup por FITID e lançar a partir da transação', () =>
     u('u-eng');
     const t2 = getState().ds.transacoes.find((x) => x.idExterno === 'F2')!;
     expect(() => actions.lancarTransacao(t2.id, { categoria: 'Medições de obras', contraparte: 'Cliente', descricao: 'x', codigoObra: 'OB-SF-CL-01' })).toThrow(RegraDeNegocioError);
+  });
+});
+
+describe('data-base automática', () => {
+  it('avança a data-base para hoje quando ativa e registra na auditoria', async () => {
+    u('u-admin');
+    actions.restaurarPlanilha();
+    u('u-fin');
+    expect(getState().ds.params.dataBase).toBe('2026-09-01');
+    actions.salvarParametros({ ...getState().ds.params, dataBaseAutomatica: true });
+    const hoje = hojeLocal();
+    expect(getState().ds.params.dataBase).toBe(hoje);
+    expect(getState().ds.auditoria.some((a) => a.acao === 'avancar_data_base')).toBe(hoje !== '2026-09-01');
+    await inicializar();
+    expect(getState().ds.params.dataBase).toBe(hoje);
+    actions.salvarParametros({ ...getState().ds.params, dataBaseAutomatica: false, dataBase: '2026-09-01' });
+    await inicializar();
+    expect(getState().ds.params.dataBase).toBe('2026-09-01');
   });
 });
 
