@@ -3,13 +3,14 @@ import { carteiraObras } from '../core/engine';
 import { resumoProducao } from '../core/obras';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Empty, Kpi, Link, Money, PageHead, StatusBadge, Tabs, money, pct, tentar, useToast } from '../ui/components';
+import PainelObra from './PainelObra';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 
 export default function CentralObras() {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'carteira' | 'demandas' | 'fabricacao' | 'montagem'>('carteira');
+  const [aba, setAba] = useState<'painel' | 'carteira' | 'demandas' | 'fabricacao' | 'montagem'>('painel');
   const visiveis = new Set(obrasVisiveis(usuario, ds.obras).map((o) => o.codigo));
   const carteira = carteiraObras(ds).filter((o) => visiveis.has(o.obra.codigo) && o.ativa);
   const servicos = carteira.flatMap((o) => o.servicos.map((s) => ({ ...s, obra: o.obra })));
@@ -28,7 +29,9 @@ export default function CentralObras() {
         <Kpi label="Demandas pendentes no período" value={demandas.filter((x) => x.status !== 'Concluída').length} hint={`${demandas.filter((x) => x.status === 'Atrasada').length} atrasada(s) · ${minhasDemandas.length} minha(s)`} tone={demandas.some((x) => x.status === 'Atrasada') ? 'bad' : demandas.some((x) => x.status === 'Pendente') ? 'warn' : 'ok'} />
         <Kpi label="Ordens em andamento" value={fab.emAndamento + mon.emAndamento} hint={`${fab.atrasadas + mon.atrasadas} atrasada(s) · fabricação ${fab.ordens.length} · montagem ${mon.ordens.length}`} tone={fab.atrasadas + mon.atrasadas ? 'bad' : undefined} />
       </div>
-      <Tabs value={aba} onChange={setAba} items={[{ id: 'carteira', label: 'Carteira e serviços' }, { id: 'demandas', label: `Demandas do período (${demandas.filter((x) => x.status !== 'Concluída').length})` }, { id: 'fabricacao', label: `Linha de fabricação (${fab.ordens.length})` }, { id: 'montagem', label: `Linha de montagem (${mon.ordens.length})` }]} />
+      <Tabs value={aba} onChange={setAba} items={[{ id: 'painel', label: 'Painel analítico' }, { id: 'carteira', label: 'Carteira e serviços' }, { id: 'demandas', label: `Demandas do período (${demandas.filter((x) => x.status !== 'Concluída').length})` }, { id: 'fabricacao', label: `Linha de fabricação (${fab.ordens.length})` }, { id: 'montagem', label: `Linha de montagem (${mon.ordens.length})` }]} />
+
+      {aba === 'painel' && <PainelObra carteira={carteira} />}
 
       {aba === 'carteira' && (
         <>
