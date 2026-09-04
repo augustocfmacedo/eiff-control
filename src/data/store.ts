@@ -8,6 +8,7 @@ import seed from './seed.json';
 import type {
   Apontamento,
   Aprovacao,
+  AvancoServico,
   Auditoria,
   Colaborador,
   Comentario,
@@ -1112,6 +1113,43 @@ export const actions = {
     exigir('editar_etc', c.codigoObra);
     if (c.fabricadoQtd > 0) throw new RegraDeNegocioError('Conjunto com fabricação apontada não pode ser excluído.');
     ds = registrar({ ...ds, conjuntos: ds.conjuntos.filter((x) => x.id !== id) }, 'excluir_conjunto', 'conjunto', id, c, undefined);
+    commit(ds);
+  },
+
+  // -------------------------------------------------------------------------
+  // Medicao fisica de servico (boletim de avanco)
+  // -------------------------------------------------------------------------
+  /** Registra uma medicao fisica do servico: quantidade na unidade do servico ou percentual; acumula na execucao. */
+  registrarAvanco(dados: { servicoId: string; data: string; quantidade?: number; pct?: number; descricao: string; evidencia?: string }) {
+    let ds = state.ds;
+    const s = ds.servicos.find((x) => x.id === dados.servicoId);
+    if (!s) throw new RegraDeNegocioError('Serviço não encontrado.');
+    exigir('comentar', s.codigoObra);
+    if (!dados.data) throw new RegraDeNegocioError('Informe a data da medição.');
+    if (!dados.descricao.trim()) throw new RegraDeNegocioError('Descreva o que foi medido (frente, trecho, critério).');
+    let quantidade = dados.quantidade ?? 0;
+    if (dados.pct !== undefined) {
+      if (dados.pct <= 0 || dados.pct > 1) throw new RegraDeNegocioError('Percentual deve estar entre 0 e 100%.');
+      quantidade = s.quantidadeOrcada > 0 ? dados.pct * s.quantidadeOrcada : dados.pct;
+    }
+    if (!(quantidade > 0)) throw new RegraDeNegocioError('Quantidade medida deve ser positiva.');
+    const acumulado = ds.avancos.filter((a) => a.servicoId === s.id).reduce((a, m) => a + m.quantidade, 0) + quantidade;
+    const limite = s.quantidadeOrcada > 0 ? s.quantidadeOrcada : 1;
+    if (acumulado > limite * 1.0001) throw new RegraDeNegocioError(`Medição ultrapassa o total do serviço (${limite} ${s.unidade}). Ajuste a quantidade orçada ou a medição.`);
+    const novo: AvancoServico = { id: seq('AVS', ds.avancos.map((a) => a.id)), codigoObra: s.codigoObra, servicoId: s.id, data: dados.data, quantidade: Math.round(quantidade * 10000) / 10000, pct: dados.pct, descricao: dados.descricao.trim(), evidencia: dados.evidencia?.trim() || undefined, responsavel: state.usuario.id, criadoEm: agora() };
+    const servicos = ds.servicos.map((x) => (x.id === s.id && x.status === 'Não iniciado' ? { ...x, status: 'Em andamento' as const, inicioReal: x.inicioReal ?? dados.data } : x));
+    ds = registrar({ ...ds, avancos: [...ds.avancos, novo], servicos }, 'medir_servico', 'servico', s.id, undefined, { ...novo, acumulado });
+    commit(ds);
+    return novo;
+  },
+
+  excluirAvanco(id: string, motivo: string) {
+    let ds = state.ds;
+    const a = ds.avancos.find((x) => x.id === id);
+    if (!a) throw new RegraDeNegocioError('Medição não encontrada.');
+    exigir('editar_etc', a.codigoObra);
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    ds = registrar({ ...ds, avancos: ds.avancos.filter((x) => x.id !== id) }, 'excluir_medicao_servico', 'servico', a.servicoId, a, undefined, motivo);
     commit(ds);
   },
 

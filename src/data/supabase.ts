@@ -84,6 +84,7 @@ interface Refs {
   orcamentos: Map<string, string>;
   pedidos: Map<string, string>;
   conjuntos: Map<string, string>;
+  avancos: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -158,7 +159,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('timesheet_incident'),
     sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
-  const [pedidosRows, pedidosItens, conjuntosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark')]);
+  const [pedidosRows, pedidosItens, conjuntosRows, avancosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark'), selTodos('service_progress', 'measured_on')]);
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -207,6 +208,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     orcamentos: new Map(estRows.map((x) => [x.id, x.id])),
     pedidos: new Map(pedidosRows.map((x) => [x.id, x.id])),
     conjuntos: new Map(conjuntosRows.map((x) => [x.id, x.id])),
+    avancos: new Map(avancosRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -290,7 +292,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     fechamentos: closes.map((c) => ({ periodo: c.period, fechadoEm: c.closed_at, fechadoPor: nome(c.closed_by), reaberto: c.reopened_at ? { em: c.reopened_at, por: nome(c.reopened_by), motivo: c.reopen_reason ?? '' } : undefined })),
     servicos: servicosRows.map((s) => ({
       id: s.id, codigoObra: r.obrasInv.get(s.project_id) ?? '', codigo: s.code, nome: s.name, etapa: s.phase, unidade: s.unit, quantidadeOrcada: Number(s.budgeted_qty), quantidadeExecutada: Number(s.executed_qty),
-      custoOrcado: Number(s.budgeted_cost), precoVenda: Number(s.sale_price), faturamentoDireto: s.sale_direct === null || s.sale_direct === undefined ? undefined : Number(s.sale_direct), valorBaseOrcamento: s.budget_base === null || s.budget_base === undefined ? undefined : Number(s.budget_base), margemAlvo: s.target_margin === null || s.target_margin === undefined ? undefined : Number(s.target_margin), estimativaConcluir: s.estimate_to_complete === null ? undefined : Number(s.estimate_to_complete),
+      custoOrcado: Number(s.budgeted_cost), precoVenda: Number(s.sale_price), faturamentoDireto: s.sale_direct === null || s.sale_direct === undefined ? undefined : Number(s.sale_direct), valorBaseOrcamento: s.budget_base === null || s.budget_base === undefined ? undefined : Number(s.budget_base), margemAlvo: s.target_margin === null || s.target_margin === undefined ? undefined : Number(s.target_margin), pesoFabricacao: s.fab_weight === null || s.fab_weight === undefined ? undefined : Number(s.fab_weight), estimativaConcluir: s.estimate_to_complete === null ? undefined : Number(s.estimate_to_complete),
       inicioPrevisto: s.planned_start ?? undefined, fimPrevisto: s.planned_end ?? undefined, inicioReal: s.actual_start ?? undefined, fimReal: s.actual_end ?? undefined,
       status: s.status, responsavel: s.manager_id ?? undefined, categoriaPadrao: s.default_category ?? undefined, observacoes: s.notes ?? '', ativo: s.active,
     })),
@@ -314,7 +316,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [],
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [],
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -342,6 +344,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, marca: x.mark, descricao: x.description ?? '', perfil: x.profile ?? undefined, tipo: x.kind, quantidade: Number(x.quantity), pesoUnitario: Number(x.unit_weight),
     revisao: x.revision ?? undefined, liberadoEm: x.released_on ?? undefined, fabricadoQtd: Number(x.fabricated_qty ?? 0), expedidoQtd: Number(x.shipped_qty ?? 0), montadoQtd: Number(x.erected_qty ?? 0), observacoes: x.notes ?? '', atualizadoEm: x.updated_at,
   }));
+  ds.avancos = avancosRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, data: x.measured_on, quantidade: Number(x.quantity), pct: x.pct === null || x.pct === undefined ? undefined : Number(x.pct), descricao: x.description ?? '', evidencia: x.evidence ?? undefined, responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
 }
 
@@ -565,7 +568,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const s of mudou(antes.servicos ?? [], depois.servicos ?? [], 'id')) {
     const row = {
       code: s.codigo, name: s.nome, phase: s.etapa, unit: s.unidade, budgeted_qty: s.quantidadeOrcada, executed_qty: s.quantidadeExecutada, budgeted_cost: s.custoOrcado, sale_price: s.precoVenda,
-      sale_direct: s.faturamentoDireto ?? null, budget_base: s.valorBaseOrcamento ?? null, target_margin: s.margemAlvo ?? null,
+      sale_direct: s.faturamentoDireto ?? null, budget_base: s.valorBaseOrcamento ?? null, target_margin: s.margemAlvo ?? null, fab_weight: s.pesoFabricacao ?? null,
       estimate_to_complete: s.estimativaConcluir ?? null, planned_start: s.inicioPrevisto ?? null, planned_end: s.fimPrevisto ?? null, actual_start: s.inicioReal ?? null, actual_end: s.fimReal ?? null,
       status: s.status, manager_id: uuidOuNulo(s.responsavel), default_category: s.categoriaPadrao ?? null, notes: s.observacoes, active: s.ativo,
     };
@@ -721,6 +724,19 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     const { error } = await sb.from('assembly').delete().eq('id', r.conjuntos.get(c.id)!);
     falha('excluir conjunto', error);
     r.conjuntos.delete(c.id);
+  }
+
+  // medicoes fisicas de servico (imutaveis: insere novas, remove excluidas)
+  for (const a of mudou(antes.avancos ?? [], depois.avancos ?? [], 'id').filter((x) => !r.avancos.get(x.id))) {
+    const { data, error } = await sb.from('service_progress').insert({ organization_id: r.orgId, project_id: r.obras.get(a.codigoObra), service_id: r.servicos.get(a.servicoId), measured_on: a.data, quantity: a.quantidade, pct: a.pct ?? null, description: a.descricao, evidence: a.evidencia ?? null, created_by: atorId }).select('id');
+    falha('registrar medição de serviço', error);
+    if (data?.[0]) r.avancos.set(a.id, data[0].id);
+  }
+  const avDepois = new Set((depois.avancos ?? []).map((a) => a.id));
+  for (const a of (antes.avancos ?? []).filter((x) => !avDepois.has(x.id) && r.avancos.get(x.id))) {
+    const { error } = await sb.from('service_progress').delete().eq('id', r.avancos.get(a.id)!);
+    falha('excluir medição de serviço', error);
+    r.avancos.delete(a.id);
   }
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)

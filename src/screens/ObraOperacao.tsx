@@ -31,6 +31,7 @@ function ServicoForm({ servico, onClose, onErro }: { servico: Servico; onClose: 
         <Field label="Custo orçado" hint="Versão-base do orçamento deste serviço"><NumberInput value={s.custoOrcado} onChange={(v) => up({ custoOrcado: v })} /></Field>
         <Field label="Receita EIFF (líquida de retenção)" hint="Parte da construtora nos eventos deste serviço"><NumberInput value={s.precoVenda} onChange={(v) => up({ precoVenda: v })} /></Field>
         <Field label="Faturamento direto do cliente" hint="Materiais pagos pelo cliente; fora da receita e do custo"><NumberInput value={s.faturamentoDireto ?? 0} onChange={(v) => up({ faturamentoDireto: v })} /></Field>
+        <Field label="Peso da fabricação no avanço (%)" hint="Serviços de estrutura: avanço físico = fabricação × peso + montagem × (1 − peso); vazio = 60%"><input type="number" step="5" min={0} max={100} value={s.pesoFabricacao === undefined ? '' : Math.round(s.pesoFabricacao * 100)} onChange={(e) => up({ pesoFabricacao: e.target.value === '' ? undefined : Number(e.target.value) / 100 })} /></Field>
         <Field label="Margem alvo (%)" hint="Usada quando o custo orçado está em zero; vazio = margem da obra"><input type="number" step="1" value={s.margemAlvo === undefined ? '' : Math.round(s.margemAlvo * 100)} onChange={(e) => up({ margemAlvo: e.target.value === '' ? undefined : Number(e.target.value) / 100 })} /></Field>
         <Field label="ETC informado" hint="Vazio = derivado (orçado − comprometido)"><input type="number" step="0.01" value={s.estimativaConcluir ?? ''} onChange={(e) => up({ estimativaConcluir: e.target.value === '' ? undefined : Number(e.target.value) })} /></Field>
         <Field label="Início previsto"><Input type="date" value={s.inicioPrevisto ?? ''} onChange={(e) => up({ inicioPrevisto: e.target.value || undefined })} /></Field>
@@ -64,10 +65,41 @@ function AvancoForm({ s, onClose, onErro }: { s: ServicoCalc; onClose: () => voi
   );
 }
 
-export function ServicosTab({ o, onErro }: { o: Obra360; onErro: (m: string) => void }) {
+function MedirForm({ s, onClose, onErro, onOk }: { s: ServicoCalc; onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { ds, usuario } = useStore();
+  const porPct = s.quantidadeOrcada <= 1 || s.unidade === 'vb';
+  const [f, setF] = useState({ data: ds.params.dataBase, quantidade: 0, pct: 0, descricao: '', evidencia: '' });
+  const nome = (id: string) => ds.usuarios.find((u) => u.id === id)?.nome ?? id;
+  const restante = Math.max(0, (s.quantidadeOrcada > 0 ? s.quantidadeOrcada : 1) - s.quantidadeMedida);
+  return (
+    <Modal title={`Medição física · ${s.codigo} ${s.nome}`} onClose={onClose} wide>
+      <div className="alert info">Avanço físico atual <b>{pct(s.pctExecucao)}</b> por <b>{s.origemExecucao.toLowerCase()}</b>{s.pctFabricacao !== undefined || s.pctMontagem !== undefined ? <> · fabricação {pct(s.pctFabricacao ?? 0)} × {pct(s.pesoFabricacaoEfetivo)} + montagem {pct(s.pctMontagem ?? 0)} × {pct(1 - s.pesoFabricacaoEfetivo)}</> : null}. {s.origemExecucao.startsWith('Fabricação') && <>As medições abaixo ficam registradas, mas o avanço deste serviço vem da fabricação e montagem.</>}</div>
+      <div className="form">
+        <Field label="Data da medição" req><Input type="date" value={f.data} onChange={(e) => setF({ ...f, data: e.target.value })} /></Field>
+        {porPct
+          ? <Field label="Percentual medido neste boletim (%)" req hint={`acumulado ${pct(s.pctMedido)} · restante ${pct(Math.max(0, 1 - s.pctMedido))}`}><NumberInput value={f.pct} onChange={(v) => setF({ ...f, pct: v })} min={0} max={100} /></Field>
+          : <Field label={`Quantidade medida (${s.unidade})`} req hint={`orçado ${s.quantidadeOrcada} · medido ${s.quantidadeMedida} · restante ${restante}`}><NumberInput value={f.quantidade} onChange={(v) => setF({ ...f, quantidade: v })} step="0.01" /></Field>}
+        <Field label="Evidência" hint="Boletim, relatório fotográfico, RDO"><Input value={f.evidencia} onChange={(e) => setF({ ...f, evidencia: e.target.value })} /></Field>
+        <Field label="Descrição (frente, trecho, critério)" req full><Input value={f.descricao} onChange={(e) => setF({ ...f, descricao: e.target.value })} /></Field>
+      </div>
+      <div className="actions" style={{ marginTop: 8 }}><button className="btn primary" onClick={() => tentar(() => { actions.registrarAvanco({ servicoId: s.id, data: f.data, quantidade: porPct ? undefined : f.quantidade, pct: porPct ? f.pct / 100 : undefined, descricao: f.descricao, evidencia: f.evidencia }); }, onErro, () => { onOk('Medição registrada.'); setF({ ...f, quantidade: 0, pct: 0, descricao: '', evidencia: '' }); })}>Registrar medição</button></div>
+      <h3 style={{ marginTop: 14 }}>Boletins registrados ({s.avancos.length}) · acumulado {s.quantidadeMedida} {s.unidade} = {pct(s.pctMedido)}</h3>
+      {s.avancos.length === 0 ? <Empty>Nenhuma medição ainda.</Empty> : (
+        <table>
+          <thead><tr><th>Data</th><th>Descrição</th><th className="num">Quantidade</th><th className="num">%</th><th>Evidência</th><th>Responsável</th><th /></tr></thead>
+          <tbody>{[...s.avancos].reverse().map((a) => <tr key={a.id}><td>{d(a.data)}</td><td>{a.descricao}</td><td className="num">{a.quantidade} {s.unidade}</td><td className="num">{pct(s.quantidadeOrcada > 0 ? a.quantidade / s.quantidadeOrcada : a.quantidade)}</td><td className="small">{a.evidencia ?? '—'}</td><td className="small">{nome(a.responsavel)}</td><td>{pode(usuario, 'editar_etc', s.codigoObra) && <button className="btn sm" onClick={() => { const m = window.prompt('Motivo da exclusão da medição:'); if (m) tentar(() => actions.excluirAvanco(a.id, m), onErro); }}>Excluir</button>}</td></tr>)}</tbody>
+        </table>
+      )}
+      <div className="foot"><button className="btn" onClick={onClose}>Fechar</button></div>
+    </Modal>
+  );
+}
+
+export function ServicosTab({ o, onErro, onOk }: { o: Obra360; onErro: (m: string) => void; onOk?: (m: string) => void }) {
   const { ds, usuario } = useStore();
   const [edit, setEdit] = useState<Servico | null>(null);
   const [avanco, setAvanco] = useState<ServicoCalc | null>(null);
+  const [medir, setMedir] = useState<ServicoCalc | null>(null);
   const podeEditar = pode(usuario, 'editar_etc', o.obra.codigo);
   const tot = (f: (s: ServicoCalc) => number) => o.servicos.reduce((a, s) => a + f(s), 0);
   return (
@@ -88,7 +120,7 @@ export function ServicosTab({ o, onErro }: { o: Obra360; onErro: (m: string) => 
                   <td>{s.nome}<div className="muted small">{s.medicoes.length} evento(s) · {s.lancamentos.length} lançamento(s) · custo {s.origemCustoPrevisto.toLowerCase()}{s.diretoPrevisto || s.comprometidoDireto ? ` · direto cliente ${money(s.comprometidoDireto, true)} de ${money(s.diretoPrevisto, true)}` : ''}</div></td>
                   <td className="small">{d(s.inicioPrevisto)} → {d(s.fimPrevisto)}{s.diasParaFim !== undefined && s.status !== 'Concluído' && <div className={s.diasParaFim < 0 ? 'neg' : 'muted'}>{s.diasParaFim} d</div>}</td>
                   <td><Badge tone={tonePrazo(s.situacaoPrazo)}>{s.situacaoPrazo}</Badge></td>
-                  <td><div className="progress" style={{ width: 60 }}><i style={{ width: `${s.pctExecucao * 100}%` }} /></div><span className="small">{pct(s.pctExecucao)}</span></td>
+                  <td><div className="progress" style={{ width: 60 }}><i style={{ width: `${s.pctExecucao * 100}%` }} /></div><span className="small">{pct(s.pctExecucao)}</span><div className="muted small" title={s.origemExecucao}>{s.pctFabricacao !== undefined || s.pctMontagem !== undefined ? `fab ${pct(s.pctFabricacao ?? 0)} · mont ${pct(s.pctMontagem ?? 0)}` : s.origemExecucao === 'Medição de serviço' ? `${s.avancos.length} boletim(ns)` : s.origemExecucao.toLowerCase()}</div></td>
                   <td><Money v={s.precoVenda} compact /></td>
                   <td><Money v={s.faturado} compact /><div className="muted small">{pct(s.pctFaturado)}</div></td>
                   <td><Money v={s.custoPrevisto} compact />{s.custoPrevistoDerivado && <div className="muted small">margem {pct(s.margemAlvoEfetiva)}</div>}</td>
@@ -99,7 +131,7 @@ export function ServicosTab({ o, onErro }: { o: Obra360; onErro: (m: string) => 
                   <td><Money v={s.etc} compact />{s.etcDerivado && <div className="muted small">derivado</div>}</td>
                   <td><Money v={s.eac} compact /></td>
                   <td className={`num ${s.margemProjetada < 0 ? 'neg' : ''}`}>{money(s.margemProjetada, true)}<div className="muted small">{pct(s.pctMargem)}</div></td>
-                  <td className="actions">{podeEditar && <><button className="btn sm" onClick={() => setAvanco(s)}>Avanço</button><button className="btn sm" onClick={() => setEdit(s)}>Editar</button></>}</td>
+                  <td className="actions">{podeEditar && <>{pode(usuario, 'comentar', o.obra.codigo) && <button className="btn sm" onClick={() => setMedir(s)} title="Boletim de medição física">Medir</button>}<button className="btn sm" onClick={() => setAvanco(s)}>Avanço</button><button className="btn sm" onClick={() => setEdit(s)}>Editar</button></>}</td>
                 </tr>
               ))}
               <tr className="total"><td colSpan={4}>TOTAL</td><td>{pct(o.execucaoFisica)}</td><td><Money v={tot((s) => s.precoVenda)} compact /></td><td><Money v={tot((s) => s.faturado)} compact /></td><td><Money v={tot((s) => s.custoPrevisto)} compact /></td><td><Money v={tot((s) => s.custoPrevistoProporcional)} compact /></td><td><Money v={tot((s) => s.custoComprometido)} compact /></td><td><Money v={tot((s) => s.custoPago)} compact /></td><td><Money v={tot((s) => s.desvioVsFaturado)} compact sign /></td><td><Money v={tot((s) => s.etc)} compact /></td><td><Money v={tot((s) => s.eac)} compact /></td><td><Money v={tot((s) => s.margemProjetada)} compact sign /></td><td /></tr>
@@ -110,6 +142,7 @@ export function ServicosTab({ o, onErro }: { o: Obra360; onErro: (m: string) => 
       )}
       {edit && <ServicoForm servico={edit} onClose={() => setEdit(null)} onErro={onErro} />}
       {avanco && <AvancoForm s={avanco} onClose={() => setAvanco(null)} onErro={onErro} />}
+      {medir && <MedirForm s={ds.servicos.some((x) => x.id === medir.id) ? o.servicos.find((x) => x.id === medir.id) ?? medir : medir} onClose={() => setMedir(null)} onErro={onErro} onOk={onOk ?? (() => undefined)} />}
       <span hidden>{ds.params.dataBase}</span>
     </>
   );

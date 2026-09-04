@@ -120,6 +120,7 @@ export interface Servico {
   faturamentoDireto?: number; // materiais/servicos faturados direto pelo cliente (fora da receita e do custo da EIFF)
   valorBaseOrcamento?: number; // valor do grupo no orcamento original da proposta (informativo)
   margemAlvo?: number; // 0-1; quando custoOrcado = 0, custo previsto = precoVenda x (1 - margemAlvo)
+  pesoFabricacao?: number; // 0-1: peso da fabricacao no avanco fisico do servico (restante = montagem); padrao 0,6
   estimativaConcluir?: number; // ETC informado; se ausente, derivado do custo previsto - comprometido
   inicioPrevisto?: string;
   fimPrevisto?: string;
@@ -594,6 +595,20 @@ export interface Conjunto {
   atualizadoEm: string;
 }
 
+/** Medicao fisica de servico (boletim de avanco): quantidades medidas por data que se acumulam na execucao. */
+export interface AvancoServico {
+  id: string;
+  codigoObra: string;
+  servicoId: string;
+  data: string;
+  quantidade: number; // na unidade do servico
+  pct?: number; // percentual informado (0-1) quando a medicao foi por percentual
+  descricao: string;
+  evidencia?: string; // foto, relatorio, boletim
+  responsavel: string;
+  criadoEm: string;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -636,4 +651,5 @@ export interface Dataset {
   orcamentos: Orcamento[];
   pedidos: PedidoCompra[];
   conjuntos: Conjunto[];
+  avancos: AvancoServico[];
 }

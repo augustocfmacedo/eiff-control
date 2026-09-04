@@ -16,7 +16,7 @@ import type {
   Registro,
   TransacaoBancaria,
 } from './types';
-import { MARGEM_ALVO_PADRAO, calcDemanda, resumoMedicoes, resumoProducao, resumoServicos, type DemandaCalc, type ResumoMedicoes, type ResumoProducao, type ServicoCalc } from './obras';
+import { MARGEM_ALVO_PADRAO, calcDemanda, resumoMedicoes, resumoProducao, resumoServicos, type DemandaCalc, type ResumoMedicoes, type ResumoProducao, type ServicoCalc, producaoPorServico } from './obras';
 import { custoOrcamentoPorServico } from './orcamentos';
 import { avancoPorPeso, resumoPeso, type ResumoPeso } from './materiais';
 
@@ -553,7 +553,7 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
   const custoExec = custoOrcamentoPorServico(ds, obra.codigo);
   const custoOrcamentoExecutivo = [...custoExec.values()].reduce((a, v) => a + v, 0);
   const conjuntosObra = (ds.conjuntos ?? []).filter((c) => c.codigoObra === obra.codigo);
-  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo, custoExec, avancoPorPeso(conjuntosObra));
+  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo, custoExec, avancoPorPeso(conjuntosObra), (ds.avancos ?? []).filter((a) => a.codigoObra === obra.codigo), producaoPorServico(ds.ordens ?? [], db, obra.codigo));
   const temServicos = rs.servicos.length > 0;
   const custoOrcado = temServicos ? rs.custoPrevisto : obra.custoOrcado || custoOrcamentoExecutivo;
   const faturamentoDiretoContratado = medicoesObra.some((m) => m.status !== 'Cancelado' && m.faturamentoDireto > 0)

@@ -45,7 +45,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
             { label: 'EAC', value: money(o.eac, true) },
             { label: 'Orçamento disponível', value: money(o.orcamentoDisponivel, true), tone: o.orcamentoDisponivel < 0 ? 'neg' : undefined },
           ]}>
-          <ProgressRow label={o.peso.pesoTotal ? "Execução física (kg montados)" : "Execução física"} valor={o.execucaoFisica} />
+          <ProgressRow label={o.peso.pesoTotal ? "Execução física (kg e medições)" : "Execução física"} valor={o.execucaoFisica} />
           <ProgressRow label="Faturado do contrato" valor={o.medicoes.liquidoConstrutora ? o.medicoes.faturado / o.medicoes.liquidoConstrutora : o.receitaTotal ? o.medidoFaturado / o.receitaTotal : 0} />
           <ProgressRow label="Orçamento comprometido" valor={o.custoOrcado ? o.custoComprometido / o.custoOrcado : 0} tone={o.custoOrcado && o.custoComprometido > o.custoOrcado ? 'bad' : undefined} />
         </KpiHero>
@@ -83,7 +83,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
           { id: 'timeline', label: 'Documentos e comunicação' },
         ]} />
         {aba === 'medicoes' && <MedicoesTab o={o} onErro={toast} onOk={toast} />}
-        {aba === 'servicos' && <ServicosTab o={o} onErro={toast} />}
+        {aba === 'servicos' && <ServicosTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'materiais' && <MateriaisTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'demandas' && <DemandasTab o={o} onErro={toast} />}
         {aba === 'fabricacao' && <ProducaoTab o={o} tipo="Fabricação" onErro={toast} />}

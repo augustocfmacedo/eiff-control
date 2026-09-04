@@ -41,8 +41,8 @@ describe('lista de materiais', () => {
     const o = obra360(getState().ds, getState().ds.obras[0]);
     expect(o.peso.pesoMontado).toBe(2400);
     const srv = o.servicos.find((s) => s.id === getState().ds.servicos[0].id)!;
-    expect(srv.origemExecucao).toBe('Peso montado');
-    expect(srv.pctExecucao).toBeCloseTo(2400 / 10000, 6); // 10 x 600 + 20 x 200
+    expect(srv.origemExecucao).toBe('Fabricação e montagem (kg)');
+    expect(srv.pctExecucao).toBeCloseTo(0.6 * (6000 / 10000) + 0.4 * (2400 / 10000), 6); // 10 x 600 + 20 x 200
     expect(() => actions.excluirConjunto(p.id)).toThrow(/fabricação/);
     const v = getState().ds.conjuntos.find((x) => x.marca === 'V-01')!;
     actions.excluirConjunto(v.id);

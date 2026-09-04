@@ -35,8 +35,10 @@ describe('lista de materiais em kg', () => {
     const ds2: Dataset = { ...ds, conjuntos: [cj({ id: 'a', servicoId: srv.id, quantidade: 10, pesoUnitario: 1000, fabricadoQtd: 10, expedidoQtd: 10, montadoQtd: 4 })] };
     const o = obra360(ds2, ds.obras[0]);
     const s = o.servicos.find((x) => x.id === srv.id)!;
-    expect(s.origemExecucao).toBe('Peso montado');
-    expect(s.pctExecucao).toBeCloseTo(0.4, 6);
+    expect(s.origemExecucao).toBe('Fabricação e montagem (kg)');
+    expect(s.pctExecucao).toBeCloseTo(0.6 * 1 + 0.4 * 0.4, 6); // fabricado 100% x 60% + montado 40% x 40%
+    expect(s.pctFabricacao).toBeCloseTo(1, 6);
+    expect(s.pctMontagem).toBeCloseTo(0.4, 6);
     expect(s.pesoTotal).toBe(10000);
     expect(o.peso.pctMontado).toBeCloseTo(0.4, 6);
     expect(obra360(ds, ds.obras[0]).servicos.find((x) => x.id === srv.id)!.origemExecucao).toBe('Faturamento');

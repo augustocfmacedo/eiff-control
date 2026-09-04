@@ -2,7 +2,7 @@
 // (linha de fabricacao / linha de montagem). Tudo calculado sobre a base unica de lancamentos,
 // para que orcamento, compra, medicao e caixa compartilhem os mesmos codigos (Blueprint, secao 2).
 
-import type { Demanda, EtapaOrdem, Medicao, OrdemProducao, Periodicidade, Servico, TipoOrdem } from './types';
+import type { AvancoServico, Demanda, EtapaOrdem, Medicao, OrdemProducao, Periodicidade, Servico, TipoOrdem } from './types';
 import type { LancamentoCalc } from './engine';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,25 @@ export function etapasPadrao(tipo: TipoOrdem): EtapaOrdem[] {
 export type SituacaoPrazo = 'Concluído' | 'Atrasado' | 'Em risco' | 'No prazo' | 'Não iniciado' | 'Suspenso' | 'Sem prazo';
 
 export const MARGEM_ALVO_PADRAO = 0.25;
+export const PESO_FABRICACAO_PADRAO = 0.6; // fabricacao pesa 60% do avanco fisico de um servico de estrutura; montagem 40%
+
+export interface ProducaoServico { fab?: number; mont?: number } // % concluido das ordens de fabricacao/montagem do servico
+
+/** % concluido das ordens por servico, ponderado pela quantidade da ordem. */
+export function producaoPorServico(ordens: OrdemProducao[], dataBase: string, codigoObra?: string): Map<string, ProducaoServico> {
+  const m = new Map<string, ProducaoServico>();
+  const acc = new Map<string, { fabQ: number; fabP: number; montQ: number; montP: number }>();
+  for (const o of ordens) {
+    if (!o.servicoId || o.cancelada || (codigoObra && o.codigoObra !== codigoObra)) continue;
+    const c = calcOrdem(o, dataBase);
+    const a = acc.get(o.servicoId) ?? { fabQ: 0, fabP: 0, montQ: 0, montP: 0 };
+    const q = o.quantidade || 1;
+    if (o.tipo === 'Fabricação') { a.fabQ += q; a.fabP += q * c.pctConcluido; } else { a.montQ += q; a.montP += q * c.pctConcluido; }
+    acc.set(o.servicoId, a);
+  }
+  for (const [id, a] of acc) m.set(id, { fab: a.fabQ ? a.fabP / a.fabQ : undefined, mont: a.montQ ? a.montP / a.montQ : undefined });
+  return m;
+}
 
 export interface ServicoCalc extends Servico {
   custoComprometido: number;
@@ -59,8 +78,14 @@ export interface ServicoCalc extends Servico {
   pctFaturado: number; // faturado / precoVenda
   custoPrevistoProporcional: number; // custo previsto x % faturado
   desvioVsFaturado: number; // comprometido - custo previsto proporcional (>0 gastando acima do ritmo de faturamento)
-  pctExecucao: number; // peso montado / peso total (lista de materiais), quantidade executada / orcada, ou % faturado
-  origemExecucao: 'Peso montado' | 'Quantidade' | 'Faturamento' | 'Concluído';
+  pctExecucao: number; // fabricacao x montagem ponderadas (kg ou ordens), medicoes de servico, quantidade executada ou % faturado
+  origemExecucao: 'Fabricação e montagem (kg)' | 'Fabricação e montagem (ordens)' | 'Medição de serviço' | 'Quantidade' | 'Faturamento' | 'Concluído';
+  pctFabricacao?: number; // avanco da fabricacao (kg fabricados ou ordens)
+  pctMontagem?: number;
+  pesoFabricacaoEfetivo: number; // peso da fabricacao no avanco (0-1)
+  avancos: AvancoServico[]; // medicoes fisicas do servico, por data
+  quantidadeMedida: number; // soma das medicoes
+  pctMedido: number; // quantidadeMedida / quantidadeOrcada
   pesoTotal: number; // kg da lista de materiais vinculada ao servico
   pesoFabricado: number;
   pesoMontado: number;
@@ -71,7 +96,7 @@ export interface ServicoCalc extends Servico {
   lancamentos: LancamentoCalc[];
 }
 
-export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO, custoOrcamento = 0, peso?: { pesoTotal: number; pesoFabricado: number; pesoMontado: number }): ServicoCalc {
+export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO, custoOrcamento = 0, peso?: { pesoTotal: number; pesoFabricado: number; pesoMontado: number }, avancos: AvancoServico[] = [], producao?: ProducaoServico): ServicoCalc {
   const meus = lancs.filter((l) => l.servicoId === s.id && l.oficial);
   const custos = meus.filter((l) => l.tipo === 'Saída' && l.status !== 'Cancelado');
   const custoComprometido = custos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
@@ -96,10 +121,21 @@ export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: strin
   const faturado = meds.filter((m) => m.medida).reduce((a, m) => a + m.valorLiquidoConstrutora, 0);
   const totalMed = meds.reduce((a, m) => a + m.valorLiquidoConstrutora, 0);
   const pctFaturado = s.precoVenda > 0 ? Math.min(1, faturado / s.precoVenda) : totalMed > 0 ? faturado / totalMed : 0;
-  // fisico: peso montado da lista de materiais; senao quantidades executadas; senao acompanha o faturado do cronograma
+  // fisico, nesta ordem: fabricacao x montagem ponderadas pela lista de materiais (kg); pelas ordens de producao;
+  // medicoes fisicas do servico; quantidade executada informada; senao acompanha o faturado do cronograma
   const temPeso = !!peso && peso.pesoTotal > 0;
-  const origemExecucao: ServicoCalc['origemExecucao'] = s.status === 'Concluído' ? 'Concluído' : temPeso ? 'Peso montado' : s.quantidadeOrcada > 0 && s.quantidadeExecutada > 0 ? 'Quantidade' : 'Faturamento';
-  const pctExecucao = origemExecucao === 'Concluído' ? 1 : origemExecucao === 'Peso montado' ? Math.min(1, peso!.pesoMontado / peso!.pesoTotal) : origemExecucao === 'Quantidade' ? Math.min(1, s.quantidadeExecutada / s.quantidadeOrcada) : pctFaturado;
+  const temOrdens = !!producao && (producao.fab !== undefined || producao.mont !== undefined);
+  const pesoFabricacaoEfetivo = Math.min(1, Math.max(0, s.pesoFabricacao ?? PESO_FABRICACAO_PADRAO));
+  const pctFabricacao = temPeso ? Math.min(1, peso!.pesoFabricado / peso!.pesoTotal) : temOrdens ? producao!.fab : undefined;
+  const pctMontagem = temPeso ? Math.min(1, peso!.pesoMontado / peso!.pesoTotal) : temOrdens ? producao!.mont : undefined;
+  const boletins = [...avancos].sort((a, b) => (a.data < b.data ? -1 : 1));
+  const quantidadeMedida = boletins.reduce((a, m) => a + m.quantidade, 0);
+  const pctMedido = s.quantidadeOrcada > 0 ? Math.min(1, quantidadeMedida / s.quantidadeOrcada) : boletins.length ? Math.min(1, quantidadeMedida) : 0;
+  const origemExecucao: ServicoCalc['origemExecucao'] = s.status === 'Concluído' ? 'Concluído' : temPeso ? 'Fabricação e montagem (kg)' : temOrdens ? 'Fabricação e montagem (ordens)' : boletins.length ? 'Medição de serviço' : s.quantidadeOrcada > 0 && s.quantidadeExecutada > 0 ? 'Quantidade' : 'Faturamento';
+  const pctExecucao = origemExecucao === 'Concluído' ? 1
+    : origemExecucao === 'Fabricação e montagem (kg)' || origemExecucao === 'Fabricação e montagem (ordens)' ? Math.min(1, pesoFabricacaoEfetivo * (pctFabricacao ?? 0) + (1 - pesoFabricacaoEfetivo) * (pctMontagem ?? 0))
+    : origemExecucao === 'Medição de serviço' ? pctMedido
+    : origemExecucao === 'Quantidade' ? Math.min(1, s.quantidadeExecutada / s.quantidadeOrcada) : pctFaturado;
   const diasParaFim = s.fimPrevisto ? diffDays(s.fimPrevisto, dataBase) : undefined;
   const duracaoPrevista = s.inicioPrevisto && s.fimPrevisto ? diffDays(s.fimPrevisto, s.inicioPrevisto) : undefined;
   let situacaoPrazo: SituacaoPrazo;
@@ -120,7 +156,7 @@ export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: strin
     desvioOrcamento: eac - custoPrevisto, receitaPrevista, receitaRealizada,
     medicoes: meds, faturado, aFaturar: Math.max(0, (s.precoVenda || totalMed) - faturado), pctFaturado, custoPrevistoProporcional,
     desvioVsFaturado: custoComprometido - custoPrevistoProporcional,
-    pctExecucao, origemExecucao, pesoTotal: peso?.pesoTotal ?? 0, pesoFabricado: peso?.pesoFabricado ?? 0, pesoMontado: peso?.pesoMontado ?? 0, pctFinanceiro: eac ? custoPago / eac : 0,
+    pctExecucao, origemExecucao, pctFabricacao, pctMontagem, pesoFabricacaoEfetivo, avancos: boletins, quantidadeMedida, pctMedido, pesoTotal: peso?.pesoTotal ?? 0, pesoFabricado: peso?.pesoFabricado ?? 0, pesoMontado: peso?.pesoMontado ?? 0, pctFinanceiro: eac ? custoPago / eac : 0,
     diasParaFim, duracaoPrevista, situacaoPrazo, lancamentos: meus,
   };
 }
@@ -213,8 +249,8 @@ export interface ResumoServicos {
   concluidos: number;
 }
 
-export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO, custoOrcamentoPorServico?: Map<string, number>, pesoPorServico?: Map<string, { pesoTotal: number; pesoFabricado: number; pesoMontado: number }>): ResumoServicos {
-  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo, custoOrcamentoPorServico?.get(s.id) ?? 0, pesoPorServico?.get(s.id)));
+export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO, custoOrcamentoPorServico?: Map<string, number>, pesoPorServico?: Map<string, { pesoTotal: number; pesoFabricado: number; pesoMontado: number }>, avancos: AvancoServico[] = [], producaoPorSrv?: Map<string, ProducaoServico>): ResumoServicos {
+  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo, custoOrcamentoPorServico?.get(s.id) ?? 0, pesoPorServico?.get(s.id), avancos.filter((a) => a.servicoId === s.id), producaoPorSrv?.get(s.id)));
   const soma = (f: (s: ServicoCalc) => number) => calc.reduce((a, s) => a + f(s), 0);
   const pesoTotal = soma((s) => s.custoOrcado || s.precoVenda);
   return {
