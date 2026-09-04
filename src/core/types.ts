@@ -454,6 +454,81 @@ export interface Apontamento {
   fechadoEm?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Orcamentos: insumos, composicoes (SINAPI/TCPO/proprias) e propostas com curva ABC
+// ---------------------------------------------------------------------------
+export type TipoInsumo = 'Material' | 'Mão de obra' | 'Equipamento' | 'Serviço' | 'Outros';
+export type OrigemCatalogo = 'SINAPI' | 'TCPO' | 'Própria';
+
+/** Insumo do catalogo de precos (material, mao de obra, equipamento ou servico). */
+export interface Insumo {
+  id: string;
+  codigo: string; // codigo SINAPI/TCPO ou proprio
+  descricao: string;
+  unidade: string;
+  tipo: TipoInsumo;
+  origem: OrigemCatalogo;
+  preco: number; // preco unitario vigente
+  precoData?: string; // data de referencia do preco
+  precoFonte?: string; // ex.: SINAPI GO 07/2026, cotacao Gerdau, compra PAG-0031
+  classe?: string; // classificacao/grupo do catalogo
+  ativo: boolean;
+  observacoes: string;
+}
+
+export interface ItemComposicao {
+  tipo: 'Insumo' | 'Composição';
+  refId: string; // id do insumo ou da composicao auxiliar
+  coeficiente: number; // quantidade por unidade da composicao
+}
+
+/** Composicao de custo unitario: lista de insumos e composicoes auxiliares com coeficientes. */
+export interface Composicao {
+  id: string;
+  codigo: string;
+  descricao: string;
+  unidade: string;
+  grupo: string; // grupo/classe do catalogo (ex.: ESTRUTURAS METALICAS)
+  origem: OrigemCatalogo;
+  itens: ItemComposicao[];
+  ativo: boolean;
+  observacoes: string;
+}
+
+export type StatusOrcamento = 'Rascunho' | 'Enviado' | 'Aprovado' | 'Contratado' | 'Perdido' | 'Cancelado';
+
+export interface ItemOrcamento {
+  id: string;
+  ordem: number;
+  etapa: string; // agrupador da planilha de venda (ex.: Fabricacao, Montagem)
+  codigo: string;
+  descricao: string;
+  unidade: string;
+  quantidade: number;
+  composicaoId?: string; // custo unitario vem da composicao
+  custoUnitarioManual?: number; // usado quando nao ha composicao
+  servicoId?: string; // servico da obra gerado ao contratar
+}
+
+/** Orcamento/proposta: itens com quantidade x composicao, BDI e conversao em servicos da obra. */
+export interface Orcamento {
+  id: string;
+  codigo: string; // ORC-0001
+  titulo: string;
+  cliente: string;
+  codigoObra?: string; // obra vinculada (obrigatoria ao contratar)
+  data: string;
+  validade?: string;
+  status: StatusOrcamento;
+  bdi: number; // 0-1; preco de venda = custo x (1 + bdi)
+  referenciaPrecos: string; // ex.: SINAPI GO 07/2026 nao desonerado
+  itens: ItemOrcamento[];
+  observacoes: string;
+  criadoEm: string;
+  criadoPor: string;
+  atualizadoEm: string;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -491,4 +566,7 @@ export interface Dataset {
   colaboradores: Colaborador[];
   apontamentos: Apontamento[];
   medicoes: Medicao[];
+  insumos: Insumo[];
+  composicoes: Composicao[];
+  orcamentos: Orcamento[];
 }

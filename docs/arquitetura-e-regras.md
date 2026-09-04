@@ -68,3 +68,13 @@ Valores atuais são placeholders (DEC-03): gestor 20.000, financeiro 100.000, di
 - Documentos financeiros não podem ser apagados (trigger); período fechado bloqueia insert/update por competência.
 - Auditoria gravada por trigger `security definer`; usuários só leem.
 - Power BI consome apenas o schema `mart` com usuário somente leitura.
+
+
+## Orçamentos e composições (SINAPI)
+
+- **Catálogo**: `Insumo` (código, unidade, tipo Material/Mão de obra/Equipamento/Serviço/Outros, preço com data e fonte) e `Composicao` (itens com coeficiente por unidade; itens podem ser insumos ou composições auxiliares). Origem `SINAPI`, `TCPO` ou `Própria`; a importação casa por origem + código e atualiza preços sem duplicar. Composições próprias são clonadas das de referência e recebem a produtividade da EIFF.
+- **Motor** (`src/core/orcamentos.ts`): `Calculadora.custo()` resolve o custo unitário recursivamente com cache, sinaliza itens faltantes e ciclos; `calcOrcamento()` calcula custo direto, preço com BDI, totais por etapa e por tipo de insumo, e as curvas ABC de insumos (explosão × quantidade) e de itens (classes A ≤ 80%, B ≤ 95%, C).
+- **Leitor SINAPI** (`src/core/sinapi.ts`): reconhece cabeçalhos por nome de coluna; aceita o formato antigo por UF (insumos + analítico) e o unificado (abas ISD/ICD, CSD/CCD, Analítico, preços por UF); escolhe desonerado ou não; `selecionarComDependencias()` recorta as composições escolhidas com auxiliares e insumos.
+- **Contratação**: `contratarOrcamento` gera um serviço da obra por item (custo orçado = custo direto; preço de venda = com BDI, redistribuído ao valor do contrato quando marcado), atualiza `obra.custoOrcado` e congela os itens (`estimate_item.service_id` guarda o vínculo). A partir daí o custo previsto do serviço deixa de ser derivado da margem alvo.
+- **Banco** (migration 0016): `catalog_input`, `catalog_composition`, `catalog_composition_item`, `estimate`, `estimate_item`; leitura paginada (1000 linhas por pedido) e inserção em lote na importação. View `v_composition_cost` traz o custo direto de um nível para BI.
+- **Licenciamento**: a base SINAPI é pública (Caixa). A TCPO (PINI) é licenciada: o sistema só importa o que o usuário exportar da sua própria licença; nada da TCPO é distribuído com o código.

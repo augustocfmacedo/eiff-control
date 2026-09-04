@@ -22,6 +22,7 @@ import { Fluxo13, Fluxo24, PosicaoDiaria } from './screens/Tesouraria';
 import Equipe from './screens/Equipe';
 import ApontamentoTela from './screens/Apontamento';
 import Campo from './screens/Campo';
+import Orcamentos from './screens/Orcamentos';
 
 export default function App() {
   const rota = useRota();
@@ -57,7 +58,7 @@ export default function App() {
     try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ }
   };
   const ICONES: Record<string, string> = {
-    '/': '📊', '/inbox': '📥', '/central': '🏗️', '/obras': '📁', '/equipe': '👷', '/campo': '📱', '/pagar': '📤', '/receber': '📥', '/lancamentos': '📒', '/aprovacoes': '✅',
+    '/': '📊', '/inbox': '📥', '/central': '🏗️', '/obras': '📁', '/orcamentos': '🧾', '/equipe': '👷', '/campo': '📱', '/pagar': '📤', '/receber': '📥', '/lancamentos': '📒', '/aprovacoes': '✅',
     '/posicao': '🏦', '/fluxo13': '📈', '/fluxo24': '📆', '/conciliacao': '🔗', '/dividas': '💳', '/dre': '🧮', '/checks': '🛡️', '/cadastros': '⚙️', '/auditoria': '🔍',
   };
   const nav = (to: string, label: string, cnt?: number) => (
@@ -73,6 +74,7 @@ export default function App() {
     case 'inbox': tela = <CaixaEntrada />; break;
     case 'obras': tela = p1 ? <Obra360 codigo={p1} /> : <Obras />; break;
     case 'central': tela = <CentralObras />; break;
+    case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;
     case 'lancamentos': tela = p1 ? <LancamentoDetalhe id={p1} /> : <Lancamentos modo="todos" query={rota.query} key={rota.query.toString()} />; break;
     case 'pagar': tela = <Lancamentos modo="pagar" query={rota.query} key={'p' + rota.query.toString()} />; break;
     case 'receber': tela = <Lancamentos modo="receber" query={rota.query} key={'r' + rota.query.toString()} />; break;
@@ -121,6 +123,7 @@ export default function App() {
           <h3>Obras</h3>
           {nav('/central', 'Central de obras')}
           {nav('/obras', 'Obras e contratos')}
+          {nav('/orcamentos', 'Orçamentos e composições', ds.orcamentos.filter((o) => o.status === 'Rascunho' || o.status === 'Enviado').length)}
           {nav('/equipe', 'Equipe e produtividade', ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length)}
           {nav('/campo', 'Modo campo (celular)')}
           <h3>Financeiro</h3>

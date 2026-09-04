@@ -79,6 +79,9 @@ interface Refs {
   colaboradores: Map<string, string>;
   apontamentos: Map<string, string>;
   medicoes: Map<string, string>;
+  insumos: Map<string, string>; // app id -> uuid
+  composicoes: Map<string, string>;
+  orcamentos: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -90,6 +93,18 @@ async function sel(tabela: string, colunas = '*', filtro?: (q: any) => any): Pro
   const { data, error } = await q;
   falha(`ler ${tabela}`, error);
   return (data ?? []) as Row[];
+}
+
+/** Le a tabela inteira em paginas de 1000 linhas (limite padrao do PostgREST). */
+async function selTodos(tabela: string, ordem: string): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await supabase!.from(tabela).select('*').order(ordem).order('id').range(de, de + 999);
+    falha(`ler ${tabela}`, error);
+    out.push(...((data ?? []) as Row[]));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +156,17 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('timesheet_incident'),
     sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
+  const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
+    selTodos('catalog_input', 'code'),
+    selTodos('catalog_composition', 'code'),
+    selTodos('catalog_composition_item', 'item_order'),
+    selTodos('estimate', 'code'),
+    selTodos('estimate_item', 'item_order'),
+  ]);
+  const compItensPor = new Map<string, Row[]>();
+  for (const i of compItens) compItensPor.set(i.composition_id, [...(compItensPor.get(i.composition_id) ?? []), i]);
+  const estItensPor = new Map<string, Row[]>();
+  for (const i of estItens) estItensPor.set(i.estimate_id, [...(estItensPor.get(i.estimate_id) ?? []), i]);
   const linhasPor = new Map<string, Row[]>();
   for (const l of tsLines) linhasPor.set(l.timesheet_id, [...(linhasPor.get(l.timesheet_id) ?? []), l]);
   const prodPor = new Map<string, Row[]>();
@@ -171,6 +197,9 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     colaboradores: new Map(workers.map((w) => [w.id, w.id])),
     apontamentos: new Map(timesheets.map((t) => [t.id, t.id])),
     medicoes: new Map(medicoesRows.map((m) => [m.id, m.id])),
+    insumos: new Map(insumosRows.map((x) => [x.id, x.id])),
+    composicoes: new Map(compRows.map((x) => [x.id, x.id])),
+    orcamentos: new Map(estRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -278,6 +307,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
+    insumos: [], composicoes: [], orcamentos: [],
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -285,6 +315,16 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     })),
   };
   const usuario = usuarios.find((u) => u.id === meu.id)!;
+  ds.insumos = insumosRows.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, unidade: x.unit, tipo: x.kind, origem: x.source, preco: Number(x.price), precoData: x.price_date ?? undefined, precoFonte: x.price_source ?? undefined, classe: x.class_name ?? undefined, ativo: x.active, observacoes: x.notes ?? '' }));
+  ds.composicoes = compRows.map((x) => ({
+    id: x.id, codigo: x.code, descricao: x.description, unidade: x.unit, grupo: x.group_name ?? '', origem: x.source, ativo: x.active, observacoes: x.notes ?? '',
+    itens: (compItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ tipo: i.input_id ? ('Insumo' as const) : ('Composição' as const), refId: i.input_id ?? i.child_composition_id, coeficiente: Number(i.coefficient) })),
+  }));
+  ds.orcamentos = estRows.map((x) => ({
+    id: x.id, codigo: x.code, titulo: x.title, cliente: x.client_name ?? '', codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, data: x.estimate_date, validade: x.valid_until ?? undefined, status: x.status, bdi: Number(x.bdi), referenciaPrecos: x.price_reference ?? '',
+    observacoes: x.notes ?? '', criadoEm: x.created_at, criadoPor: x.created_by ?? '', atualizadoEm: x.updated_at,
+    itens: (estItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ id: i.id, ordem: i.item_order, etapa: i.stage ?? '', codigo: i.code ?? '', descricao: i.description, unidade: i.unit, quantidade: Number(i.quantity), composicaoId: i.composition_id ?? undefined, custoUnitarioManual: i.manual_unit_cost === null || i.manual_unit_cost === undefined ? undefined : Number(i.manual_unit_cost), servicoId: i.service_id ?? undefined })),
+  }));
   return { ds, usuario };
 }
 
@@ -558,6 +598,73 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     };
     const data = await gravar('measurement', { id: r.medicoes.get(m.id) }, row, { organization_id: r.orgId, project_id: r.obras.get(m.codigoObra) });
     if (data) r.medicoes.set(m.id, data.id);
+  }
+
+  // catalogo: insumos (novos em lote; alterados um a um)
+  const insumoRow = (i: Dataset['insumos'][number]): Row => ({ source: i.origem, code: i.codigo, description: i.descricao, unit: i.unidade, kind: i.tipo, price: i.preco, price_date: i.precoData ?? null, price_source: i.precoFonte ?? null, class_name: i.classe ?? null, active: i.ativo, notes: i.observacoes || null });
+  const insumosMud = mudou(antes.insumos ?? [], depois.insumos ?? [], 'id');
+  const insumosNovos = insumosMud.filter((i) => !r.insumos.get(i.id));
+  for (let k = 0; k < insumosNovos.length; k += 500) {
+    const lote = insumosNovos.slice(k, k + 500);
+    const { data, error } = await sb.from('catalog_input').insert(lote.map((i) => ({ ...insumoRow(i), organization_id: r.orgId }))).select('id');
+    falha('inserir insumos', error);
+    lote.forEach((i, idx) => { if (data?.[idx]) r.insumos.set(i.id, data[idx].id); });
+  }
+  for (const i of insumosMud.filter((x) => r.insumos.get(x.id))) {
+    const { error } = await sb.from('catalog_input').update(insumoRow(i)).eq('id', r.insumos.get(i.id)!);
+    falha('atualizar insumo', error);
+  }
+
+  // catalogo: composicoes (cabecalhos em lote, depois itens de todas as alteradas)
+  const compRow = (c: Dataset['composicoes'][number]): Row => ({ source: c.origem, code: c.codigo, description: c.descricao, unit: c.unidade, group_name: c.grupo || null, active: c.ativo, notes: c.observacoes || null });
+  const compsMud = mudou(antes.composicoes ?? [], depois.composicoes ?? [], 'id');
+  const compsNovas = compsMud.filter((c) => !r.composicoes.get(c.id));
+  for (let k = 0; k < compsNovas.length; k += 500) {
+    const lote = compsNovas.slice(k, k + 500);
+    const { data, error } = await sb.from('catalog_composition').insert(lote.map((c) => ({ ...compRow(c), organization_id: r.orgId }))).select('id');
+    falha('inserir composições', error);
+    lote.forEach((c, idx) => { if (data?.[idx]) r.composicoes.set(c.id, data[idx].id); });
+  }
+  const compAntes = new Map((antes.composicoes ?? []).map((c) => [c.id, c]));
+  const itensRows: Row[] = [];
+  for (const c of compsMud) {
+    const cid = r.composicoes.get(c.id);
+    if (!cid) continue;
+    const prev = compAntes.get(c.id);
+    if (prev) {
+      const { error } = await sb.from('catalog_composition').update(compRow(c)).eq('id', cid);
+      falha('atualizar composição', error);
+      if (JSON.stringify(prev.itens) === JSON.stringify(c.itens)) continue;
+      const { error: e1 } = await sb.from('catalog_composition_item').delete().eq('composition_id', cid);
+      falha('limpar itens da composição', e1);
+    }
+    c.itens.forEach((it, idx) => {
+      const ref = it.tipo === 'Insumo' ? r.insumos.get(it.refId) : r.composicoes.get(it.refId);
+      if (!ref) return;
+      itensRows.push({ composition_id: cid, item_order: idx + 1, input_id: it.tipo === 'Insumo' ? ref : null, child_composition_id: it.tipo === 'Composição' ? ref : null, coefficient: it.coeficiente });
+    });
+  }
+  for (let k = 0; k < itensRows.length; k += 1000) {
+    const { error } = await sb.from('catalog_composition_item').insert(itensRows.slice(k, k + 1000));
+    falha('inserir itens das composições', error);
+  }
+
+  // orcamentos e itens (itens regravados quando mudam)
+  const orcAntes = new Map((antes.orcamentos ?? []).map((o) => [o.id, o]));
+  for (const o of mudou(antes.orcamentos ?? [], depois.orcamentos ?? [], 'id')) {
+    const row = { code: o.codigo, title: o.titulo, client_name: o.cliente || null, project_id: o.codigoObra ? r.obras.get(o.codigoObra) ?? null : null, estimate_date: o.data, valid_until: o.validade ?? null, status: o.status, bdi: o.bdi, price_reference: o.referenciaPrecos || null, notes: o.observacoes || null, updated_by: atorId };
+    const data = await gravar('estimate', { id: r.orcamentos.get(o.id) }, row, { organization_id: r.orgId, company_id: r.companyId, created_by: atorId });
+    const oid = data?.id ?? r.orcamentos.get(o.id);
+    if (data) r.orcamentos.set(o.id, data.id);
+    const prev = orcAntes.get(o.id);
+    if (oid && (!prev || JSON.stringify(prev.itens) !== JSON.stringify(o.itens))) {
+      const { error: e1 } = await sb.from('estimate_item').delete().eq('estimate_id', oid);
+      falha('limpar itens do orçamento', e1);
+      if (o.itens.length) {
+        const { error: e2 } = await sb.from('estimate_item').insert(o.itens.map((it, idx) => ({ estimate_id: oid, item_order: idx + 1, stage: it.etapa || null, code: it.codigo || null, description: it.descricao, unit: it.unidade || 'un', quantity: it.quantidade, composition_id: it.composicaoId ? r.composicoes.get(it.composicaoId) ?? null : null, manual_unit_cost: it.custoUnitarioManual ?? null, service_id: it.servicoId ? r.servicos.get(it.servicoId) ?? null : null })));
+        falha('inserir itens do orçamento', e2);
+      }
+    }
   }
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)

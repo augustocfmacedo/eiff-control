@@ -11,6 +11,9 @@ import type {
   Auditoria,
   Colaborador,
   Comentario,
+  Composicao,
+  Insumo,
+  Orcamento,
   ContaFinanceira,
   Dataset,
   Demanda,
@@ -32,6 +35,8 @@ import type {
 } from '../core/types';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
+import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
+import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -226,7 +231,8 @@ export type Acao =
   | 'ver_auditoria'
   | 'administrar'
   | 'comentar'
-  | 'exportar';
+  | 'exportar'
+  | 'orcar';
 
 const MATRIZ: Record<Acao, Papel[]> = {
   ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
@@ -244,6 +250,7 @@ const MATRIZ: Record<Acao, Papel[]> = {
   administrar: ['Administrador'],
   comentar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
   exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
+  orcar: ['Administrador', 'Diretoria', 'Financeiro', 'Engenharia', 'Compras', 'Gestor de obra'],
 };
 
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {
@@ -760,6 +767,152 @@ export const actions = {
   },
 
   // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Orcamentos: catalogo de insumos/composicoes e propostas
+  // -------------------------------------------------------------------------
+  salvarInsumo(i: Insumo) {
+    let ds = state.ds;
+    exigir('orcar');
+    if (!i.codigo.trim() || !i.descricao.trim()) throw new RegraDeNegocioError('Código e descrição do insumo são obrigatórios.');
+    if (i.preco < 0) throw new RegraDeNegocioError('Preço deve ser positivo.');
+    if (ds.insumos.some((x) => x.id !== i.id && x.origem === i.origem && x.codigo === i.codigo)) throw new RegraDeNegocioError(`Insumo ${i.origem} ${i.codigo} já existe.`);
+    const atual = ds.insumos.find((x) => x.id === i.id);
+    const insumos = atual ? ds.insumos.map((x) => (x.id === i.id ? i : x)) : [...ds.insumos, i];
+    ds = registrar({ ...ds, insumos }, atual ? 'alterar_insumo' : 'criar_insumo', 'insumo', i.id, atual, i);
+    commit(ds);
+    return i;
+  },
+
+  novoInsumo(): Insumo {
+    return { id: seq('INS', state.ds.insumos.map((x) => x.id)), codigo: '', descricao: '', unidade: 'un', tipo: 'Material', origem: 'Própria', preco: 0, precoData: state.ds.params.dataBase, precoFonte: 'Cadastro manual', ativo: true, observacoes: '' };
+  },
+
+  salvarComposicao(c: Composicao) {
+    let ds = state.ds;
+    exigir('orcar');
+    if (!c.codigo.trim() || !c.descricao.trim()) throw new RegraDeNegocioError('Código e descrição da composição são obrigatórios.');
+    if (ds.composicoes.some((x) => x.id !== c.id && x.origem === c.origem && x.codigo === c.codigo)) throw new RegraDeNegocioError(`Composição ${c.origem} ${c.codigo} já existe.`);
+    if (c.itens.some((it) => !(it.coeficiente > 0))) throw new RegraDeNegocioError('Coeficientes devem ser positivos.');
+    if (c.itens.some((it) => it.tipo === 'Composição' && it.refId === c.id) || criaCiclo(c.id, c.itens, ds)) throw new RegraDeNegocioError('A composição não pode conter a si mesma (ciclo).');
+    for (const it of c.itens) {
+      if (it.tipo === 'Insumo' && !ds.insumos.some((x) => x.id === it.refId)) throw new RegraDeNegocioError('Insumo não encontrado no catálogo.');
+      if (it.tipo === 'Composição' && !ds.composicoes.some((x) => x.id === it.refId)) throw new RegraDeNegocioError('Composição auxiliar não encontrada.');
+    }
+    const atual = ds.composicoes.find((x) => x.id === c.id);
+    const composicoes = atual ? ds.composicoes.map((x) => (x.id === c.id ? c : x)) : [...ds.composicoes, c];
+    ds = registrar({ ...ds, composicoes }, atual ? 'alterar_composicao' : 'criar_composicao', 'composicao', c.id, atual, c);
+    commit(ds);
+    return c;
+  },
+
+  novaComposicao(base?: Composicao): Composicao {
+    const id = seq('CMP', state.ds.composicoes.map((x) => x.id));
+    if (base) {
+      const n = state.ds.composicoes.filter((x) => x.origem === 'Própria').length + 1;
+      return { ...base, id, codigo: `EIFF-${String(n).padStart(4, '0')}`, origem: 'Própria', observacoes: `Derivada de ${base.origem} ${base.codigo}. ${base.observacoes}`.trim(), itens: base.itens.map((it) => ({ ...it })) };
+    }
+    return { id, codigo: '', descricao: '', unidade: 'un', grupo: 'ESTRUTURAS METÁLICAS', origem: 'Própria', itens: [], ativo: true, observacoes: '' };
+  },
+
+  /**
+   * Importa um recorte do catalogo (SINAPI/TCPO) para a base. Insumos e composicoes sao casados por
+   * origem + codigo: existentes recebem preco/descricao novos (mesmo id); novos sao criados.
+   */
+  importarCatalogo(dados: { insumos: InsumoImportado[]; composicoes: ComposicaoImportada[] }, origem: Insumo['origem'], referencia: string, precoData?: string) {
+    let ds = state.ds;
+    exigir('orcar');
+    const data = precoData ?? ds.params.dataBase;
+    const idInsumo = new Map(ds.insumos.filter((i) => i.origem === origem).map((i) => [i.codigo, i.id]));
+    const idComp = new Map(ds.composicoes.filter((c) => c.origem === origem).map((c) => [c.codigo, c.id]));
+    let insumos = [...ds.insumos];
+    let novosI = 0; let atualizadosI = 0;
+    for (const i of dados.insumos) {
+      const id = idInsumo.get(i.codigo);
+      if (id) {
+        insumos = insumos.map((x) => (x.id === id ? { ...x, descricao: i.descricao || x.descricao, unidade: i.unidade || x.unidade, tipo: i.tipo, classe: i.classe ?? x.classe, preco: i.preco > 0 ? i.preco : x.preco, precoData: i.preco > 0 ? data : x.precoData, precoFonte: i.preco > 0 ? referencia : x.precoFonte } : x));
+        atualizadosI++;
+      } else {
+        const novo: Insumo = { id: `${origem}-${i.codigo}`, codigo: i.codigo, descricao: i.descricao, unidade: i.unidade, tipo: i.tipo, origem, preco: i.preco, precoData: data, precoFonte: referencia, classe: i.classe, ativo: true, observacoes: '' };
+        insumos.push(novo); idInsumo.set(i.codigo, novo.id); novosI++;
+      }
+    }
+    // composicoes: primeiro garante ids para todas, depois monta os itens (auxiliares podem vir depois na lista)
+    for (const c of dados.composicoes) if (!idComp.has(c.codigo)) idComp.set(c.codigo, `${origem}C-${c.codigo}`);
+    let composicoes = [...ds.composicoes];
+    let novasC = 0; let atualizadasC = 0; let itensIgnorados = 0;
+    for (const c of dados.composicoes) {
+      const id = idComp.get(c.codigo)!;
+      const itens = c.itens.flatMap((it) => {
+        const refId = it.tipo === 'Insumo' ? idInsumo.get(it.codigo) : idComp.get(it.codigo);
+        if (!refId || (it.tipo === 'Composição' && !dados.composicoes.some((x) => x.codigo === it.codigo) && !ds.composicoes.some((x) => x.id === refId))) { itensIgnorados++; return []; }
+        return [{ tipo: it.tipo, refId, coeficiente: it.coeficiente }];
+      });
+      const atual = composicoes.find((x) => x.id === id);
+      if (atual) {
+        composicoes = composicoes.map((x) => (x.id === id ? { ...x, descricao: c.descricao || x.descricao, unidade: c.unidade || x.unidade, grupo: c.grupo || x.grupo, itens: itens.length ? itens : x.itens } : x));
+        atualizadasC++;
+      } else {
+        composicoes.push({ id, codigo: c.codigo, descricao: c.descricao, unidade: c.unidade, grupo: c.grupo, origem, itens, ativo: true, observacoes: '' });
+        novasC++;
+      }
+    }
+    const resumo = { referencia, insumosNovos: novosI, insumosAtualizados: atualizadosI, composicoesNovas: novasC, composicoesAtualizadas: atualizadasC, itensIgnorados };
+    ds = registrar({ ...ds, insumos, composicoes }, 'importar_catalogo', 'catalogo', origem, undefined, resumo);
+    commit(ds);
+    return resumo;
+  },
+
+  novoOrcamento(): Orcamento {
+    const id = seq('ORC', state.ds.orcamentos.map((o) => o.id));
+    return { id, codigo: id, titulo: '', cliente: '', data: state.ds.params.dataBase, status: 'Rascunho', bdi: 0.25, referenciaPrecos: '', itens: [], observacoes: '', criadoEm: agora(), criadoPor: state.usuario.id, atualizadoEm: agora() };
+  },
+
+  salvarOrcamento(o: Orcamento) {
+    let ds = state.ds;
+    exigir('orcar');
+    if (!o.titulo.trim()) throw new RegraDeNegocioError('Título do orçamento é obrigatório.');
+    if (o.bdi < 0 || o.bdi > 2) throw new RegraDeNegocioError('BDI deve estar entre 0% e 200%.');
+    if (o.codigoObra && !ds.obras.some((x) => x.codigo === o.codigoObra)) throw new RegraDeNegocioError('Obra não cadastrada.');
+    if (o.itens.some((it) => it.quantidade < 0)) throw new RegraDeNegocioError('Quantidades devem ser positivas.');
+    if (o.itens.some((it) => it.composicaoId && !ds.composicoes.some((c) => c.id === it.composicaoId))) throw new RegraDeNegocioError('Composição não encontrada.');
+    const atual = ds.orcamentos.find((x) => x.id === o.id);
+    if (atual?.status === 'Contratado' && JSON.stringify(atual.itens) !== JSON.stringify(o.itens)) throw new RegraDeNegocioError('Orçamento contratado: os itens são congelados. Ajuste os serviços na obra.');
+    const novo: Orcamento = { ...o, itens: o.itens.map((it, i) => ({ ...it, ordem: i + 1 })), atualizadoEm: agora() };
+    const orcamentos = atual ? ds.orcamentos.map((x) => (x.id === o.id ? novo : x)) : [...ds.orcamentos, novo];
+    ds = registrar({ ...ds, orcamentos }, atual ? 'alterar_orcamento' : 'criar_orcamento', 'orcamento', o.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  /**
+   * Contrata o orcamento: gera um servico da obra por item (custo orcado = custo direto, preco de venda = preco
+   * com BDI, redistribuido para fechar no valor do contrato quando informado) e atualiza o custo orcado da obra.
+   */
+  contratarOrcamento(id: string, dados: { codigoObra: string; ajustarAoContrato: boolean }) {
+    let ds = state.ds;
+    const atual = ds.orcamentos.find((x) => x.id === id);
+    if (!atual) throw new RegraDeNegocioError('Orçamento não encontrado.');
+    exigir('orcar');
+    exigir('editar_obra', dados.codigoObra);
+    if (atual.status === 'Contratado') throw new RegraDeNegocioError('Orçamento já contratado.');
+    const obra = ds.obras.find((o) => o.codigo === dados.codigoObra);
+    if (!obra) throw new RegraDeNegocioError('Obra não cadastrada. Cadastre a obra em Obras e contratos antes de contratar.');
+    const calc = calcOrcamento(atual, ds);
+    if (!calc.itens.length) throw new RegraDeNegocioError('Orçamento sem itens.');
+    if (calc.semCusto) throw new RegraDeNegocioError(`${calc.semCusto} item(ns) sem custo: vincule uma composição ou informe o custo unitário.`);
+    const sigla = obra.codigo.replace(/^OB-/, '').split('-').slice(0, 2).join('');
+    const valorContrato = dados.ajustarAoContrato ? obra.valorContrato + obra.aditivos : undefined;
+    const gerados = servicosDeOrcamento(calc, obra.codigo, sigla || 'SRV', ds.servicos, valorContrato);
+    const itens = calc.itens.map((it, i) => ({ id: it.id, ordem: it.ordem, etapa: it.etapa, codigo: it.codigo, descricao: it.descricao, unidade: it.unidade, quantidade: it.quantidade, composicaoId: it.composicaoId, custoUnitarioManual: it.custoUnitarioManual, servicoId: gerados[i]?.id }));
+    const novo: Orcamento = { ...atual, status: 'Contratado', codigoObra: obra.codigo, itens, atualizadoEm: agora() };
+    const custoOrcado = gerados.reduce((a, s) => a + s.custoOrcado, 0);
+    const obraNova: Obra = { ...obra, custoOrcado: Math.round(custoOrcado * 100) / 100 };
+    ds = { ...ds, orcamentos: ds.orcamentos.map((x) => (x.id === id ? novo : x)), servicos: [...ds.servicos, ...gerados], obras: ds.obras.map((o) => (o.codigo === obra.codigo ? obraNova : o)) };
+    ds = registrar(ds, 'contratar_orcamento', 'orcamento', id, atual, { status: 'Contratado', servicos: gerados.length, custoOrcado, precoVenda: gerados.reduce((a, s) => a + s.precoVenda, 0) });
+    commit(ds);
+    return { orcamento: novo, servicos: gerados };
+  },
+
   // Medicoes / cronograma fisico-financeiro
   // ---------------------------------------------------------------------------
   novaMedicao(codigoObra: string): Medicao {
