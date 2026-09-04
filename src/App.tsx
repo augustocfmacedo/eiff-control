@@ -24,6 +24,7 @@ import ApontamentoTela from './screens/Apontamento';
 import Campo from './screens/Campo';
 import Orcamentos from './screens/Orcamentos';
 import Compras from './screens/Compras';
+import { Icon, Marca, type IconName } from './ui/icons';
 
 export default function App() {
   const rota = useRota();
@@ -31,6 +32,8 @@ export default function App() {
   useEffect(() => { void inicializar(); }, []);
   // todos os hooks antes de qualquer saida antecipada (regra dos hooks)
   const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
+  const [tema, setTema] = useState<'dark' | 'light'>(() => { try { return localStorage.getItem('eiff-control:tema') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } });
+  useEffect(() => { document.documentElement.dataset.theme = tema; try { localStorage.setItem('eiff-control:tema', tema); } catch { /* ignore */ } }, [tema]);
   if (modo === 'remoto' && carregando) return <div className="empty" style={{ paddingTop: 120 }}>Carregando dados do Supabase…</div>;
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
@@ -58,13 +61,13 @@ export default function App() {
     setRecolhida(v);
     try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ }
   };
-  const ICONES: Record<string, string> = {
-    '/': '📊', '/inbox': '📥', '/central': '🏗️', '/obras': '📁', '/orcamentos': '🧾', '/compras': '🛒', '/equipe': '👷', '/campo': '📱', '/pagar': '📤', '/receber': '📥', '/lancamentos': '📒', '/aprovacoes': '✅',
-    '/posicao': '🏦', '/fluxo13': '📈', '/fluxo24': '📆', '/conciliacao': '🔗', '/dividas': '💳', '/dre': '🧮', '/checks': '🛡️', '/cadastros': '⚙️', '/auditoria': '🔍',
+  const ICONES: Record<string, IconName> = {
+    '/': 'painel', '/inbox': 'inbox', '/central': 'central', '/obras': 'obras', '/orcamentos': 'orcamento', '/compras': 'compras', '/equipe': 'equipe', '/campo': 'campo', '/pagar': 'pagar', '/receber': 'receber', '/lancamentos': 'lancamentos', '/aprovacoes': 'aprovacoes',
+    '/posicao': 'banco', '/fluxo13': 'fluxo', '/fluxo24': 'calendario', '/conciliacao': 'conciliacao', '/dividas': 'dividas', '/dre': 'dre', '/checks': 'checks', '/cadastros': 'cadastros', '/auditoria': 'auditoria',
   };
   const nav = (to: string, label: string, cnt?: number) => (
     <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && rota.path.startsWith(to)) ? 'active' : ''} title={label}>
-      <span className="nav-ico" aria-hidden="true">{ICONES[to] ?? '•'}</span><span className="nav-label">{label}</span>{cnt ? <span className="cnt">{cnt}</span> : null}
+      <span className="nav-ico" aria-hidden="true"><Icon name={ICONES[to] ?? 'obras'} size={17} /></span><span className="nav-label">{label}</span>{cnt ? <span className="cnt">{cnt}</span> : null}
     </a>
   );
 
@@ -100,7 +103,7 @@ export default function App() {
     return (
       <div className="campo">
         <header className="topbar" style={{ padding: '10px 14px' }}>
-          <div className="brand" style={{ padding: 0 }}><div className="logo">E</div><div><b>EIFF Control</b><span>Modo campo</span></div></div>
+          <div className="brand" style={{ padding: 0 }}><div className="logo"><Marca size={22} /></div><div><b>EIFF Control</b><span>Modo campo</span></div></div>
           <div className="spacer" />
           <span className="small">{usuario.nome.split(' ')[0]}</span>
           {modo === 'remoto' && sync.status === 'erro' && <Badge tone="bad">não sincronizado</Badge>}
@@ -115,9 +118,9 @@ export default function App() {
     <div className={`app ${recolhida ? 'recolhida' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
-          <div className="logo">E</div>
+          <div className="logo"><Marca size={22} /></div>
           <div className="nav-label"><b>EIFF Control</b><span>Do orçamento ao caixa</span></div>
-          <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}>{recolhida ? '»' : '«'}</button>
+          <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}><Icon name={recolhida ? 'expandir' : 'recolher'} size={16} /></button>
         </div>
         <nav className="nav">
           {nav('/', 'Painel executivo')}
@@ -150,7 +153,7 @@ export default function App() {
       </aside>
       <div className="main">
         <header className="topbar">
-          <button className="btn sm" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label="Alternar menu">☰</button>
+          <button className="btn sm" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label="Alternar menu"><Icon name="menu" size={16} /></button>
           <div className="ctx">
             <span><b>{ds.params.empresa}</b></span>
             <span>· data-base <b>{ds.params.dataBase.split('-').reverse().join('/')}</b></span>
@@ -159,6 +162,7 @@ export default function App() {
             {ds.params.incluirDemo && <span className="badge warn">demo</span>}
           </div>
           <div className="spacer" />
+          <button className="btn sm" onClick={() => setTema(tema === 'dark' ? 'light' : 'dark')} title={tema === 'dark' ? 'Tema claro' : 'Tema escuro'} aria-label="Alternar tema"><Icon name={tema === 'dark' ? 'sol' : 'lua'} size={15} /></button>
           {modo === 'remoto' ? (
             <>
               {sync.status === 'enviando' && <Badge tone="info">sincronizando…</Badge>}

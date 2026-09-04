@@ -4,8 +4,8 @@
   "description": "Gestão financeira, obras, equipe e produção da EIFF",
   "start_url": "/#/campo",
   "display": "standalone",
-  "background_color": "#0b1220",
-  "theme_color": "#0b3d91",
+  "background_color": "#0e1013",
+  "theme_color": "#14171b",
   "lang": "pt-BR",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
