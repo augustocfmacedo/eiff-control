@@ -26,6 +26,8 @@ import Orcamentos from './screens/Orcamentos';
 import Compras from './screens/Compras';
 import Producao from './screens/Producao';
 import Estoque from './screens/Estoque';
+import Capacitacao from './screens/Capacitacao';
+import { trilhaDe } from './core/capacitacao';
 import { Icon, Logotipo, Marca, type IconName } from './ui/icons';
 
 export default function App() {
@@ -57,6 +59,7 @@ export default function App() {
   const pend = ds.aprovacoes.filter((a) => a.status === 'Pendente' && a.etapas.find((e) => e.status === 'Pendente')?.papel === usuario.papel && a.solicitante !== usuario.nome).length;
   const tarefas = ds.tarefas.filter((t) => t.status === 'Aberta' && t.responsavel === usuario.id).length;
   const bancos = pode(usuario, 'ver_bancos');
+  const licoesPendentes = trilhaDe(usuario.papel).filter((l) => !ds.treinamentos.some((t) => t.usuarioId === usuario.id && t.licaoId === l.id)).length;
 
   const alternarSidebar = () => {
     const v = !recolhida;
@@ -65,7 +68,7 @@ export default function App() {
   };
   const ICONES: Record<string, IconName> = {
     '/': 'painel', '/inbox': 'inbox', '/central': 'central', '/obras': 'obras', '/orcamentos': 'orcamento', '/compras': 'compras', '/producao': 'fabrica', '/estoque': 'estoque', '/equipe': 'equipe', '/campo': 'campo', '/pagar': 'pagar', '/receber': 'receber', '/lancamentos': 'lancamentos', '/aprovacoes': 'aprovacoes',
-    '/posicao': 'banco', '/fluxo13': 'fluxo', '/fluxo24': 'calendario', '/conciliacao': 'conciliacao', '/dividas': 'dividas', '/dre': 'dre', '/checks': 'checks', '/cadastros': 'cadastros', '/auditoria': 'auditoria',
+    '/posicao': 'banco', '/fluxo13': 'fluxo', '/fluxo24': 'calendario', '/conciliacao': 'conciliacao', '/dividas': 'dividas', '/dre': 'dre', '/checks': 'checks', '/cadastros': 'cadastros', '/auditoria': 'auditoria', '/capacitacao': 'capacitacao',
   };
   const nav = (to: string, label: string, cnt?: number) => (
     <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && rota.path.startsWith(to)) ? 'active' : ''} title={label}>
@@ -82,6 +85,7 @@ export default function App() {
     case 'central': tela = <CentralObras />; break;
     case 'producao': tela = <Producao query={rota.query} key={rota.query.toString()} />; break;
     case 'estoque': tela = <Estoque query={rota.query} key={rota.query.toString()} />; break;
+    case 'capacitacao': tela = <Capacitacao licao={p1} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
     case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
     case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;
     case 'lancamentos': tela = p1 ? <LancamentoDetalhe id={p1} /> : <Lancamentos modo="todos" query={rota.query} key={rota.query.toString()} />; break;
@@ -128,6 +132,7 @@ export default function App() {
         <nav className="nav">
           {nav('/', 'Painel executivo')}
           {nav('/inbox', 'Minha caixa de entrada', pend + tarefas)}
+          {nav('/capacitacao', 'Capacitação', licoesPendentes)}
           <h3>Obras</h3>
           {nav('/central', 'Central de obras')}
           {nav('/obras', 'Obras e contratos')}

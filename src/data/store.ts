@@ -6,6 +6,7 @@
 import { useSyncExternalStore } from 'react';
 import seed from './seed.json';
 import type {
+  Treinamento,
   ItemEstoque,
   MovimentoEstoque,
   Apontamento,
@@ -1381,6 +1382,31 @@ export const actions = {
     ds = registrar({ ...ds, movimentosEstoque: [...ds.movimentosEstoque, novo] }, 'estornar_movimento_estoque', 'estoque', o.itemId, o, novo, motivo);
     commit(ds);
     return novo;
+  },
+
+  // -------------------------------------------------------------------------
+  // Capacitacao: progresso nas licoes (qualquer usuario ativo; conclusao registra a verificacao)
+  // -------------------------------------------------------------------------
+  concluirLicao(licaoId: string, acertos = 1) {
+    let ds = state.ds;
+    if (!state.usuario.ativo) throw new RegraDeNegocioError('Usuário inativo.');
+    if (!licaoId.trim()) throw new RegraDeNegocioError('Lição inválida.');
+    if (acertos < 1) throw new RegraDeNegocioError('Responda corretamente a verificação para concluir a lição.');
+    const atual = ds.treinamentos.find((t) => t.usuarioId === state.usuario.id && t.licaoId === licaoId);
+    if (atual) return atual;
+    const novo: Treinamento = { id: seq('TRN', ds.treinamentos.map((t) => t.id)), usuarioId: state.usuario.id, licaoId, concluidoEm: agora(), acertos };
+    ds = registrar({ ...ds, treinamentos: [...ds.treinamentos, novo] }, 'concluir_licao', 'capacitacao', licaoId, undefined, { usuario: state.usuario.id, acertos });
+    commit(ds);
+    return novo;
+  },
+
+  desfazerLicao(licaoId: string, usuarioId = state.usuario.id) {
+    let ds = state.ds;
+    if (usuarioId !== state.usuario.id) exigir('administrar');
+    const atual = ds.treinamentos.find((t) => t.usuarioId === usuarioId && t.licaoId === licaoId);
+    if (!atual) return;
+    ds = registrar({ ...ds, treinamentos: ds.treinamentos.filter((t) => t.id !== atual.id) }, 'desfazer_licao', 'capacitacao', licaoId, atual, undefined);
+    commit(ds);
   },
 
   // Medicoes / cronograma fisico-financeiro

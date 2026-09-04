@@ -379,3 +379,15 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 @media print { .print-head { display: flex; } }
 .print-head b { font-size: 16px; }
 .print-head span { color: var(--muted); font-size: 12px; }
+
+/* Capacitacao */
+.licao-n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; background: var(--surface-3); color: var(--muted); flex: 0 0 28px; }
+.licao-n.ok { background: var(--ok-bg); color: var(--ok); }
+.card.licao:hover { border-color: var(--brand); }
+.lista-passos li, .lista-processo li, .lista-rotina li { margin: 6px 0; line-height: 1.45; }
+.lista-processo { padding-left: 20px; }
+.lista-rotina { padding-left: 18px; }
+.manual-licao { page-break-inside: avoid; margin-bottom: 18px; }
+.manual-licao h2 { font-size: 15px; margin: 14px 0 2px; }
+.manual-licao h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin: 10px 0 2px; }
+.manual-licao ol, .manual-licao ul { margin: 2px 0 6px; padding-left: 20px; }

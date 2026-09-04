@@ -699,6 +699,15 @@ export interface MovimentoEstoque {
   criadoEm: string;
 }
 
+/** Progresso do usuario no modulo de capacitacao (licao concluida com a verificacao correta). */
+export interface Treinamento {
+  id: string;
+  usuarioId: string;
+  licaoId: string;
+  concluidoEm: string;
+  acertos?: number; // 0-1
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -746,4 +755,5 @@ export interface Dataset {
   romaneios: Romaneio[];
   itensEstoque: ItemEstoque[];
   movimentosEstoque: MovimentoEstoque[];
+  treinamentos: Treinamento[];
 }
