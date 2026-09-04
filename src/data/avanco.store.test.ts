@@ -34,13 +34,13 @@ describe('medicao fisica de servico', () => {
     actions.salvarServico({ ...est, pesoFabricacao: 0.7 });
     actions.salvarOrdem({ id: 'OF-T1', codigoObra: 'OB-SF-CL-01', servicoId: est.id, tipo: 'Fabricação', codigo: 'OF-T1', descricao: 'Lote 1', quantidade: 100, unidade: 't', prioridade: 'Normal', etapas: etapasPadrao('Fabricação'), observacoes: '', criadoEm: '', criadoPor: '' });
     actions.salvarOrdem({ id: 'OM-T1', codigoObra: 'OB-SF-CL-01', servicoId: est.id, tipo: 'Montagem', codigo: 'OM-T1', descricao: 'Eixos', quantidade: 100, unidade: 't', prioridade: 'Normal', etapas: etapasPadrao('Montagem'), observacoes: '', criadoEm: '', criadoPor: '' });
-    // fabricacao: 5 etapas, conclui 4 -> 80%; montagem: 5 etapas, conclui 1 -> 20%
+    // fabricacao: 6 estacoes, conclui 4 -> 66,7%; montagem: 5 etapas, conclui 1 -> 20%
     for (let i = 0; i < 4; i++) actions.avancarEtapa('OF-T1', i, 'Concluída', 100);
     actions.avancarEtapa('OM-T1', 0, 'Concluída', 100);
     const s = obra360(getState().ds, getState().ds.obras[0]).servicos.find((x) => x.id === est.id)!;
     expect(s.origemExecucao).toBe('Fabricação e montagem (ordens)');
-    expect(s.pctFabricacao).toBeCloseTo(0.8, 6);
+    expect(s.pctFabricacao).toBeCloseTo(4 / 6, 6);
     expect(s.pctMontagem).toBeCloseTo(0.2, 6);
-    expect(s.pctExecucao).toBeCloseTo(0.7 * 0.8 + 0.3 * 0.2, 6);
+    expect(s.pctExecucao).toBeCloseTo(0.7 * (4 / 6) + 0.3 * 0.2, 6);
   });
 });

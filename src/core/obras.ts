@@ -17,8 +17,10 @@ const segunda = (s: string) => addDays(s, -((toDate(s).getUTCDay() + 6) % 7));
 // ---------------------------------------------------------------------------
 // Linhas de producao: etapas padrao
 // ---------------------------------------------------------------------------
-export const ETAPAS_FABRICACAO = ['Detalhamento', 'Corte', 'Solda / conformação', 'Pintura', 'Expedição'];
+export const ETAPAS_FABRICACAO = ['Corte', 'Furação', 'Montagem e ponteamento', 'Solda', 'Pintura', 'Expedição'];
 export const ETAPAS_MONTAGEM = ['Recebimento em obra', 'Pré-montagem', 'Içamento', 'Fixação / torqueamento', 'Liberação'];
+/** Nomes de etapas de ordens antigas -> estacoes atuais (compatibilidade). */
+export const ETAPA_LEGADA: Record<string, string> = { Detalhamento: 'Corte', 'Solda / conformação': 'Solda' };
 
 export function etapasPadrao(tipo: TipoOrdem): EtapaOrdem[] {
   return (tipo === 'Fabricação' ? ETAPAS_FABRICACAO : ETAPAS_MONTAGEM).map((nome) => ({ nome, status: 'Pendente', quantidadeConcluida: 0 }));
@@ -362,7 +364,7 @@ export function resumoProducao(ordens: OrdemProducao[], tipo: TipoOrdem, dataBas
   const nomes = tipo === 'Fabricação' ? ETAPAS_FABRICACAO : ETAPAS_MONTAGEM;
   const porEtapa = [...nomes.map((nome) => ({ nome, quantidade: 0, ordens: [] as OrdemCalc[] })), { nome: 'Concluída', quantidade: 0, ordens: [] as OrdemCalc[] }];
   for (const o of calc) {
-    const col = o.status === 'Concluída' ? porEtapa[porEtapa.length - 1] : porEtapa.find((c) => c.nome === o.etapaAtual) ?? porEtapa[0];
+    const col = o.status === 'Concluída' ? porEtapa[porEtapa.length - 1] : porEtapa.find((c) => c.nome === (o.etapaAtual ? ETAPA_LEGADA[o.etapaAtual] ?? o.etapaAtual : '')) ?? porEtapa[0];
     col.ordens.push(o);
     col.quantidade += o.quantidade;
   }

@@ -145,13 +145,13 @@ describe('ordens de producao', () => {
   it('etapa atual, progresso e atraso', () => {
     let c = calcOrdem(o, DB);
     expect(c.status).toBe('Não iniciada');
-    expect(c.etapaAtual).toBe('Detalhamento');
+    expect(c.etapaAtual).toBe('Corte');
     expect(c.atrasada).toBe(true);
     const etapas = o.etapas.map((e, i) => (i < 2 ? { ...e, status: 'Concluída' as const } : e));
     c = calcOrdem({ ...o, etapas }, DB);
     expect(c.status).toBe('Em andamento');
-    expect(c.etapaAtual).toBe('Solda / conformação');
-    expect(c.pctConcluido).toBeCloseTo(0.4, 4);
+    expect(c.etapaAtual).toBe('Montagem e ponteamento');
+    expect(c.pctConcluido).toBeCloseTo(2 / 6, 4);
     c = calcOrdem({ ...o, etapas: o.etapas.map((e) => ({ ...e, status: 'Concluída' as const })) }, DB);
     expect(c.status).toBe('Concluída');
     expect(c.atrasada).toBe(false);

@@ -609,6 +609,47 @@ export interface AvancoServico {
   criadoEm: string;
 }
 
+// ---------------------------------------------------------------------------
+// Producao por estacao: apontamento de kg/horas e romaneios
+// ---------------------------------------------------------------------------
+export type LinhaProducao = 'Fabricação' | 'Montagem';
+
+/** Apontamento diario de uma estacao (fabrica ou canteiro): quilos e pecas processados, horas por colaborador. */
+export interface ApontamentoEstacao {
+  id: string;
+  data: string;
+  codigoObra: string;
+  servicoId?: string;
+  ordemId?: string;
+  linha: LinhaProducao;
+  estacao: string; // ver ESTACOES_FABRICA / ESTACOES_CANTEIRO
+  conjuntos: { conjuntoId: string; quantidade: number }[]; // pecas por marca (opcional)
+  pecas: number;
+  pesoKg: number;
+  colaboradores: { colaboradorId: string; horas: number }[];
+  observacao: string;
+  responsavel: string;
+  criadoEm: string;
+}
+
+/** Romaneio de expedicao: carga enviada da fabrica para o canteiro. */
+export interface Romaneio {
+  id: string;
+  codigoObra: string;
+  numero: string; // ROM-0001
+  data: string;
+  transportadora: string;
+  placa?: string;
+  motorista?: string;
+  destino: string;
+  itens: { conjuntoId: string; quantidade: number }[];
+  status: 'Emitido' | 'Entregue' | 'Cancelado';
+  entregueEm?: string;
+  observacoes: string;
+  criadoPor: string;
+  criadoEm: string;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -652,4 +693,6 @@ export interface Dataset {
   pedidos: PedidoCompra[];
   conjuntos: Conjunto[];
   avancos: AvancoServico[];
+  apontamentosEstacao: ApontamentoEstacao[];
+  romaneios: Romaneio[];
 }

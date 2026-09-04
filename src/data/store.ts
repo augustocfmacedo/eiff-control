@@ -7,6 +7,7 @@ import { useSyncExternalStore } from 'react';
 import seed from './seed.json';
 import type {
   Apontamento,
+  ApontamentoEstacao,
   Aprovacao,
   AvancoServico,
   Auditoria,
@@ -28,6 +29,7 @@ import type {
   OrdemProducao,
   Papel,
   Params,
+  Romaneio,
   PlanoConta,
   Servico,
   StatusEtapa,
@@ -41,6 +43,7 @@ import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
 import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
+import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -1150,6 +1153,133 @@ export const actions = {
     exigir('editar_etc', a.codigoObra);
     if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
     ds = registrar({ ...ds, avancos: ds.avancos.filter((x) => x.id !== id) }, 'excluir_medicao_servico', 'servico', a.servicoId, a, undefined, motivo);
+    commit(ds);
+  },
+
+  // -------------------------------------------------------------------------
+  // Producao por estacao e romaneios
+  // -------------------------------------------------------------------------
+  novoApontamentoEstacao(parcial: Partial<ApontamentoEstacao> = {}): ApontamentoEstacao {
+    return { id: seq('APE', state.ds.apontamentosEstacao.map((a) => a.id)), data: state.ds.params.dataBase, codigoObra: '', linha: 'Fabricação', estacao: 'Corte', conjuntos: [], pecas: 0, pesoKg: 0, colaboradores: [], observacao: '', responsavel: state.usuario.id, criadoEm: agora(), ...parcial };
+  },
+
+  /**
+   * Aponta uma estacao: grava kg/pecas/horas; se a estacao conclui um marco (Pintura = fabricado, Expedicao = expedido,
+   * Liberacao = montado) atualiza os conjuntos informados; se ha ordem, acumula a quantidade concluida na etapa homonima.
+   */
+  apontarEstacao(a: ApontamentoEstacao) {
+    let ds = state.ds;
+    if (!a.codigoObra || !ds.obras.some((o) => o.codigo === a.codigoObra)) throw new RegraDeNegocioError('Informe a obra.');
+    exigir('comentar', a.codigoObra);
+    if (!a.data) throw new RegraDeNegocioError('Informe a data.');
+    if (!estacoesDe(a.linha).includes(a.estacao)) throw new RegraDeNegocioError(`Estação ${a.estacao} não existe na linha ${a.linha}.`);
+    if (!(a.pesoKg > 0) && !(a.pecas > 0) && !a.conjuntos.length) throw new RegraDeNegocioError('Informe o peso, as peças ou os conjuntos processados.');
+    if (a.colaboradores.some((c) => c.horas <= 0 || c.horas > 24)) throw new RegraDeNegocioError('Horas por colaborador devem estar entre 0 e 24.');
+    if (a.colaboradores.some((c) => !ds.colaboradores.some((x) => x.id === c.colaboradorId))) throw new RegraDeNegocioError('Colaborador não cadastrado.');
+    if (a.servicoId && !ds.servicos.some((s) => s.id === a.servicoId && s.codigoObra === a.codigoObra)) throw new RegraDeNegocioError('Serviço não pertence à obra.');
+    if (a.ordemId && !ds.ordens.some((o) => o.id === a.ordemId && o.codigoObra === a.codigoObra)) throw new RegraDeNegocioError('Ordem não pertence à obra.');
+    // conjuntos: peso e pecas derivados quando nao informados
+    let conjuntos = ds.conjuntos;
+    let pesoKg = a.pesoKg; let pecas = a.pecas;
+    if (a.conjuntos.length) {
+      let pesoC = 0; let pecasC = 0;
+      for (const it of a.conjuntos) {
+        const c = conjuntos.find((x) => x.id === it.conjuntoId && x.codigoObra === a.codigoObra);
+        if (!c) throw new RegraDeNegocioError('Conjunto não pertence à obra.');
+        if (!(it.quantidade > 0)) throw new RegraDeNegocioError(`Quantidade do conjunto ${c.marca} deve ser positiva.`);
+        pesoC += it.quantidade * c.pesoUnitario; pecasC += it.quantidade;
+      }
+      if (!(pesoKg > 0)) pesoKg = Math.round(pesoC * 100) / 100;
+      if (!(pecas > 0)) pecas = pecasC;
+      const marco = ESTACAO_CONCLUI[a.estacao];
+      if (marco) {
+        const campo = marco === 'fabricado' ? 'fabricadoQtd' : marco === 'expedido' ? 'expedidoQtd' : 'montadoQtd';
+        conjuntos = conjuntos.map((c) => {
+          const it = a.conjuntos.find((x) => x.conjuntoId === c.id);
+          if (!it) return c;
+          const n = { ...c, [campo]: Math.min(c.quantidade, c[campo] + it.quantidade), liberadoEm: c.liberadoEm ?? a.data, atualizadoEm: agora() };
+          if (n.montadoQtd > n.expedidoQtd) n.expedidoQtd = n.montadoQtd;
+          if (n.expedidoQtd > n.fabricadoQtd) n.fabricadoQtd = n.expedidoQtd;
+          return n;
+        });
+      }
+    }
+    // ordem: acumula na etapa homonima
+    let ordens = ds.ordens;
+    if (a.ordemId) {
+      ordens = ordens.map((o) => {
+        if (o.id !== a.ordemId) return o;
+        const idx = o.etapas.findIndex((e) => e.nome === a.estacao);
+        if (idx < 0) return o;
+        const etapas = o.etapas.map((e, i) => {
+          if (i !== idx) return e;
+          const q = e.quantidadeConcluida + (o.unidade === 'kg' ? pesoKg : o.unidade === 't' ? pesoKg / 1000 : pecas);
+          return { ...e, quantidadeConcluida: q, status: q >= o.quantidade ? 'Concluída' as const : 'Em andamento' as const, inicio: e.inicio ?? a.data, fim: q >= o.quantidade ? a.data : e.fim };
+        });
+        return { ...o, etapas };
+      });
+    }
+    const novo: ApontamentoEstacao = { ...a, pesoKg, pecas, criadoEm: a.criadoEm || agora() };
+    const atual = ds.apontamentosEstacao.find((x) => x.id === a.id);
+    if (atual) throw new RegraDeNegocioError('Apontamento já registrado; exclua e aponte de novo.');
+    ds = registrar({ ...ds, conjuntos, ordens, apontamentosEstacao: [...ds.apontamentosEstacao, novo] }, 'apontar_estacao', 'producao', novo.id, undefined, { data: novo.data, linha: novo.linha, estacao: novo.estacao, pesoKg, pecas, horas: novo.colaboradores.reduce((s, c) => s + c.horas, 0) });
+    commit(ds);
+    return novo;
+  },
+
+  excluirApontamentoEstacao(id: string, motivo: string) {
+    let ds = state.ds;
+    const a = ds.apontamentosEstacao.find((x) => x.id === id);
+    if (!a) throw new RegraDeNegocioError('Apontamento não encontrado.');
+    exigir('editar_etc', a.codigoObra);
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    // desfaz os marcos nos conjuntos (nao mexe nas ordens: reapontar corrige)
+    const marco = ESTACAO_CONCLUI[a.estacao];
+    const campo = marco === 'fabricado' ? 'fabricadoQtd' : marco === 'expedido' ? 'expedidoQtd' : marco === 'montado' ? 'montadoQtd' : null;
+    const conjuntos = campo ? ds.conjuntos.map((c) => { const it = a.conjuntos.find((x) => x.conjuntoId === c.id); return it ? { ...c, [campo]: Math.max(0, c[campo] - it.quantidade), atualizadoEm: agora() } : c; }) : ds.conjuntos;
+    ds = registrar({ ...ds, conjuntos, apontamentosEstacao: ds.apontamentosEstacao.filter((x) => x.id !== id) }, 'excluir_apontamento_estacao', 'producao', id, a, undefined, motivo);
+    commit(ds);
+  },
+
+  novoRomaneio(codigoObra: string): Romaneio {
+    const id = seq('ROM', state.ds.romaneios.map((r) => r.id));
+    return { id, codigoObra, numero: id, data: state.ds.params.dataBase, transportadora: '', destino: state.ds.obras.find((o) => o.codigo === codigoObra)?.cidadeUf ?? '', itens: [], status: 'Emitido', observacoes: '', criadoPor: state.usuario.id, criadoEm: agora() };
+  },
+
+  /** Emite o romaneio e marca os conjuntos como expedidos (mesma regra da estacao Expedicao). */
+  emitirRomaneio(r: Romaneio) {
+    let ds = state.ds;
+    if (!ds.obras.some((o) => o.codigo === r.codigoObra)) throw new RegraDeNegocioError('Obra não cadastrada.');
+    exigir('comentar', r.codigoObra);
+    if (ds.romaneios.some((x) => x.id === r.id)) throw new RegraDeNegocioError('Romaneio já emitido.');
+    if (!r.transportadora.trim()) throw new RegraDeNegocioError('Informe a transportadora ou o veículo.');
+    if (!r.itens.length) throw new RegraDeNegocioError('Romaneio sem conjuntos.');
+    let conjuntos = ds.conjuntos;
+    for (const it of r.itens) {
+      const c = conjuntos.find((x) => x.id === it.conjuntoId && x.codigoObra === r.codigoObra);
+      if (!c) throw new RegraDeNegocioError('Conjunto não pertence à obra.');
+      if (!(it.quantidade > 0)) throw new RegraDeNegocioError(`Quantidade do conjunto ${c.marca} deve ser positiva.`);
+      if (c.expedidoQtd + it.quantidade > c.quantidade + 1e-9) throw new RegraDeNegocioError(`${c.marca}: expedição ultrapassa as ${c.quantidade} peça(s).`);
+      conjuntos = conjuntos.map((x) => (x.id === c.id ? { ...x, expedidoQtd: x.expedidoQtd + it.quantidade, fabricadoQtd: Math.max(x.fabricadoQtd, x.expedidoQtd + it.quantidade), liberadoEm: x.liberadoEm ?? r.data, atualizadoEm: agora() } : x));
+    }
+    const novo: Romaneio = { ...r, status: 'Emitido', criadoEm: agora() };
+    ds = registrar({ ...ds, conjuntos, romaneios: [...ds.romaneios, novo] }, 'emitir_romaneio', 'romaneio', r.id, undefined, novo);
+    commit(ds);
+    return novo;
+  },
+
+  atualizarRomaneio(id: string, dados: { status: Romaneio['status']; entregueEm?: string; observacoes?: string; motivo?: string }) {
+    let ds = state.ds;
+    const r = ds.romaneios.find((x) => x.id === id);
+    if (!r) throw new RegraDeNegocioError('Romaneio não encontrado.');
+    exigir('comentar', r.codigoObra);
+    let conjuntos = ds.conjuntos;
+    if (dados.status === 'Cancelado' && r.status !== 'Cancelado') {
+      if (!dados.motivo?.trim()) throw new RegraDeNegocioError('Motivo do cancelamento é obrigatório.');
+      conjuntos = conjuntos.map((c) => { const it = r.itens.find((x) => x.conjuntoId === c.id); return it ? { ...c, expedidoQtd: Math.max(c.montadoQtd, c.expedidoQtd - it.quantidade), atualizadoEm: agora() } : c; });
+    }
+    const novo: Romaneio = { ...r, status: dados.status, entregueEm: dados.status === 'Entregue' ? dados.entregueEm ?? ds.params.dataBase : r.entregueEm, observacoes: dados.observacoes ?? r.observacoes };
+    ds = registrar({ ...ds, conjuntos, romaneios: ds.romaneios.map((x) => (x.id === id ? novo : x)) }, dados.status === 'Cancelado' ? 'cancelar_romaneio' : 'atualizar_romaneio', 'romaneio', id, r, novo, dados.motivo);
     commit(ds);
   },
 

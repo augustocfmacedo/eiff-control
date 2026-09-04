@@ -85,6 +85,8 @@ interface Refs {
   pedidos: Map<string, string>;
   conjuntos: Map<string, string>;
   avancos: Map<string, string>;
+  apontEstacao: Map<string, string>;
+  romaneios: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -160,6 +162,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
   const [pedidosRows, pedidosItens, conjuntosRows, avancosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark'), selTodos('service_progress', 'measured_on')]);
+  const [estacaoRows, romaneioRows] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number')]);
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -209,6 +212,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     pedidos: new Map(pedidosRows.map((x) => [x.id, x.id])),
     conjuntos: new Map(conjuntosRows.map((x) => [x.id, x.id])),
     avancos: new Map(avancosRows.map((x) => [x.id, x.id])),
+    apontEstacao: new Map(estacaoRows.map((x) => [x.id, x.id])),
+    romaneios: new Map(romaneioRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -316,7 +321,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [],
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [],
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -345,6 +350,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     revisao: x.revision ?? undefined, liberadoEm: x.released_on ?? undefined, fabricadoQtd: Number(x.fabricated_qty ?? 0), expedidoQtd: Number(x.shipped_qty ?? 0), montadoQtd: Number(x.erected_qty ?? 0), observacoes: x.notes ?? '', atualizadoEm: x.updated_at,
   }));
   ds.avancos = avancosRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, data: x.measured_on, quantidade: Number(x.quantity), pct: x.pct === null || x.pct === undefined ? undefined : Number(x.pct), descricao: x.description ?? '', evidencia: x.evidence ?? undefined, responsavel: x.created_by ?? '', criadoEm: x.created_at }));
+  ds.apontamentosEstacao = estacaoRows.map((x) => ({ id: x.id, data: x.log_date, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, linha: x.line, estacao: x.station, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], pecas: Number(x.pieces ?? 0), pesoKg: Number(x.weight_kg ?? 0), colaboradores: (x.workers ?? []) as { colaboradorId: string; horas: number }[], observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
+  ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
 }
 
@@ -737,6 +744,24 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     const { error } = await sb.from('service_progress').delete().eq('id', r.avancos.get(a.id)!);
     falha('excluir medição de serviço', error);
     r.avancos.delete(a.id);
+  }
+
+  // apontamentos de estacao (imutaveis) e romaneios
+  for (const a of mudou(antes.apontamentosEstacao ?? [], depois.apontamentosEstacao ?? [], 'id').filter((x) => !r.apontEstacao.get(x.id))) {
+    const { data, error } = await sb.from('station_log').insert({ organization_id: r.orgId, project_id: r.obras.get(a.codigoObra), service_id: a.servicoId ? r.servicos.get(a.servicoId) ?? null : null, order_id: a.ordemId ? r.ordens.get(a.ordemId) ?? null : null, log_date: a.data, line: a.linha, station: a.estacao, assemblies: a.conjuntos.map((c) => ({ conjuntoId: r.conjuntos.get(c.conjuntoId) ?? c.conjuntoId, quantidade: c.quantidade })), pieces: a.pecas, weight_kg: a.pesoKg, workers: a.colaboradores.map((c) => ({ colaboradorId: r.colaboradores.get(c.colaboradorId) ?? c.colaboradorId, horas: c.horas })), notes: a.observacao || null, created_by: atorId }).select('id');
+    falha('registrar apontamento de estação', error);
+    if (data?.[0]) r.apontEstacao.set(a.id, data[0].id);
+  }
+  const apeDepois = new Set((depois.apontamentosEstacao ?? []).map((a) => a.id));
+  for (const a of (antes.apontamentosEstacao ?? []).filter((x) => !apeDepois.has(x.id) && r.apontEstacao.get(x.id))) {
+    const { error } = await sb.from('station_log').delete().eq('id', r.apontEstacao.get(a.id)!);
+    falha('excluir apontamento de estação', error);
+    r.apontEstacao.delete(a.id);
+  }
+  for (const ro of mudou(antes.romaneios ?? [], depois.romaneios ?? [], 'id')) {
+    const row = { number: ro.numero, shipped_on: ro.data, carrier: ro.transportadora, plate: ro.placa ?? null, driver: ro.motorista ?? null, destination: ro.destino || null, items: ro.itens.map((i) => ({ conjuntoId: r.conjuntos.get(i.conjuntoId) ?? i.conjuntoId, quantidade: i.quantidade })), status: ro.status, delivered_on: ro.entregueEm ?? null, notes: ro.observacoes || null };
+    const data = await gravar('shipment', { id: r.romaneios.get(ro.id) }, row, { organization_id: r.orgId, project_id: r.obras.get(ro.codigoObra), created_by: atorId });
+    if (data) r.romaneios.set(ro.id, data.id);
   }
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)
