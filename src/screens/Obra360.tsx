@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { calcLancamentos, fluxo13Semanas, obra360 } from '../core/engine';
 import { actions, pode, useStore } from '../data/store';
-import { Bars, Empty, Field, Kpi, Link, Modal, Money, NumberInput, PageHead, StatusBadge, Tabs, money, pct, tentar, useToast } from '../ui/components';
+import { Bars, Empty, Field, KpiHero, KpiStrip, Link, Modal, Money, NumberInput, PageHead, PrintHead, ProgressRow, StatusBadge, Tabs, money, pct, tentar, useToast } from '../ui/components';
+import { Sparkline } from '../ui/charts';
 import { Timeline } from '../ui/Timeline';
 import { ObraForm } from './Obras';
 import { LancamentoForm } from './LancamentoForm';
@@ -27,22 +28,45 @@ export default function Obra360({ codigo }: { codigo: string }) {
       <PageHead title={`${obra.codigo} · ${obra.nome}`} subtitle={<>{obra.cliente} · {obra.cidadeUf} · <StatusBadge s={obra.status} /> {o.diasParaPrazo !== undefined && <span className={o.diasParaPrazo < 0 ? 'neg' : 'muted'}> · {o.diasParaPrazo} dias para o prazo contratual</span>}</>}>
         {pode(usuario, 'editar_etc', codigo) && <button className="btn" onClick={() => setExec({ execucaoFisica: obra.execucaoFisica, medidoFaturado: obra.medidoFaturado, estimativaConcluir: obra.estimativaConcluir, justificativa: '' })}>Atualizar execução / ETC</button>}
         {pode(usuario, 'editar_lancamento', codigo) && <button className="btn" onClick={() => setNovoLanc(true)}>+ Compromisso / recebível</button>}
+        <button className="btn" onClick={() => window.print()} title="Imprime a Obra 360 como relatório">Imprimir relatório</button>
         {pode(usuario, 'editar_obra', codigo) && <button className="btn primary" onClick={() => setEditando(true)}>Editar contrato</button>}
       </PageHead>
+      <PrintHead titulo={`${obra.codigo} · ${obra.nome}`} subtitulo={`${obra.cliente} · ${obra.cidadeUf} · data-base ${ds.params.dataBase.split('-').reverse().join('/')}`} />
       {o.ativa && !o.etc && !o.custoComprometido && <div className="alert warn">Estimativa a concluir (ETC) não informada: a margem projetada de {pct(o.pctMargemProjetada)} está superestimada. Atualize a execução.</div>}
       {o.margemProjetada < 0 && <div className="alert bad">Margem projetada negativa. Reorçar e travar novos compromissos.</div>}
 
-      <div className="grid cols-4">
-        <Kpi label="Receita total" value={money(o.receitaTotal)} hint={`contrato ${money(obra.valorContrato, true)} + aditivos ${money(obra.aditivos, true)}`} />
-        <Kpi label="Medido / faturado" value={money(o.medidoFaturado)} hint={`saldo a medir ${money(o.saldoAMedir, true)}`} />
-        <Kpi label="Recebido" value={money(o.recebido)} hint={`contas a receber ${money(o.contasAReceber, true)}`} to={`/receber?obra=${codigo}`} />
-        <Kpi label="Caixa da obra" value={money(o.caixaGerado)} hint="entradas realizadas − saídas realizadas" tone={o.caixaGerado < 0 ? 'warn' : undefined} />
-        <Kpi label={o.temServicos ? 'Custo previsto (serviços)' : 'Custo orçado'} value={money(o.custoOrcado)} hint={o.temServicos ? (o.custoOrcamentoExecutivo > 0 ? `orçamento executivo ${money(o.custoOrcamentoExecutivo, true)} · margem alvo ${pct(o.margemAlvo)} onde não há orçamento` : `margem alvo ${pct(o.margemAlvo)} onde não há orçamento`) + ` · faturado ${money(o.medicoes.faturado, true)} de ${money(o.medicoes.liquidoConstrutora, true)}` : `margem orçada ${pct(o.pctMargemOrcada)}`} />
-        <Kpi label="Comprometido" value={money(o.custoComprometido)} hint={`pago ${money(o.custoPago, true)} · em aberto ${money(o.comprometidoAberto, true)} · orçamento disponível ${money(o.orcamentoDisponivel, true)}`} tone={o.orcamentoDisponivel < 0 ? 'bad' : undefined} to={`/pagar?obra=${codigo}`} />
-        <Kpi label="Faturamento direto (cliente)" value={money(o.faturamentoDiretoUtilizado)} hint={`contrato ${money(o.faturamentoDiretoContratado, true)} · saldo ${money(o.faturamentoDiretoSaldo, true)} · pago pelo cliente ${money(o.custoPagoDireto, true)}`} tone={o.faturamentoDiretoSaldo < 0 ? 'bad' : undefined} />
-        <Kpi label="EAC (custo projetado)" value={money(o.eac)} hint={`ETC ${money(o.etc, true)} · não comprometido ${money(o.etcNaoComprometido, true)}`} />
-        <Kpi label="Margem projetada" value={`${money(o.margemProjetada)} · ${pct(o.pctMargemProjetada)}`} tone={o.margemProjetada < 0 ? 'bad' : o.pctMargemProjetada < 0.1 ? 'warn' : 'ok'} />
+      <div className="hero-grid">
+        <KpiHero label="Margem projetada" value={money(o.margemProjetada)} sufixo={pct(o.pctMargemProjetada)} tone={o.margemProjetada < 0 ? 'bad' : o.pctMargemProjetada < 0.1 ? 'warn' : 'ok'}
+          hint={`receita ${money(o.receitaTotal, true)} − EAC ${money(o.eac, true)} (pago ${money(o.custoPago, true)} · em aberto ${money(o.comprometidoAberto, true)} · ETC não comprometido ${money(o.etcNaoComprometido, true)})`}
+          secundarios={[
+            { label: 'Receita total', value: money(o.receitaTotal, true) },
+            { label: o.temServicos ? 'Custo previsto' : 'Custo orçado', value: money(o.custoOrcado, true) },
+            { label: 'EAC', value: money(o.eac, true) },
+            { label: 'Orçamento disponível', value: money(o.orcamentoDisponivel, true), tone: o.orcamentoDisponivel < 0 ? 'neg' : undefined },
+          ]}>
+          <ProgressRow label="Execução física" valor={o.execucaoFisica} />
+          <ProgressRow label="Faturado do contrato" valor={o.medicoes.liquidoConstrutora ? o.medicoes.faturado / o.medicoes.liquidoConstrutora : o.receitaTotal ? o.medidoFaturado / o.receitaTotal : 0} />
+          <ProgressRow label="Orçamento comprometido" valor={o.custoOrcado ? o.custoComprometido / o.custoOrcado : 0} tone={o.custoOrcado && o.custoComprometido > o.custoOrcado ? 'bad' : undefined} />
+        </KpiHero>
+        <KpiHero label="Caixa da obra" value={money(o.caixaGerado)} hint="recebido − pago pela EIFF (sem faturamento direto)" tone={o.caixaGerado < 0 ? 'warn' : undefined} to={`/receber?obra=${codigo}`}
+          secundarios={[
+            { label: 'Medido / faturado', value: money(o.medidoFaturado, true) },
+            { label: 'Recebido', value: money(o.recebido, true) },
+            { label: 'Contas a receber', value: money(o.contasAReceber, true) },
+            { label: 'Pago pela EIFF', value: money(o.custoPagoEIFF, true) },
+          ]}>
+          <Sparkline valores={f13.saldoFinal} rotulos={f13.periodos.map((p) => p.rotulo)} />
+          <div className="muted small">Saldo acumulado da obra nas próximas 13 semanas</div>
+        </KpiHero>
       </div>
+      <KpiStrip itens={[
+        { label: 'Comprometido', value: money(o.custoComprometido, true), hint: `em aberto ${money(o.comprometidoAberto, true)}`, to: `/pagar?obra=${codigo}` },
+        { label: 'Faturamento direto usado', value: money(o.faturamentoDiretoUtilizado, true), hint: `saldo ${money(o.faturamentoDiretoSaldo, true)} de ${money(o.faturamentoDiretoContratado, true)}`, tone: o.faturamentoDiretoSaldo < 0 ? 'neg' : undefined },
+        { label: 'ETC', value: money(o.etc, true), hint: `não comprometido ${money(o.etcNaoComprometido, true)}` },
+        { label: 'Saldo a medir', value: money(o.saldoAMedir, true), hint: `${o.medicoes.pendentes} evento(s) pendente(s)`, tone: o.medicoes.atrasadas ? 'warn' : undefined },
+        { label: 'Margem orçada', value: pct(o.pctMargemOrcada), hint: o.custoOrcamentoExecutivo > 0 ? `orçamento executivo ${money(o.custoOrcamentoExecutivo, true)}` : `margem alvo ${pct(o.margemAlvo)}` },
+        { label: 'Prazo', value: o.diasParaPrazo !== undefined ? `${o.diasParaPrazo} d` : '—', hint: obra.fimContratual ? obra.fimContratual.split('-').reverse().join('/') : 'sem fim contratual', tone: o.diasParaPrazo !== undefined && o.diasParaPrazo < 0 ? 'neg' : undefined },
+      ]} />
 
       <div className="card" style={{ marginTop: 16 }}>
         <Tabs value={aba} onChange={setAba} items={[

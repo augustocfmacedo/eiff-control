@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fmtBr } from '../core/engine';
 import { href, navegar } from './router';
+import { Icon, Marca, type IconName } from './icons';
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 });
 const brlInt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -23,6 +24,59 @@ export function Kpi({ label, value, hint, tone, to }: { label: string; value: Re
       <div className="label">{label}</div>
       <div className="value">{value}</div>
       {hint && <div className="hint">{hint}</div>}
+    </div>
+  );
+}
+
+export interface KpiSecundario { label: string; value: React.ReactNode; tone?: 'neg' | 'warn' | 'pos' }
+
+/** KPI principal da tela: valor grande, complemento, grafico opcional e metricas secundarias na base. */
+export function KpiHero({ label, value, sufixo, hint, tone, to, children, secundarios }: { label: string; value: React.ReactNode; sufixo?: React.ReactNode; hint?: React.ReactNode; tone?: 'ok' | 'warn' | 'bad'; to?: string; children?: React.ReactNode; secundarios?: KpiSecundario[] }) {
+  return (
+    <div className={`kpi hero ${tone ?? ''} ${to ? 'link' : ''}`} onClick={to ? () => navegar(to) : undefined}>
+      <div className="label">{label}</div>
+      <div className="value">{value}{sufixo && <small>{sufixo}</small>}</div>
+      {hint && <div className="hint">{hint}</div>}
+      {children && <div className="kpi-spark">{children}</div>}
+      {secundarios && secundarios.length > 0 && (
+        <div className="kpi-sec">{secundarios.map((s) => <div key={s.label}><div className="label">{s.label}</div><div className={`v ${s.tone ?? ''}`}>{s.value}</div></div>)}</div>
+      )}
+    </div>
+  );
+}
+
+/** Faixa compacta de metricas secundarias. */
+export function KpiStrip({ itens }: { itens: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: 'neg' | 'warn' | 'pos'; to?: string }[] }) {
+  return (
+    <div className="strip">
+      {itens.map((i) => (
+        <div key={i.label} className={i.to ? 'link' : ''} onClick={i.to ? () => navegar(i.to!) : undefined}>
+          <div className="label">{i.label}</div>
+          <div className={`v ${i.tone ?? ''}`}>{i.value}</div>
+          {i.hint && <div className="hint">{i.hint}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ProgressRow({ label, valor, texto, tone }: { label: string; valor: number; texto?: string; tone?: 'ok' | 'warn' | 'bad' }) {
+  const cor = tone === 'bad' ? 'var(--bad)' : tone === 'warn' ? 'var(--warn)' : tone === 'ok' ? 'var(--ok)' : 'var(--brand)';
+  return (
+    <div className="progress-row">
+      <span className="label">{label}</span>
+      <div className="progress"><i style={{ width: `${Math.max(0, Math.min(1, valor)) * 100}%`, background: cor }} /></div>
+      <span className="v">{texto ?? pct(valor)}</span>
+    </div>
+  );
+}
+
+/** Cabecalho de relatorio, visivel so na impressao. */
+export function PrintHead({ titulo, subtitulo }: { titulo: string; subtitulo?: string }) {
+  return (
+    <div className="print-only print-head">
+      <Marca size={26} />
+      <div><b>{titulo}</b><br /><span>{subtitulo ?? ''} · impresso em {new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span></div>
     </div>
   );
 }
@@ -96,8 +150,8 @@ export function Alert({ tone, children }: { tone: 'ok' | 'warn' | 'bad' | 'info'
   return <div className={`alert ${tone}`}>{children}</div>;
 }
 
-export function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="empty">{children}</div>;
+export function Empty({ children, icone = 'vazio', titulo }: { children: React.ReactNode; icone?: IconName; titulo?: string }) {
+  return <div className="empty"><Icon name={icone} size={26} />{titulo && <div className="empty-title">{titulo}</div>}<div>{children}</div></div>;
 }
 
 export function Link({ to, children, className }: { to: string; children: React.ReactNode; className?: string }) {
