@@ -87,6 +87,15 @@ describe('orcamento com BDI e curva ABC', () => {
     expect(s2.reduce((a, x) => a + x.precoVenda, 0)).toBeCloseTo(200000, 0);
     expect(s2[0].custoOrcado).toBeCloseTo(121250, 2);
   });
+  it('preco de venda informado substitui o BDI e gera margem por item e por servico', () => {
+    const c2 = calcOrcamento({ ...orc, itens: [{ ...orc.itens[0], precoUnitarioVenda: 20, servicoId: 'S1' }, { ...orc.itens[1], servicoId: 'S1' }, orc.itens[2]] }, cat);
+    expect(c2.itens[0].precoInformado).toBe(true);
+    expect(c2.itens[0].precoTotal).toBeCloseTo(200000, 2);
+    expect(c2.itens[0].margem).toBeCloseTo(200000 - 121250, 2);
+    expect(c2.itens[1].precoTotal).toBeCloseTo(23000 * 1.25, 2); // sem preco informado: BDI
+    expect(c2.porServico).toEqual([{ servicoId: 'S1', custo: expect.closeTo(144250, 2), preco: expect.closeTo(200000 + 28750, 2), itens: 2 }]);
+    expect(c2.pctMargem).toBeCloseTo((c2.precoTotal - c2.custoTotal) / c2.precoTotal, 6);
+  });
   it('mapeia etapas textuais para as etapas da obra', () => {
     expect(etapaObraDe('Pintura eletrostática')).toBe('Pintura');
     expect(etapaObraDe('Cobertura em telha')).toBe('Cobertura e fechamento');

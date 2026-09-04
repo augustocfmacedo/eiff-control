@@ -903,7 +903,7 @@ export const actions = {
     const sigla = obra.codigo.replace(/^OB-/, '').split('-').slice(0, 2).join('');
     const valorContrato = dados.ajustarAoContrato ? obra.valorContrato + obra.aditivos : undefined;
     const gerados = servicosDeOrcamento(calc, obra.codigo, sigla || 'SRV', ds.servicos, valorContrato);
-    const itens = calc.itens.map((it, i) => ({ id: it.id, ordem: it.ordem, etapa: it.etapa, codigo: it.codigo, descricao: it.descricao, unidade: it.unidade, quantidade: it.quantidade, composicaoId: it.composicaoId, custoUnitarioManual: it.custoUnitarioManual, servicoId: gerados[i]?.id }));
+    const itens = calc.itens.map((it, i) => ({ id: it.id, ordem: it.ordem, etapa: it.etapa, codigo: it.codigo, descricao: it.descricao, unidade: it.unidade, quantidade: it.quantidade, composicaoId: it.composicaoId, custoUnitarioManual: it.custoUnitarioManual, precoUnitarioVenda: it.precoUnitarioVenda, servicoId: gerados[i]?.id }));
     const novo: Orcamento = { ...atual, status: 'Contratado', codigoObra: obra.codigo, itens, atualizadoEm: agora() };
     const custoOrcado = gerados.reduce((a, s) => a + s.custoOrcado, 0);
     const obraNova: Obra = { ...obra, custoOrcado: Math.round(custoOrcado * 100) / 100 };

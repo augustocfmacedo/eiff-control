@@ -444,7 +444,7 @@ function OrcamentoDetalhe({ id, onErro, onOk }: { id: string; onErro: (m: string
       </PageHead>
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <Kpi label="Custo direto" value={money(calc.custoTotal)} hint={`${calc.itens.length} item(ns)${calc.semCusto ? ` · ${calc.semCusto} sem custo` : ''}`} tone={calc.semCusto || calc.incompletos ? 'warn' : undefined} />
-        <Kpi label={`BDI ${pct(o.bdi)}`} value={money(calc.valorBdi)} />
+        <Kpi label={calc.itens.some((i) => i.precoInformado) ? `Margem sobre a venda (${pct(calc.pctMargem)})` : `BDI ${pct(o.bdi)}`} value={money(calc.margem)} tone={calc.custoTotal > 0 && calc.margem < 0 ? 'bad' : undefined} hint={calc.itens.some((i) => i.precoInformado) ? `${calc.itens.filter((i) => i.precoInformado).length} item(ns) com preço de venda informado` : undefined} />
         <Kpi label="Preço de venda" value={money(calc.precoTotal)} hint={obra ? `contrato ${money(obra.valorContrato + obra.aditivos)}` : undefined} />
         <Kpi label="Material / MO / Equip." value={`${pct(calc.custoTotal ? calc.porTipo.Material / calc.custoTotal : 0)} / ${pct(calc.custoTotal ? calc.porTipo['Mão de obra'] / calc.custoTotal : 0)} / ${pct(calc.custoTotal ? calc.porTipo.Equipamento / calc.custoTotal : 0)}`} hint={`serviços/outros ${pct(calc.custoTotal ? (calc.porTipo.Serviço + calc.porTipo.Outros) / calc.custoTotal : 0)}`} />
       </div>
@@ -473,7 +473,7 @@ function OrcamentoDetalhe({ id, onErro, onOk }: { id: string; onErro: (m: string
                   <td className="small">{podeEditar && <><button className="btn sm" onClick={() => mover(idx, -1)} title="Subir">↑</button><button className="btn sm" onClick={() => mover(idx, 1)} title="Descer">↓</button></>}</td>
                   <td><input value={it.etapa} onChange={(e) => setItem(idx, { etapa: e.target.value })} disabled={!podeEditar} style={{ width: 120 }} list="etapas-orc" /></td>
                   <td><input value={it.codigo} onChange={(e) => setItem(idx, { codigo: e.target.value })} disabled={!podeEditar} style={{ width: 70 }} /></td>
-                  <td><input value={it.descricao} onChange={(e) => setItem(idx, { descricao: e.target.value })} disabled={!podeEditar} style={{ width: '100%' }} />{it.servicoId && <div className="small muted">serviço {ds.servicos.find((s) => s.id === it.servicoId)?.codigo ?? ''}</div>}</td>
+                  <td><input value={it.descricao} onChange={(e) => setItem(idx, { descricao: e.target.value })} disabled={!podeEditar} style={{ width: '100%' }} />{it.servicoId && <div className="small muted">serviço <b>{ds.servicos.find((s) => s.id === it.servicoId)?.codigo ?? ''}</b></div>}</td>
                   <td><input value={it.unidade} onChange={(e) => setItem(idx, { unidade: e.target.value })} disabled={!podeEditar} style={{ width: 55 }} /></td>
                   <td className="num"><input type="number" step="0.0001" value={it.quantidade} onChange={(e) => setItem(idx, { quantidade: Number(e.target.value) })} disabled={!podeEditar} style={{ width: 100, textAlign: 'right' }} /></td>
                   <td className="small">
@@ -482,8 +482,8 @@ function OrcamentoDetalhe({ id, onErro, onOk }: { id: string; onErro: (m: string
                   </td>
                   <td className="num">{it.composicaoId ? n2(it.custoUnitario) : <input type="number" step="0.01" value={it.custoUnitarioManual ?? ''} placeholder="manual" onChange={(e) => setItem(idx, { custoUnitarioManual: e.target.value === '' ? undefined : Number(e.target.value) })} disabled={!podeEditar} style={{ width: 100, textAlign: 'right' }} />}</td>
                   <td className="num"><b>{money(it.custoTotal)}</b></td>
-                  <td className="num">{n2(it.precoUnitario)}</td>
-                  <td className="num">{money(it.precoTotal)}</td>
+                  <td className="num"><input type="number" step="0.0001" value={it.precoUnitarioVenda ?? ''} placeholder={n2(it.precoUnitario)} title="Vazio = custo × (1 + BDI); preenchido = preço de venda informado" onChange={(e) => setItem(idx, { precoUnitarioVenda: e.target.value === '' ? undefined : Number(e.target.value) })} disabled={!podeEditar} style={{ width: 110, textAlign: 'right' }} /></td>
+                  <td className="num">{money(it.precoTotal)}{it.custoTotal > 0 && <div className={`small ${it.margem < 0 ? 'neg' : 'muted'}`}>margem {pct(it.pctMargem)}</div>}</td>
                   <td>{podeEditar && <button className="btn sm" onClick={() => up({ itens: o.itens.filter((_, i) => i !== idx) })}>✕</button>}</td>
                 </tr>
               ))}
@@ -497,6 +497,15 @@ function OrcamentoDetalhe({ id, onErro, onOk }: { id: string; onErro: (m: string
       )}
       {aba === 'insumos' && <CurvaAbc itens={calc.curvaInsumos} titulo="Curva ABC de insumos (explosão das composições × quantidades)" />}
       {aba === 'abcItens' && <CurvaAbc itens={calc.curvaItens} titulo="Curva ABC de itens do orçamento (custo direto)" />}
+      {aba === 'resumo' && calc.porServico.length > 0 && (
+        <div className="card table-wrap" style={{ marginBottom: 16 }}>
+          <h2>Por serviço da obra</h2>
+          <table>
+            <thead><tr><th>Serviço</th><th className="num">Itens</th><th className="num">Custo direto</th><th className="num">Preço de venda</th><th className="num">Margem</th><th className="num">Base do serviço</th></tr></thead>
+            <tbody>{calc.porServico.map((s) => { const sv = ds.servicos.find((x) => x.id === s.servicoId); return <tr key={s.servicoId}><td>{sv ? <Link to={`/obras/${sv.codigoObra}`}><b>{sv.codigo}</b> {sv.nome}</Link> : s.servicoId}</td><td className="num">{s.itens}</td><td className="num">{money(s.custo)}</td><td className="num">{money(s.preco)}</td><td className={`num ${s.custo > 0 && s.preco - s.custo < 0 ? 'neg' : ''}`}>{s.custo > 0 ? `${money(s.preco - s.custo)} (${pct(s.preco ? (s.preco - s.custo) / s.preco : 0)})` : '—'}</td><td className="num">{sv?.valorBaseOrcamento !== undefined ? money(sv.valorBaseOrcamento) : '—'}</td></tr>; })}</tbody>
+          </table>
+        </div>
+      )}
       {aba === 'resumo' && (
         <div className="grid cols-2">
           <div className="card table-wrap">

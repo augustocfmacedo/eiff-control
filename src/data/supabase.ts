@@ -323,7 +323,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.orcamentos = estRows.map((x) => ({
     id: x.id, codigo: x.code, titulo: x.title, cliente: x.client_name ?? '', codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, data: x.estimate_date, validade: x.valid_until ?? undefined, status: x.status, bdi: Number(x.bdi), referenciaPrecos: x.price_reference ?? '',
     observacoes: x.notes ?? '', criadoEm: x.created_at, criadoPor: x.created_by ?? '', atualizadoEm: x.updated_at,
-    itens: (estItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ id: i.id, ordem: i.item_order, etapa: i.stage ?? '', codigo: i.code ?? '', descricao: i.description, unidade: i.unit, quantidade: Number(i.quantity), composicaoId: i.composition_id ?? undefined, custoUnitarioManual: i.manual_unit_cost === null || i.manual_unit_cost === undefined ? undefined : Number(i.manual_unit_cost), servicoId: i.service_id ?? undefined })),
+    itens: (estItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ id: i.id, ordem: i.item_order, etapa: i.stage ?? '', codigo: i.code ?? '', descricao: i.description, unidade: i.unit, quantidade: Number(i.quantity), composicaoId: i.composition_id ?? undefined, custoUnitarioManual: i.manual_unit_cost === null || i.manual_unit_cost === undefined ? undefined : Number(i.manual_unit_cost), precoUnitarioVenda: i.sale_unit_price === null || i.sale_unit_price === undefined ? undefined : Number(i.sale_unit_price), servicoId: i.service_id ?? undefined })),
   }));
   return { ds, usuario };
 }
@@ -661,7 +661,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
       const { error: e1 } = await sb.from('estimate_item').delete().eq('estimate_id', oid);
       falha('limpar itens do orçamento', e1);
       if (o.itens.length) {
-        const { error: e2 } = await sb.from('estimate_item').insert(o.itens.map((it, idx) => ({ estimate_id: oid, item_order: idx + 1, stage: it.etapa || null, code: it.codigo || null, description: it.descricao, unit: it.unidade || 'un', quantity: it.quantidade, composition_id: it.composicaoId ? r.composicoes.get(it.composicaoId) ?? null : null, manual_unit_cost: it.custoUnitarioManual ?? null, service_id: it.servicoId ? r.servicos.get(it.servicoId) ?? null : null })));
+        const { error: e2 } = await sb.from('estimate_item').insert(o.itens.map((it, idx) => ({ estimate_id: oid, item_order: idx + 1, stage: it.etapa || null, code: it.codigo || null, description: it.descricao, unit: it.unidade || 'un', quantity: it.quantidade, composition_id: it.composicaoId ? r.composicoes.get(it.composicaoId) ?? null : null, manual_unit_cost: it.custoUnitarioManual ?? null, sale_unit_price: it.precoUnitarioVenda ?? null, service_id: it.servicoId ? r.servicos.get(it.servicoId) ?? null : null })));
         falha('inserir itens do orçamento', e2);
       }
     }

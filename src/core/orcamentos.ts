@@ -86,8 +86,11 @@ export function criaCiclo(composicaoId: string, itens: Composicao['itens'], cat:
 export interface ItemOrcamentoCalc extends ItemOrcamento {
   custoUnitario: number;
   custoTotal: number;
-  precoUnitario: number; // com BDI
+  precoUnitario: number; // com BDI, ou preco de venda informado
   precoTotal: number;
+  margem: number; // precoTotal - custoTotal
+  pctMargem: number;
+  precoInformado: boolean;
   porTipo: Record<TipoInsumo, number>; // custo total por tipo
   origemCusto: 'Composição' | 'Manual' | 'Sem custo';
   composicao?: Composicao;
@@ -117,6 +120,9 @@ export interface OrcamentoCalc extends Orcamento {
   valorBdi: number;
   porTipo: Record<TipoInsumo, number>;
   porEtapa: { etapa: string; custo: number; preco: number; pct: number; itens: number }[];
+  porServico: { servicoId: string; custo: number; preco: number; itens: number }[]; // itens vinculados a servicos da obra
+  margem: number;
+  pctMargem: number;
   curvaInsumos: CurvaAbcItem[];
   curvaItens: CurvaAbcItem[];
   incompletos: number;
@@ -158,9 +164,11 @@ export function calcOrcamento(o: Orcamento, cat: Catalogo): OrcamentoCalc {
       origemCusto = 'Manual';
     }
     const custoTotal = custoUnitario * it.quantidade;
-    const precoUnitario = custoUnitario * (1 + o.bdi);
+    const precoInformado = it.precoUnitarioVenda !== undefined && it.precoUnitarioVenda !== null;
+    const precoUnitario = precoInformado ? it.precoUnitarioVenda! : custoUnitario * (1 + o.bdi);
+    const precoTotal = precoUnitario * it.quantidade;
     for (const t of TIPOS_INSUMO) porTipo[t] *= it.quantidade;
-    return { ...it, custoUnitario, custoTotal, precoUnitario, precoTotal: precoUnitario * it.quantidade, porTipo, origemCusto, composicao, incompleto };
+    return { ...it, custoUnitario, custoTotal, precoUnitario, precoTotal, margem: precoTotal - custoTotal, pctMargem: precoTotal ? (precoTotal - custoTotal) / precoTotal : 0, precoInformado, porTipo, origemCusto, composicao, incompleto };
   });
   const custoTotal = itens.reduce((a, i) => a + i.custoTotal, 0);
   const precoTotal = itens.reduce((a, i) => a + i.precoTotal, 0);
@@ -172,13 +180,18 @@ export function calcOrcamento(o: Orcamento, cat: Catalogo): OrcamentoCalc {
     const custo = meus.reduce((a, i) => a + i.custoTotal, 0);
     return { etapa, custo, preco: meus.reduce((a, i) => a + i.precoTotal, 0), pct: custoTotal ? custo / custoTotal : 0, itens: meus.length };
   });
+  const servicos = [...new Set(itens.map((i) => i.servicoId).filter((s): s is string => !!s))];
+  const porServico = servicos.map((servicoId) => {
+    const meus = itens.filter((i) => i.servicoId === servicoId);
+    return { servicoId, custo: meus.reduce((a, i) => a + i.custoTotal, 0), preco: meus.reduce((a, i) => a + i.precoTotal, 0), itens: meus.length };
+  });
   const curvaInsumos = classificarAbc([...consumo].map(([iid, q]) => {
     const i = calc.getInsumo(iid);
     return { id: iid, codigo: i?.codigo ?? iid, descricao: i?.descricao ?? '(insumo não encontrado)', unidade: i?.unidade ?? '', quantidade: q, precoUnitario: i?.preco ?? 0, valor: q * (i?.preco ?? 0), tipo: i?.tipo };
   }));
   const curvaItens = classificarAbc(itens.map((i) => ({ id: i.id, codigo: i.codigo, descricao: i.descricao, unidade: i.unidade, quantidade: i.quantidade, precoUnitario: i.custoUnitario, valor: i.custoTotal })));
   return {
-    ...o, itens, custoTotal, precoTotal, valorBdi: precoTotal - custoTotal, porTipo, porEtapa, curvaInsumos, curvaItens,
+    ...o, itens, custoTotal, precoTotal, valorBdi: precoTotal - custoTotal, margem: precoTotal - custoTotal, pctMargem: precoTotal ? (precoTotal - custoTotal) / precoTotal : 0, porTipo, porEtapa, porServico, curvaInsumos, curvaItens,
     incompletos: itens.filter((i) => i.incompleto).length, semCusto: itens.filter((i) => i.origemCusto === 'Sem custo').length,
   };
 }

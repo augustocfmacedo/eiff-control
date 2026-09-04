@@ -507,6 +507,7 @@ export interface ItemOrcamento {
   quantidade: number;
   composicaoId?: string; // custo unitario vem da composicao
   custoUnitarioManual?: number; // usado quando nao ha composicao
+  precoUnitarioVenda?: number; // preco de venda informado (proposta/contrato); quando presente, substitui custo x (1 + BDI)
   servicoId?: string; // servico da obra gerado ao contratar
 }
 
