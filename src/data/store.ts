@@ -832,7 +832,7 @@ export const actions = {
         insumos = insumos.map((x) => (x.id === id ? { ...x, descricao: i.descricao || x.descricao, unidade: i.unidade || x.unidade, tipo: i.tipo, classe: i.classe ?? x.classe, preco: i.preco > 0 ? i.preco : x.preco, precoData: i.preco > 0 ? data : x.precoData, precoFonte: i.preco > 0 ? referencia : x.precoFonte } : x));
         atualizadosI++;
       } else {
-        const novo: Insumo = { id: `${origem}-${i.codigo}`, codigo: i.codigo, descricao: i.descricao, unidade: i.unidade, tipo: i.tipo, origem, preco: i.preco, precoData: data, precoFonte: referencia, classe: i.classe, ativo: true, observacoes: '' };
+        const novo: Insumo = { id: `${origem}-${i.codigo}`, codigo: i.codigo, descricao: i.descricao, unidade: i.unidade, tipo: i.tipo, origem, preco: i.preco, precoData: data, precoFonte: i.precoAtribuido ? `${referencia} (preço atribuído ${i.precoAtribuido})` : referencia, classe: i.classe, ativo: true, observacoes: '' };
         insumos.push(novo); idInsumo.set(i.codigo, novo.id); novosI++;
       }
     }

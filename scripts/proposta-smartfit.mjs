@@ -116,6 +116,62 @@ const ITENS = [
   ['Etapa 15: Serviços diversos', '15.1', 'Limpeza final de obra', 2231.82, 'm²', 4.63, 10322.17],
 ];
 
+
+// Vinculo item -> composicao SINAPI (C) ou insumo SINAPI (I, embrulhado numa composicao propria INS-<codigo>).
+// Escolhidos a partir do catalogo GO 07/2026 (scripts/importar-sinapi.mjs). Sem vinculo: itens sem equivalente no SINAPI
+// (estrutura metalica MODO, isopainel PIR, pinos stud, chumbadores, parafusos, estimativas por verba, transporte, EPI, canteiro).
+export const VINCULOS = {
+  '1.1': 'C90777', '1.2': 'C93572', '1.4': 'C100309', '1.5': 'C94296',
+  '2.1': 'I10775', '2.2': 'I10778', '2.10': 'I4813', '2.12': 'C99059', '2.13': 'C98525',
+  '3.1': 'C104738',
+  '4.1.1': 'C100900', '4.1.2': 'C96531', '4.1.3': 'C92915', '4.1.4': 'C92919', '4.1.6': 'C96544', '4.1.8': 'C103673',
+  '4.6.2': 'C100900', '4.6.3': 'C96531', '4.6.4': 'C96533', '4.6.5': 'C92269', '4.6.6': 'C92271', '4.6.7': 'C96557', '4.6.8': 'C96557',
+  '4.6.9': 'C103672', '4.6.10': 'C103674', '4.6.11': 'C103686', '4.6.12': 'C96544', '4.6.13': 'C95944', '4.6.14': 'C92769', '4.6.15': 'C104108',
+  '4.6.16': 'C92759', '4.6.17': 'C95945', '4.6.18': 'C92770', '4.6.19': 'C92761', '4.6.20': 'C96546', '4.6.21': 'C92771', '4.6.22': 'C92762',
+  '4.6.23': 'C92763', '4.6.24': 'C92915', '4.6.25': 'C89480', '4.6.26': 'C105033',
+  '5.1': 'C98557', '5.2': 'I123',
+  '6.1.1.1': 'C102107', '6.1.1.2': 'C100606', '6.2.4': 'C102679',
+  '7.11': 'C103914',
+  '8.1': 'I1525', '8.2': 'C103673', '8.3': 'C97086', '8.4': 'I43126', '8.5': 'C97088', '8.6': 'I10997',
+  '10.4': 'I10997',
+  '11.2': 'C94213', // fechamento em telha trapezoidal: proxy = telhamento com telha de aco 0,5 mm
+  '12.1': 'C94216', '12.4': 'C94229',
+  '13.1': 'C100757', '13.2': 'C102507', '13.3': 'C88426',
+};
+
+/** Gera 0020_smartfit_vinculos.sql: composicoes-embrulho para insumos diretos e composition_id nos itens do orcamento. */
+export function gerarVinculos() {
+  const q = (v) => `'${String(v).replace(/'/g, "''")}'`;
+  const ORG = "(select id from organization where code = 'EIFF')";
+  const insumosDiretos = [...new Set(Object.values(VINCULOS).filter((v) => v.startsWith('I')).map((v) => v.slice(1)))];
+  let sql = `-- Vinculo dos itens do orcamento ${CODIGO} a composicoes/insumos do SINAPI (catalogo da migration 0019). Idempotente.
+-- Insumos usados diretamente viram composicoes proprias INS-<codigo> com um unico item (coeficiente 1).
+`;
+  for (const cod of insumosDiretos) {
+    sql += `insert into catalog_composition (organization_id, source, code, description, unit, group_name, notes, active)
+select ${ORG}, 'Própria', ${q('INS-' + cod)}, 'Insumo SINAPI ' || i.code || ': ' || i.description, i.unit, 'Insumo direto', 'Composição-embrulho gerada para usar o insumo diretamente no orçamento.', true
+from catalog_input i where i.organization_id = ${ORG} and i.source = 'SINAPI' and i.code = ${q(cod)}
+on conflict (organization_id, source, code) do update set description = excluded.description, unit = excluded.unit;
+delete from catalog_composition_item where composition_id = (select id from catalog_composition where organization_id = ${ORG} and source = 'Própria' and code = ${q('INS-' + cod)});
+insert into catalog_composition_item (composition_id, item_order, input_id, coefficient)
+select c.id, 1, i.id, 1 from catalog_composition c join catalog_input i on i.organization_id = c.organization_id and i.source = 'SINAPI' and i.code = ${q(cod)}
+where c.organization_id = ${ORG} and c.source = 'Própria' and c.code = ${q('INS-' + cod)};
+`;
+  }
+  for (const [item, v] of Object.entries(VINCULOS)) {
+    const [source, code] = v.startsWith('I') ? ['Própria', 'INS-' + v.slice(1)] : ['SINAPI', v.slice(1)];
+    sql += `update estimate_item set composition_id = (select id from catalog_composition where organization_id = ${ORG} and source = ${q(source)} and code = ${q(code)}) where code = ${q(item)} and estimate_id = (select id from estimate where organization_id = ${ORG} and code = ${q(CODIGO)});
+`;
+  }
+  const out = path.join(root, 'supabase', 'migrations', '0020_smartfit_vinculos.sql');
+  fs.writeFileSync(out, sql);
+  console.log(`gerado ${path.relative(root, out)}: ${Object.keys(VINCULOS).length} vinculos, ${insumosDiretos.length} insumos diretos`);
+}
+
+export { ITENS, ETAPAS };
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) { gerar(); gerarVinculos(); }
+
+function gerar() {
 const q = (v) => `'${String(v).replace(/'/g, "''")}'`;
 const r2 = (v) => Math.round(v * 100) / 100;
 
@@ -158,3 +214,4 @@ console.log(`TOTAL ${r2(total).toFixed(2)} (PDF 4131354.17) ${Math.abs(r2(total)
 const out = path.join(root, 'supabase', 'migrations', '0018_smartfit_proposta.sql');
 fs.writeFileSync(out, sql);
 console.log(`gerado ${path.relative(root, out)} (${ITENS.length} itens)`);
+}

@@ -9,6 +9,7 @@ const unificado: Planilha[] = [
     ['MATERIAL', 4813, 'PERFIL "I" DE ACO LAMINADO', 'KG', '8,50', '8,90'],
     ['MATERIAL', 10001, 'ELETRODO REVESTIDO AWS E7018', 'KG', 40, 41],
     ['MÃO DE OBRA', 88264, 'MONTADOR DE ESTRUTURA METALICA COM ENCARGOS COMPLEMENTARES', 'H', 30.1, 32],
+    ['MATERIAL', 20000, 'CHAPA SEM COLETA EM GO', 'KG', null, 12],
     ['', 'x', 'linha invalida', '', 1, 1],
   ] },
   { arquivo: 'SINAPI_Referência_2026_07.xlsx', aba: 'ICD', linhas: [
@@ -22,6 +23,11 @@ const unificado: Planilha[] = [
     ['ESTRUTURAS METÁLICAS', 100001, 'FABRICACAO DE ESTRUTURA METALICA', 'KG', 'COMPOSICAO', 100002, 'MONTAGEM', 'KG', 1],
     ['ESTRUTURAS METÁLICAS', 100002, 'MONTAGEM DE ESTRUTURA METALICA', 'KG', 'INSUMO', 88264, 'MONTADOR', 'H', '0,08'],
     ['PINTURA', 100003, 'PINTURA DE FUNDO', 'M2', 'INSUMO', 99999, 'TINTA (nao esta na aba de insumos)', 'L', 0.2],
+  ] },
+  { arquivo: 'SINAPI_Referência_2026_07.xlsx', aba: 'Analítico 2', linhas: [
+    ['Grupo', 'Código da Composição', 'Tipo Item', 'Código do Item', 'Descrição', 'Unidade', 'Coeficiente', 'Situação'],
+    ['SOLDAS', 100004, null, null, 'SOLDA ESPECIAL', 'M', null, 'SEM CUSTO'],
+    ['SOLDAS', 100004, 'INSUMO', 77777, 'CONSUMIVEL SEM PRECO', 'KG', 0.5, 'SEM PREÇO'],
   ] },
 ];
 
@@ -37,8 +43,17 @@ describe('parser SINAPI (formato unificado)', () => {
     expect(perfil.unidade).toBe('KG');
     expect(cat.insumos.find((i) => i.codigo === '88264')!.tipo).toBe('Mão de obra');
     expect(cat.insumos.some((i) => i.codigo === 'x')).toBe(false);
-    // insumo que so aparece no analitico entra sem preco
+    // insumo que so aparece no analitico entra sem preco (coluna propria ou coluna compartilhada do formato unificado)
     expect(cat.insumos.find((i) => i.codigo === '99999')!.preco).toBe(0);
+    const cons = cat.insumos.find((i) => i.codigo === '77777')!;
+    expect(cons.descricao).toBe('CONSUMIVEL SEM PRECO');
+    expect(cons.unidade).toBe('KG');
+    expect(cat.composicoes.find((c) => c.codigo === '100004')!.descricao).toBe('SOLDA ESPECIAL');
+    // sem coleta em GO: preco atribuido de SP
+    const chapa = cat.insumos.find((i) => i.codigo === '20000')!;
+    expect(chapa.preco).toBe(12);
+    expect(chapa.precoAtribuido).toBe('SP');
+    expect(cat.avisos.some((x) => x.includes('atribuído'))).toBe(true);
   });
   it('monta as composicoes com itens e composicoes auxiliares', () => {
     const cat = parseSinapi(unificado, { uf: 'SP' });
@@ -58,6 +73,20 @@ describe('parser SINAPI (formato unificado)', () => {
     const cat = parseSinapi(unificado, { uf: 'GO', desonerado: true });
     expect(cat.insumos.find((i) => i.codigo === '4813')!.preco).toBe(7);
     expect(cat.referencia).toContain('desonerado');
+  });
+});
+
+describe('parser SINAPI (formato unificado): abas auxiliares', () => {
+  it('ignora ISE/CSE (sem encargos) e codigos 0 de formulas de hiperlink', () => {
+    const extra: Planilha[] = [
+      ...unificado,
+      { arquivo: 'SINAPI_Referência_2026_07.xlsx', aba: 'ISE', linhas: [['Classificação', 'Código', 'Descrição do Insumo', 'Unidade', 'GO'], ['MATERIAL', 4813, 'PERFIL', 'KG', 1]] },
+      { arquivo: 'SINAPI_Referência_2026_07.xlsx', aba: 'CSD', linhas: [['Grupo', 'Código da Composição', 'Descrição', 'Unidade', 'GO'], ['ESTRUTURAS', 0, 'QUALQUER', 'KG', 9], ['ESTRUTURAS', 100001, 'FABRICACAO DE ESTRUTURA METALICA', 'KG', 9]] },
+    ];
+    const cat = parseSinapi(extra, { uf: 'GO' });
+    expect(cat.insumos.find((i) => i.codigo === '4813')!.preco).toBe(8.5);
+    expect(cat.composicoes.some((c) => c.codigo === '0')).toBe(false);
+    expect(cat.composicoes.find((c) => c.codigo === '100001')!.grupo).toBe('ESTRUTURAS METÁLICAS');
   });
 });
 

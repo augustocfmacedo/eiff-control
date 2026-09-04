@@ -13,7 +13,7 @@ export interface Planilha {
   linhas: Celula[][];
 }
 
-export interface InsumoImportado { codigo: string; descricao: string; unidade: string; tipo: TipoInsumo; preco: number; classe?: string }
+export interface InsumoImportado { codigo: string; descricao: string; unidade: string; tipo: TipoInsumo; preco: number; classe?: string; precoAtribuido?: string } // precoAtribuido: UF de onde o preco veio por falta de coleta na UF escolhida
 export interface ItemImportado { tipo: 'Insumo' | 'Composição'; codigo: string; coeficiente: number }
 export interface ComposicaoImportada { codigo: string; descricao: string; unidade: string; grupo: string; itens: ItemImportado[] }
 export interface CatalogoImportado {
@@ -39,7 +39,7 @@ export function numero(v: Celula): number {
   const n = Number(semMilhar);
   return Number.isFinite(n) ? n : 0;
 }
-const codigo = (v: Celula) => (typeof v === 'number' ? String(Math.round(v)) : texto(v).replace(/\.0+$/, ''));
+const codigo = (v: Celula) => { const c = typeof v === 'number' ? String(Math.round(v)) : texto(v).replace(/\.0+$/, ''); return c === '0' ? '' : c; }; // 0 = formula de hiperlink sem valor
 
 /** Tipo do insumo pela classificacao do catalogo ou, na falta dela, pela descricao. */
 export function tipoInsumoDe(classe: string, descricao: string): TipoInsumo {
@@ -71,6 +71,7 @@ const achar = (cols: string[], ...padroes: RegExp[]): number => {
 
 type TipoAba = 'insumos' | 'analitico' | 'sintetico' | 'outra';
 function tipoAba(aba: string, cols: string[]): TipoAba {
+  if (/^[IC]SE$|SEM ENCARGOS/.test(norm(aba))) return 'outra'; // relatorios sem encargos sociais nao sao a base de precos
   if (achar(cols, /COEFICIENTE/) >= 0 && achar(cols, /TIPO( DO)? ITEM|^TIPO$/) >= 0) return 'analitico';
   const a = norm(aba);
   if (achar(cols, /DESCRICAO DO INSUMO/) >= 0 || /^I[SC]D$|INSUMO/.test(a)) return 'insumos';
@@ -140,13 +141,20 @@ export function parseSinapi(planilhas: Planilha[], opcoes: { uf?: string; desone
         if (fm && UFS.includes(fm[1])) uf = fm[1];
       }
       if (iCod < 0 || iDesc < 0 || iPreco < 0) { avisos.push(`Aba ${p.aba}: colunas de código/descrição/preço não reconhecidas.`); continue; }
+      // sem coleta na UF, o SINAPI atribui o preco de Sao Paulo (coluna %AS dos relatorios de custo)
+      const iSP = cols.indexOf('SP') !== iPreco ? cols.indexOf('SP') : -1;
+      let atribuidos = 0;
       for (const l of dados) {
         const cod = codigo(l[iCod]);
         if (!cod || !/^\d+$/.test(cod)) continue;
         const descricao = texto(l[iDesc]);
         const classe = iClasse >= 0 ? texto(l[iClasse]) : '';
-        insumos.set(cod, { codigo: cod, descricao, unidade: iUn >= 0 ? texto(l[iUn]) : '', tipo: tipoInsumoDe(classe, descricao), preco: numero(l[iPreco]), classe: classe || undefined });
+        let preco = numero(l[iPreco]);
+        let precoAtribuido: string | undefined;
+        if (!(preco > 0) && iSP >= 0 && numero(l[iSP]) > 0) { preco = numero(l[iSP]); precoAtribuido = 'SP'; atribuidos++; }
+        insumos.set(cod, { codigo: cod, descricao, unidade: iUn >= 0 ? texto(l[iUn]) : '', tipo: tipoInsumoDe(classe, descricao), preco, classe: classe || undefined, precoAtribuido });
       }
+      if (atribuidos) avisos.push(`${atribuidos} insumo(s) sem coleta em ${uf}: preço atribuído de SP, como faz o SINAPI.`);
     } else if (tipo === 'sintetico') {
       const iCod = achar(cols, /CODIGO( DA COMPOSICAO)?$/, /^CODIGO/);
       const iDesc = achar(cols, /DESCRICAO/);
@@ -168,8 +176,9 @@ export function parseSinapi(planilhas: Planilha[], opcoes: { uf?: string; desone
       const iGrupo = achar(cols, /GRUPO|CLASSE/);
       const iTipoItem = achar(cols, /TIPO( DO)? ITEM|^TIPO$/);
       const iCodItem = achar(cols, /CODIGO( DO)? ITEM/);
-      const iDescItem = achar(cols, /DESCRICAO( DO)? ITEM/);
-      const iUnItem = achar(cols, /UNIDADE( DO)? ITEM/);
+      // formato unificado: descricao/unidade do item ficam na mesma coluna da composicao (linha de item)
+      const iDescItem = achar(cols, /DESCRICAO( DO)? ITEM/) >= 0 ? achar(cols, /DESCRICAO( DO)? ITEM/) : iDesc;
+      const iUnItem = achar(cols, /UNIDADE( DO)? ITEM/) >= 0 ? achar(cols, /UNIDADE( DO)? ITEM/) : iUn;
       const iCoef = achar(cols, /COEFICIENTE/);
       const iPrecoItem = achar(cols, /PRECO UNITARIO/);
       const iClasseItem = achar(cols, /CLASSIFICACAO( DO)? ITEM|CLASSE( DO)? ITEM/);
