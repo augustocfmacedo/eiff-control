@@ -391,3 +391,25 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .manual-licao h2 { font-size: 15px; margin: 14px 0 2px; }
 .manual-licao h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin: 10px 0 2px; }
 .manual-licao ol, .manual-licao ul { margin: 2px 0 6px; padding-left: 20px; }
+
+/* Assistente (chat) */
+.chat-fab { position: fixed; right: 22px; bottom: 22px; width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--border); background: var(--brand); color: #fff; display: grid; place-items: center; box-shadow: var(--shadow-lg); cursor: pointer; z-index: 40; transition: transform 120ms ease; }
+.chat-fab:hover { transform: translateY(-1px); }
+.chat-fab.aberto { background: var(--surface-2); color: var(--text); }
+.chat-panel { position: fixed; right: 22px; bottom: 82px; width: min(420px, calc(100vw - 32px)); height: min(620px, calc(100vh - 110px)); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); display: flex; flex-direction: column; z-index: 40; animation: rise 140ms ease-out; overflow: hidden; }
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.chat-msgs { flex: 1; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.chat-msg { display: flex; }
+.chat-msg.usuario { justify-content: flex-end; }
+.chat-bolha { max-width: 88%; padding: 9px 12px; border-radius: 12px; background: var(--surface-2); font-size: 13px; line-height: 1.45; }
+.chat-msg.usuario .chat-bolha { background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg.assistente .chat-bolha { border-bottom-left-radius: 4px; }
+.chat-bolha p { margin: 0 0 6px; } .chat-bolha p:last-child { margin-bottom: 0; }
+.chat-bolha ul { margin: 4px 0 6px; padding-left: 18px; } .chat-bolha li { margin: 2px 0; }
+.chat-link { color: var(--brand); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.chat-msg.usuario .chat-link { color: #fff; }
+.chat-sug { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-sug .btn { white-space: normal; text-align: left; }
+.chat-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.chat-input input { flex: 1; }
+@media (max-width: 640px) { .chat-panel { right: 8px; bottom: 74px; } .chat-fab { right: 12px; bottom: 14px; } }

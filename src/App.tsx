@@ -28,6 +28,7 @@ import Producao from './screens/Producao';
 import Estoque from './screens/Estoque';
 import Capacitacao from './screens/Capacitacao';
 import { trilhaDe } from './core/capacitacao';
+import { Assistente } from './ui/Assistente';
 import { Icon, Logotipo, Marca, type IconName } from './ui/icons';
 
 export default function App() {
@@ -198,6 +199,7 @@ export default function App() {
         </header>
         <main className="content">{tela}</main>
       </div>
+      <Assistente tela={rota.path} />
     </div>
   );
 }

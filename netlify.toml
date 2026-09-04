@@ -9,6 +9,11 @@
   NODE_VERSION = "20"
   NPM_FLAGS = "--no-audit --no-fund"
 
+# Funcoes serverless (assistente com IA): netlify/functions; exige ANTHROPIC_API_KEY no painel
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
 # SPA com roteamento por hash: nada a reescrever; cabecalhos de seguranca basicos
 [[headers]]
   for = "/*"

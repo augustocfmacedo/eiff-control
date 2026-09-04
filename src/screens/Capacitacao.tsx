@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { LICOES, PAPEIS, PROCESSOS, ROTINAS, progressoDe, progressoEquipe, trilhaDe, type AreaLicao, type Licao } from '../core/capacitacao';
+import { SETORES, gerarHtmlCompleto, gerarHtmlSetor, licoesDoSetor } from '../core/ebook';
 import type { Papel } from '../core/types';
 import { actions, pode, useStore } from '../data/store';
 import { Badge, Empty, KpiHero, KpiStrip, Link, Modal, PageHead, PrintHead, ProgressRow, Select, Tabs, pct, tentar, useToast } from '../ui/components';
@@ -67,7 +68,13 @@ export default function Capacitacao({ licao: licaoUrl, query }: { licao?: string
   const { toast, el } = useToast();
   const gestor = pode(usuario, 'editar_obra') || pode(usuario, 'administrar');
   const [papel, setPapel] = useState<Papel>((query.get('papel') as Papel) || usuario.papel);
-  const [aba, setAba] = useState<'trilha' | 'processos' | 'rotinas' | 'todas' | 'equipe'>((query.get('aba') as 'trilha') || 'trilha');
+  const [aba, setAba] = useState<'trilha' | 'processos' | 'rotinas' | 'todas' | 'ebook' | 'equipe'>((query.get('aba') as 'trilha') || 'trilha');
+  const abrirEbook = (html: string, nome: string, baixar: boolean) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    if (baixar) { const a = document.createElement('a'); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove(); } else window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
   const [aberta, setAberta] = useState<string | null>(licaoUrl ?? null);
   const feitas = new Set(ds.treinamentos.filter((t) => t.usuarioId === usuario.id).map((t) => t.licaoId));
   const prog = progressoDe(usuario, ds.treinamentos, papel);
@@ -91,7 +98,8 @@ export default function Capacitacao({ licao: licaoUrl, query }: { licao?: string
       <div className="no-print">
         <PageHead title="Capacitação" subtitle="Trilha de estudo por papel, com o passo a passo de cada tela, os campos que o sistema exige, as regras automáticas e uma verificação ao final. Processos ponta a ponta e rotinas diária, semanal e mensal.">
           {gestor && <Select value={papel} onChange={(v) => setPapel(v as Papel)} options={PAPEIS} />}
-          <button className="btn" onClick={() => window.print()}>Imprimir manual</button>
+          <button className="btn" onClick={() => setAba('ebook')}>E-books</button>
+          <button className="btn" onClick={() => window.print()}>Imprimir trilha</button>
         </PageHead>
         <div className="hero-grid">
           <KpiHero label={papel === usuario.papel ? 'Minha trilha' : `Trilha · ${papel}`} value={pct(prog.pct)} sufixo={`${prog.concluidas} de ${prog.total} lições`} tone={prog.pct >= 1 ? 'ok' : undefined}
@@ -112,7 +120,7 @@ export default function Capacitacao({ licao: licaoUrl, query }: { licao?: string
         </div>
         <KpiStrip itens={ORDEM_AREAS.filter((a) => trilha.some((l) => l.area === a)).map((a) => ({ label: a, value: `${trilha.filter((l) => l.area === a && feitas.has(l.id)).length}/${trilha.filter((l) => l.area === a).length}`, hint: `${trilha.filter((l) => l.area === a).reduce((s, l) => s + l.minutos, 0)} min` }))} />
         <div style={{ height: 16 }} />
-        <Tabs value={aba} onChange={setAba} items={[{ id: 'trilha', label: `Minha trilha (${trilha.length})` }, { id: 'processos', label: `Processos (${PROCESSOS.length})` }, { id: 'rotinas', label: 'Rotinas' }, { id: 'todas', label: `Todas as lições (${LICOES.length})` }, ...(gestor ? [{ id: 'equipe' as const, label: `Equipe (${equipe.length})` }] : [])]} />
+        <Tabs value={aba} onChange={setAba} items={[{ id: 'trilha', label: `Minha trilha (${trilha.length})` }, { id: 'processos', label: `Processos (${PROCESSOS.length})` }, { id: 'rotinas', label: 'Rotinas' }, { id: 'todas', label: `Todas as lições (${LICOES.length})` }, { id: 'ebook', label: `E-books (${SETORES.length})` }, ...(gestor ? [{ id: 'equipe' as const, label: `Equipe (${equipe.length})` }] : [])]} />
         {aba === 'trilha' && (
           <div className="grid" style={{ gap: 8 }}>
             {!trilha.length ? <Empty icone="capacitacao" titulo="Sem trilha para este papel">Peça ao Administrador para revisar o papel do seu usuário.</Empty> : trilha.map((l, i) => cardLicao(l, i))}
@@ -151,6 +159,29 @@ export default function Capacitacao({ licao: licaoUrl, query }: { licao?: string
             <div className="grid" style={{ gap: 8 }}>{LICOES.filter((l) => l.area === a).map((l) => cardLicao(l))}</div>
           </div>
         ))}
+        {aba === 'ebook' && (
+          <>
+            <div className="card" style={{ marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Icon name="livro" size={22} />
+              <div style={{ flex: 1 }}><b>Manual completo</b><div className="small muted">Todos os setores em um único documento: introdução, conceitos, lições passo a passo, processos, rotinas e perguntas frequentes. Abra e use "Imprimir › Salvar como PDF" para distribuir.</div></div>
+              <button className="btn" onClick={() => abrirEbook(gerarHtmlCompleto({ empresa: ds.params.empresa, data: ds.params.dataBase }), 'eiff-control-manual-completo.html', true)}>Baixar</button>
+              <button className="btn primary" onClick={() => abrirEbook(gerarHtmlCompleto({ empresa: ds.params.empresa, data: ds.params.dataBase }), 'manual-completo.html', false)}>Abrir</button>
+            </div>
+            <div className="grid cols-2">
+              {SETORES.map((s) => (
+                <div key={s.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div><b>{s.titulo}</b><div className="small muted">{s.subtitulo}</div></div>
+                  <div className="small">{s.introducao[0].slice(0, 220)}…</div>
+                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}><Badge tone="muted">{licoesDoSetor(s).length} lições</Badge><Badge tone="muted">{s.conceitos.length} conceitos</Badge><Badge tone="muted">{s.faq.length} perguntas</Badge>{s.papeis.map((p) => <Badge key={p} tone="info">{p}</Badge>)}</div>
+                  <div className="row" style={{ gap: 6, marginTop: 'auto' }}>
+                    <button className="btn sm" onClick={() => abrirEbook(gerarHtmlSetor(s, { empresa: ds.params.empresa, data: ds.params.dataBase }), `eiff-control-${s.id}.html`, true)}>Baixar</button>
+                    <button className="btn sm primary" onClick={() => abrirEbook(gerarHtmlSetor(s, { empresa: ds.params.empresa, data: ds.params.dataBase }), `${s.id}.html`, false)}>Abrir</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
         {aba === 'equipe' && gestor && (
           <div className="card table-wrap">
             {!equipe.length ? <Empty icone="equipe">Sem usuários ativos.</Empty> : (

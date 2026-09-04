@@ -45,6 +45,13 @@ export async function login(email: string, senha: string): Promise<void> {
   if (error) throw new RemotoError(error.message === 'Invalid login credentials' ? 'E-mail ou senha inválidos.' : error.message);
 }
 
+/** Token da sessao atual (para chamar as funcoes serverless autenticadas). */
+export async function tokenSessao(): Promise<string | null> {
+  if (!supabase) return null;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
 export async function logout(): Promise<void> {
   await supabase?.auth.signOut();
 }

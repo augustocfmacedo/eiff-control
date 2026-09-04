@@ -11,6 +11,8 @@ const PATHS: Record<string, React.ReactNode> = {
   fabrica: <><path d="M3 21V10l6 3V10l6 3V10l6 3v8" /><path d="M3 21h18" /><path d="M7 17h2M11 17h2M15 17h2" /></>,
   estoque: <><path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z" /><path d="M3 7.5v9l9 4.5 9-4.5v-9" /><path d="M12 12v9" /></>,
   capacitacao: <><path d="M12 4L2 9l10 5 10-5-10-5z" /><path d="M6 11.5V16c0 1.5 3 3 6 3s6-1.5 6-3v-4.5" /><path d="M22 9v6" /></>,
+  chat: <><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.2-4.2A8 8 0 1 1 21 12z" /><path d="M8.5 11h.01M12 11h.01M15.5 11h.01" /></>,
+  livro: <><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v16H6.5A2.5 2.5 0 0 0 4 20.5v-16z" /><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H20v4H6.5A2.5 2.5 0 0 1 4 20.5z" /><path d="M8 6h8M8 9.5h6" /></>,
   campo: <><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M11 18h2" /></>,
   compras: <><path d="M3 4h2l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.2L21 8H6" /><circle cx="9.5" cy="20" r="1.2" /><circle cx="17.5" cy="20" r="1.2" /></>,
   pagar: <><path d="M7 17L17 7" /><path d="M9 7h8v8" /></>,
