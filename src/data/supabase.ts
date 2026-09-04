@@ -83,6 +83,7 @@ interface Refs {
   composicoes: Map<string, string>;
   orcamentos: Map<string, string>;
   pedidos: Map<string, string>;
+  conjuntos: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -157,7 +158,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('timesheet_incident'),
     sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
-  const [pedidosRows, pedidosItens] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order')]);
+  const [pedidosRows, pedidosItens, conjuntosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark')]);
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -205,6 +206,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     composicoes: new Map(compRows.map((x) => [x.id, x.id])),
     orcamentos: new Map(estRows.map((x) => [x.id, x.id])),
     pedidos: new Map(pedidosRows.map((x) => [x.id, x.id])),
+    conjuntos: new Map(conjuntosRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -312,7 +314,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [],
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [],
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -335,6 +337,10 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     prazoPagamentoDias: Number(x.payment_days ?? 28), categoria: r.planoInv.get(x.chart_account_id) ?? '', faturamentoDireto: !!x.direct_billing, status: x.status, lancamentoId: x.entry_id ? r.lancsInv.get(x.entry_id) : undefined, observacoes: x.notes ?? '',
     criadoEm: x.created_at, criadoPor: x.created_by ?? '', atualizadoEm: x.updated_at,
     itens: (pedItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ id: i.id, insumoId: i.input_id ?? undefined, descricao: i.description, unidade: i.unit, quantidade: Number(i.quantity), precoUnitario: Number(i.unit_price), quantidadeRecebida: Number(i.received_qty ?? 0) })),
+  }));
+  ds.conjuntos = conjuntosRows.map((x) => ({
+    id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, marca: x.mark, descricao: x.description ?? '', perfil: x.profile ?? undefined, tipo: x.kind, quantidade: Number(x.quantity), pesoUnitario: Number(x.unit_weight),
+    revisao: x.revision ?? undefined, liberadoEm: x.released_on ?? undefined, fabricadoQtd: Number(x.fabricated_qty ?? 0), expedidoQtd: Number(x.shipped_qty ?? 0), montadoQtd: Number(x.erected_qty ?? 0), observacoes: x.notes ?? '', atualizadoEm: x.updated_at,
   }));
   return { ds, usuario };
 }
@@ -694,6 +700,27 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
         falha('inserir itens do pedido', e2);
       }
     }
+  }
+
+  // lista de materiais (novos em lote; alterados um a um; excluidos removidos)
+  const cjRow = (c: Dataset['conjuntos'][number]): Row => ({ service_id: c.servicoId ? r.servicos.get(c.servicoId) ?? null : null, order_id: c.ordemId ? r.ordens.get(c.ordemId) ?? null : null, mark: c.marca, description: c.descricao, profile: c.perfil ?? null, kind: c.tipo, quantity: c.quantidade, unit_weight: c.pesoUnitario, revision: c.revisao ?? null, released_on: c.liberadoEm ?? null, fabricated_qty: c.fabricadoQtd, shipped_qty: c.expedidoQtd, erected_qty: c.montadoQtd, notes: c.observacoes || null, updated_by: atorId });
+  const cjMud = mudou(antes.conjuntos ?? [], depois.conjuntos ?? [], 'id');
+  const cjNovos = cjMud.filter((c) => !r.conjuntos.get(c.id));
+  for (let k = 0; k < cjNovos.length; k += 500) {
+    const lote = cjNovos.slice(k, k + 500);
+    const { data, error } = await sb.from('assembly').insert(lote.map((c) => ({ ...cjRow(c), organization_id: r.orgId, project_id: r.obras.get(c.codigoObra), created_by: atorId }))).select('id');
+    falha('inserir conjuntos', error);
+    lote.forEach((c, idx) => { if (data?.[idx]) r.conjuntos.set(c.id, data[idx].id); });
+  }
+  for (const c of cjMud.filter((x) => r.conjuntos.get(x.id))) {
+    const { error } = await sb.from('assembly').update(cjRow(c)).eq('id', r.conjuntos.get(c.id)!);
+    falha('atualizar conjunto', error);
+  }
+  const cjDepois = new Set((depois.conjuntos ?? []).map((c) => c.id));
+  for (const c of (antes.conjuntos ?? []).filter((x) => !cjDepois.has(x.id) && r.conjuntos.get(x.id))) {
+    const { error } = await sb.from('assembly').delete().eq('id', r.conjuntos.get(c.id)!);
+    falha('excluir conjunto', error);
+    r.conjuntos.delete(c.id);
   }
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)

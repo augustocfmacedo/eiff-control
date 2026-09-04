@@ -18,6 +18,7 @@ import type {
 } from './types';
 import { MARGEM_ALVO_PADRAO, calcDemanda, resumoMedicoes, resumoProducao, resumoServicos, type DemandaCalc, type ResumoMedicoes, type ResumoProducao, type ServicoCalc } from './obras';
 import { custoOrcamentoPorServico } from './orcamentos';
+import { avancoPorPeso, resumoPeso, type ResumoPeso } from './materiais';
 
 // ---------------------------------------------------------------------------
 // Datas (sempre em UTC para evitar deslocamento de fuso)
@@ -527,6 +528,7 @@ export interface Obra360 {
   demandasAtrasadas: number;
   fabricacao: ResumoProducao;
   montagem: ResumoProducao;
+  peso: ResumoPeso; // lista de materiais em kg
 }
 
 export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcLancamentos(ds)): Obra360 {
@@ -550,7 +552,8 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
   const medicoesObra = (ds.medicoes ?? []).filter((m) => m.codigoObra === obra.codigo);
   const custoExec = custoOrcamentoPorServico(ds, obra.codigo);
   const custoOrcamentoExecutivo = [...custoExec.values()].reduce((a, v) => a + v, 0);
-  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo, custoExec);
+  const conjuntosObra = (ds.conjuntos ?? []).filter((c) => c.codigoObra === obra.codigo);
+  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo, custoExec, avancoPorPeso(conjuntosObra));
   const temServicos = rs.servicos.length > 0;
   const custoOrcado = temServicos ? rs.custoPrevisto : obra.custoOrcado || custoOrcamentoExecutivo;
   const faturamentoDiretoContratado = medicoesObra.some((m) => m.status !== 'Cancelado' && m.faturamentoDireto > 0)
@@ -621,6 +624,7 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
     demandasAtrasadas: demandas.filter((d) => d.status === 'Atrasada').length,
     fabricacao: resumoProducao(ds.ordens ?? [], 'Fabricação', db, obra.codigo),
     montagem: resumoProducao(ds.ordens ?? [], 'Montagem', db, obra.codigo),
+    peso: resumoPeso(conjuntosObra),
   };
 }
 

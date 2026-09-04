@@ -59,7 +59,11 @@ export interface ServicoCalc extends Servico {
   pctFaturado: number; // faturado / precoVenda
   custoPrevistoProporcional: number; // custo previsto x % faturado
   desvioVsFaturado: number; // comprometido - custo previsto proporcional (>0 gastando acima do ritmo de faturamento)
-  pctExecucao: number; // quantidade executada / orcada (ou % faturado quando nao ha quantidades)
+  pctExecucao: number; // peso montado / peso total (lista de materiais), quantidade executada / orcada, ou % faturado
+  origemExecucao: 'Peso montado' | 'Quantidade' | 'Faturamento' | 'Concluído';
+  pesoTotal: number; // kg da lista de materiais vinculada ao servico
+  pesoFabricado: number;
+  pesoMontado: number;
   pctFinanceiro: number; // pago / eac
   diasParaFim?: number;
   duracaoPrevista?: number;
@@ -67,7 +71,7 @@ export interface ServicoCalc extends Servico {
   lancamentos: LancamentoCalc[];
 }
 
-export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO, custoOrcamento = 0): ServicoCalc {
+export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO, custoOrcamento = 0, peso?: { pesoTotal: number; pesoFabricado: number; pesoMontado: number }): ServicoCalc {
   const meus = lancs.filter((l) => l.servicoId === s.id && l.oficial);
   const custos = meus.filter((l) => l.tipo === 'Saída' && l.status !== 'Cancelado');
   const custoComprometido = custos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
@@ -92,8 +96,10 @@ export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: strin
   const faturado = meds.filter((m) => m.medida).reduce((a, m) => a + m.valorLiquidoConstrutora, 0);
   const totalMed = meds.reduce((a, m) => a + m.valorLiquidoConstrutora, 0);
   const pctFaturado = s.precoVenda > 0 ? Math.min(1, faturado / s.precoVenda) : totalMed > 0 ? faturado / totalMed : 0;
-  // fisico: quantidades executadas quando apontadas; senao acompanha o faturado do cronograma
-  const pctExecucao = s.status === 'Concluído' ? 1 : s.quantidadeOrcada > 0 && s.quantidadeExecutada > 0 ? Math.min(1, s.quantidadeExecutada / s.quantidadeOrcada) : pctFaturado;
+  // fisico: peso montado da lista de materiais; senao quantidades executadas; senao acompanha o faturado do cronograma
+  const temPeso = !!peso && peso.pesoTotal > 0;
+  const origemExecucao: ServicoCalc['origemExecucao'] = s.status === 'Concluído' ? 'Concluído' : temPeso ? 'Peso montado' : s.quantidadeOrcada > 0 && s.quantidadeExecutada > 0 ? 'Quantidade' : 'Faturamento';
+  const pctExecucao = origemExecucao === 'Concluído' ? 1 : origemExecucao === 'Peso montado' ? Math.min(1, peso!.pesoMontado / peso!.pesoTotal) : origemExecucao === 'Quantidade' ? Math.min(1, s.quantidadeExecutada / s.quantidadeOrcada) : pctFaturado;
   const diasParaFim = s.fimPrevisto ? diffDays(s.fimPrevisto, dataBase) : undefined;
   const duracaoPrevista = s.inicioPrevisto && s.fimPrevisto ? diffDays(s.fimPrevisto, s.inicioPrevisto) : undefined;
   let situacaoPrazo: SituacaoPrazo;
@@ -114,7 +120,7 @@ export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: strin
     desvioOrcamento: eac - custoPrevisto, receitaPrevista, receitaRealizada,
     medicoes: meds, faturado, aFaturar: Math.max(0, (s.precoVenda || totalMed) - faturado), pctFaturado, custoPrevistoProporcional,
     desvioVsFaturado: custoComprometido - custoPrevistoProporcional,
-    pctExecucao, pctFinanceiro: eac ? custoPago / eac : 0,
+    pctExecucao, origemExecucao, pesoTotal: peso?.pesoTotal ?? 0, pesoFabricado: peso?.pesoFabricado ?? 0, pesoMontado: peso?.pesoMontado ?? 0, pctFinanceiro: eac ? custoPago / eac : 0,
     diasParaFim, duracaoPrevista, situacaoPrazo, lancamentos: meus,
   };
 }
@@ -207,8 +213,8 @@ export interface ResumoServicos {
   concluidos: number;
 }
 
-export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO, custoOrcamentoPorServico?: Map<string, number>): ResumoServicos {
-  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo, custoOrcamentoPorServico?.get(s.id) ?? 0));
+export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO, custoOrcamentoPorServico?: Map<string, number>, pesoPorServico?: Map<string, { pesoTotal: number; pesoFabricado: number; pesoMontado: number }>): ResumoServicos {
+  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo, custoOrcamentoPorServico?.get(s.id) ?? 0, pesoPorServico?.get(s.id)));
   const soma = (f: (s: ServicoCalc) => number) => calc.reduce((a, s) => a + f(s), 0);
   const pesoTotal = soma((s) => s.custoOrcado || s.precoVenda);
   return {

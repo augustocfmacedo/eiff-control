@@ -12,6 +12,7 @@ import type {
   Colaborador,
   Comentario,
   Composicao,
+  Conjunto,
   Insumo,
   Orcamento,
   PedidoCompra,
@@ -38,6 +39,7 @@ import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarCheck
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
 import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
+import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -1018,6 +1020,99 @@ export const actions = {
     const novo: PedidoCompra = { ...p, status: 'Cancelado', atualizadoEm: agora() };
     ds2 = registrar({ ...ds2, pedidos: ds2.pedidos.map((x) => (x.id === id ? novo : x)) }, 'cancelar_pedido', 'pedido', id, p, novo, motivo);
     commit(ds2);
+  },
+
+  // -------------------------------------------------------------------------
+  // Lista de materiais (conjuntos em kg)
+  // -------------------------------------------------------------------------
+  novoConjunto(codigoObra: string, servicoId?: string): Conjunto {
+    return { id: seq('CJ', state.ds.conjuntos.map((c) => c.id)), codigoObra, servicoId, marca: '', descricao: '', tipo: 'Viga', quantidade: 1, pesoUnitario: 0, fabricadoQtd: 0, expedidoQtd: 0, montadoQtd: 0, observacoes: '', atualizadoEm: agora() };
+  },
+
+  salvarConjunto(c: Conjunto) {
+    let ds = state.ds;
+    exigir('editar_etc', c.codigoObra);
+    if (!c.marca.trim()) throw new RegraDeNegocioError('Marca do conjunto é obrigatória.');
+    if (!ds.obras.some((o) => o.codigo === c.codigoObra)) throw new RegraDeNegocioError('Obra não cadastrada.');
+    if (c.servicoId && !ds.servicos.some((s) => s.id === c.servicoId && s.codigoObra === c.codigoObra)) throw new RegraDeNegocioError('Serviço não pertence à obra.');
+    if (!(c.quantidade > 0) || !(c.pesoUnitario > 0)) throw new RegraDeNegocioError('Quantidade e peso unitário devem ser positivos.');
+    if (c.fabricadoQtd < 0 || c.expedidoQtd < 0 || c.montadoQtd < 0) throw new RegraDeNegocioError('Quantidades apontadas não podem ser negativas.');
+    if (ds.conjuntos.some((x) => x.id !== c.id && x.codigoObra === c.codigoObra && x.marca === c.marca)) throw new RegraDeNegocioError(`Marca ${c.marca} já existe nesta obra.`);
+    const atual = ds.conjuntos.find((x) => x.id === c.id);
+    const novo: Conjunto = { ...c, atualizadoEm: agora() };
+    const conjuntos = atual ? ds.conjuntos.map((x) => (x.id === c.id ? novo : x)) : [...ds.conjuntos, novo];
+    ds = registrar({ ...ds, conjuntos }, atual ? 'alterar_conjunto' : 'criar_conjunto', 'conjunto', c.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  /** Importa uma lista de materiais: marcas existentes na obra sao atualizadas (quantidade, peso, revisao), novas sao criadas. */
+  importarConjuntos(lista: ConjuntoImportado[], codigoObra: string, servicoId?: string) {
+    let ds = state.ds;
+    exigir('editar_etc', codigoObra);
+    if (!ds.obras.some((o) => o.codigo === codigoObra)) throw new RegraDeNegocioError('Obra não cadastrada.');
+    if (servicoId && !ds.servicos.some((s) => s.id === servicoId && s.codigoObra === codigoObra)) throw new RegraDeNegocioError('Serviço não pertence à obra.');
+    const porMarca = new Map(ds.conjuntos.filter((c) => c.codigoObra === codigoObra).map((c) => [c.marca, c]));
+    let conjuntos = [...ds.conjuntos];
+    let novos = 0; let atualizados = 0; let n = ds.conjuntos.length;
+    for (const it of lista) {
+      const atual = porMarca.get(it.marca);
+      if (atual) {
+        conjuntos = conjuntos.map((x) => (x.id === atual.id ? { ...x, descricao: it.descricao || x.descricao, perfil: it.perfil ?? x.perfil, tipo: it.tipo, quantidade: it.quantidade, pesoUnitario: it.pesoUnitario, revisao: it.revisao ?? x.revisao, servicoId: servicoId ?? x.servicoId, atualizadoEm: agora() } : x));
+        atualizados++;
+      } else {
+        const id = `CJ-${String(++n).padStart(4, '0')}`;
+        const c: Conjunto = { id, codigoObra, servicoId, marca: it.marca, descricao: it.descricao, perfil: it.perfil, tipo: it.tipo, quantidade: it.quantidade, pesoUnitario: it.pesoUnitario, revisao: it.revisao, fabricadoQtd: 0, expedidoQtd: 0, montadoQtd: 0, observacoes: '', atualizadoEm: agora() };
+        conjuntos.push(c); porMarca.set(it.marca, c); novos++;
+      }
+    }
+    const resumo = { codigoObra, servicoId, novos, atualizados, pesoTotal: lista.reduce((a, it) => a + it.quantidade * it.pesoUnitario, 0) };
+    ds = registrar({ ...ds, conjuntos }, 'importar_lista_materiais', 'obra', codigoObra, undefined, resumo);
+    commit(ds);
+    return resumo;
+  },
+
+  /** Aponta avanco por conjunto: libera para fabricacao, ou registra pecas fabricadas/expedidas/montadas (acumula, limitado a quantidade). */
+  apontarConjuntos(apontamentos: { id: string; etapa: EtapaPeso; quantidade?: number }[], data: string, observacao = '') {
+    let ds = state.ds;
+    if (!apontamentos.length) throw new RegraDeNegocioError('Nenhum conjunto selecionado.');
+    if (!data) throw new RegraDeNegocioError('Informe a data do apontamento.');
+    let conjuntos = ds.conjuntos;
+    let pesoApontado = 0;
+    for (const a of apontamentos) {
+      const c = conjuntos.find((x) => x.id === a.id);
+      if (!c) throw new RegraDeNegocioError('Conjunto não encontrado.');
+      exigir('comentar', c.codigoObra);
+      let novo: Conjunto;
+      if (a.etapa === 'liberado') novo = { ...c, liberadoEm: data };
+      else {
+        const campo = a.etapa === 'fabricado' ? 'fabricadoQtd' : a.etapa === 'expedido' ? 'expedidoQtd' : 'montadoQtd';
+        const q = a.quantidade ?? c.quantidade - c[campo];
+        if (q < 0) throw new RegraDeNegocioError('Quantidade apontada não pode ser negativa.');
+        const valor = Math.min(c.quantidade, c[campo] + q);
+        pesoApontado += (valor - c[campo]) * c.pesoUnitario;
+        novo = { ...c, [campo]: valor, liberadoEm: c.liberadoEm ?? (a.etapa === 'fabricado' ? data : c.liberadoEm) };
+        // expedido nao passa do fabricado; montado nao passa do expedido
+        if (novo.expedidoQtd > novo.fabricadoQtd) novo.fabricadoQtd = novo.expedidoQtd;
+        if (novo.montadoQtd > novo.expedidoQtd) novo.expedidoQtd = novo.montadoQtd;
+        if (novo.expedidoQtd > novo.fabricadoQtd) novo.fabricadoQtd = novo.expedidoQtd;
+      }
+      novo = { ...novo, observacoes: observacao ? `${novo.observacoes} [${data}] ${observacao}`.trim() : novo.observacoes, atualizadoEm: agora() };
+      conjuntos = conjuntos.map((x) => (x.id === a.id ? novo : x));
+    }
+    ds = registrar({ ...ds, conjuntos }, 'apontar_conjuntos', 'conjunto', apontamentos.map((a) => a.id).join(','), undefined, { data, apontamentos, pesoApontado: Math.round(pesoApontado * 100) / 100 }, observacao || undefined);
+    commit(ds);
+    return { pesoApontado };
+  },
+
+  excluirConjunto(id: string) {
+    let ds = state.ds;
+    const c = ds.conjuntos.find((x) => x.id === id);
+    if (!c) throw new RegraDeNegocioError('Conjunto não encontrado.');
+    exigir('editar_etc', c.codigoObra);
+    if (c.fabricadoQtd > 0) throw new RegraDeNegocioError('Conjunto com fabricação apontada não pode ser excluído.');
+    ds = registrar({ ...ds, conjuntos: ds.conjuntos.filter((x) => x.id !== id) }, 'excluir_conjunto', 'conjunto', id, c, undefined);
+    commit(ds);
   },
 
   // Medicoes / cronograma fisico-financeiro

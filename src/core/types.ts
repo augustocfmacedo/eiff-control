@@ -568,6 +568,32 @@ export interface PedidoCompra {
   atualizadoEm: string;
 }
 
+// ---------------------------------------------------------------------------
+// Lista de materiais: conjuntos (marcas de montagem) em kg
+// ---------------------------------------------------------------------------
+export type TipoConjunto = 'Pilar' | 'Viga' | 'Terça' | 'Treliça' | 'Contraventamento' | 'Chumbador' | 'Escada' | 'Fechamento' | 'Plataforma' | 'Outros';
+
+/** Conjunto/marca de montagem da lista de materiais: unidade de fabricacao, expedicao e montagem, medida em kg. */
+export interface Conjunto {
+  id: string;
+  codigoObra: string;
+  servicoId?: string;
+  ordemId?: string; // ordem de fabricacao/montagem que o produz
+  marca: string; // ex.: P-01, V-12
+  descricao: string;
+  perfil?: string; // ex.: W 310x38,7
+  tipo: TipoConjunto;
+  quantidade: number; // pecas
+  pesoUnitario: number; // kg por peca
+  revisao?: string; // revisao de projeto
+  liberadoEm?: string; // liberacao para fabricacao (LPF)
+  fabricadoQtd: number;
+  expedidoQtd: number;
+  montadoQtd: number;
+  observacoes: string;
+  atualizadoEm: string;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -609,4 +635,5 @@ export interface Dataset {
   composicoes: Composicao[];
   orcamentos: Orcamento[];
   pedidos: PedidoCompra[];
+  conjuntos: Conjunto[];
 }

@@ -7,11 +7,12 @@ import { Timeline } from '../ui/Timeline';
 import { ObraForm } from './Obras';
 import { LancamentoForm } from './LancamentoForm';
 import { DemandasTab, MedicoesTab, ProducaoTab, ServicosTab } from './ObraOperacao';
+import { MateriaisTab } from './Materiais';
 
 export default function Obra360({ codigo }: { codigo: string }) {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'servicos' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
+  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'servicos' | 'materiais' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
   const [editando, setEditando] = useState(false);
   const [novoLanc, setNovoLanc] = useState(false);
   const [exec, setExec] = useState<{ execucaoFisica: number; medidoFaturado: number; estimativaConcluir: number; justificativa: string } | null>(null);
@@ -44,7 +45,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
             { label: 'EAC', value: money(o.eac, true) },
             { label: 'Orçamento disponível', value: money(o.orcamentoDisponivel, true), tone: o.orcamentoDisponivel < 0 ? 'neg' : undefined },
           ]}>
-          <ProgressRow label="Execução física" valor={o.execucaoFisica} />
+          <ProgressRow label={o.peso.pesoTotal ? "Execução física (kg montados)" : "Execução física"} valor={o.execucaoFisica} />
           <ProgressRow label="Faturado do contrato" valor={o.medicoes.liquidoConstrutora ? o.medicoes.faturado / o.medicoes.liquidoConstrutora : o.receitaTotal ? o.medidoFaturado / o.receitaTotal : 0} />
           <ProgressRow label="Orçamento comprometido" valor={o.custoOrcado ? o.custoComprometido / o.custoOrcado : 0} tone={o.custoOrcado && o.custoComprometido > o.custoOrcado ? 'bad' : undefined} />
         </KpiHero>
@@ -73,6 +74,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
           { id: 'resumo', label: 'Resumo econômico' },
           { id: 'medicoes', label: `Cronograma e medições (${o.medicoes.medicoes.filter((m) => m.medida).length}/${o.medicoes.medicoes.length})` },
           { id: 'servicos', label: `Serviços (${o.servicos.length})` },
+          { id: 'materiais', label: `Materiais (${o.peso.pesoTotal ? `${Math.round(o.peso.pctMontado * 100)}% de ${(o.peso.pesoTotal / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} t` : 'kg'})` },
           { id: 'demandas', label: `Demandas (${o.demandasPendentes + o.demandasAtrasadas} pend.)` },
           { id: 'fabricacao', label: `Fabricação (${o.fabricacao.emAndamento}/${o.fabricacao.ordens.length})` },
           { id: 'montagem', label: `Montagem (${o.montagem.emAndamento}/${o.montagem.ordens.length})` },
@@ -82,6 +84,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
         ]} />
         {aba === 'medicoes' && <MedicoesTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'servicos' && <ServicosTab o={o} onErro={toast} />}
+        {aba === 'materiais' && <MateriaisTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'demandas' && <DemandasTab o={o} onErro={toast} />}
         {aba === 'fabricacao' && <ProducaoTab o={o} tipo="Fabricação" onErro={toast} />}
         {aba === 'montagem' && <ProducaoTab o={o} tipo="Montagem" onErro={toast} />}
