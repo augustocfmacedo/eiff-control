@@ -14,6 +14,7 @@ import type {
   Composicao,
   Insumo,
   Orcamento,
+  PedidoCompra,
   ContaFinanceira,
   Dataset,
   Demanda,
@@ -232,7 +233,8 @@ export type Acao =
   | 'administrar'
   | 'comentar'
   | 'exportar'
-  | 'orcar';
+  | 'orcar'
+  | 'comprar';
 
 const MATRIZ: Record<Acao, Papel[]> = {
   ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
@@ -251,6 +253,7 @@ const MATRIZ: Record<Acao, Papel[]> = {
   comentar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
   exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
   orcar: ['Administrador', 'Diretoria', 'Financeiro', 'Engenharia', 'Compras', 'Gestor de obra'],
+  comprar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
 };
 
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {
@@ -913,6 +916,108 @@ export const actions = {
     ds = registrar(ds, 'contratar_orcamento', 'orcamento', id, atual, { status: 'Contratado', servicos: gerados.length, custoOrcado, precoVenda: gerados.reduce((a, s) => a + s.precoVenda, 0) });
     commit(ds);
     return { orcamento: novo, servicos: gerados };
+  },
+
+  // -------------------------------------------------------------------------
+  // Suprimentos: pedidos de compra
+  // -------------------------------------------------------------------------
+  novoPedido(codigoObra = ''): PedidoCompra {
+    const id = seq('PC', state.ds.pedidos.map((p) => p.id));
+    return { id, codigo: id, codigoObra, fornecedor: '', data: state.ds.params.dataBase, prazoPagamentoDias: 28, categoria: 'Aço e perfis', faturamentoDireto: false, status: 'Rascunho', itens: [], observacoes: '', criadoEm: agora(), criadoPor: state.usuario.id, atualizadoEm: agora() };
+  },
+
+  salvarPedido(p: PedidoCompra) {
+    let ds = state.ds;
+    exigir('comprar', p.codigoObra || undefined);
+    if (!p.codigoObra || !ds.obras.some((o) => o.codigo === p.codigoObra)) throw new RegraDeNegocioError('Pedido exige uma obra cadastrada.');
+    if (!p.fornecedor.trim()) throw new RegraDeNegocioError('Fornecedor é obrigatório.');
+    const plano = mapaPlano(ds).get(p.categoria);
+    if (!plano) throw new RegraDeNegocioError('Categoria do plano de contas inválida.');
+    if (plano.tipo !== 'Saída') throw new RegraDeNegocioError('A categoria do pedido deve ser de saída.');
+    if (p.servicoId && !ds.servicos.some((s) => s.id === p.servicoId && s.codigoObra === p.codigoObra)) throw new RegraDeNegocioError('Serviço não pertence à obra.');
+    if (p.itens.some((it) => !it.descricao.trim() || !(it.quantidade > 0) || it.precoUnitario < 0)) throw new RegraDeNegocioError('Cada item precisa de descrição, quantidade positiva e preço.');
+    if (p.itens.some((it) => it.insumoId && !ds.insumos.some((i) => i.id === it.insumoId))) throw new RegraDeNegocioError('Insumo não encontrado no catálogo.');
+    const atual = ds.pedidos.find((x) => x.id === p.id);
+    if (atual && atual.status !== 'Rascunho' && JSON.stringify(atual.itens) !== JSON.stringify(p.itens)) throw new RegraDeNegocioError('Itens de pedido emitido não podem ser alterados. Cancele e emita outro.');
+    if (atual && atual.status === 'Cancelado') throw new RegraDeNegocioError('Pedido cancelado não pode ser editado.');
+    const novo: PedidoCompra = { ...p, status: atual?.status ?? 'Rascunho', lancamentoId: atual?.lancamentoId, atualizadoEm: agora() };
+    const pedidos = atual ? ds.pedidos.map((x) => (x.id === p.id ? novo : x)) : [...ds.pedidos, novo];
+    ds = registrar({ ...ds, pedidos }, atual ? 'alterar_pedido' : 'criar_pedido', 'pedido', p.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  /** Emite o pedido: gera o lancamento previsto (comprometido) com servico e faturamento direto, passando pelas alcadas. */
+  emitirPedido(id: string) {
+    const ds = state.ds;
+    const p = ds.pedidos.find((x) => x.id === id);
+    if (!p) throw new RegraDeNegocioError('Pedido não encontrado.');
+    exigir('comprar', p.codigoObra);
+    if (p.status !== 'Rascunho') throw new RegraDeNegocioError('Só rascunhos podem ser emitidos.');
+    if (!p.itens.length) throw new RegraDeNegocioError('Pedido sem itens.');
+    const total = p.itens.reduce((a, it) => a + it.quantidade * it.precoUnitario, 0);
+    if (!(total > 0)) throw new RegraDeNegocioError('Valor do pedido deve ser positivo.');
+    const conta = ds.contas.find((c) => c.ativa)?.instituicao ?? '';
+    const lanc = actions.novoLancamento({
+      categoria: p.categoria, centroCusto: 'Obra', codigoObra: p.codigoObra, servicoId: p.servicoId, contraparte: p.fornecedor, documento: p.documento ?? p.codigo,
+      descricao: `Pedido ${p.codigo} · ${p.fornecedor} · ${p.itens.length} item(ns)`, competencia: p.data, vencimento: addDays(p.data, p.prazoPagamentoDias), status: 'Programado', confiabilidade: 'Confirmado', probabilidade: 1,
+      contaFinanceira: conta, valorBruto: Math.round(total * 100) / 100, faturamentoDireto: p.faturamentoDireto, origem: 'pedido', idExterno: p.codigo,
+      observacoes: p.itens.map((it) => `${it.quantidade} ${it.unidade} ${it.descricao} @ ${it.precoUnitario}`).join('; ').slice(0, 500),
+    });
+    const r = actions.salvarLancamento(lanc);
+    let ds2 = state.ds;
+    const novo: PedidoCompra = { ...p, status: 'Emitido', lancamentoId: r.lancamento.id, atualizadoEm: agora() };
+    ds2 = registrar({ ...ds2, pedidos: ds2.pedidos.map((x) => (x.id === id ? novo : x)) }, 'emitir_pedido', 'pedido', id, p, { status: 'Emitido', lancamentoId: r.lancamento.id, total, aprovacaoAberta: r.aprovacaoAberta });
+    commit(ds2);
+    return { pedido: novo, lancamento: r.lancamento, aprovacaoAberta: r.aprovacaoAberta };
+  },
+
+  /** Registra o recebimento (parcial ou total) e, se pedido, atualiza o preco dos insumos no catalogo. */
+  receberPedido(id: string, dados: { data: string; quantidades: Record<string, number>; atualizarPrecos: boolean; observacao?: string }) {
+    let ds = state.ds;
+    const p = ds.pedidos.find((x) => x.id === id);
+    if (!p) throw new RegraDeNegocioError('Pedido não encontrado.');
+    exigir('comprar', p.codigoObra);
+    if (p.status !== 'Emitido' && p.status !== 'Recebido parcial') throw new RegraDeNegocioError('Só pedidos emitidos recebem material.');
+    if (!dados.data) throw new RegraDeNegocioError('Informe a data do recebimento.');
+    const itens = p.itens.map((it) => {
+      const q = dados.quantidades[it.id];
+      if (q === undefined) return it;
+      if (q < 0) throw new RegraDeNegocioError('Quantidade recebida não pode ser negativa.');
+      return { ...it, quantidadeRecebida: Math.min(it.quantidade, it.quantidadeRecebida + q) };
+    });
+    if (JSON.stringify(itens) === JSON.stringify(p.itens)) throw new RegraDeNegocioError('Informe pelo menos uma quantidade recebida.');
+    const completo = itens.every((it) => it.quantidadeRecebida >= it.quantidade);
+    let insumos = ds.insumos;
+    let atualizados = 0;
+    if (dados.atualizarPrecos) {
+      for (const it of itens) {
+        if (!it.insumoId || !(dados.quantidades[it.id] > 0) || !(it.precoUnitario > 0)) continue;
+        insumos = insumos.map((i) => (i.id === it.insumoId ? { ...i, preco: it.precoUnitario, precoData: dados.data, precoFonte: `Pedido ${p.codigo} · ${p.fornecedor}` } : i));
+        atualizados++;
+      }
+    }
+    const novo: PedidoCompra = { ...p, itens, status: completo ? 'Recebido' : 'Recebido parcial', observacoes: dados.observacao ? `${p.observacoes} ${dados.observacao}`.trim() : p.observacoes, atualizadoEm: agora() };
+    ds = registrar({ ...ds, insumos, pedidos: ds.pedidos.map((x) => (x.id === id ? novo : x)) }, 'receber_pedido', 'pedido', id, p, { status: novo.status, data: dados.data, quantidades: dados.quantidades, precosAtualizados: atualizados });
+    commit(ds);
+    return { pedido: novo, precosAtualizados: atualizados };
+  },
+
+  cancelarPedido(id: string, motivo: string) {
+    const ds = state.ds;
+    const p = ds.pedidos.find((x) => x.id === id);
+    if (!p) throw new RegraDeNegocioError('Pedido não encontrado.');
+    exigir('comprar', p.codigoObra);
+    if (p.status === 'Cancelado') throw new RegraDeNegocioError('Pedido já cancelado.');
+    if (p.status === 'Recebido') throw new RegraDeNegocioError('Pedido recebido não pode ser cancelado; estorne o lançamento.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    const lanc = p.lancamentoId ? ds.lancamentos.find((l) => l.id === p.lancamentoId) : undefined;
+    if (lanc && lanc.status === 'Realizado') throw new RegraDeNegocioError('Lançamento do pedido já foi pago; estorne-o primeiro.');
+    if (lanc && lanc.status !== 'Cancelado') actions.cancelarLancamento(lanc.id, `Pedido ${p.codigo} cancelado: ${motivo}`);
+    let ds2 = state.ds;
+    const novo: PedidoCompra = { ...p, status: 'Cancelado', atualizadoEm: agora() };
+    ds2 = registrar({ ...ds2, pedidos: ds2.pedidos.map((x) => (x.id === id ? novo : x)) }, 'cancelar_pedido', 'pedido', id, p, novo, motivo);
+    commit(ds2);
   },
 
   // Medicoes / cronograma fisico-financeiro

@@ -23,6 +23,7 @@ import Equipe from './screens/Equipe';
 import ApontamentoTela from './screens/Apontamento';
 import Campo from './screens/Campo';
 import Orcamentos from './screens/Orcamentos';
+import Compras from './screens/Compras';
 
 export default function App() {
   const rota = useRota();
@@ -58,7 +59,7 @@ export default function App() {
     try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ }
   };
   const ICONES: Record<string, string> = {
-    '/': '📊', '/inbox': '📥', '/central': '🏗️', '/obras': '📁', '/orcamentos': '🧾', '/equipe': '👷', '/campo': '📱', '/pagar': '📤', '/receber': '📥', '/lancamentos': '📒', '/aprovacoes': '✅',
+    '/': '📊', '/inbox': '📥', '/central': '🏗️', '/obras': '📁', '/orcamentos': '🧾', '/compras': '🛒', '/equipe': '👷', '/campo': '📱', '/pagar': '📤', '/receber': '📥', '/lancamentos': '📒', '/aprovacoes': '✅',
     '/posicao': '🏦', '/fluxo13': '📈', '/fluxo24': '📆', '/conciliacao': '🔗', '/dividas': '💳', '/dre': '🧮', '/checks': '🛡️', '/cadastros': '⚙️', '/auditoria': '🔍',
   };
   const nav = (to: string, label: string, cnt?: number) => (
@@ -74,6 +75,7 @@ export default function App() {
     case 'inbox': tela = <CaixaEntrada />; break;
     case 'obras': tela = p1 ? <Obra360 codigo={p1} /> : <Obras />; break;
     case 'central': tela = <CentralObras />; break;
+    case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
     case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;
     case 'lancamentos': tela = p1 ? <LancamentoDetalhe id={p1} /> : <Lancamentos modo="todos" query={rota.query} key={rota.query.toString()} />; break;
     case 'pagar': tela = <Lancamentos modo="pagar" query={rota.query} key={'p' + rota.query.toString()} />; break;
@@ -127,6 +129,7 @@ export default function App() {
           {nav('/equipe', 'Equipe e produtividade', ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length)}
           {nav('/campo', 'Modo campo (celular)')}
           <h3>Financeiro</h3>
+          {nav('/compras', 'Compras e pedidos', ds.pedidos.filter((p) => p.status === 'Emitido' || p.status === 'Recebido parcial').length)}
           {nav('/pagar', 'Contas a pagar')}
           {nav('/receber', 'Contas a receber')}
           {nav('/lancamentos', 'Lançamentos')}

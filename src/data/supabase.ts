@@ -82,6 +82,7 @@ interface Refs {
   insumos: Map<string, string>; // app id -> uuid
   composicoes: Map<string, string>;
   orcamentos: Map<string, string>;
+  pedidos: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -156,6 +157,9 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('timesheet_incident'),
     sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
+  const [pedidosRows, pedidosItens] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order')]);
+  const pedItensPor = new Map<string, Row[]>();
+  for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
     selTodos('catalog_input', 'code'),
     selTodos('catalog_composition', 'code'),
@@ -200,6 +204,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     insumos: new Map(insumosRows.map((x) => [x.id, x.id])),
     composicoes: new Map(compRows.map((x) => [x.id, x.id])),
     orcamentos: new Map(estRows.map((x) => [x.id, x.id])),
+    pedidos: new Map(pedidosRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -307,7 +312,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [],
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [],
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -324,6 +329,12 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     id: x.id, codigo: x.code, titulo: x.title, cliente: x.client_name ?? '', codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, data: x.estimate_date, validade: x.valid_until ?? undefined, status: x.status, bdi: Number(x.bdi), referenciaPrecos: x.price_reference ?? '',
     observacoes: x.notes ?? '', criadoEm: x.created_at, criadoPor: x.created_by ?? '', atualizadoEm: x.updated_at,
     itens: (estItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ id: i.id, ordem: i.item_order, etapa: i.stage ?? '', codigo: i.code ?? '', descricao: i.description, unidade: i.unit, quantidade: Number(i.quantity), composicaoId: i.composition_id ?? undefined, custoUnitarioManual: i.manual_unit_cost === null || i.manual_unit_cost === undefined ? undefined : Number(i.manual_unit_cost), precoUnitarioVenda: i.sale_unit_price === null || i.sale_unit_price === undefined ? undefined : Number(i.sale_unit_price), servicoId: i.service_id ?? undefined })),
+  }));
+  ds.pedidos = pedidosRows.map((x) => ({
+    id: x.id, codigo: x.code, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, fornecedor: x.supplier_name ?? '', documento: x.document ?? undefined, data: x.order_date, previsaoEntrega: x.expected_on ?? undefined,
+    prazoPagamentoDias: Number(x.payment_days ?? 28), categoria: r.planoInv.get(x.chart_account_id) ?? '', faturamentoDireto: !!x.direct_billing, status: x.status, lancamentoId: x.entry_id ? r.lancsInv.get(x.entry_id) : undefined, observacoes: x.notes ?? '',
+    criadoEm: x.created_at, criadoPor: x.created_by ?? '', atualizadoEm: x.updated_at,
+    itens: (pedItensPor.get(x.id) ?? []).sort((a, b) => a.item_order - b.item_order).map((i) => ({ id: i.id, insumoId: i.input_id ?? undefined, descricao: i.description, unidade: i.unit, quantidade: Number(i.quantity), precoUnitario: Number(i.unit_price), quantidadeRecebida: Number(i.received_qty ?? 0) })),
   }));
   return { ds, usuario };
 }
@@ -663,6 +674,24 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
       if (o.itens.length) {
         const { error: e2 } = await sb.from('estimate_item').insert(o.itens.map((it, idx) => ({ estimate_id: oid, item_order: idx + 1, stage: it.etapa || null, code: it.codigo || null, description: it.descricao, unit: it.unidade || 'un', quantity: it.quantidade, composition_id: it.composicaoId ? r.composicoes.get(it.composicaoId) ?? null : null, manual_unit_cost: it.custoUnitarioManual ?? null, sale_unit_price: it.precoUnitarioVenda ?? null, service_id: it.servicoId ? r.servicos.get(it.servicoId) ?? null : null })));
         falha('inserir itens do orçamento', e2);
+      }
+    }
+  }
+
+  // pedidos de compra e itens
+  const pedAntes = new Map((antes.pedidos ?? []).map((p) => [p.id, p]));
+  for (const p of mudou(antes.pedidos ?? [], depois.pedidos ?? [], 'id')) {
+    const row = { code: p.codigo, service_id: p.servicoId ? r.servicos.get(p.servicoId) ?? null : null, supplier_name: p.fornecedor, document: p.documento ?? null, order_date: p.data, expected_on: p.previsaoEntrega ?? null, payment_days: p.prazoPagamentoDias, chart_account_id: r.plano.get(p.categoria) ?? null, direct_billing: p.faturamentoDireto, status: p.status, entry_id: p.lancamentoId ? r.lancs.get(p.lancamentoId) ?? null : null, notes: p.observacoes || null, updated_by: atorId };
+    const data = await gravar('purchase_order', { id: r.pedidos.get(p.id) }, row, { organization_id: r.orgId, project_id: r.obras.get(p.codigoObra), created_by: atorId });
+    const pid = data?.id ?? r.pedidos.get(p.id);
+    if (data) r.pedidos.set(p.id, data.id);
+    const prev = pedAntes.get(p.id);
+    if (pid && (!prev || JSON.stringify(prev.itens) !== JSON.stringify(p.itens))) {
+      const { error: e1 } = await sb.from('purchase_order_item').delete().eq('order_id', pid);
+      falha('limpar itens do pedido', e1);
+      if (p.itens.length) {
+        const { error: e2 } = await sb.from('purchase_order_item').insert(p.itens.map((it, idx) => ({ order_id: pid, item_order: idx + 1, input_id: it.insumoId ? r.insumos.get(it.insumoId) ?? null : null, description: it.descricao, unit: it.unidade || 'un', quantity: it.quantidade, unit_price: it.precoUnitario, received_qty: it.quantidadeRecebida })));
+        falha('inserir itens do pedido', e2);
       }
     }
   }

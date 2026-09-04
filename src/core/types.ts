@@ -531,6 +531,43 @@ export interface Orcamento {
   atualizadoEm: string;
 }
 
+// ---------------------------------------------------------------------------
+// Suprimentos: pedidos de compra
+// ---------------------------------------------------------------------------
+export type StatusPedido = 'Rascunho' | 'Emitido' | 'Recebido parcial' | 'Recebido' | 'Cancelado';
+
+export interface ItemPedido {
+  id: string;
+  insumoId?: string; // insumo do catalogo (atualiza o preco no recebimento e alimenta o comparativo orcado x comprado)
+  descricao: string;
+  unidade: string;
+  quantidade: number;
+  precoUnitario: number;
+  quantidadeRecebida: number;
+}
+
+/** Pedido de compra da obra: ao emitir vira lancamento previsto (comprometido) na base unica. */
+export interface PedidoCompra {
+  id: string;
+  codigo: string; // PC-0001
+  codigoObra: string;
+  servicoId?: string;
+  fornecedor: string;
+  documento?: string; // cotacao, proposta ou NF
+  data: string;
+  previsaoEntrega?: string;
+  prazoPagamentoDias: number; // vencimento do lancamento = data + prazo
+  categoria: string; // categoria do plano de contas do lancamento gerado
+  faturamentoDireto: boolean; // cliente paga o fornecedor (abate o contrato global)
+  status: StatusPedido;
+  itens: ItemPedido[];
+  lancamentoId?: string;
+  observacoes: string;
+  criadoEm: string;
+  criadoPor: string;
+  atualizadoEm: string;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -571,4 +608,5 @@ export interface Dataset {
   insumos: Insumo[];
   composicoes: Composicao[];
   orcamentos: Orcamento[];
+  pedidos: PedidoCompra[];
 }
