@@ -85,7 +85,7 @@ export function ServicosTab({ o, onErro }: { o: Obra360; onErro: (m: string) => 
               {o.servicos.map((s) => (
                 <tr key={s.id}>
                   <td><b>{s.codigo}</b><div className="muted small">{s.etapa}</div></td>
-                  <td>{s.nome}<div className="muted small">{s.medicoes.length} evento(s) · {s.lancamentos.length} lançamento(s){s.faturamentoDireto ? ` · direto cliente ${money(s.faturamentoDireto, true)}` : ''}</div></td>
+                  <td>{s.nome}<div className="muted small">{s.medicoes.length} evento(s) · {s.lancamentos.length} lançamento(s) · custo {s.origemCustoPrevisto.toLowerCase()}{s.diretoPrevisto || s.comprometidoDireto ? ` · direto cliente ${money(s.comprometidoDireto, true)} de ${money(s.diretoPrevisto, true)}` : ''}</div></td>
                   <td className="small">{d(s.inicioPrevisto)} → {d(s.fimPrevisto)}{s.diasParaFim !== undefined && s.status !== 'Concluído' && <div className={s.diasParaFim < 0 ? 'neg' : 'muted'}>{s.diasParaFim} d</div>}</td>
                   <td><Badge tone={tonePrazo(s.situacaoPrazo)}>{s.situacaoPrazo}</Badge></td>
                   <td><div className="progress" style={{ width: 60 }}><i style={{ width: `${s.pctExecucao * 100}%` }} /></div><span className="small">{pct(s.pctExecucao)}</span></td>

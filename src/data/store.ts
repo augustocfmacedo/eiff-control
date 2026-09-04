@@ -294,11 +294,13 @@ export function validarLancamento(ds: Dataset, l: Lancamento): string[] {
   if (plano && (plano.grupoFluxo === 'Custos Diretos de Obras' || plano.grupoDre === 'Receita Operacional') && !l.codigoObra)
     erros.push('Custos diretos e receitas de obra exigem Código Obra.');
   if (l.codigoObra && !ds.obras.some((o) => o.codigo === l.codigoObra)) erros.push(`Obra ${l.codigoObra} não cadastrada.`);
+  if (l.faturamentoDireto && !l.codigoObra) erros.push('Faturamento direto ao cliente exige Código Obra.');
+  if (l.faturamentoDireto && plano?.tipo === 'Entrada') erros.push('Faturamento direto só se aplica a saídas (compras pagas pelo cliente ao fornecedor).');
   if (l.competencia && periodoFechado(ds, l.competencia)) erros.push(`Período ${l.competencia.slice(0, 7)} está fechado.`);
   return erros;
 }
 
-const CAMPOS_RELEVANTES: (keyof Lancamento)[] = ['valorBruto', 'retencoes', 'desconto', 'multaJuros', 'vencimento', 'codigoObra', 'categoria', 'contraparte'];
+const CAMPOS_RELEVANTES: (keyof Lancamento)[] = ['valorBruto', 'retencoes', 'desconto', 'multaJuros', 'vencimento', 'codigoObra', 'categoria', 'contraparte', 'faturamentoDireto'];
 
 function precisaAprovacao(ds: Dataset, l: Lancamento): { precisa: boolean; excecao: boolean; impacto: ReturnType<typeof impactoLancamento> } {
   const calc = calcLancamento(l, ds);

@@ -196,6 +196,16 @@ export function calcOrcamento(o: Orcamento, cat: Catalogo): OrcamentoCalc {
   };
 }
 
+/** Custo direto do orcamento executivo (orcamentos Contratados da obra) por servico vinculado. */
+export function custoOrcamentoPorServico(ds: { orcamentos: Orcamento[]; insumos: Insumo[]; composicoes: Composicao[] }, codigoObra?: string): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const o of ds.orcamentos ?? []) {
+    if (o.status !== 'Contratado' || (codigoObra && o.codigoObra !== codigoObra)) continue;
+    for (const s of calcOrcamento(o, ds).porServico) m.set(s.servicoId, (m.get(s.servicoId) ?? 0) + s.custo);
+  }
+  return m;
+}
+
 // ---------------------------------------------------------------------------
 // Conversao em servicos da obra (orcamento contratado)
 // ---------------------------------------------------------------------------

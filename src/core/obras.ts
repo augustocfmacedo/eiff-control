@@ -35,8 +35,14 @@ export interface ServicoCalc extends Servico {
   custoComprometido: number;
   custoPago: number;
   comprometidoAberto: number;
-  custoPrevisto: number; // custo orcado informado ou precoVenda x (1 - margem alvo)
+  custoPrevisto: number; // custo orcado informado, custo do orcamento executivo ou precoVenda x (1 - margem alvo)
   custoPrevistoDerivado: boolean;
+  origemCustoPrevisto: 'Orçado' | 'Orçamento executivo' | 'Margem alvo';
+  custoOrcamento: number; // custo direto dos itens do orcamento executivo vinculados ao servico
+  comprometidoDireto: number; // compras com faturamento direto ao cliente (dentro do comprometido)
+  pagoDireto: number;
+  diretoPrevisto: number; // faturamento direto previsto para o servico (contrato)
+  diretoSaldo: number;
   margemAlvoEfetiva: number;
   etc: number;
   etcDerivado: boolean;
@@ -61,15 +67,20 @@ export interface ServicoCalc extends Servico {
   lancamentos: LancamentoCalc[];
 }
 
-export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO): ServicoCalc {
+export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvoObra = MARGEM_ALVO_PADRAO, custoOrcamento = 0): ServicoCalc {
   const meus = lancs.filter((l) => l.servicoId === s.id && l.oficial);
   const custos = meus.filter((l) => l.tipo === 'Saída' && l.status !== 'Cancelado');
   const custoComprometido = custos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
   const custoPago = custos.filter((l) => l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
   const comprometidoAberto = Math.max(0, custoComprometido - custoPago);
   const margemAlvoEfetiva = s.margemAlvo ?? margemAlvoObra;
-  const custoPrevistoDerivado = !(s.custoOrcado > 0);
-  const custoPrevisto = custoPrevistoDerivado ? s.precoVenda * (1 - margemAlvoEfetiva) : s.custoOrcado;
+  const origemCustoPrevisto: ServicoCalc['origemCustoPrevisto'] = s.custoOrcado > 0 ? 'Orçado' : custoOrcamento > 0 ? 'Orçamento executivo' : 'Margem alvo';
+  const custoPrevistoDerivado = origemCustoPrevisto === 'Margem alvo';
+  const custoPrevisto = origemCustoPrevisto === 'Orçado' ? s.custoOrcado : origemCustoPrevisto === 'Orçamento executivo' ? custoOrcamento : s.precoVenda * (1 - margemAlvoEfetiva);
+  const diretos = custos.filter((l) => l.direto);
+  const comprometidoDireto = diretos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
+  const pagoDireto = diretos.filter((l) => l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
+  const diretoPrevisto = s.faturamentoDireto ?? 0;
   const etcDerivado = s.estimativaConcluir === undefined || s.estimativaConcluir === null;
   const etcInformado = etcDerivado ? Math.max(0, custoPrevisto - custoComprometido) : s.estimativaConcluir!;
   const etcNaoComprometido = etcDerivado ? etcInformado : Math.max(0, etcInformado - comprometidoAberto);
@@ -98,7 +109,7 @@ export function calcServico(s: Servico, lancs: LancamentoCalc[], dataBase: strin
   const custoPrevistoProporcional = custoPrevisto * pctFaturado;
   return {
     ...s,
-    custoComprometido, custoPago, comprometidoAberto, custoPrevisto, custoPrevistoDerivado, margemAlvoEfetiva, etc: etcInformado, etcDerivado, eac,
+    custoComprometido, custoPago, comprometidoAberto, custoPrevisto, custoPrevistoDerivado, origemCustoPrevisto, custoOrcamento, comprometidoDireto, pagoDireto, diretoPrevisto, diretoSaldo: diretoPrevisto - comprometidoDireto, margemAlvoEfetiva, etc: etcInformado, etcDerivado, eac,
     margemProjetada: s.precoVenda - eac, pctMargem: s.precoVenda ? (s.precoVenda - eac) / s.precoVenda : 0,
     desvioOrcamento: eac - custoPrevisto, receitaPrevista, receitaRealizada,
     medicoes: meds, faturado, aFaturar: Math.max(0, (s.precoVenda || totalMed) - faturado), pctFaturado, custoPrevistoProporcional,
@@ -186,6 +197,8 @@ export interface ResumoServicos {
   custoPrevistoProporcional: number;
   custoComprometido: number;
   custoPago: number;
+  comprometidoDireto: number;
+  custoOrcamento: number;
   etc: number;
   eac: number;
   execucaoFisica: number; // ponderada pelo custo orcado (ou preco de venda)
@@ -194,8 +207,8 @@ export interface ResumoServicos {
   concluidos: number;
 }
 
-export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO): ResumoServicos {
-  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo));
+export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dataBase: string, medicoes: Medicao[] = [], margemAlvo = MARGEM_ALVO_PADRAO, custoOrcamentoPorServico?: Map<string, number>): ResumoServicos {
+  const calc = servicos.filter((s) => s.ativo).map((s) => calcServico(s, lancs, dataBase, medicoes, margemAlvo, custoOrcamentoPorServico?.get(s.id) ?? 0));
   const soma = (f: (s: ServicoCalc) => number) => calc.reduce((a, s) => a + f(s), 0);
   const pesoTotal = soma((s) => s.custoOrcado || s.precoVenda);
   return {
@@ -207,6 +220,8 @@ export function resumoServicos(servicos: Servico[], lancs: LancamentoCalc[], dat
     custoPrevistoProporcional: soma((s) => s.custoPrevistoProporcional),
     custoComprometido: soma((s) => s.custoComprometido),
     custoPago: soma((s) => s.custoPago),
+    comprometidoDireto: soma((s) => s.comprometidoDireto),
+    custoOrcamento: soma((s) => s.custoOrcamento),
     etc: soma((s) => s.etc),
     eac: soma((s) => s.eac),
     execucaoFisica: pesoTotal ? soma((s) => (s.custoOrcado || s.precoVenda) * s.pctExecucao) / pesoTotal : calc.length ? soma((s) => s.pctExecucao) / calc.length : 0,

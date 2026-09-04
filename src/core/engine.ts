@@ -17,6 +17,7 @@ import type {
   TransacaoBancaria,
 } from './types';
 import { MARGEM_ALVO_PADRAO, calcDemanda, resumoMedicoes, resumoProducao, resumoServicos, type DemandaCalc, type ResumoMedicoes, type ResumoProducao, type ServicoCalc } from './obras';
+import { custoOrcamentoPorServico } from './orcamentos';
 
 // ---------------------------------------------------------------------------
 // Datas (sempre em UTC para evitar deslocamento de fuso)
@@ -102,6 +103,7 @@ export interface LancamentoCalc extends Lancamento {
   situacao: Situacao;
   diasAtraso: number;
   vinculoBancario: boolean; // existe transacao do extrato vinculada (fonte da verdade da conciliacao)
+  direto: boolean; // faturamento direto ao cliente: fora do caixa e do DRE da EIFF, dentro do orcamento da obra
 }
 
 export function mapaPlano(ds: Dataset): Map<string, PlanoConta> {
@@ -125,10 +127,11 @@ export function calcLancamento(
   const incluir = incluirRegistro(l.registro, ds.params);
   const oficial = incluir && l.status !== 'Rascunho' && l.status !== 'Pendente';
   const sinal = tipo === 'Entrada' ? 1 : -1;
+  const direto = !!l.faturamentoDireto;
 
   let valorCaixaProjetado = 0;
   let valorGerencial = 0;
-  if (oficial && l.status !== 'Cancelado' && dataCaixa && tipo && tipo !== 'NÃO CADASTRADO') {
+  if (oficial && !direto && l.status !== 'Cancelado' && dataCaixa && tipo && tipo !== 'NÃO CADASTRADO') {
     if (l.status === 'Realizado') {
       valorCaixaProjetado = sinal * valorRealizadoTotal;
       valorGerencial = sinal * valorRealizadoTotal;
@@ -178,6 +181,7 @@ export function calcLancamento(
     situacao,
     diasAtraso,
     vinculoBancario: ds.transacoes.some((t) => t.lancamentoIds.includes(l.id)),
+    direto,
   };
 }
 
@@ -497,7 +501,14 @@ export interface Obra360 {
   pctMargemProjetada: number;
   caixaGerado: number;
   diasParaPrazo?: number;
-  orcamentoDisponivel: number; // custo orcado - comprometido
+  orcamentoDisponivel: number; // custo orcado (orcamento executivo quando ha) - comprometido
+  custoOrcamentoExecutivo: number; // custo direto dos orcamentos contratados vinculados aos servicos
+  custoComprometidoDireto: number; // compras com faturamento direto ao cliente (dentro do comprometido)
+  custoPagoDireto: number;
+  custoPagoEIFF: number; // pago pela EIFF (sem faturamento direto)
+  faturamentoDiretoContratado: number; // parcela do contrato faturada direto pelo cliente (medicoes ou servicos)
+  faturamentoDiretoUtilizado: number; // compras com faturamento direto ja lancadas
+  faturamentoDiretoSaldo: number;
   incluir: boolean;
   ativa: boolean;
   entradas: LancamentoCalc[];
@@ -529,13 +540,22 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
   const custoComprometido = custosDiretos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
   const custoPago = custosDiretos.filter((l) => l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
   const comprometidoAberto = Math.max(0, custoComprometido - custoPago);
+  const diretos = custosDiretos.filter((l) => l.direto);
+  const custoComprometidoDireto = diretos.reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
+  const custoPagoDireto = diretos.filter((l) => l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
 
-  // servicos: quando existem, sao a fonte detalhada de orcamento, ETC e avanco fisico
+  // servicos: quando existem, sao a fonte detalhada de orcamento, ETC e avanco fisico; o orcamento executivo
+  // contratado (itens vinculados aos servicos) e a fonte do custo previsto quando o servico nao tem custo orcado proprio
   const margemAlvo = obra.margemAlvo ?? MARGEM_ALVO_PADRAO;
   const medicoesObra = (ds.medicoes ?? []).filter((m) => m.codigoObra === obra.codigo);
-  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo);
+  const custoExec = custoOrcamentoPorServico(ds, obra.codigo);
+  const custoOrcamentoExecutivo = [...custoExec.values()].reduce((a, v) => a + v, 0);
+  const rs = resumoServicos((ds.servicos ?? []).filter((s) => s.codigoObra === obra.codigo), da, db, medicoesObra, margemAlvo, custoExec);
   const temServicos = rs.servicos.length > 0;
-  const custoOrcado = temServicos ? rs.custoPrevisto : obra.custoOrcado;
+  const custoOrcado = temServicos ? rs.custoPrevisto : obra.custoOrcado || custoOrcamentoExecutivo;
+  const faturamentoDiretoContratado = medicoesObra.some((m) => m.status !== 'Cancelado' && m.faturamentoDireto > 0)
+    ? medicoesObra.filter((m) => m.status !== 'Cancelado').reduce((a, m) => a + m.faturamentoDireto, 0)
+    : rs.servicos.reduce((a, s) => a + (s.faturamentoDireto ?? 0), 0);
   let eac: number;
   let etc: number;
   let etcNaoComprometido: number;
@@ -574,9 +594,16 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
     eac,
     margemProjetada,
     pctMargemProjetada: receitaTotal ? margemProjetada / receitaTotal : 0,
-    caixaGerado: recebido - custoPago,
+    caixaGerado: recebido - (custoPago - custoPagoDireto),
     diasParaPrazo: obra.fimContratual && ativa ? diffDays(obra.fimContratual, db) : undefined,
     orcamentoDisponivel: custoOrcado - custoComprometido,
+    custoOrcamentoExecutivo,
+    custoComprometidoDireto,
+    custoPagoDireto,
+    custoPagoEIFF: custoPago - custoPagoDireto,
+    faturamentoDiretoContratado,
+    faturamentoDiretoUtilizado: custoComprometidoDireto,
+    faturamentoDiretoSaldo: faturamentoDiretoContratado - custoComprometidoDireto,
     incluir: incluirRegistro(obra.registro, ds.params),
     ativa,
     entradas,
@@ -616,7 +643,7 @@ export const FAIXAS_AGING = ['A vencer', '1-7 dias', '8-30 dias', '31-60 dias', 
 export function aging(lancs: LancamentoCalc[], tipo: 'Entrada' | 'Saída'): FaixaAging[] {
   const faixas = FAIXAS_AGING.map((f) => ({ faixa: f, valor: 0, quantidade: 0 }));
   for (const l of lancs) {
-    if (l.tipo !== tipo || !l.oficial || l.status === 'Cancelado' || l.status === 'Realizado' || !l.vencimento) continue;
+    if (l.tipo !== tipo || !l.oficial || l.direto || l.status === 'Cancelado' || l.status === 'Realizado' || !l.vencimento) continue;
     const d = l.diasAtraso;
     const idx = d <= 0 ? 0 : d <= 7 ? 1 : d <= 30 ? 2 : d <= 60 ? 3 : d <= 90 ? 4 : 5;
     faixas[idx].valor += l.saldoAberto;
@@ -817,7 +844,7 @@ export function dashboard(ds: Dataset): Dashboard {
   const agora = new Date().toISOString();
   const checks = executarChecks(ds);
   const somaSit = (tipo: string, sit: Situacao) =>
-    lancs.filter((l) => l.tipo === tipo && l.situacao === sit && l.oficial).reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
+    lancs.filter((l) => l.tipo === tipo && l.situacao === sit && l.oficial && !l.direto).reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
   return {
     saldoInicial: f13.saldoInicial,
     saldoDisponivel: f13.saldoInicial - reservaVinculadaTotal(ds),
@@ -868,6 +895,6 @@ export function impactoLancamento(ds: Dataset, novo: Lancamento) {
     comprometidoObra: o360Depois?.custoComprometido,
     eacObra: o360Depois?.eac,
     margemProjetadaObra: o360Depois?.margemProjetada,
-    foraDoOrcamento: !!(o360Depois && o360Antes && obra && obra.custoOrcado > 0 && o360Depois.custoComprometido > obra.custoOrcado * (1 + ds.params.alcadas.desvioOrcamentoPermitido)),
+    foraDoOrcamento: !!(o360Depois && o360Antes && obra && o360Antes.custoOrcado > 0 && o360Depois.custoComprometido > o360Antes.custoOrcado * (1 + ds.params.alcadas.desvioOrcamentoPermitido)),
   };
 }

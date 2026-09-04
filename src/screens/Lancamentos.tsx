@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { aging, calcLancamentos } from '../core/engine';
 import type { Lancamento } from '../core/types';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
-import { Kpi, Money, PageHead, StatusBadge, money, useToast } from '../ui/components';
+import { Badge, Kpi, Money, PageHead, StatusBadge, money, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
 import { LancamentoForm } from './LancamentoForm';
 
@@ -116,7 +116,7 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
                 <td>{l.categoria}<div className="muted small">{l.grupoFluxo}</div></td>
                 <td>{l.codigoObra || <span className="muted">—</span>}</td>
                 <td>{l.contraparte}</td>
-                <td>{l.descricao}<div className="muted small">{l.documento}</div></td>
+                <td>{l.descricao}{l.faturamentoDireto && <> <Badge tone="info">direto cliente</Badge></>}<div className="muted small">{l.documento}</div></td>
                 <DataCell valor={l.competencia} editavel={podeEditar(l)} onChange={(v) => alterar(l.id, { competencia: v })} />
                 <DataCell valor={l.vencimento} editavel={podeEditar(l)} className={l.situacao === 'Atrasado' ? 'neg' : ''} onChange={(v) => alterar(l.id, { vencimento: v })} />
                 <DataCell valor={l.dataCaixa} editavel={l.status === 'Realizado' ? pode(usuario, 'liquidar') : podeEditar(l)} title={l.status === 'Realizado' ? 'Data de realização' : 'Segue o vencimento até a liquidação'} onChange={(v) => alterar(l.id, l.status === 'Realizado' ? { realizacao: v } : { vencimento: v })} />

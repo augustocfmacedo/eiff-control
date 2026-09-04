@@ -219,6 +219,7 @@ export interface Lancamento {
   centroCusto: string;
   codigoObra: string;
   servicoId?: string;
+  faturamentoDireto?: boolean; // compra paga pelo cliente direto ao fornecedor: abate o contrato global, nao passa pelo caixa nem pelo DRE da EIFF
   contraparte: string;
   documento: string;
   descricao: string;
