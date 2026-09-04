@@ -9,6 +9,7 @@ const PATHS: Record<string, React.ReactNode> = {
   orcamento: <><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z" /><path d="M9 8h6M9 12h6M9 16h3" /></>,
   equipe: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20a6 6 0 0 1 12 0" /><circle cx="17" cy="9" r="2.6" /><path d="M15.5 14.5A5 5 0 0 1 21 20" /></>,
   fabrica: <><path d="M3 21V10l6 3V10l6 3V10l6 3v8" /><path d="M3 21h18" /><path d="M7 17h2M11 17h2M15 17h2" /></>,
+  estoque: <><path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z" /><path d="M3 7.5v9l9 4.5 9-4.5v-9" /><path d="M12 12v9" /></>,
   campo: <><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M11 18h2" /></>,
   compras: <><path d="M3 4h2l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.2L21 8H6" /><circle cx="9.5" cy="20" r="1.2" /><circle cx="17.5" cy="20" r="1.2" /></>,
   pagar: <><path d="M7 17L17 7" /><path d="M9 7h8v8" /></>,

@@ -19,6 +19,7 @@ import type {
 import { MARGEM_ALVO_PADRAO, calcDemanda, resumoMedicoes, resumoProducao, resumoServicos, type DemandaCalc, type ResumoMedicoes, type ResumoProducao, type ServicoCalc, producaoPorServico } from './obras';
 import { custoOrcamentoPorServico } from './orcamentos';
 import { avancoPorPeso, resumoPeso, type ResumoPeso } from './materiais';
+import { consumoAco, type ConsumoAco } from './estoque';
 
 // ---------------------------------------------------------------------------
 // Datas (sempre em UTC para evitar deslocamento de fuso)
@@ -529,6 +530,7 @@ export interface Obra360 {
   fabricacao: ResumoProducao;
   montagem: ResumoProducao;
   peso: ResumoPeso; // lista de materiais em kg
+  aco: ConsumoAco; // aco consumido do estoque (kg liquido de sobras e custo real)
 }
 
 export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcLancamentos(ds)): Obra360 {
@@ -625,6 +627,7 @@ export function obra360(ds: Dataset, obra: Obra, lancs: LancamentoCalc[] = calcL
     fabricacao: resumoProducao(ds.ordens ?? [], 'Fabricação', db, obra.codigo),
     montagem: resumoProducao(ds.ordens ?? [], 'Montagem', db, obra.codigo),
     peso: resumoPeso(conjuntosObra),
+    aco: consumoAco(ds, { codigoObra: obra.codigo }).total,
   };
 }
 

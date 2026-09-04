@@ -6,6 +6,8 @@
 import { useSyncExternalStore } from 'react';
 import seed from './seed.json';
 import type {
+  ItemEstoque,
+  MovimentoEstoque,
   Apontamento,
   ApontamentoEstacao,
   Aprovacao,
@@ -44,6 +46,7 @@ import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamento
 import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
+import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -1281,6 +1284,103 @@ export const actions = {
     const novo: Romaneio = { ...r, status: dados.status, entregueEm: dados.status === 'Entregue' ? dados.entregueEm ?? ds.params.dataBase : r.entregueEm, observacoes: dados.observacoes ?? r.observacoes };
     ds = registrar({ ...ds, conjuntos, romaneios: ds.romaneios.map((x) => (x.id === id ? novo : x)) }, dados.status === 'Cancelado' ? 'cancelar_romaneio' : 'atualizar_romaneio', 'romaneio', id, r, novo, dados.motivo);
     commit(ds);
+  },
+
+  // -------------------------------------------------------------------------
+  // Estoque de aco: itens e movimentos (entrada com corrida, consumo, sobra, ajuste, estorno)
+  // -------------------------------------------------------------------------
+  novoItemEstoque(): ItemEstoque {
+    return { id: seq('EST', state.ds.itensEstoque.map((i) => i.id)), codigo: '', descricao: '', familia: 'Perfil laminado', estoqueMinimo: 0, ativo: true, observacoes: '' };
+  },
+
+  salvarItemEstoque(i: ItemEstoque) {
+    let ds = state.ds;
+    exigir('comprar');
+    if (!i.codigo.trim() || !i.descricao.trim()) throw new RegraDeNegocioError('Código e descrição são obrigatórios.');
+    if (ds.itensEstoque.some((x) => x.id !== i.id && x.codigo.trim().toUpperCase() === i.codigo.trim().toUpperCase())) throw new RegraDeNegocioError('Já existe um item com este código.');
+    if (i.insumoId && !ds.insumos.some((x) => x.id === i.insumoId)) throw new RegraDeNegocioError('Insumo do catálogo inválido.');
+    if (i.estoqueMinimo < 0 || (i.pesoUnitario !== undefined && i.pesoUnitario < 0)) throw new RegraDeNegocioError('Estoque mínimo e peso unitário não podem ser negativos.');
+    const atual = ds.itensEstoque.find((x) => x.id === i.id);
+    const item: ItemEstoque = { ...i, codigo: i.codigo.trim().toUpperCase() };
+    ds = registrar({ ...ds, itensEstoque: atual ? ds.itensEstoque.map((x) => (x.id === i.id ? item : x)) : [...ds.itensEstoque, item] }, atual ? 'alterar_item_estoque' : 'criar_item_estoque', 'estoque', i.id, atual, item);
+    commit(ds);
+    return item;
+  },
+
+  novoMovimentoEstoque(parcial: Partial<MovimentoEstoque> = {}): MovimentoEstoque {
+    return { id: seq('MOV', state.ds.movimentosEstoque.map((m) => m.id)), data: state.ds.params.dataBase, tipo: 'Entrada', itemId: '', local: 'Fábrica', conjuntos: [], quantidade: 0, custoUnitario: 0, observacao: '', responsavel: state.usuario.id, criadoEm: agora(), ...parcial };
+  },
+
+  /**
+   * Registra entrada, consumo, sobra ou ajuste. Entrada de aco estrutural exige corrida; consumo e sobra exigem obra;
+   * consumo (e ajuste negativo) nao pode exceder o saldo do lote/local e recebe o custo medio do lote.
+   */
+  registrarMovimento(m: MovimentoEstoque) {
+    let ds = state.ds;
+    if (m.tipo === 'Estorno') throw new RegraDeNegocioError('Estorno é feito a partir do movimento original.');
+    const item = ds.itensEstoque.find((x) => x.id === m.itemId);
+    if (!item || !item.ativo) throw new RegraDeNegocioError('Informe um item de estoque ativo.');
+    if (ds.movimentosEstoque.some((x) => x.id === m.id)) throw new RegraDeNegocioError('Movimento já registrado.');
+    if (!m.data) throw new RegraDeNegocioError('Informe a data.');
+    if (m.codigoObra && !ds.obras.some((o) => o.codigo === m.codigoObra)) throw new RegraDeNegocioError('Obra não cadastrada.');
+    exigir(m.tipo === 'Consumo' || m.tipo === 'Sobra' ? 'comentar' : 'comprar', m.codigoObra);
+    if (m.servicoId && !ds.servicos.some((s) => s.id === m.servicoId && s.codigoObra === m.codigoObra)) throw new RegraDeNegocioError('Serviço não pertence à obra.');
+    if (m.ordemId && !ds.ordens.some((o) => o.id === m.ordemId && o.codigoObra === m.codigoObra)) throw new RegraDeNegocioError('Ordem não pertence à obra.');
+    for (const c of m.conjuntos) {
+      const cj = ds.conjuntos.find((x) => x.id === c.conjuntoId && x.codigoObra === m.codigoObra);
+      if (!cj) throw new RegraDeNegocioError('Conjunto não pertence à obra.');
+      if (!(c.quantidade > 0)) throw new RegraDeNegocioError(`Quantidade do conjunto ${cj.marca} deve ser positiva.`);
+    }
+    if (m.pedidoId && !ds.pedidos.some((p) => p.id === m.pedidoId)) throw new RegraDeNegocioError('Pedido inválido.');
+    if (m.custoUnitario < 0) throw new RegraDeNegocioError('Custo por kg não pode ser negativo.');
+    if (m.tipo === 'Ajuste') {
+      if (!m.quantidade || !Number.isFinite(m.quantidade)) throw new RegraDeNegocioError('Informe a quantidade do ajuste (negativa para baixa).');
+      if (!m.observacao.trim()) throw new RegraDeNegocioError('Ajuste exige justificativa.');
+    } else if (!(m.quantidade > 0)) throw new RegraDeNegocioError('Quantidade em kg deve ser positiva.');
+    const corrida = m.corrida?.trim().toUpperCase() || undefined;
+    if (m.tipo === 'Entrada' && exigeCorrida(item.familia) && !corrida) throw new RegraDeNegocioError(`Entrada de ${item.familia.toLowerCase()} exige o número da corrida do certificado.`);
+    if ((m.tipo === 'Consumo' || m.tipo === 'Sobra') && !m.codigoObra) throw new RegraDeNegocioError('Informe a obra que consome ou devolve o material.');
+    const ic = posicaoEstoque(ds).itens.find((x) => x.id === item.id)!;
+    const lote = corrida ? ic.lotes.find((l) => l.corrida === corrida) : undefined;
+    let custoUnitario = m.custoUnitario;
+    if (m.tipo === 'Consumo' || (m.tipo === 'Ajuste' && m.quantidade < 0)) {
+      const q = Math.abs(m.quantidade);
+      if (corrida) {
+        if (!lote) throw new RegraDeNegocioError(`Corrida ${corrida} não tem entrada de ${item.codigo}.`);
+        if (lote.saldoPorLocal[m.local] + 1e-6 < q) throw new RegraDeNegocioError(`Saldo da corrida ${corrida} em ${m.local}: ${lote.saldoPorLocal[m.local]} kg, insuficiente para ${q} kg.`);
+      } else {
+        const saldo = m.local === 'Fábrica' ? ic.saldoFabrica : ic.saldoObra;
+        if (saldo + 1e-6 < q) throw new RegraDeNegocioError(`Saldo de ${item.codigo} em ${m.local}: ${saldo} kg, insuficiente para ${q} kg.`);
+      }
+      if (!(custoUnitario > 0)) custoUnitario = lote?.custoMedio || ic.custoMedio;
+    }
+    if (m.tipo === 'Sobra' && !(custoUnitario > 0)) custoUnitario = lote?.custoMedio || ic.custoMedio;
+    const novo: MovimentoEstoque = { ...m, corrida, custoUnitario, quantidade: m.tipo === 'Ajuste' ? m.quantidade : Math.abs(m.quantidade), criadoEm: m.criadoEm || agora() };
+    ds = registrar({ ...ds, movimentosEstoque: [...ds.movimentosEstoque, novo] }, 'movimentar_estoque', 'estoque', item.id, undefined, { id: novo.id, tipo: novo.tipo, quantidade: novo.quantidade, corrida, local: novo.local, codigoObra: novo.codigoObra, custoUnitario });
+    commit(ds);
+    return novo;
+  },
+
+  /** Estorna um movimento criando o inverso (nunca apaga). Entrada ja consumida nao pode ser estornada. */
+  estornarMovimento(id: string, motivo: string) {
+    let ds = state.ds;
+    const o = ds.movimentosEstoque.find((x) => x.id === id);
+    if (!o) throw new RegraDeNegocioError('Movimento não encontrado.');
+    if (o.tipo === 'Estorno') throw new RegraDeNegocioError('Estorno não pode ser estornado.');
+    if (ds.movimentosEstoque.some((x) => x.origemId === id)) throw new RegraDeNegocioError('Movimento já estornado.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    exigir('comprar', o.codigoObra);
+    const quantidade = -efeitoMovimento(o);
+    if (quantidade < 0) {
+      const ic = posicaoEstoque(ds).itens.find((x) => x.id === o.itemId)!;
+      const lote = o.corrida ? ic.lotes.find((l) => l.corrida === o.corrida) : undefined;
+      const saldo = lote ? lote.saldoPorLocal[o.local] : o.local === 'Fábrica' ? ic.saldoFabrica : ic.saldoObra;
+      if (saldo + 1e-6 < -quantidade) throw new RegraDeNegocioError('Saldo insuficiente para estornar: o material já foi consumido.');
+    }
+    const novo: MovimentoEstoque = { ...o, id: seq('MOV', ds.movimentosEstoque.map((m) => m.id)), data: ds.params.dataBase, tipo: 'Estorno', quantidade, origemId: id, origemTipo: o.tipo, observacao: motivo, responsavel: state.usuario.id, criadoEm: agora() };
+    ds = registrar({ ...ds, movimentosEstoque: [...ds.movimentosEstoque, novo] }, 'estornar_movimento_estoque', 'estoque', o.itemId, o, novo, motivo);
+    commit(ds);
+    return novo;
   },
 
   // Medicoes / cronograma fisico-financeiro

@@ -63,6 +63,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
       <KpiStrip itens={[
         { label: 'Comprometido', value: money(o.custoComprometido, true), hint: `em aberto ${money(o.comprometidoAberto, true)}`, to: `/pagar?obra=${codigo}` },
         { label: 'Faturamento direto usado', value: money(o.faturamentoDiretoUtilizado, true), hint: `saldo ${money(o.faturamentoDiretoSaldo, true)} de ${money(o.faturamentoDiretoContratado, true)}`, tone: o.faturamentoDiretoSaldo < 0 ? 'neg' : undefined },
+        { label: 'Aço consumido', value: o.aco.liquidoKg ? `${(o.aco.liquidoKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} t` : '—', hint: o.aco.liquidoKg ? `${money(o.aco.custo, true)} · ${o.aco.custoPorKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/kg` : 'sem consumo do estoque', to: `/estoque?obra=${codigo}` },
         { label: 'ETC', value: money(o.etc, true), hint: `não comprometido ${money(o.etcNaoComprometido, true)}` },
         { label: 'Saldo a medir', value: money(o.saldoAMedir, true), hint: `${o.medicoes.pendentes} evento(s) pendente(s)`, tone: o.medicoes.atrasadas ? 'warn' : undefined },
         { label: 'Margem orçada', value: pct(o.pctMargemOrcada), hint: o.custoOrcamentoExecutivo > 0 ? `orçamento executivo ${money(o.custoOrcamentoExecutivo, true)}` : `margem alvo ${pct(o.margemAlvo)}` },

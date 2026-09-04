@@ -87,6 +87,8 @@ interface Refs {
   avancos: Map<string, string>;
   apontEstacao: Map<string, string>;
   romaneios: Map<string, string>;
+  itensEstoque: Map<string, string>;
+  movEstoque: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -162,7 +164,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('measurement', '*', (q) => q.order('month_no').order('number')),
   ]);
   const [pedidosRows, pedidosItens, conjuntosRows, avancosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark'), selTodos('service_progress', 'measured_on')]);
-  const [estacaoRows, romaneioRows] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number')]);
+  const [estacaoRows, romaneioRows, stockItems, stockMovs] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number'), selTodos('stock_item', 'code'), selTodos('stock_movement', 'moved_on')]);
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -214,6 +216,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     avancos: new Map(avancosRows.map((x) => [x.id, x.id])),
     apontEstacao: new Map(estacaoRows.map((x) => [x.id, x.id])),
     romaneios: new Map(romaneioRows.map((x) => [x.id, x.id])),
+    itensEstoque: new Map(stockItems.map((x) => [x.id, x.id])),
+    movEstoque: new Map(stockMovs.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -321,7 +325,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [],
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [],
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -351,6 +355,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   }));
   ds.avancos = avancosRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, data: x.measured_on, quantidade: Number(x.quantity), pct: x.pct === null || x.pct === undefined ? undefined : Number(x.pct), descricao: x.description ?? '', evidencia: x.evidence ?? undefined, responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.apontamentosEstacao = estacaoRows.map((x) => ({ id: x.id, data: x.log_date, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, linha: x.line, estacao: x.station, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], pecas: Number(x.pieces ?? 0), pesoKg: Number(x.weight_kg ?? 0), colaboradores: (x.workers ?? []) as { colaboradorId: string; horas: number }[], observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
+  ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
+  ds.movimentosEstoque = stockMovs.map((x) => ({ id: x.id, data: x.moved_on, tipo: x.kind, itemId: x.item_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], quantidade: Number(x.quantity_kg), pecas: x.pieces != null ? Number(x.pieces) : undefined, corrida: x.heat_number ?? undefined, certificado: x.certificate ?? undefined, fornecedor: x.supplier ?? undefined, pedidoId: x.purchase_order_id ?? undefined, notaFiscal: x.invoice ?? undefined, custoUnitario: Number(x.unit_cost ?? 0), origemId: x.origin_id ?? undefined, origemTipo: x.origin_kind ?? undefined, observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
 }
@@ -762,6 +768,18 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     const row = { number: ro.numero, shipped_on: ro.data, carrier: ro.transportadora, plate: ro.placa ?? null, driver: ro.motorista ?? null, destination: ro.destino || null, items: ro.itens.map((i) => ({ conjuntoId: r.conjuntos.get(i.conjuntoId) ?? i.conjuntoId, quantidade: i.quantidade })), status: ro.status, delivered_on: ro.entregueEm ?? null, notes: ro.observacoes || null };
     const data = await gravar('shipment', { id: r.romaneios.get(ro.id) }, row, { organization_id: r.orgId, project_id: r.obras.get(ro.codigoObra), created_by: atorId });
     if (data) r.romaneios.set(ro.id, data.id);
+  }
+
+  // estoque: itens (update-senao-insert) e movimentos (imutaveis; estorno e um movimento novo)
+  for (const i of mudou(antes.itensEstoque ?? [], depois.itensEstoque ?? [], 'id')) {
+    const row = { code: i.codigo, description: i.descricao, family: i.familia, catalog_input_id: i.insumoId ? r.insumos.get(i.insumoId) ?? null : null, unit_weight: i.pesoUnitario ?? null, min_stock: i.estoqueMinimo, active: i.ativo, notes: i.observacoes || null };
+    const data = await gravar('stock_item', { id: r.itensEstoque.get(i.id) }, row, { organization_id: r.orgId, created_by: atorId });
+    if (data) r.itensEstoque.set(i.id, data.id);
+  }
+  for (const m of (depois.movimentosEstoque ?? []).filter((x) => !r.movEstoque.get(x.id))) {
+    const { data, error } = await sb.from('stock_movement').insert({ organization_id: r.orgId, moved_on: m.data, kind: m.tipo, item_id: r.itensEstoque.get(m.itemId) ?? m.itemId, location: m.local, project_id: m.codigoObra ? r.obras.get(m.codigoObra) ?? null : null, service_id: m.servicoId ? r.servicos.get(m.servicoId) ?? null : null, order_id: m.ordemId ? r.ordens.get(m.ordemId) ?? null : null, assemblies: m.conjuntos.map((c) => ({ conjuntoId: r.conjuntos.get(c.conjuntoId) ?? c.conjuntoId, quantidade: c.quantidade })), quantity_kg: m.quantidade, pieces: m.pecas ?? null, heat_number: m.corrida ?? null, certificate: m.certificado ?? null, supplier: m.fornecedor ?? null, purchase_order_id: m.pedidoId ? r.pedidos.get(m.pedidoId) ?? null : null, invoice: m.notaFiscal ?? null, unit_cost: m.custoUnitario, origin_id: m.origemId ? r.movEstoque.get(m.origemId) ?? null : null, origin_kind: m.origemTipo ?? null, notes: m.observacao || null, created_by: atorId }).select('id');
+    falha('registrar movimento de estoque', error);
+    if (data?.[0]) r.movEstoque.set(m.id, data[0].id);
   }
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)

@@ -650,6 +650,55 @@ export interface Romaneio {
   criadoEm: string;
 }
 
+// ---------------------------------------------------------------------------
+// Estoque de aco com rastreabilidade de corrida (kg)
+// ---------------------------------------------------------------------------
+export type FamiliaEstoque = 'Perfil laminado' | 'Perfil soldado' | 'Chapa' | 'Tubo' | 'Barra' | 'Cantoneira' | 'Telha e fechamento' | 'Consumível' | 'Outros';
+export type LocalEstoque = 'Fábrica' | 'Obra';
+export type TipoMovimento = 'Entrada' | 'Consumo' | 'Sobra' | 'Ajuste' | 'Estorno';
+
+/** Item estocavel (perfil, chapa, tubo, consumivel). Saldo sempre em kg. */
+export interface ItemEstoque {
+  id: string;
+  codigo: string; // ex.: W200X26.6, CH-3/8, TUBO-100X100X4.75
+  descricao: string;
+  familia: FamiliaEstoque;
+  insumoId?: string; // insumo do catalogo (preco de referencia)
+  pesoUnitario?: number; // kg por peca ou por metro, para conversao
+  estoqueMinimo: number; // kg; 0 = sem alerta
+  ativo: boolean;
+  observacoes: string;
+}
+
+/**
+ * Movimento de estoque: Entrada (com corrida/certificado), Consumo (obra/ordem/conjuntos), Sobra (retalho devolvido),
+ * Ajuste (quantidade com sinal, exige justificativa) e Estorno (inverso de outro movimento; quantidade com sinal).
+ */
+export interface MovimentoEstoque {
+  id: string;
+  data: string;
+  tipo: TipoMovimento;
+  itemId: string;
+  local: LocalEstoque;
+  codigoObra?: string; // obra que consome/devolve (ou reserva na entrada)
+  servicoId?: string;
+  ordemId?: string;
+  conjuntos: { conjuntoId: string; quantidade: number }[]; // conjuntos cortados com este material
+  quantidade: number; // kg (positivo; Ajuste/Estorno com sinal)
+  pecas?: number;
+  corrida?: string; // heat number do certificado
+  certificado?: string;
+  fornecedor?: string;
+  pedidoId?: string;
+  notaFiscal?: string;
+  custoUnitario: number; // R$/kg (entrada: preco pago; consumo/sobra: custo medio do lote)
+  origemId?: string; // estorno: movimento estornado
+  origemTipo?: TipoMovimento;
+  observacao: string;
+  responsavel: string;
+  criadoEm: string;
+}
+
 export interface Usuario {
   id: string;
   nome: string;
@@ -695,4 +744,6 @@ export interface Dataset {
   avancos: AvancoServico[];
   apontamentosEstacao: ApontamentoEstacao[];
   romaneios: Romaneio[];
+  itensEstoque: ItemEstoque[];
+  movimentosEstoque: MovimentoEstoque[];
 }
