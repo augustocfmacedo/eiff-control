@@ -124,7 +124,7 @@ describe('edição de datas na grade', () => {
     u('u-admin');
     actions.restaurarPlanilha();
     u('u-fin');
-    let l = actions.alterarDatas('PAG-FOLHA-2026-10', { vencimento: '2026-10-09', competencia: '2026-10-01' });
+    const l = actions.alterarDatas('PAG-FOLHA-2026-10', { vencimento: '2026-10-09', competencia: '2026-10-01' });
     expect(l.vencimento).toBe('2026-10-09');
     expect(l.competencia).toBe('2026-10-01');
     // vencimento e alteracao relevante (APR-003): titulo acima da alcada volta para aprovacao

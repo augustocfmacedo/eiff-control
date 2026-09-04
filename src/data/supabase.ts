@@ -20,7 +20,7 @@ const KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim
 export const remotoAtivo = !!(URL && KEY);
 export const supabase: SupabaseClient | null = remotoAtivo ? createClient(URL!, KEY!) : null;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type Row = Record<string, any>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

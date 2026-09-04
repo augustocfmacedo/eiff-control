@@ -853,7 +853,7 @@ export const actions = {
     exigir('editar_cadastros');
     if (!item.categoria.trim() || !item.grupoFluxo.trim() || !item.grupoDre.trim()) throw new RegraDeNegocioError('Categoria, grupo de fluxo e grupo DRE são obrigatórios.');
     const existe = ds.planoContas.find((p) => p.categoria === (original ?? item.categoria));
-    let planoContas = existe ? ds.planoContas.map((p) => (p.categoria === (original ?? item.categoria) ? item : p)) : [...ds.planoContas, item];
+    const planoContas = existe ? ds.planoContas.map((p) => (p.categoria === (original ?? item.categoria) ? item : p)) : [...ds.planoContas, item];
     let lancamentos = ds.lancamentos;
     if (original && original !== item.categoria) lancamentos = ds.lancamentos.map((l) => (l.categoria === original ? { ...l, categoria: item.categoria } : l));
     ds = registrar({ ...ds, planoContas, lancamentos }, 'alterar_plano_contas', 'plano_contas', item.categoria, existe, item);
