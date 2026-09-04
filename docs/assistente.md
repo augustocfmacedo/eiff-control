@@ -14,7 +14,8 @@
 2. No Netlify: Site configuration › Environment variables › Add a variable:
    - `ANTHROPIC_API_KEY` = a chave (marque como *secret*).
    - `ANTHROPIC_MODEL` (opcional) = modelo; padrão `claude-sonnet-5`.
-   - `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` já devem existir (a função usa para validar a sessão).
+   - `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` são opcionais: sem elas a função usa o projeto fixo da EIFF e a chave
+     pública que o próprio app envia (o site é publicado já compilado, então essas variáveis normalmente não estão no Netlify).
 3. Publique de novo (`npx netlify deploy --prod --dir dist` ou push). A função fica em `/api/assistente`.
 4. Abra o sistema, clique no assistente e pergunte algo: a etiqueta muda de "manual local" para "IA".
 

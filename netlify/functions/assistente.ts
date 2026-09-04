@@ -4,14 +4,17 @@
 import { montarConhecimento, montarContexto, type ContextoAssistente, type MensagemChat } from '../../src/core/assistente';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
 const PAPEIS = ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade', 'Auditoria'];
 
 export default async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') return json({ erro: 'metodo' }, 405);
   const chave = process.env.ANTHROPIC_API_KEY;
   if (!chave) return json({ erro: 'nao_configurado', mensagem: 'ANTHROPIC_API_KEY não definida no Netlify.' }, 501);
-  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-  const anon = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  // URL do projeto: variavel do Netlify ou o projeto fixo da EIFF. Chave anonima (publica, ja vai no bundle do app):
+  // variavel do Netlify ou o cabecalho enviado pelo app. A seguranca esta na validacao do token do usuario contra esse projeto.
+  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? SUPABASE_URL_PADRAO;
+  const anon = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? req.headers.get('x-supabase-anon') ?? '';
   if (!url || !anon) return json({ erro: 'nao_configurado', mensagem: 'Supabase não configurado na função.' }, 501);
   const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return json({ erro: 'nao_autenticado' }, 401);
