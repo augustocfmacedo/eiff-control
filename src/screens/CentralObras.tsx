@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { carteiraObras } from '../core/engine';
 import { resumoProducao } from '../core/obras';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
-import { Badge, Empty, Kpi, Link, Money, PageHead, StatusBadge, Tabs, money, pct, tentar, useToast } from '../ui/components';
+import { Badge, Empty, KpiStrip, Link, Money, PageHead, StatusBadge, Tabs, money, pct, tentar, useToast } from '../ui/components';
 import PainelObra from './PainelObra';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
@@ -23,12 +23,14 @@ export default function CentralObras() {
   return (
     <>
       <PageHead title="Central de obras" subtitle="Serviços, prazos, orçamento × custo, check-lists e linhas de fabricação e montagem de todas as obras, ligados ao caixa e ao resultado." />
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Kpi label="Obras ativas" value={carteira.length} hint={`${servicos.length} serviços`} to="/obras" />
-        <Kpi label="Serviços atrasados / em risco" value={`${servicos.filter((s) => s.situacaoPrazo === 'Atrasado').length} / ${servicos.filter((s) => s.situacaoPrazo === 'Em risco').length}`} tone={servicos.some((s) => s.situacaoPrazo === 'Atrasado') ? 'bad' : servicos.some((s) => s.situacaoPrazo === 'Em risco') ? 'warn' : 'ok'} />
-        <Kpi label="Demandas pendentes no período" value={demandas.filter((x) => x.status !== 'Concluída').length} hint={`${demandas.filter((x) => x.status === 'Atrasada').length} atrasada(s) · ${minhasDemandas.length} minha(s)`} tone={demandas.some((x) => x.status === 'Atrasada') ? 'bad' : demandas.some((x) => x.status === 'Pendente') ? 'warn' : 'ok'} />
-        <Kpi label="Ordens em andamento" value={fab.emAndamento + mon.emAndamento} hint={`${fab.atrasadas + mon.atrasadas} atrasada(s) · fabricação ${fab.ordens.length} · montagem ${mon.ordens.length}`} tone={fab.atrasadas + mon.atrasadas ? 'bad' : undefined} />
-      </div>
+      <KpiStrip itens={[
+        { label: 'Obras ativas', value: carteira.length, hint: `${servicos.length} serviço(s)`, to: '/obras' },
+        { label: 'Serviços atrasados', value: servicos.filter((s) => s.situacaoPrazo === 'Atrasado').length, hint: `${servicos.filter((s) => s.situacaoPrazo === 'Em risco').length} em risco`, tone: servicos.some((s) => s.situacaoPrazo === 'Atrasado') ? 'neg' : servicos.some((s) => s.situacaoPrazo === 'Em risco') ? 'warn' : undefined },
+        { label: 'Demandas pendentes', value: demandas.filter((x) => x.status !== 'Concluída').length, hint: `${demandas.filter((x) => x.status === 'Atrasada').length} atrasada(s) · ${minhasDemandas.length} minha(s)`, tone: demandas.some((x) => x.status === 'Atrasada') ? 'neg' : demandas.some((x) => x.status === 'Pendente') ? 'warn' : undefined },
+        { label: 'Fabricação', value: `${fab.emAndamento}/${fab.ordens.length}`, hint: `${fab.atrasadas} atrasada(s)`, tone: fab.atrasadas ? 'neg' : undefined },
+        { label: 'Montagem', value: `${mon.emAndamento}/${mon.ordens.length}`, hint: `${mon.atrasadas} atrasada(s)`, tone: mon.atrasadas ? 'neg' : undefined },
+      ]} />
+      <div style={{ height: 16 }} />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'painel', label: 'Painel analítico' }, { id: 'carteira', label: 'Carteira e serviços' }, { id: 'demandas', label: `Demandas do período (${demandas.filter((x) => x.status !== 'Concluída').length})` }, { id: 'fabricacao', label: `Linha de fabricação (${fab.ordens.length})` }, { id: 'montagem', label: `Linha de montagem (${mon.ordens.length})` }]} />
 
       {aba === 'painel' && <PainelObra carteira={carteira} />}

@@ -3,7 +3,7 @@ import { Calculadora, TIPOS_INSUMO, calcOrcamento, type CurvaAbcItem, type Orcam
 import { UFS, detectarUfs, parseSinapi, selecionarComDependencias, type CatalogoImportado, type Planilha } from '../core/sinapi';
 import type { Composicao, Insumo, ItemComposicao, ItemOrcamento, Orcamento, OrigemCatalogo, StatusOrcamento, TipoInsumo } from '../core/types';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
-import { Badge, Empty, Field, Input, Kpi, Link, Modal, Money, NumberInput, PageHead, Select, Tabs, money, pct, tentar, useToast, type Tone } from '../ui/components';
+import { Badge, Empty, Field, Input, Kpi, KpiHero, KpiStrip, Link, Modal, Money, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast, type Tone } from '../ui/components';
 import { navegar } from '../ui/router';
 
 const ORIGENS: OrigemCatalogo[] = ['SINAPI', 'TCPO', 'Própria'];
@@ -442,11 +442,24 @@ function OrcamentoDetalhe({ id, onErro, onOk }: { id: string; onErro: (m: string
         {podeEditar && <button className="btn primary" onClick={salvar} disabled={!alterado && !!salvo}>{salvo ? 'Salvar alterações' : 'Salvar'}</button>}
         {salvo && o.status !== 'Contratado' && pode(usuario, 'orcar') && <button className="btn" disabled={alterado} title={alterado ? 'Salve antes de contratar' : ''} onClick={() => setContratar(true)}>Contratar → serviços da obra</button>}
       </PageHead>
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Kpi label="Custo direto" value={money(calc.custoTotal)} hint={`${calc.itens.length} item(ns)${calc.semCusto ? ` · ${calc.semCusto} sem custo` : ''}`} tone={calc.semCusto || calc.incompletos ? 'warn' : undefined} />
-        <Kpi label={calc.itens.some((i) => i.precoInformado) ? `Margem sobre a venda (${pct(calc.pctMargem)})` : `BDI ${pct(o.bdi)}`} value={money(calc.margem)} tone={calc.custoTotal > 0 && calc.margem < 0 ? 'bad' : undefined} hint={calc.itens.some((i) => i.precoInformado) ? `${calc.itens.filter((i) => i.precoInformado).length} item(ns) com preço de venda informado` : undefined} />
-        <Kpi label="Preço de venda" value={money(calc.precoTotal)} hint={obra ? `contrato ${money(obra.valorContrato + obra.aditivos)}` : undefined} />
-        <Kpi label="Material / MO / Equip." value={`${pct(calc.custoTotal ? calc.porTipo.Material / calc.custoTotal : 0)} / ${pct(calc.custoTotal ? calc.porTipo['Mão de obra'] / calc.custoTotal : 0)} / ${pct(calc.custoTotal ? calc.porTipo.Equipamento / calc.custoTotal : 0)}`} hint={`serviços/outros ${pct(calc.custoTotal ? (calc.porTipo.Serviço + calc.porTipo.Outros) / calc.custoTotal : 0)}`} />
+      <div className="hero-grid" style={{ marginBottom: 16 }}>
+        <KpiHero label="Preço de venda" value={money(calc.precoTotal)} sufixo={calc.itens.some((i) => i.precoInformado) ? `margem ${pct(calc.pctMargem)}` : `BDI ${pct(o.bdi)}`} tone={calc.custoTotal > 0 && calc.margem < 0 ? 'bad' : calc.semCusto || calc.incompletos ? 'warn' : undefined}
+          hint={`custo direto ${money(calc.custoTotal, true)} · margem ${money(calc.margem, true)}${obra ? ` · contrato ${money(obra.valorContrato + obra.aditivos, true)}` : ''}`}
+          secundarios={[
+            { label: 'Custo direto', value: money(calc.custoTotal, true) },
+            { label: 'Margem', value: money(calc.margem, true), tone: calc.custoTotal > 0 && calc.margem < 0 ? 'neg' : undefined },
+            { label: 'Itens', value: `${calc.itens.length}${calc.semCusto ? ` · ${calc.semCusto} sem custo` : ''}`, tone: calc.semCusto ? 'warn' : undefined },
+            { label: 'Com preço informado', value: calc.itens.filter((i) => i.precoInformado).length },
+          ]}>
+          <ProgressRow label="Material" valor={calc.custoTotal ? calc.porTipo.Material / calc.custoTotal : 0} />
+          <ProgressRow label="Mão de obra" valor={calc.custoTotal ? calc.porTipo['Mão de obra'] / calc.custoTotal : 0} />
+          <ProgressRow label="Equipamento" valor={calc.custoTotal ? calc.porTipo.Equipamento / calc.custoTotal : 0} />
+          <ProgressRow label="Serviços e outros" valor={calc.custoTotal ? (calc.porTipo.Serviço + calc.porTipo.Outros) / calc.custoTotal : 0} />
+        </KpiHero>
+        <KpiHero label="Curva ABC de insumos" value={`${calc.curvaInsumos.filter((i) => i.classe === 'A').length}`} sufixo={`insumo(s) classe A · ${pct(calc.curvaInsumos.filter((i) => i.classe === 'A').reduce((a, i) => a + i.pct, 0))} do custo`} hint={`${calc.curvaInsumos.length} insumo(s) na explosão · B ${calc.curvaInsumos.filter((i) => i.classe === 'B').length} · C ${calc.curvaInsumos.filter((i) => i.classe === 'C').length}`}>
+          {calc.curvaInsumos.slice(0, 5).map((i) => <ProgressRow key={i.id} label={i.descricao.slice(0, 34)} valor={i.pct} texto={money(i.valor, true)} tone={i.classe === 'A' ? 'bad' : i.classe === 'B' ? 'warn' : undefined} />)}
+          {!calc.curvaInsumos.length && <div className="muted small">Vincule composições aos itens para ver os insumos.</div>}
+        </KpiHero>
       </div>
       <div className="card">
         <div className="form">
@@ -570,12 +583,13 @@ export default function Orcamentos({ id, aba0 }: { id?: string; aba0?: string })
   return (
     <>
       <PageHead title="Orçamentos e composições" subtitle="Catálogo de insumos e composições (SINAPI, TCPO ou próprias), propostas com BDI e curva ABC, e conversão do orçamento contratado em serviços da obra com custo orçado." />
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Kpi label="Orçamentos em aberto" value={abertos.length} hint={`${ds.orcamentos.filter((o) => o.status === 'Contratado').length} contratado(s)`} />
-        <Kpi label="Composições" value={ds.composicoes.length} hint={`${ds.composicoes.filter((c) => c.origem === 'Própria').length} própria(s) · ${ds.composicoes.filter((c) => c.origem === 'SINAPI').length} SINAPI`} />
-        <Kpi label="Insumos" value={ds.insumos.length} hint={`${ds.insumos.filter((i) => i.tipo === 'Mão de obra').length} de mão de obra`} />
-        <Kpi label="Referência de preços" value={ds.insumos.find((i) => i.origem === 'SINAPI')?.precoFonte ?? '—'} hint={ds.insumos.length ? `última data ${d([...ds.insumos].map((i) => i.precoData ?? '').sort().pop())}` : 'importe o SINAPI'} />
-      </div>
+      <KpiStrip itens={[
+        { label: 'Orçamentos em aberto', value: abertos.length, hint: `${ds.orcamentos.filter((o) => o.status === 'Contratado').length} contratado(s)` },
+        { label: 'Composições', value: ds.composicoes.length, hint: `${ds.composicoes.filter((c) => c.origem === 'Própria').length} própria(s) · ${ds.composicoes.filter((c) => c.origem === 'SINAPI').length} SINAPI` },
+        { label: 'Insumos', value: ds.insumos.length, hint: `${ds.insumos.filter((i) => i.tipo === 'Mão de obra').length} de mão de obra` },
+        { label: 'Referência de preços', value: ds.insumos.find((i) => i.origem === 'SINAPI')?.precoFonte?.replace(/ \(.*\)$/, '') ?? '—', hint: ds.insumos.length ? `última data ${d([...ds.insumos].map((i) => i.precoData ?? '').sort().pop())}` : 'importe o SINAPI' },
+      ]} />
+      <div style={{ height: 16 }} />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'orcamentos', label: `Orçamentos (${ds.orcamentos.length})` }, { id: 'composicoes', label: `Composições (${ds.composicoes.length})` }, { id: 'insumos', label: `Insumos (${ds.insumos.length})` }, { id: 'importar', label: 'Importar SINAPI' }]} />
       {aba === 'orcamentos' && <OrcamentosTab onErro={toast} />}
       {aba === 'composicoes' && <ComposicoesTab onErro={toast} />}

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { calcPedido, comparativoOrcadoComprado, resumoCompras, type PedidoCalc } from '../core/compras';
 import type { ItemPedido, PedidoCompra } from '../core/types';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
-import { Badge, Empty, Field, Input, Kpi, Link, Modal, Money, NumberInput, PageHead, Select, Tabs, money, pct, tentar, useToast, type Tone } from '../ui/components';
+import { Badge, Empty, Field, Input, KpiHero, KpiStrip, Link, Modal, Money, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast, type Tone } from '../ui/components';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 const n2 = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -147,12 +147,14 @@ export default function Compras({ query }: { query: URLSearchParams }) {
         <Select value={obra} onChange={setObra} options={obras.map((o) => ({ value: o.codigo, label: `${o.codigo} · ${o.nome}` }))} allowEmpty="Todas as obras" />
         {podeComprar && <button className="btn primary" onClick={() => setEdit(actions.novoPedido(obra))}>+ Novo pedido</button>}
       </PageHead>
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Kpi label="Pedidos emitidos" value={money(r.emitido)} hint={`${r.pedidos.filter((p) => p.ativo).length} pedido(s) · ${r.rascunhos} rascunho(s)`} />
-        <Kpi label="Recebido" value={money(r.recebido)} hint={`a receber ${money(r.aReceber, true)} · ${r.atrasados} atrasado(s)`} tone={r.atrasados ? 'warn' : undefined} />
-        <Kpi label="Faturamento direto (cliente)" value={money(r.direto)} hint="pedidos pagos pelo cliente ao fornecedor" />
-        <Kpi label="Aguardando aprovação" value={r.aguardandoAprovacao} hint="lançamentos do pedido pendentes por alçada" tone={r.aguardandoAprovacao ? 'warn' : undefined} to="/aprovacoes" />
-      </div>
+      <KpiStrip itens={[
+        { label: 'Pedidos emitidos', value: money(r.emitido, true), hint: `${r.pedidos.filter((p) => p.ativo).length} pedido(s) · ${r.rascunhos} rascunho(s)` },
+        { label: 'Recebido', value: money(r.recebido, true), hint: `a receber ${money(r.aReceber, true)}`, tone: r.atrasados ? 'warn' : undefined },
+        { label: 'Entregas atrasadas', value: r.atrasados, tone: r.atrasados ? 'neg' : undefined },
+        { label: 'Faturamento direto', value: money(r.direto, true), hint: 'pagos pelo cliente ao fornecedor' },
+        { label: 'Aguardando aprovação', value: r.aguardandoAprovacao, hint: 'lançamentos pendentes por alçada', tone: r.aguardandoAprovacao ? 'warn' : undefined, to: '/aprovacoes' },
+      ]} />
+      <div style={{ height: 16 }} />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'pedidos', label: `Pedidos (${r.pedidos.length})` }, { id: 'comparativo', label: 'Orçado × comprado por insumo' }]} />
       {aba === 'pedidos' && (
         <div className="card table-wrap">
@@ -192,11 +194,18 @@ export default function Compras({ query }: { query: URLSearchParams }) {
       {aba === 'comparativo' && (
         !comp ? <Empty>Escolha uma obra para comparar o orçamento executivo com as compras.</Empty> : (
           <>
-            <div className="grid cols-4" style={{ marginBottom: 16 }}>
-              <Kpi label="Insumos orçados" value={money(comp.orcadoValor)} hint={`${comp.linhas.filter((l) => l.orcadoQtd > 0).length} insumo(s) na explosão do orçamento contratado`} />
-              <Kpi label="Comprado" value={money(comp.compradoValor)} hint={`${pct(comp.pctComprado)} do orçado`} />
-              <Kpi label="Fora do orçamento" value={money(comp.linhas.filter((l) => !l.orcadoQtd).reduce((a, l) => a + l.compradoValor, 0) + comp.compradoForaOrcamento)} hint={`itens livres ${money(comp.compradoForaOrcamento, true)}`} tone={comp.compradoForaOrcamento > 0 ? 'warn' : undefined} />
-              <Kpi label="Desvio acima do ritmo orçado" value={money(comp.linhas.reduce((a, l) => a + Math.max(0, l.desvioValor), 0))} hint="comprado − orçado × % comprado, só desvios positivos" tone={comp.linhas.some((l) => l.desvioValor > 1000) ? 'warn' : undefined} />
+            <div className="hero-grid" style={{ marginBottom: 16 }}>
+              <KpiHero label="Comprado × orçado" value={money(comp.compradoValor)} sufixo={`${pct(comp.pctComprado)} do orçado`} hint={`insumos orçados ${money(comp.orcadoValor, true)} em ${comp.linhas.filter((l) => l.orcadoQtd > 0).length} insumo(s) da explosão do orçamento contratado`} tone={comp.linhas.some((l) => l.desvioValor > 1000) ? 'warn' : undefined}
+                secundarios={[
+                  { label: 'Orçado', value: money(comp.orcadoValor, true) },
+                  { label: 'Fora do orçamento', value: money(comp.linhas.filter((l) => !l.orcadoQtd).reduce((a, l) => a + l.compradoValor, 0) + comp.compradoForaOrcamento, true), tone: comp.compradoForaOrcamento > 0 ? 'warn' : undefined },
+                  { label: 'Desvio acima do ritmo', value: money(comp.linhas.reduce((a, l) => a + Math.max(0, l.desvioValor), 0), true), tone: comp.linhas.some((l) => l.desvioValor > 1000) ? 'neg' : undefined },
+                ]}>
+                <ProgressRow label="Avanço das compras" valor={comp.pctComprado} />
+              </KpiHero>
+              <KpiHero label="Maiores insumos orçados" value={comp.linhas.filter((l) => l.classe === 'A').length} sufixo="classe A" hint="quanto de cada um já foi comprado">
+                {comp.linhas.slice(0, 5).map((l) => <ProgressRow key={l.insumoId} label={l.descricao.slice(0, 34)} valor={l.pctComprado} texto={`${pct(l.pctComprado)}`} tone={l.desvioPreco > 0.05 ? 'warn' : undefined} />)}
+              </KpiHero>
             </div>
             <div className="card table-wrap">
               {!comp.linhas.length ? <Empty>Sem orçamento contratado com composições nesta obra.</Empty> : (
