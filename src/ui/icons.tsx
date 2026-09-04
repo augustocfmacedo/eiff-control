@@ -44,13 +44,46 @@ export function Icon({ name, size = 18, className }: { name: IconName; size?: nu
   );
 }
 
-/** Marca EIFF: tres barras da identidade visual (laranja sobre o fundo da interface). */
+/** Simbolo EIFF: tres colunas de blocos. Preto da marca = currentColor (branco no tema escuro), laranja = --brand. */
 export function Marca({ size = 28 }: { size?: number }) {
+  const h = size; const w = Math.round((size * 343) / 714);
   return (
-    <svg className="marca" width={size} height={size} viewBox="0 0 40 40" aria-label="EIFF" role="img">
-      <rect x="5" y="20" width="8" height="15" rx="1.2" fill="var(--brand)" />
-      <rect x="16.5" y="5" width="8" height="10" rx="1.2" fill="var(--brand)" />
-      <rect x="27" y="10" width="8" height="25" rx="1.2" fill="var(--brand)" />
+    <svg className="marca" width={w} height={h} viewBox="0 0 343 714" aria-label="EIFF" role="img">
+      <g fill="currentColor">
+        <rect x="0" y="136" width="68" height="126" rx="4" /><rect x="0" y="293" width="68" height="126" rx="4" />
+        <rect x="137" y="136" width="68" height="441" rx="4" /><rect x="137" y="626" width="68" height="88" rx="4" />
+        <rect x="275" y="136" width="68" height="86" rx="4" />
+      </g>
+      <g fill="var(--brand)">
+        <rect x="0" y="451" width="68" height="126" rx="4" /><rect x="137" y="0" width="68" height="88" rx="4" /><rect x="275" y="264" width="68" height="313" rx="4" />
+      </g>
+    </svg>
+  );
+}
+
+/** Logotipo completo: simbolo + palavra EIFF (traco geometrico da identidade). */
+export function Logotipo({ height = 24 }: { height?: number }) {
+  const w = Math.round((height * 1190) / 715);
+  // letras medidas da identidade (altura 715, traco 56): E com ganchos, I, F, F
+  const r = (x: number, y: number, w: number, h: number) => <rect x={x} y={y} width={w} height={h} />;
+  const letras = (
+    <>
+      {r(0, 0, 56, 715)}{r(56, 0, 100, 57)}{r(100, 57, 56, 111)}{r(56, 287, 100, 56)}{r(56, 658, 100, 57)}{r(100, 547, 56, 111)}
+      {r(224, 0, 56, 715)}
+      {[344, 554].map((x) => <React.Fragment key={x}>{r(x, 0, 56, 715)}{r(x + 56, 0, 100, 57)}{r(x + 100, 57, 56, 111)}{r(x + 56, 287, 100, 56)}</React.Fragment>)}
+    </>
+  );
+  return (
+    <svg className="logotipo" width={w} height={height} viewBox="0 0 1190 716" aria-label="EIFF" role="img">
+      <g fill="currentColor">
+        <rect x="0" y="136" width="68" height="126" rx="4" /><rect x="0" y="293" width="68" height="126" rx="4" />
+        <rect x="137" y="136" width="68" height="441" rx="4" /><rect x="137" y="626" width="68" height="88" rx="4" />
+        <rect x="275" y="136" width="68" height="86" rx="4" />
+      </g>
+      <g fill="var(--brand)">
+        <rect x="0" y="451" width="68" height="126" rx="4" /><rect x="137" y="0" width="68" height="88" rx="4" /><rect x="275" y="264" width="68" height="313" rx="4" />
+      </g>
+      <g fill="currentColor" transform="translate(480 0)">{letras}</g>
     </svg>
   );
 }

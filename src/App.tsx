@@ -24,7 +24,7 @@ import ApontamentoTela from './screens/Apontamento';
 import Campo from './screens/Campo';
 import Orcamentos from './screens/Orcamentos';
 import Compras from './screens/Compras';
-import { Icon, Marca, type IconName } from './ui/icons';
+import { Icon, Logotipo, Marca, type IconName } from './ui/icons';
 
 export default function App() {
   const rota = useRota();
@@ -103,7 +103,7 @@ export default function App() {
     return (
       <div className="campo">
         <header className="topbar" style={{ padding: '10px 14px' }}>
-          <div className="brand" style={{ padding: 0 }}><div className="logo"><Marca size={22} /></div><div><b>EIFF Control</b><span>Modo campo</span></div></div>
+          <div className="brand" style={{ padding: 0 }}><Logotipo height={30} /><div className="brand-txt"><b>Control</b><span>Modo campo</span></div></div>
           <div className="spacer" />
           <span className="small">{usuario.nome.split(' ')[0]}</span>
           {modo === 'remoto' && sync.status === 'erro' && <Badge tone="bad">não sincronizado</Badge>}
@@ -118,8 +118,7 @@ export default function App() {
     <div className={`app ${recolhida ? 'recolhida' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
-          <div className="logo"><Marca size={22} /></div>
-          <div className="nav-label"><b>EIFF Control</b><span>Do orçamento ao caixa</span></div>
+          {recolhida ? <Marca size={26} /> : <><Logotipo height={40} /><div className="nav-label brand-txt"><b>Control</b><span>Do orçamento ao caixa</span></div></>}
           <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}><Icon name={recolhida ? 'expandir' : 'recolher'} size={16} /></button>
         </div>
         <nav className="nav">

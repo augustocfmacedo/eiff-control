@@ -103,7 +103,11 @@ h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   background: var(--surface); border-right: 1px solid var(--border);
   padding: 14px 10px; position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column;
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 14px; color: var(--text); }
+.brand .logotipo { flex: 0 0 auto; }
+.brand-txt b { font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.brand-txt span { display: block; line-height: 1.2; }
+.print-head .logotipo { color: #000; }
 .brand .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--border); display: grid; place-items: center; flex: 0 0 34px; }
 .brand b { display: block; font-size: 14px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.15; }
 .brand span { font-size: 11px; color: var(--muted); }

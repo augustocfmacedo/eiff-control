@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fmtBr } from '../core/engine';
 import { href, navegar } from './router';
-import { Icon, Marca, type IconName } from './icons';
+import { Icon, Logotipo, type IconName } from './icons';
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 });
 const brlInt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -75,7 +75,7 @@ export function ProgressRow({ label, valor, texto, tone }: { label: string; valo
 export function PrintHead({ titulo, subtitulo }: { titulo: string; subtitulo?: string }) {
   return (
     <div className="print-only print-head">
-      <Marca size={26} />
+      <Logotipo height={40} />
       <div><b>{titulo}</b><br /><span>{subtitulo ?? ''} · impresso em {new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span></div>
     </div>
   );

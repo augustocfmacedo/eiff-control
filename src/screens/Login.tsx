@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Marca } from '../ui/icons';
+import { Logotipo } from '../ui/icons';
 import { actions, useStore } from '../data/store';
 
 export default function Login() {
@@ -23,7 +23,7 @@ export default function Login() {
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
       <form className="card" style={{ width: 'min(400px, 92vw)' }} onSubmit={entrar}>
-        <div className="brand" style={{ paddingLeft: 0 }}><div className="logo"><Marca size={22} /></div><div><b>EIFF Control</b><span>Do orçamento ao caixa</span></div></div>
+        <div className="brand" style={{ paddingLeft: 0 }}><Logotipo height={56} /><div className="brand-txt"><b>Control</b><span>Do orçamento ao caixa</span></div></div>
         <p className="muted small">Acesso restrito. Use o e-mail e a senha cadastrados pelo administrador no Supabase.</p>
         {erroInicial && <div className="alert warn">{erroInicial}</div>}
         {erro && <div className="alert bad">{erro}</div>}
