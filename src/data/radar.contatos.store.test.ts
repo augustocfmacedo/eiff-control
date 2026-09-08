@@ -77,3 +77,27 @@ describe('Radar: decisores no lote piloto', () => {
     expect(radar().contatos.find((c) => c.id === roberto.id)!.decisionFitScore).toBe(roberto.decisionFitScore);
   });
 });
+
+describe('Radar: resultados do Vibe', () => {
+  it('grava business_id, importa prospects associando pela empresa e aplica e-mail enriquecido pelo prospect_id', () => {
+    actions.trocarUsuario('u-admin');
+    const acme = radar().empresas.find((e) => e.fonteExternaId === 'V-1')!;
+    const B = 'f'.repeat(32); const P = 'e'.repeat(40);
+    expect(actions.definirBusinessIdsRadar([{ empresaId: acme.id, businessId: B }, { empresaId: 'nao-existe', businessId: null }])).toBe(1);
+    expect(radar().empresas.find((e) => e.id === acme.id)!.businessId).toBe(B);
+    const r1 = actions.importarProspectsVibe([{ prospect_id: P, business_id: B.toUpperCase(), full_name: 'Marcos Engenharia', job_title: 'Diretor de Engenharia', job_level_main: 'director', job_department_main: 'engineering', linkedin: 'li/marcos', prioridade: 'engenharia' }, { prospect_id: 'd'.repeat(40), business_id: '0'.repeat(32), full_name: 'Sem Empresa' }]);
+    expect(r1).toEqual({ importados: 1, atualizados: 0, semEmpresa: 1 });
+    const marcos = radar().contatos.find((c) => c.fonteExternaId === P)!;
+    expect(marcos.empresaId).toBe(acme.id); expect(marcos.persona).toBe('ENGINEERING_DIRECTOR'); expect(marcos.senioridade).toBe('Diretor'); expect(marcos.email).toBeUndefined();
+    expect(radar().registrosFonte.some((g) => g.externoId === P)).toBe(true);
+    // reimportar o mesmo prospect atualiza em vez de duplicar
+    expect(actions.importarProspectsVibe([{ prospect_id: P, business_id: B, full_name: 'Marcos Engenharia', job_title: 'Diretor de Engenharia' }]).atualizados).toBe(1);
+    expect(radar().contatos.filter((c) => c.fonteExternaId === P)).toHaveLength(1);
+    expect(actions.aplicarEnriquecimentoVibe([{ prospect_id: P.toUpperCase(), professional_email: 'Marcos@Acme.com.br', professional_email_status: 'valid' }, { prospect_id: 'a'.repeat(40), professional_email: 'x@y.com' }])).toBe(1);
+    const m2 = radar().contatos.find((c) => c.fonteExternaId === P)!;
+    expect(m2.email).toBe('marcos@acme.com.br'); expect(m2.statusEmail).toBe('valido'); expect(m2.qualidade).toBeGreaterThan(marcos.qualidade);
+    actions.trocarUsuario('u-compras');
+    expect(() => actions.definirBusinessIdsRadar([{ empresaId: acme.id, businessId: B }])).toThrow(/permissão/);
+    actions.trocarUsuario('u-admin');
+  });
+});

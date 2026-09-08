@@ -7,7 +7,18 @@ Duas formas, ambas sem chave no código nem no navegador:
 2. **MCP remoto no Claude Code** (`.mcp.json`): `https://vibeprospecting.explorium.ai/mcp`, autenticação OAuth pelo
    navegador na primeira sessão, sem chave. Serve para pesquisa conversacional; exportações consomem créditos.
 
-## Configurar a chave (uma vez, na sua máquina)
+## Caminho recomendado: pela aplicação (função Netlify `/api/vibe`)
+
+1. No Netlify: Site configuration › Environment variables › `VIBE_API_KEY` (secret). Publique de novo.
+2. No sistema, como Administrador ou Diretoria: Radar › Command Center › aba **Vibe Prospecting**:
+   1 · Testar conexão (créditos, estatística gratuita, 1 registro em preview) ·
+   2 · Casar empresas do Radar na Explorium (1 crédito por empresa; grava `business_id`) ·
+   3 · Cobertura por prioridade e amostra de 5 (sem créditos) com a estimativa ·
+   4 · Buscar até N decisores (1 por empresa, confirmação com custo), importar no Radar (preserva `business_id` e
+   `prospect_id`) e enriquecer e-mail profissional (2 créditos cada; telefone só sob pedido).
+   A função (`netlify/functions/vibe.ts`) valida a sessão do Supabase e o papel; a chave nunca chega ao navegador.
+
+## Alternativa local: script com a chave em `.env.local`
 
 1. Crie o arquivo `.env.local` na raiz do projeto (já ignorado pelo git por `.env.*`):
    ```

@@ -36,6 +36,7 @@ export interface Empresa {
   numeroUnidades?: number;
   fonteId?: string;
   fonteExternaId?: string;
+  businessId?: string; // Explorium/Vibe business_id (32 hex)
   observacoes: string;
   ativo: boolean;
   mescladaEm?: string; // id da empresa que absorveu esta (duplicata resolvida)
@@ -79,6 +80,7 @@ export interface Contato {
   statusTelefone?: StatusTelefone; // phone_status
   situacao?: SituacaoContato; // ATIVO | INVALIDO | SAIU_DA_EMPRESA
   fonteId?: string;
+  fonteExternaId?: string; // ex.: prospect_id do Vibe
   verificadoEm?: string; // last_verified_at
   observacoes: string;
   ativo: boolean;

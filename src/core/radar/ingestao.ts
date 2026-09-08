@@ -50,8 +50,8 @@ export function upsertContato(r: RadarDataset, empresaId: string, c: ContatoNorm
   if (!nome) throw new Error('Nome do contato é obrigatório.');
   const email = c.email?.trim().toLowerCase() || undefined;
   const chaveNome = nome.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
-  const atual = r.contatos.find((x) => x.empresaId === empresaId && ((email && x.email?.toLowerCase() === email) || x.nome.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '') === chaveNome));
-  const dados = limpo({ cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, poderDecisao: c.poderDecisao, statusEmail: c.statusEmail, statusTelefone: c.statusTelefone, persona: c.persona, verificadoEm: c.verificadoEm, observacoes: c.observacoes });
+  const atual = r.contatos.find((x) => x.empresaId === empresaId && ((c.externoId && x.fonteExternaId && x.fonteExternaId === c.externoId) || (email && x.email?.toLowerCase() === email) || x.nome.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '') === chaveNome));
+  const dados = limpo({ cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, poderDecisao: c.poderDecisao, statusEmail: c.statusEmail, statusTelefone: c.statusTelefone, persona: c.persona, verificadoEm: c.verificadoEm, fonteExternaId: c.externoId, observacoes: c.observacoes });
   const empresa = r.empresas.find((e) => e.id === empresaId);
   if (atual) {
     const merged: Contato = { ...atual };

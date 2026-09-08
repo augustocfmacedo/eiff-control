@@ -48,7 +48,7 @@ import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
-import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, associarEmpresaContato, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarEmpresasCsv, normalizarUf, radarVazio, recalcularEmpresa, registrarSinalNormalizado, upsertContato, upsertEmpresa, type Atividade, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type ImportacaoErro, type ImportacaoJob, type ImportacaoLinha, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegistroFonte, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa } from '../core/radar';
+import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, associarEmpresaContato, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarEmpresasCsv, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, recalcularEmpresa, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type ImportacaoErro, type ImportacaoJob, type ImportacaoLinha, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegistroFonte, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -2001,6 +2001,67 @@ export const actions = {
     const radar: RadarDataset = qual === 'regrasScore' ? { ...r, regrasScore: REGRAS_PADRAO } : qual === 'regrasPersona' ? { ...r, regrasPersona: REGRAS_PERSONA_PADRAO } : { ...r, pesosDecisionFit: PESOS_DECISION_FIT_PADRAO };
     ds = registrar({ ...ds, radar }, 'radar_restaurar_padroes', 'radar_config', qual, undefined, { qual });
     commit(ds);
+  },
+
+  // --- Vibe Prospecting (resultados vindos da funcao /api/vibe; a chave nunca passa pelo app)
+  /** Grava o business_id da Explorium nas empresas casadas. */
+  definirBusinessIdsRadar(pares: { empresaId: string; businessId: string | null }[]) {
+    let ds = state.ds;
+    exigir('radar_config');
+    const r = ds.radar;
+    const mapa = new Map(pares.filter((p) => p.businessId && /^[a-f0-9]{32}$/i.test(p.businessId)).map((p) => [p.empresaId, p.businessId!.toLowerCase()]));
+    if (!mapa.size) return 0;
+    const radar = { ...r, empresas: r.empresas.map((e) => (mapa.has(e.id) ? { ...e, businessId: mapa.get(e.id), atualizadoEm: agora() } : e)) };
+    ds = registrar({ ...ds, radar }, 'radar_vibe_match', 'radar_empresa', 'lote', undefined, { casadas: mapa.size, tentadas: pares.length });
+    commit(ds);
+    return mapa.size;
+  },
+
+  /** Importa prospects do Vibe como contatos (1 por empresa, ja com prioridade), associando pelo business_id. */
+  importarProspectsVibe(prospects: ProspectVibe[]) {
+    let ds = state.ds;
+    exigir('radar');
+    let r = ds.radar;
+    const fonte = fonteRadar(r, 'VIBE');
+    const ids = idsRadar(r);
+    const porBusiness = new Map(r.empresas.filter((e) => e.businessId && e.ativo && !e.mescladaEm).map((e) => [e.businessId!, e]));
+    let importados = 0; let atualizados = 0; let semEmpresa = 0;
+    const afetadas = new Set<string>();
+    for (const p of prospects) {
+      const e = porBusiness.get((p.business_id ?? '').toLowerCase());
+      if (!e || !/^[a-f0-9]{40}$/i.test(p.prospect_id ?? '')) { semEmpresa++; continue; }
+      const dados = prospectParaContato(p, ds.params.dataBase);
+      if (!dados.nome) { semEmpresa++; continue; }
+      const up = upsertContato(r, e.id, { ...dados, persona: personaPorDepartamentoVibe(p.job_department_main) }, fonte.id, ids);
+      r = { ...up.radar, registrosFonte: [...up.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'contato', externoId: p.prospect_id, payload: p, recebidoEm: agora(), entidadeId: up.contato.id }] };
+      if (up.resultado === 'importada') importados++; else atualizados++;
+      afetadas.add(e.id);
+    }
+    r = recalcularEmpresasRadar(r, [...afetadas], ids);
+    ds = registrar({ ...ds, radar: r }, 'radar_vibe_importar_prospects', 'radar_contato', 'lote', undefined, { recebidos: prospects.length, importados, atualizados, semEmpresa });
+    commit(ds);
+    return { importados, atualizados, semEmpresa };
+  },
+
+  /** Aplica e-mail/telefone enriquecidos aos contatos pelo prospect_id (fonteExternaId). */
+  aplicarEnriquecimentoVibe(resultados: { prospect_id: string; professional_email?: string | null; professional_email_status?: string | null; mobile_phone?: string | null }[]) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const porExt = new Map(resultados.map((x) => [x.prospect_id.toLowerCase(), x]));
+    let aplicados = 0;
+    const afetadas = new Set<string>();
+    const contatos = r.contatos.map((c) => {
+      const x = c.fonteExternaId ? porExt.get(c.fonteExternaId.toLowerCase()) : undefined;
+      if (!x) return c;
+      aplicados++; afetadas.add(c.empresaId);
+      const email = x.professional_email || c.email;
+      return enriquecerContato({ ...c, email: email?.toLowerCase(), statusEmail: x.professional_email ? statusEmailVibe(x.professional_email_status ?? undefined) : c.statusEmail, celular: x.mobile_phone || c.celular, verificadoEm: ds.params.dataBase, atualizadoEm: agora() }, r.empresas.find((e) => e.id === c.empresaId), r, ds.params.dataBase);
+    });
+    const radar = recalcularEmpresasRadar({ ...r, contatos }, [...afetadas], idsRadar(r));
+    ds = registrar({ ...ds, radar }, 'radar_vibe_enriquecer', 'radar_contato', 'lote', undefined, { recebidos: resultados.length, aplicados });
+    commit(ds);
+    return aplicados;
   },
 
   /** Ingere registros brutos de uma fonte pelo adapter dela (base para as integracoes CNO/PNCP/CNPJ/B2B/noticias). */

@@ -7,3 +7,4 @@ export * from './csv';
 export * from './adapters';
 export * from './ingestao';
 export * from './contatos';
+export * from './vibe';
