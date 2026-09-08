@@ -29,13 +29,27 @@ fonte de verdade.
 - **`radar_vibe_credit_policy`** (1 linha por organização; criada na migration e na primeira reserva): `enabled`,
   `daily_budget` 60, `monthly_budget` 600, `reserve_credits` 20, `max_credits_per_operation` 40,
   `max_paid_records_per_operation` 20, `email_cache_days` 90, `allowed_roles` {Administrador, Diretoria},
-  `validated_filters` (catálogo do autocomplete) e `validated_at`. Ajustes só por SQL, por enquanto.
+  `validated_filters` (catálogo do autocomplete) e `validated_at`. Leitura por Administrador/Diretoria;
+  alteração dos limites financeiros e dos papéis só por Administrador (RLS + GRANT por coluna; Diretoria não aumenta
+  o próprio teto); o catálogo validado é gravado pela função Netlify com service_role. Ajustes só por SQL, por enquanto.
 - **`radar_vibe_operation`** (ledger, só leitura pelo app): `idempotency_key` (única por organização),
   `request_hash`, `operation_type` (match, discovery, discovery_pool, enrich_email, enrich_phone, test_email),
   `status` (PLANNED → RESERVED → RUNNING → SUCCEEDED | FAILED | UNCERTAIN; CANCELLED), créditos estimados,
   reservados e reais, saldo antes/depois, registros pedidos e devolvidos, `paid_record_cap`, `correlation_ids`,
   erro sanitizado e `result_summary`.
-- **RPCs** (security definer, papel checado no banco): `reserve_vibe_operation(key, hash, tipo, estimado,
+- **Fronteira de confiança (migration 0035)**: `reserve_vibe_operation` e `update_vibe_operation` são
+  **server-only** (EXECUTE só para `service_role`; revogado de `public`, `anon` e `authenticated`, com checagem
+  extra da claim `role` dentro da função). A função Netlify valida o JWT do usuário (usuário, organização, papel) e
+  só então chama essas RPCs com `SUPABASE_SERVICE_ROLE_KEY` (variável só no painel do Netlify: nunca `VITE_`,
+  nunca no navegador, nunca em logs ou mensagens de erro, nunca versionada), passando `p_user_id` já validado e
+  `p_credits_available` obtido pelo servidor em `/v2/credits`. O navegador nunca fornece o saldo usado na decisão
+  e não consegue reservar, cancelar nem marcar RUNNING/FAILED/SUCCEEDED/UNCERTAIN. Sem a service role a função
+  responde `configuracao_incompleta` (501) sem fallback para a chave anônima e sem chamar a Explorium.
+  `vibe_credits_committed` só é executável por `service_role` (as funções de leitura a usam como definer).
+  Leitura (`vibe_operation_state`, `vibe_budget_status`) continua para `authenticated`, sempre por
+  `current_org()` e, no caso da política, só para Administrador/Diretoria. Todas as funções SECURITY DEFINER do
+  módulo fixam `search_path = public, pg_temp`. A auditoria das escritas é atribuída ao usuário validado.
+- **RPCs** (security definer, papel checado no banco): `reserve_vibe_operation(user_id, key, hash, tipo, estimado,
   registros, saldo, cap, dry_run)` decide sob `pg_advisory_xact_lock` por organização com
   limite = min(máximo por operação, diário restante, mensal restante, saldo − reserva); recusa com
   `custo_invalido`, `orcamento_insuficiente`, `registros_acima_do_limite`, `papel_nao_permitido`,
@@ -136,5 +150,12 @@ função serverless. O front-end nunca recebe a chave nem chama a Explorium dire
 ## Segurança
 
 - Chave apenas em `VIBE_API_KEY` (ambiente ou `.env.local`); `.gitignore` cobre `.env.*` e `dados/vibe/`.
+- `SUPABASE_SERVICE_ROLE_KEY` só no painel do Netlify (server-side), usada apenas depois de o JWT do usuário ter sido
+  validado, e nunca para autenticar o usuário. Testes de segurança executados no Postgres (migration 0035): authenticated
+  não executa `reserve_vibe_operation`, `update_vibe_operation` nem `vibe_credits_committed` (42501); claim
+  `service_role` forjada num JWT de usuário também é negada; `service_role` reserva; usuário sem perfil na
+  organização não lê ledger, política nem estado; Diretoria não altera `daily_budget` (0 linhas) mas lê a política;
+  Administrador altera e a auditoria registra o ator; tabela temporária com o mesmo nome antes de `public` não muda o
+  que `vibe_budget_status` lê; mesma chave em duas reservas gera uma única linha.
 - O script recusa rodar sem a variável e mascara qualquer sequência longa em mensagens de erro.
 - Exportações contêm dados pessoais: ficam fora do repositório e devem ser importadas no Radar e apagadas.

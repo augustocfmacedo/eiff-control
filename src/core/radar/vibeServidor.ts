@@ -184,3 +184,16 @@ export function validarForceRefresh(x: { papel: string; justificativa?: string; 
   if (!x.idempotencyKeyNova || x.idempotencyKeyNova === x.idempotencyKeyAnterior) return { ok: false, motivo: 'nova idempotencyKey obrigatória' };
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Configuracao do servidor: quais acoes exigem a chave da Explorium e a service role (RPCs mutaveis sao server-only)
+// ---------------------------------------------------------------------------
+/** Acoes que reservam/alteram consumo ou gravam a politica: so com SUPABASE_SERVICE_ROLE_KEY (nunca fallback para anon). */
+export const ACOES_SERVIDOR = ['simular', 'reservar', 'cancelar', 'concluir', 'executar', 'catalogo'] as const;
+/** Acoes que nao precisam da chave da Explorium (so leem o banco). */
+export const ACOES_SEM_EXPLORIUM = ['orcamento', 'estado', 'cancelar'] as const;
+export function verificarConfiguracaoServidor(x: { acao: string; temChave: boolean; temServiceRole: boolean }): { ok: true } | { ok: false; erro: 'configuracao_incompleta' | 'nao_configurado'; mensagem: string } {
+  if ((ACOES_SERVIDOR as readonly string[]).includes(x.acao) && !x.temServiceRole) return { ok: false, erro: 'configuracao_incompleta', mensagem: 'SUPABASE_SERVICE_ROLE_KEY não definida no painel do Netlify: operações de consumo bloqueadas.' };
+  if (!x.temChave && !(ACOES_SEM_EXPLORIUM as readonly string[]).includes(x.acao)) return { ok: false, erro: 'nao_configurado', mensagem: 'VIBE_API_KEY não definida no painel do Netlify.' };
+  return { ok: true };
+}

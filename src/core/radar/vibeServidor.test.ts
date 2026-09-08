@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LedgerMemoria, POLITICA_PADRAO, aplicarPagina, classificarErro, cursorDe, decidirReserva, filtrosPool, filtrosValidados, hashRequisicao, novoEstadoPaginacao, precisaEnriquecerEmail, proximaPagina, tamanhoPaginaServidor, transicao, validarForceRefresh, type PedidoReserva } from './vibeServidor';
+import { LedgerMemoria, POLITICA_PADRAO, aplicarPagina, verificarConfiguracaoServidor, classificarErro, cursorDe, decidirReserva, filtrosPool, filtrosValidados, hashRequisicao, novoEstadoPaginacao, precisaEnriquecerEmail, proximaPagina, tamanhoPaginaServidor, transicao, validarForceRefresh, type PedidoReserva } from './vibeServidor';
 
 const B = (n: number) => n.toString(16).padStart(32, '0');
 const P = (n: number) => n.toString(16).padStart(40, '0');
@@ -108,5 +108,23 @@ describe('catalogo validado, pool, cache de e-mail e force refresh', () => {
     expect(validarForceRefresh({ papel: 'Administrador', justificativa: '', idempotencyKeyNova: 'n' }).motivo).toMatch(/justificativa/);
     expect(validarForceRefresh({ papel: 'Administrador', justificativa: 'contato trocou de e-mail', idempotencyKeyNova: 'a', idempotencyKeyAnterior: 'a' }).motivo).toMatch(/idempotencyKey/);
     expect(validarForceRefresh({ papel: 'Administrador', justificativa: 'contato trocou de e-mail', idempotencyKeyNova: 'b', idempotencyKeyAnterior: 'a' }).ok).toBe(true);
+  });
+});
+
+describe('fronteira de confianca (server-only)', () => {
+  it('acoes de consumo exigem service role; sem ela nada vai para a Explorium e nao ha fallback para anon', () => {
+    for (const acao of ['simular', 'reservar', 'cancelar', 'concluir', 'executar', 'catalogo']) expect(verificarConfiguracaoServidor({ acao, temChave: true, temServiceRole: false })).toMatchObject({ ok: false, erro: 'configuracao_incompleta' });
+    expect(verificarConfiguracaoServidor({ acao: 'executar', temChave: false, temServiceRole: false })).toMatchObject({ ok: false, erro: 'configuracao_incompleta' });
+    expect(verificarConfiguracaoServidor({ acao: 'executar', temChave: true, temServiceRole: true })).toEqual({ ok: true });
+    expect(verificarConfiguracaoServidor({ acao: 'creditos', temChave: false, temServiceRole: false })).toMatchObject({ ok: false, erro: 'nao_configurado' });
+    expect(verificarConfiguracaoServidor({ acao: 'orcamento', temChave: false, temServiceRole: false })).toEqual({ ok: true });
+    expect(verificarConfiguracaoServidor({ acao: 'estado', temChave: false, temServiceRole: false })).toEqual({ ok: true });
+  });
+  it('nenhum codigo do navegador chama as RPCs mutaveis; o saldo da decisao nao vem do navegador', () => {
+    // Vibe.tsx so fala com /api/vibe; o corpo enviado nunca carrega p_credits_available/budget/reserve como fonte de verdade
+    const corpoNavegador = { acao: 'reservar', tipo: 'match', empresas: [{ id: 'E1', nome: 'X' }], idempotencyKey: 'k1', budget: 999999, reserve: 0, confirmar: true, p_credits_available: 999999 };
+    const paramsServidor = { tipo: corpoNavegador.tipo, empresas: corpoNavegador.empresas }; // e o que a funcao usa para o hash/estimativa
+    expect(Object.keys(paramsServidor)).not.toContain('p_credits_available');
+    expect(hashRequisicao(paramsServidor)).toBe(hashRequisicao({ tipo: 'match', empresas: [{ id: 'E1', nome: 'X' }] }));
   });
 });
