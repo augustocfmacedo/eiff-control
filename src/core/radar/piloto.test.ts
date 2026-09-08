@@ -147,8 +147,8 @@ describe('piloto: importacao pura e Signal Pilot', () => {
     expect(r.contatos[0]).toMatchObject({ fonteExternaId: P(1), persona: 'CEO', senioridade: 'C-level', statusEmail: 'valido' });
     expect(r.importacaoLinhas).toHaveLength(3); expect(r.registrosFonte).toHaveLength(3); expect(r.oportunidades).toHaveLength(0);
     const v = visaoSignalPilot(r, HOJE, ['Cereal Ouro', 'Fiagril', 'Inexistente SA']);
-    expect(v[0]).toMatchObject({ encontrada: true, signalCount: 0, strongestSignal: undefined, recommendedAction: 'RESEARCH_SIGNALS', contato: 'André Schwening', decisionFit: 75, timingScore: 0, intentScore: 0 });
-    expect(v[1]).toMatchObject({ encontrada: true, signalCount: 0, recommendedAction: 'SEARCH_DECISION_MAKER', contato: undefined });
+    expect(v[0]).toMatchObject({ encontrada: true, signalCount: 0, strongestSignal: undefined, recommendedAction: 'RESEARCH_SIGNALS', estadoCrm: 'RESEARCH_SIGNALS', contato: 'André Schwening', decisionFit: 75, timingScore: 0, intentScore: 0, whyNow: 'Sem sinal recente' });
+    expect(v[1]).toMatchObject({ encontrada: true, signalCount: 0, recommendedAction: 'NURTURE', estadoCrm: 'SEARCH_DECISION_MAKER', contato: undefined });
     expect(v[2]).toMatchObject({ encontrada: false, signalCount: 0, recommendedAction: '—' });
   });
 });

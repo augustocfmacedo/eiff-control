@@ -18,7 +18,7 @@ describe('Signal Pilot 01: inclusão manual de sinal', () => {
     const antes = { timing: e0.timingScore, intent: e0.intentScore, total: e0.priorityScore, snapshots: radar().snapshotsScore.filter((s) => s.empresaId === e0.id).length };
     expect(antes.timing).toBe(0); expect(antes.intent).toBe(0);
     expect(recomendarAcao(e0, radar(), hoje).estado).toBe('RESEARCH_SIGNALS');
-    expect(visaoSignalPilot(radar(), hoje, ['ZZ Fictícia Sinal Teste'])[0]).toMatchObject({ encontrada: true, signalCount: 0, recommendedAction: 'RESEARCH_SIGNALS' });
+    expect(visaoSignalPilot(radar(), hoje, ['ZZ Fictícia Sinal Teste'])[0]).toMatchObject({ encontrada: true, signalCount: 0, recommendedAction: 'RESEARCH_SIGNALS', estadoCrm: 'RESEARCH_SIGNALS', whyNow: 'Sem sinal recente' });
     const fonteNews = radar().fontes.find((f) => f.codigo === 'NEWS')!;
 
     // inclusao manual com todos os campos que a pesquisa externa vai trazer
@@ -56,7 +56,7 @@ describe('Signal Pilot 01: inclusão manual de sinal', () => {
 
     // Signal Pilot e Hoje/proxima acao refletem os sinais sem nada alem do commit do store
     const sp = visaoSignalPilot(radar(), hoje, ['ZZ Fictícia Sinal Teste'])[0];
-    expect(sp).toMatchObject({ signalCount: 2, timingScore: e2.timingScore, intentScore: e2.intentScore, recommendedAction: 'CONTACT_NOW' });
+    expect(sp).toMatchObject({ signalCount: 2, timingScore: e2.timingScore, intentScore: e2.intentScore, estadoCrm: 'CONTACT_NOW' }); expect(['CONTACT_NOW', 'RESEARCH_PROJECT', 'FIND_BETTER_DECISION_MAKER']).toContain(sp.recommendedAction); // matriz operacional (confianca 0,8 x confiabilidade da fonte)
     expect(sp.strongestSignal).toContain('fictício'); expect(sp.signalDate).toMatch(/^2026-09-0[15]$/); expect(sp.confidence).toBeGreaterThan(0);
     const e1b = e2;
     const rec = recomendarAcao(e1b, radar(), hoje);

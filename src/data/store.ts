@@ -48,7 +48,7 @@ import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
-import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas } from '../core/radar';
+import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -1575,7 +1575,7 @@ export const actions = {
   },
 
   /** Sinal registrado pela equipe (ou por um adapter ja normalizado). Sinal igual (fonte + externo, ou tipo + titulo + data) e ignorado. */
-  registrarSinalRadar(s: { empresaId: string; tipo: TipoSinal; titulo: string; descricao?: string; eventoEm: string; confianca?: number; url?: string; projetoId?: string; fonteId?: string; externoId?: string; payload?: unknown; verificado?: boolean }) {
+  registrarSinalRadar(s: { empresaId: string; tipo: TipoSinal; titulo: string; descricao?: string; eventoEm: string; confianca?: number; url?: string; projetoId?: string; fonteId?: string; externoId?: string; payload?: unknown; verificado?: boolean; leitura?: LeituraSinal }) {
     let ds = state.ds;
     exigir('radar');
     const r = ds.radar;
@@ -1586,7 +1586,7 @@ export const actions = {
     if (s.projetoId && !r.projetos.some((p) => p.id === s.projetoId && p.empresaId === s.empresaId)) throw new RegraDeNegocioError('Projeto não pertence à empresa.');
     const fonte = fonteRadar(r, s.fonteId);
     const ids = idsRadar(r);
-    const res = registrarSinalNormalizado(r, s.empresaId, { tipo: s.tipo, titulo: s.titulo.trim(), descricao: s.descricao, eventoEm: s.eventoEm, confianca: s.confianca ?? 1, url: s.url, externoId: s.externoId }, fonte, ids, { projetoId: s.projetoId, payload: s.payload, verificado: s.verificado ?? fonte.codigo === 'MANUAL' });
+    const res = registrarSinalNormalizado(r, s.empresaId, { tipo: s.tipo, titulo: s.titulo.trim(), descricao: s.descricao, eventoEm: s.eventoEm, confianca: s.confianca ?? 1, url: s.url, externoId: s.externoId }, fonte, ids, { projetoId: s.projetoId, payload: payloadComLeitura(s.payload, s.leitura), verificado: s.verificado ?? fonte.codigo === 'MANUAL' });
     if (res.resultado === 'ignorada') throw new RegraDeNegocioError('Este sinal já está registrado.');
     const radar = recalcularEmpresasRadar(res.radar, [s.empresaId], ids);
     ds = registrar({ ...ds, radar }, 'radar_registrar_sinal', 'radar_sinal', res.sinal.id, undefined, { tipo: s.tipo, titulo: s.titulo, empresaId: s.empresaId });
