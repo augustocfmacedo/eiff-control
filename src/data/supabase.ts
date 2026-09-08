@@ -816,6 +816,15 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     sel: selTodos, gravar, orgId: r.orgId, atorId, uuid: uuidOuNulo,
     perfil: (id) => uuidOuNulo(id) ?? (id ? r.perfisInv.get(id) ?? null : null),
     inserir: async (tabela, rows) => { const { data, error } = await sb.from(tabela).insert(rows).select('id'); falha(`inserir ${tabela}`, error); return data ?? []; },
+    gravarComposta: async (tabela, chave, row) => {
+      let q = sb.from(tabela).update(row);
+      for (const [k, v] of Object.entries(chave)) q = q.eq(k, v);
+      const { data, error } = await q.select(Object.keys(chave).join(','));
+      falha(`atualizar ${tabela}`, error);
+      if (data?.length) return;
+      const { error: e2 } = await sb.from(tabela).insert({ ...row, ...chave });
+      falha(`inserir ${tabela}`, e2);
+    },
     apagar: async (tabela, id) => { const { error } = await sb.from(tabela).delete().eq('id', id); falha(`apagar ${tabela}`, error); },
   }, antes.radar, depois.radar);
 

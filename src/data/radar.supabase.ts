@@ -8,6 +8,8 @@ type Row = Record<string, any>;
 export interface HelpersRadar {
   sel: (tabela: string, ordem: string, comId?: boolean) => Promise<Row[]>;
   gravar: (tabela: string, filtro: Record<string, string | null | undefined>, row: Row, extraInsert?: Row) => Promise<Row | undefined>;
+  /** update-senao-insert para tabelas de chave composta (sem coluna id): o filtro e a propria chave. */
+  gravarComposta: (tabela: string, chave: Record<string, string>, row: Row) => Promise<void>;
   inserir: (tabela: string, rows: Row[]) => Promise<Row[]>;
   apagar: (tabela: string, id: string) => Promise<void>;
   orgId: string;
@@ -99,14 +101,14 @@ export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | unde
   // tabelas de chave composta
   for (const t of depois.tiposResposta ?? []) {
     if (igual((a.tiposResposta ?? []).find((x) => x.codigo === t.codigo), t)) continue;
-    await h.gravar('radar_response_type', { organization_id: h.orgId, code: t.codigo }, { name: t.nome, sentiment: t.sentimento, active: t.ativo }, { organization_id: h.orgId, code: t.codigo });
+    await h.gravarComposta('radar_response_type', { organization_id: h.orgId, code: t.codigo }, { name: t.nome, sentiment: t.sentimento, active: t.ativo });
   }
   for (const c of depois.configScore ?? []) {
     if (igual((a.configScore ?? []).find((x) => x.chave === c.chave), c)) continue;
-    await h.gravar('radar_score_setting', { organization_id: h.orgId, key: c.chave }, { value: c.valor }, { organization_id: h.orgId, key: c.chave });
+    await h.gravarComposta('radar_score_setting', { organization_id: h.orgId, key: c.chave }, { value: c.valor });
   }
   for (const c of depois.pesosDecisionFit ?? []) {
     if (igual((a.pesosDecisionFit ?? []).find((x) => x.chave === c.chave), c)) continue;
-    await h.gravar('radar_decision_fit_weight', { organization_id: h.orgId, key: c.chave }, { value: c.valor }, { organization_id: h.orgId, key: c.chave });
+    await h.gravarComposta('radar_decision_fit_weight', { organization_id: h.orgId, key: c.chave }, { value: c.valor });
   }
 }
