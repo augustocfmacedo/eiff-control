@@ -1,0 +1,20 @@
+// Tipos do modulo puro scripts/vibe-core.mjs (para os testes em TypeScript).
+export const PAGE_SIZE_MAX: number;
+export const LOTE_ENRIQUECIMENTO_MAX: number;
+export const CUSTO: { match: number; buscaFull: number; email: number; telefone: number; perfil: number };
+export const RESERVA_PADRAO: number;
+export const BUDGET_PADRAO: number;
+export function tamanhoPagina(desejado: number): number;
+export function filtrosDecisores(tier: { filtros: Record<string, unknown> }, businessIds: string[], somenteComEmail?: boolean): Record<string, unknown>;
+export function escolherPorEmpresa(prospects: Record<string, unknown>[], businessIdsValidos: string[], escolhidos: Map<string, Record<string, unknown>>, max: number, extra?: Record<string, unknown>): number;
+export function paginar(buscarPagina: (p: { page_size: number; page?: number; next_cursor?: string }) => Promise<{ data?: Record<string, unknown>[]; page?: { next_cursor?: string | null }; response_context?: { correlation_id?: string } }>, opts: { businessIds: string[]; escolhidos: Map<string, Record<string, unknown>>; max: number; maxPaginas?: number; extra?: Record<string, unknown> }): Promise<{ paginas: number; devolvidos: number; correlacoes: string[] }>;
+export function payloadEnriquecimento(prospectIds: string[], tipos?: string[]): { prospect_id: string | string[]; parameters: { contact_types: string[] } };
+export function normalizarEnriquecimento(resposta: unknown): { prospect_id: string; professional_email: string | null; professional_email_status: string | null; mobile_phone: string | null }[];
+export function estimar(opts: { decisores: number; cobertura?: number; email?: boolean; telefone?: boolean; perfil?: boolean; paginasMax?: number; reserva?: number }): { busca: number; buscaMaxima: number; email: number; telefone: number; perfil: number; subtotal: number; reserva: number; total: number; maximoProjetado: number; natureza: string };
+export function budgetGuard(opts: { custoMaximo: number; disponiveis: number; budget?: number; reserve?: number }): { ok: boolean; limite: number; motivo: string };
+export function filtrarJaProcessados<T extends { prospect_id?: string }>(prospects: T[], jaIds: Iterable<string>): T[];
+export function emailValidoPresente(linha: Record<string, unknown>): boolean;
+export function linhasParaEnriquecer<T extends Record<string, unknown>>(linhas: T[], opts?: { force?: boolean }): T[];
+export function mascararEmail(e?: string): string;
+export function mascararChaves(s: string): string;
+export function registroConsumo(x: { operation: string; records_requested?: number; records_returned?: number; credits_before?: number | null; credits_after?: number | null; estimated_credits?: number; correlation_id?: string | null; status?: string; detalhe?: string }): Record<string, unknown>;

@@ -20,16 +20,55 @@ export const PRIORIDADE_DECISORES: PrioridadeDecisor[] = [
   { nome: 'compras e suprimentos', filtros: { job_title: { values: ['compras', 'suprimentos', 'procurement', 'purchasing'], include_related_job_titles: true } } },
 ];
 
-/** Custos documentados pela Explorium (creditos por registro). */
+/** Custos documentados pela Explorium (creditos por registro). AgentSource v2 limita page_size a 100. */
 export const CUSTO_VIBE = { match: 1, buscaFull: 1, email: 2, telefone: 5, perfil: 1 } as const;
+export const PAGE_SIZE_MAX_VIBE = 100;
+export const LOTE_ENRIQUECIMENTO_VIBE = 50;
+export const BUDGET_PADRAO_VIBE = 180;
+export const RESERVA_PADRAO_VIBE = 20;
+export const tamanhoPaginaVibe = (desejado: number) => Math.max(1, Math.min(PAGE_SIZE_MAX_VIBE, Math.floor(desejado || 1)));
 
-export function estimarCreditos(opts: { empresasSemId: number; decisores: number; cobertura: number; email?: boolean; telefone?: boolean; perfil?: boolean }): { match: number; busca: number; email: number; telefone: number; perfil: number; total: number } {
+/** Estimativa (nao e valor exato): descoberta (provavel e maxima com paginacao), e-mail, telefone, perfil so se pedido, reserva. */
+export function estimarCreditos(opts: { empresasSemId: number; decisores: number; cobertura: number; email?: boolean; telefone?: boolean; perfil?: boolean; paginasMax?: number; reserva?: number }): { match: number; busca: number; buscaMaxima: number; email: number; telefone: number; perfil: number; subtotal: number; reserva: number; total: number; maximoProjetado: number; natureza: 'estimativa' } {
+  const paginas = opts.paginasMax ?? 5;
   const busca = Math.min(opts.decisores * 2, opts.cobertura) * CUSTO_VIBE.buscaFull;
+  const buscaMaxima = Math.min(opts.decisores * 2 * paginas, opts.cobertura) * CUSTO_VIBE.buscaFull;
   const match = opts.empresasSemId * CUSTO_VIBE.match;
   const email = opts.email === false ? 0 : opts.decisores * CUSTO_VIBE.email;
-  const telefone = opts.telefone ? opts.decisores * (CUSTO_VIBE.telefone - CUSTO_VIBE.email) : 0;
+  const telefone = opts.telefone ? opts.decisores * (opts.email === false ? CUSTO_VIBE.telefone : CUSTO_VIBE.telefone - CUSTO_VIBE.email) : 0;
   const perfil = opts.perfil ? opts.decisores * CUSTO_VIBE.perfil : 0;
-  return { match, busca, email, telefone, perfil, total: match + busca + email + telefone + perfil };
+  const subtotal = match + busca + email + telefone + perfil;
+  const reserva = opts.reserva ?? RESERVA_PADRAO_VIBE;
+  return { match, busca, buscaMaxima, email, telefone, perfil, subtotal, reserva, total: subtotal + reserva, maximoProjetado: match + buscaMaxima + email + telefone + perfil, natureza: 'estimativa' };
+}
+
+/** Bloqueia se o custo maximo projetado puder ultrapassar min(budget, disponiveis - reserve). */
+export function budgetGuardVibe(x: { custoMaximo: number; disponiveis: number; budget?: number; reserve?: number }): { ok: boolean; limite: number; motivo: string } {
+  const budget = x.budget ?? BUDGET_PADRAO_VIBE; const reserve = x.reserve ?? RESERVA_PADRAO_VIBE;
+  const limite = Math.min(budget, x.disponiveis - reserve);
+  const ok = Number.isFinite(limite) && x.custoMaximo <= limite;
+  return { ok, limite, motivo: ok ? `custo máximo projetado ${x.custoMaximo} ≤ limite ${limite}` : `custo máximo projetado ${x.custoMaximo} ultrapassa o limite ${limite} (budget ${budget}, disponíveis ${x.disponiveis}, reserva ${reserve})` };
+}
+
+/** Contrato v2 do enriquecimento: campo `prospect_id` com string ou lista de ate 50. */
+export function payloadEnriquecimentoVibe(prospectIds: string[], tipos: string[] = ['email']): { prospect_id: string | string[]; parameters: { contact_types: string[] } } {
+  const ids = [...new Set(prospectIds.map((p) => p.toLowerCase()).filter((p) => /^[a-f0-9]{40}$/.test(p)))];
+  if (!ids.length) throw new Error('Nenhum prospect_id válido.');
+  if (ids.length > LOTE_ENRIQUECIMENTO_VIBE) throw new Error(`No máximo ${LOTE_ENRIQUECIMENTO_VIBE} prospect_ids por chamada.`);
+  return { prospect_id: ids.length === 1 ? ids[0] : ids, parameters: { contact_types: tipos } };
+}
+
+export interface EnriquecimentoVibe { prospect_id: string; professional_email: string | null; professional_email_status: string | null; mobile_phone: string | null }
+/** Aceita prospect_id/entity_id no item ou em item.data. */
+export function normalizarEnriquecimentoVibe(resposta: unknown): EnriquecimentoVibe[] {
+  const r = resposta as { data?: unknown } | unknown[] | null | undefined;
+  const itens = (Array.isArray(r) ? r : Array.isArray((r as { data?: unknown })?.data) ? ((r as { data: unknown[] }).data) : r ? [r] : []) as Record<string, unknown>[];
+  return itens.map((item) => {
+    const inner = (item?.data && typeof item.data === 'object' ? item.data : {}) as Record<string, unknown>;
+    const pid = String(item?.prospect_id ?? item?.entity_id ?? inner.prospect_id ?? inner.entity_id ?? '').toLowerCase();
+    const v = (k: string) => (item?.[k] ?? inner[k] ?? null) as string | null;
+    return { prospect_id: pid, professional_email: v('professional_email'), professional_email_status: v('professional_email_status'), mobile_phone: v('mobile_phone') };
+  }).filter((x) => /^[a-f0-9]{40}$/.test(x.prospect_id));
 }
 
 /** Prospect como devolvido por POST /v2/prospects (campos usados). */

@@ -1,26 +1,43 @@
 #!/usr/bin/env node
-// Cliente server-side da Data API do Vibe Prospecting (Explorium AgentSource API, https://api.explorium.ai).
-// A chave vem SOMENTE da variavel de ambiente VIBE_API_KEY (ou de .env.local / .env, que nao sao versionados).
-// Nunca imprime a chave, nunca a grava em arquivo, nunca roda no navegador.
+// Cliente server-side da Data API do Vibe Prospecting (Explorium AgentSource API v2, https://api.explorium.ai).
+// A chave vem SOMENTE da variavel de ambiente VIBE_API_KEY (ou de .env.local / .env, ignorados pelo git).
+// Nunca imprime a chave, nunca a grava; log de consumo em dados/vibe/consumo.log sem dados pessoais.
 //
-// Uso:
-//   node scripts/vibe.mjs teste                                   # creditos + estatistica gratuita + 1 registro em preview
-//   node scripts/vibe.mjs creditos                                # saldo de creditos
-//   node scripts/vibe.mjs autocomplete <campo> <texto>            # valores validos (job_department, job_level, ...)
-//   node scripts/vibe.mjs match --entrada dados/vibe/empresas.csv # resolve business_id por nome/dominio (1 credito por empresa)
-//   node scripts/vibe.mjs decisores --lista <csv> [--max 56] [--amostra 5] [--executar] [--saida dados/vibe/decisores.csv]
-//       csv da lista exportada do Vibe (precisa da coluna business_id; prospect_id opcional). Sem --executar so mostra
-//       a amostra (modo preview, sem consumo relevante) e a estimativa de creditos.
-//   node scripts/vibe.mjs enriquecer --entrada dados/vibe/decisores.csv [--telefone] [--executar]
-//       enriquece e-mail profissional (2 creditos/registro; telefone 5) preservando business_id e prospect_id.
+// Comandos (nenhum consome creditos sem --executar):
+//   node scripts/vibe.mjs creditos
+//   node scripts/vibe.mjs validar-contrato                         # creditos + stats gratis + preview de 1 + delta de creditos
+//   node scripts/vibe.mjs testar-email --prospect-id <id> [--executar]   # 2 creditos, so com --executar
+//   node scripts/vibe.mjs autocomplete <campo> <texto>
+//   node scripts/vibe.mjs match --entrada <csv> [--executar] [--budget 180] [--reserve 20]
+//   node scripts/vibe.mjs decisores --lista <csv com business_id> [--max 56] [--amostra 5] [--somente-com-email]
+//                                    [--budget 180] [--reserve 20] [--paginas 5] [--saida dados/vibe/decisores.csv] [--executar]
+//   node scripts/vibe.mjs enriquecer [--entrada dados/vibe/decisores.csv] [--telefone] [--force=sim] [--budget] [--reserve] [--executar]
 import fs from 'node:fs';
 import path from 'node:path';
+import { BUDGET_PADRAO, CUSTO, LOTE_ENRIQUECIMENTO_MAX, RESERVA_PADRAO, budgetGuard, escolherPorEmpresa, estimar, filtrarJaProcessados, filtrosDecisores, linhasParaEnriquecer, mascararChaves, mascararEmail, normalizarEnriquecimento, paginar, payloadEnriquecimento, registroConsumo } from './vibe-core.mjs';
 
 const BASE = process.env.VIBE_API_BASE || 'https://api.explorium.ai';
-const PASTA_SAIDA = path.join(process.cwd(), 'dados', 'vibe');
+const PASTA = path.join(process.cwd(), 'dados', 'vibe');
+const LOG = path.join(PASTA, 'consumo.log');
+
+// Prioridade de decisores (mesma ordem de src/core/radar/vibe.ts)
+const PRIORIDADE = [
+  { nome: 'engenharia', filtros: { job_department: { values: ['engineering'] }, job_level: { values: ['cxo', 'vp', 'director', 'manager'] } } },
+  { nome: 'direção industrial', filtros: { job_title: { values: ['diretor industrial', 'industrial director', 'plant director', 'diretor de produção', 'diretor fabril'], include_related_job_titles: true } } },
+  { nome: 'expansão', filtros: { job_title: { values: ['diretor de expansão', 'expansion director', 'gerente de expansão', 'head of expansion', 'novos negócios'], include_related_job_titles: true } } },
+  { nome: 'operações', filtros: { job_department: { values: ['operations'] }, job_level: { values: ['cxo', 'vp', 'director', 'manager'] } } },
+  { nome: 'facilities', filtros: { job_title: { values: ['facilities', 'gerente de facilities', 'infraestrutura', 'manutenção predial'], include_related_job_titles: true } } },
+  { nome: 'COO', filtros: { job_title: { values: ['COO', 'chief operating officer', 'diretor de operações'], include_related_job_titles: false } } },
+  { nome: 'proprietário', filtros: { job_level: { values: ['owner', 'partner'] } } },
+  { nome: 'presidente', filtros: { job_title: { values: ['presidente', 'president'], include_related_job_titles: false } } },
+  { nome: 'CEO', filtros: { job_title: { values: ['CEO', 'chief executive officer', 'diretor geral'], include_related_job_titles: false } } },
+  { nome: 'supply chain', filtros: { job_title: { values: ['supply chain'], include_related_job_titles: true } } },
+  { nome: 'logística', filtros: { job_title: { values: ['logística', 'logistics'], include_related_job_titles: true } } },
+  { nome: 'compras e suprimentos', filtros: { job_title: { values: ['compras', 'suprimentos', 'procurement', 'purchasing'], include_related_job_titles: true } } },
+];
 
 // ---------------------------------------------------------------------------
-// Chave: variavel de ambiente > .env.local > .env (arquivos ignorados pelo git). Nunca logada.
+// Ambiente e chave (nunca exibida)
 // ---------------------------------------------------------------------------
 function carregarEnv() {
   for (const arquivo of ['.env.local', '.env']) {
@@ -33,30 +50,28 @@ function carregarEnv() {
   }
 }
 carregarEnv();
-
 function chave() {
   const k = (process.env.VIBE_API_KEY ?? '').trim();
-  if (!k) {
-    console.error('VIBE_API_KEY ausente. Crie o arquivo .env.local (ignorado pelo git) com a linha VIBE_API_KEY=<sua chave do painel Data API do Vibe Prospecting> e rode de novo.');
-    process.exit(2);
-  }
+  if (!k) { console.error('VIBE_API_KEY ausente. Defina no ambiente ou em .env.local (ignorado pelo git).'); process.exit(2); }
   if (k.length < 16) { console.error('VIBE_API_KEY parece inválida (muito curta).'); process.exit(2); }
   return k;
 }
 
-const mascarar = (s) => (typeof s === 'string' ? s.replace(/[A-Za-z0-9_-]{24,}/g, (m) => `${m.slice(0, 4)}…(${m.length} caracteres)`) : s);
-
+let ultimaCorrelacao = null;
 async function api(metodo, caminho, corpo) {
-  const k = chave();
-  const r = await fetch(`${BASE}${caminho}`, { method: metodo, headers: { accept: 'application/json', 'content-type': 'application/json', api_key: k }, body: corpo ? JSON.stringify(corpo) : undefined });
+  const r = await fetch(`${BASE}${caminho}`, { method: metodo, headers: { accept: 'application/json', 'content-type': 'application/json', api_key: chave() }, body: corpo ? JSON.stringify(corpo) : undefined });
   const texto = await r.text();
-  let json; try { json = JSON.parse(texto); } catch { json = { raw: texto.slice(0, 500) }; }
-  if (!r.ok) throw new Error(`${metodo} ${caminho} -> HTTP ${r.status}: ${mascarar(JSON.stringify(json).slice(0, 400))}`);
+  let json; try { json = JSON.parse(texto); } catch { json = { raw: texto.slice(0, 300) }; }
+  ultimaCorrelacao = json?.response_context?.correlation_id ?? r.headers.get('x-correlation-id') ?? ultimaCorrelacao;
+  if (!r.ok) throw new Error(`${metodo} ${caminho} -> HTTP ${r.status}: ${mascararChaves(JSON.stringify(json).slice(0, 400))}`);
   return json;
 }
+const creditosAgora = async () => { const c = await api('GET', '/v2/credits'); return { disponiveis: Number(c.remaining_credits), alocados: Number(c.allocated_credits), conta: c.account_type }; };
+
+function logar(reg) { fs.mkdirSync(PASTA, { recursive: true }); fs.appendFileSync(LOG, `${JSON.stringify(registroConsumo(reg))}\n`); }
 
 // ---------------------------------------------------------------------------
-// CSV utilitario (mesma logica de src/core/radar/csv.ts, sem dependencia do app)
+// CSV
 // ---------------------------------------------------------------------------
 function lerCsv(texto) {
   const t = texto.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
@@ -82,31 +97,52 @@ function escreverCsv(arquivo, linhas, colunas) {
   const esc = (v) => { const s = v === undefined || v === null ? '' : String(v); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   fs.writeFileSync(arquivo, `﻿${colunas.join(';')}\n${linhas.map((l) => colunas.map((c) => esc(l[c])).join(';')).join('\n')}\n`, 'utf8');
 }
+const lerCsvSeExiste = (arquivo) => (fs.existsSync(arquivo) ? lerCsv(fs.readFileSync(arquivo, 'utf8')) : []);
 
 const arg = (nome, padrao) => { const i = process.argv.indexOf(`--${nome}`); return i >= 0 ? process.argv[i + 1] ?? padrao : padrao; };
 const flag = (nome) => process.argv.includes(`--${nome}`);
+const opcoesOrcamento = () => ({ budget: Number(arg('budget', BUDGET_PADRAO)), reserve: Number(arg('reserve', RESERVA_PADRAO)) });
+
+/** Guarda de orcamento: consulta creditos e bloqueia antes de qualquer chamada paga. */
+async function guardar(operacao, custoMaximo) {
+  const { budget, reserve } = opcoesOrcamento();
+  const c = await creditosAgora();
+  const g = budgetGuard({ custoMaximo, disponiveis: c.disponiveis, budget, reserve });
+  console.log(`Orçamento: ${g.motivo}.`);
+  if (!g.ok) { logar({ operation: operacao, credits_before: c.disponiveis, credits_after: c.disponiveis, estimated_credits: custoMaximo, status: 'bloqueado_orcamento', detalhe: g.motivo }); console.error('Operação não iniciada: orçamento insuficiente. Nenhum lote parcial foi executado.'); process.exit(3); }
+  return c;
+}
 
 // ---------------------------------------------------------------------------
 // Comandos
 // ---------------------------------------------------------------------------
-async function creditos() {
-  const c = await api('GET', '/v2/credits');
-  console.log(`Créditos: ${c.remaining_credits} disponíveis de ${c.allocated_credits} (conta ${c.account_type ?? '?'})`);
-  return c;
-}
+async function creditos() { const c = await creditosAgora(); console.log(`Créditos: ${c.disponiveis} disponíveis de ${c.alocados} (conta ${c.conta ?? '?'})`); return c; }
 
-async function teste() {
+async function validarContrato() {
   console.log(`Base: ${BASE} · chave: presente (${chave().length} caracteres, não exibida)`);
-  const c = await creditos();
-  // estatistica gratuita: quantos prospects de engenharia no Brasil
+  const antes = await creditosAgora();
+  console.log(`Créditos antes: ${antes.disponiveis} de ${antes.alocados} (${antes.conta ?? '?'})`);
   const s = await api('POST', '/v2/prospects/stats', { filters: { company_country_code: { values: ['br'] }, job_department: { values: ['engineering'] } } });
-  console.log(`Estatística (grátis): ${s.total_results ?? '?'} prospects de engenharia em empresas do Brasil`);
-  // 1 registro em modo preview (campos limitados, sem consumo relevante)
+  console.log(`Stats (grátis): ${s.total_results ?? '?'} prospects de engenharia no Brasil · correlation_id ${s.response_context?.correlation_id ?? '—'}`);
   const p = await api('POST', '/v2/prospects', { mode: 'preview', page_size: 1, page: 1, filters: { company_country_code: { values: ['br'] }, job_department: { values: ['engineering'] }, job_level: { values: ['director'] } } });
   const d = p.data?.[0];
-  console.log(`Preview (1 registro): ${d ? JSON.stringify({ prospect_id: d.prospect_id, business_id: d.business_id, job_title: d.job_title, company_name: d.company_name, job_level_main: d.job_level_main, job_department_main: d.job_department_main }) : 'sem dados'}`);
-  const c2 = await api('GET', '/v2/credits');
-  console.log(`Créditos após o teste: ${c2.remaining_credits} (consumo do teste: ${c.remaining_credits - c2.remaining_credits})`);
+  console.log(`Preview (1 registro, sem mode full): ${d ? JSON.stringify({ prospect_id: d.prospect_id, business_id: d.business_id, job_title: d.job_title, company_name: d.company_name, job_level_main: d.job_level_main, job_department_main: d.job_department_main }) : 'sem dados'} · correlation_id ${p.response_context?.correlation_id ?? '—'}`);
+  const depois = await creditosAgora();
+  console.log(`Créditos depois: ${depois.disponiveis} · delta: ${antes.disponiveis - depois.disponiveis}`);
+  logar({ operation: 'validar-contrato', records_requested: 1, records_returned: p.data?.length ?? 0, credits_before: antes.disponiveis, credits_after: depois.disponiveis, estimated_credits: 0, correlation_id: p.response_context?.correlation_id ?? null, status: 'ok' });
+}
+
+async function testarEmail() {
+  const pid = String(arg('prospect-id', '')).toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(pid)) throw new Error('Informe --prospect-id com 40 caracteres hexadecimais.');
+  console.log(`Teste de e-mail para prospect ${pid.slice(0, 8)}…: poderá consumir ${CUSTO.email} créditos (e-mail apenas).`);
+  if (!flag('executar')) { console.log('Nada executado. Repita com --executar para confirmar.'); return; }
+  const antes = await guardar('testar-email', CUSTO.email);
+  const r = await api('POST', '/v2/prospects/contact_information/enrich', payloadEnriquecimento([pid], ['email']));
+  const n = normalizarEnriquecimento(r);
+  const depois = await creditosAgora();
+  console.log(`Resultado: ${n.length ? `${mascararEmail(n[0].professional_email)} (${n[0].professional_email_status ?? 'sem status'})` : 'sem retorno'} · correlation_id ${r.response_context?.correlation_id ?? '—'} · créditos ${antes.disponiveis} → ${depois.disponiveis} (delta ${antes.disponiveis - depois.disponiveis})`);
+  logar({ operation: 'testar-email', records_requested: 1, records_returned: n.length, credits_before: antes.disponiveis, credits_after: depois.disponiveis, estimated_credits: CUSTO.email, correlation_id: r.response_context?.correlation_id ?? null, status: 'ok' });
 }
 
 async function autocomplete(campo, texto) {
@@ -117,113 +153,99 @@ async function autocomplete(campo, texto) {
 async function match() {
   const entrada = arg('entrada'); if (!entrada) throw new Error('Informe --entrada <csv com nome/dominio>');
   const linhas = lerCsv(fs.readFileSync(entrada, 'utf8'));
-  const itens = linhas.map((l) => ({ id: col(l, 'id', 'empresaid', 'idexterno'), name: col(l, 'razaosocial', 'empresa', 'nome', 'name', 'companyname'), domain: col(l, 'dominio', 'domain', 'site', 'website').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] })).filter((x) => x.name || x.domain);
-  console.log(`${itens.length} empresa(s) para casar · custo estimado: ${itens.length} crédito(s) (1 por empresa)`);
+  const itens = linhas.map((l) => ({ id: col(l, 'id', 'empresaid', 'idexterno', 'ideiff'), name: col(l, 'razaosocial', 'empresa', 'nome', 'name', 'companyname'), domain: col(l, 'dominio', 'domain', 'site', 'website').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] })).filter((x) => x.name || x.domain);
+  console.log(`${itens.length} empresa(s) para casar · custo estimado: ${itens.length * CUSTO.match} crédito(s) (${CUSTO.match} por empresa; estimativa)`);
   if (!flag('executar')) { console.log('Rode com --executar para consumir os créditos.'); return; }
+  const antes = await guardar('match', itens.length * CUSTO.match);
   const saida = [];
   for (let i = 0; i < itens.length; i += 50) {
     const lote = itens.slice(i, i + 50);
     const r = await api('POST', '/v2/businesses/match', { businesses_to_match: lote.map(({ name, domain }) => ({ name: name || undefined, domain: domain || undefined })) });
-    (r.matched_businesses ?? []).forEach((m, j) => saida.push({ id_eiff: lote[j].id, nome: lote[j].name, dominio: lote[j].domain, business_id: m.business_id ?? '', match_input: JSON.stringify(m.input ?? {}) }));
-    console.log(`lote ${i / 50 + 1}: ${r.total_matches ?? '?'} casadas`);
+    (r.matched_businesses ?? []).forEach((m, j) => saida.push({ id_eiff: lote[j].id, nome: lote[j].name, dominio: lote[j].domain, business_id: m.business_id ?? '' }));
   }
-  const arq = arg('saida', path.join(PASTA_SAIDA, 'empresas-match.csv'));
-  escreverCsv(arq, saida, ['id_eiff', 'nome', 'dominio', 'business_id', 'match_input']);
-  console.log(`Gravado ${arq} (${saida.filter((s) => s.business_id).length} com business_id)`);
+  const depois = await creditosAgora();
+  const arq = arg('saida', path.join(PASTA, 'empresas-match.csv'));
+  escreverCsv(arq, saida, ['id_eiff', 'nome', 'dominio', 'business_id']);
+  console.log(`Gravado ${arq} (${saida.filter((s) => s.business_id).length} com business_id) · créditos ${antes.disponiveis} → ${depois.disponiveis}`);
+  logar({ operation: 'match', records_requested: itens.length, records_returned: saida.filter((s) => s.business_id).length, credits_before: antes.disponiveis, credits_after: depois.disponiveis, estimated_credits: itens.length * CUSTO.match, correlation_id: ultimaCorrelacao, status: 'ok' });
 }
 
-// Prioridade de decisores para estrutura metalica (do mais ao menos relevante). Cada nivel e um filtro da API.
-const PRIORIDADE = [
-  { nome: 'engenharia', filtros: { job_department: { values: ['engineering'] }, job_level: { values: ['cxo', 'vp', 'director', 'manager'] } } },
-  { nome: 'direção industrial', filtros: { job_title: { values: ['diretor industrial', 'industrial director', 'plant director', 'diretor de produção', 'diretor fabril'], include_related_job_titles: true } } },
-  { nome: 'expansão', filtros: { job_title: { values: ['diretor de expansão', 'expansion director', 'gerente de expansão', 'head of expansion', 'novos negócios'], include_related_job_titles: true } } },
-  { nome: 'operações', filtros: { job_department: { values: ['operations'] }, job_level: { values: ['cxo', 'vp', 'director', 'manager'] } } },
-  { nome: 'facilities', filtros: { job_title: { values: ['facilities', 'gerente de facilities', 'infraestrutura', 'manutenção predial'], include_related_job_titles: true } } },
-  { nome: 'COO', filtros: { job_title: { values: ['COO', 'chief operating officer', 'diretor de operações'], include_related_job_titles: false } } },
-  { nome: 'proprietário', filtros: { job_level: { values: ['owner', 'partner'] } } },
-  { nome: 'presidente', filtros: { job_title: { values: ['presidente', 'president'], include_related_job_titles: false } } },
-  { nome: 'CEO', filtros: { job_title: { values: ['CEO', 'chief executive officer', 'diretor geral'], include_related_job_titles: false } } },
-  { nome: 'supply chain', filtros: { job_title: { values: ['supply chain'], include_related_job_titles: true } } },
-  { nome: 'logística', filtros: { job_title: { values: ['logística', 'logistics'], include_related_job_titles: true } } },
-  { nome: 'compras e suprimentos', filtros: { job_title: { values: ['compras', 'suprimentos', 'procurement', 'purchasing'], include_related_job_titles: true } } },
-];
-
 async function decisores() {
-  const lista = arg('lista'); if (!lista) throw new Error('Informe --lista <csv exportado do Vibe com business_id>');
-  const max = Number(arg('max', '56')); const amostra = Number(arg('amostra', '5'));
+  const lista = arg('lista'); if (!lista) throw new Error('Informe --lista <csv com business_id>');
+  const max = Number(arg('max', '56')); const amostra = Math.min(10, Number(arg('amostra', '5'))); const paginasMax = Number(arg('paginas', '5'));
+  const somenteComEmail = flag('somente-com-email');
   const linhas = lerCsv(fs.readFileSync(lista, 'utf8'));
   const empresas = new Map();
-  for (const l of linhas) { const bid = col(l, 'businessid', 'business_id'.replace('_', ''), 'idexplorium'); if (/^[a-f0-9]{32}$/i.test(bid)) empresas.set(bid.toLowerCase(), { business_id: bid.toLowerCase(), nome: col(l, 'razaosocial', 'empresa', 'nome', 'name', 'companyname'), id_eiff: col(l, 'ideiff', 'empresaid', 'idexterno', 'id'), prospect_id: col(l, 'prospectid') }); }
-  if (!empresas.size) throw new Error('A lista não tem a coluna business_id (32 caracteres hexadecimais). Exporte a lista do Vibe com os identificadores.');
+  for (const l of linhas) { const bid = col(l, 'businessid', 'idexplorium').toLowerCase(); if (/^[a-f0-9]{32}$/.test(bid)) empresas.set(bid, { business_id: bid, nome: col(l, 'razaosocial', 'empresa', 'nome', 'name', 'companyname'), id_eiff: col(l, 'ideiff', 'empresaid', 'idexterno', 'id') }); }
+  if (!empresas.size) throw new Error('A lista não tem a coluna business_id (32 caracteres hexadecimais).');
   const ids = [...empresas.keys()];
-  console.log(`${empresas.size} empresa(s) com business_id na lista "${path.basename(lista)}"; alvo: até ${max} decisores, 1 por empresa, na ordem de prioridade.`);
-  // 1) estatisticas gratuitas por nivel de prioridade
+  const arqSaida = arg('saida', path.join(PASTA, 'decisores.csv'));
+  const jaProcessados = lerCsvSeExiste(arqSaida).map((l) => l.prospect_id).filter(Boolean);
+  const escolhidos = new Map(lerCsvSeExiste(arqSaida).filter((l) => /^[a-f0-9]{32}$/i.test(l.business_id ?? '')).map((l) => [l.business_id.toLowerCase(), l]));
+  console.log(`${empresas.size} empresa(s) com business_id · alvo até ${max} decisores (1 por empresa) · ${somenteComEmail ? 'somente com e-mail disponível' : 'com ou sem e-mail'} · ${escolhidos.size} já no CSV de saída (idempotência).`);
+  // cobertura (gratis)
   const cobertura = [];
-  for (const p of PRIORIDADE) {
-    const s = await api('POST', '/v2/prospects/stats', { filters: { business_id: { values: ids }, ...p.filtros } });
-    cobertura.push({ nome: p.nome, total: Number(s.total_results ?? 0) });
-  }
+  for (const p of PRIORIDADE) { const s = await api('POST', '/v2/prospects/stats', { filters: filtrosDecisores(p, ids, somenteComEmail) }); cobertura.push({ nome: p.nome, total: Number(s.total_results ?? 0) }); }
   console.log('Cobertura por prioridade (estatística, sem créditos):');
   for (const c of cobertura) console.log(`  ${c.nome.padEnd(24)} ${c.total}`);
-  // 2) amostra em preview (campos limitados, sem consumo relevante)
-  const primeiraComDados = PRIORIDADE.find((p, i) => cobertura[i].total > 0);
-  if (primeiraComDados) {
-    const pv = await api('POST', '/v2/prospects', { mode: 'preview', page_size: amostra, page: 1, filters: { business_id: { values: ids }, ...primeiraComDados.filtros } });
-    console.log(`Amostra (${primeiraComDados.nome}, preview):`);
+  const coberturaTotal = cobertura.reduce((s, c) => s + c.total, 0);
+  const i0 = cobertura.findIndex((c) => c.total > 0);
+  if (i0 >= 0 && amostra > 0) {
+    const pv = await api('POST', '/v2/prospects', { mode: 'preview', page_size: amostra, page: 1, filters: filtrosDecisores(PRIORIDADE[i0], ids, somenteComEmail) });
+    console.log(`Amostra (${PRIORIDADE[i0].nome}, preview, ${pv.data?.length ?? 0} registros):`);
     for (const d of pv.data ?? []) console.log(`  ${JSON.stringify({ prospect_id: d.prospect_id, business_id: d.business_id, nome: d.full_name ?? `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim(), cargo: d.job_title, nivel: d.job_level_main, departamento: d.job_department_main, empresa: d.company_name })}`);
   }
-  // 3) estimativa: buscar em modo full ~1 credito/registro (buscamos ate 2x o necessario para escolher 1 por empresa),
-  //    e-mail 2 creditos/registro selecionado, perfil ~1 credito/registro
-  const buscar = Math.min(max * 2, cobertura.reduce((s, c) => s + c.total, 0));
-  console.log(`Estimativa: busca ${buscar} registro(s) ≈ ${buscar} crédito(s); e-mail profissional de até ${max} ≈ ${max * 2}; perfil ≈ ${max}. Total ≈ ${buscar + max * 3} créditos (telefone não incluído).`);
-  if (!flag('executar')) { console.log('Rode com --executar para buscar os decisores (sem enriquecer). Depois use "enriquecer" para os e-mails.'); return; }
-  // 4) execucao: percorre prioridades, 1 decisor por empresa, ate max
-  const escolhidos = new Map();
+  const faltamDecisores = Math.max(0, max - escolhidos.size);
+  const e = estimar({ decisores: faltamDecisores, cobertura: coberturaTotal, email: true, telefone: false, perfil: false, paginasMax, reserva: opcoesOrcamento().reserve });
+  console.log(`Estimativa (não é valor exato): descoberta provável ${e.busca} (máximo ${e.buscaMaxima} se paginar até ${paginasMax} páginas) · e-mail depois ${e.email} · telefone 0 · perfil 0 (não chamado) · reserva ${e.reserva} · total provável ${e.total}.`);
+  if (!flag('executar')) { console.log('Nada foi buscado em modo full. Repita com --executar para a descoberta (o e-mail é um passo separado: "enriquecer").'); return; }
+  if (!faltamDecisores) { console.log('Nada a buscar: o CSV de saída já tem o máximo pedido.'); return; }
+  const antes = await guardar('decisores', e.buscaMaxima);
+  let devolvidos = 0; const correlacoes = [];
   for (const [i, p] of PRIORIDADE.entries()) {
     if (escolhidos.size >= max || !cobertura[i].total) continue;
     const faltam = ids.filter((b) => !escolhidos.has(b));
     if (!faltam.length) break;
-    const r = await api('POST', '/v2/prospects', { mode: 'full', page_size: Math.min(500, Math.max(10, (max - escolhidos.size) * 2)), page: 1, filters: { business_id: { values: faltam }, ...p.filtros } });
-    for (const d of r.data ?? []) {
-      const bid = (d.business_id ?? '').toLowerCase();
-      if (!bid || escolhidos.has(bid) || !empresas.has(bid) || escolhidos.size >= max) continue;
-      escolhidos.set(bid, { business_id: bid, prospect_id: d.prospect_id, id_eiff: empresas.get(bid).id_eiff, empresa: d.company_name ?? empresas.get(bid).nome, nome: d.full_name ?? `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim(), cargo: d.job_title ?? '', departamento: d.job_department_main ?? '', senioridade: d.job_level_main ?? '', linkedin: d.linkedin ?? d.linkedin_url_array?.[0] ?? '', cidade: d.city ?? '', uf: d.region_name ?? '', prioridade: p.nome, email: '', status_email: '', fonte: 'VIBE' });
-    }
-    console.log(`  ${p.nome}: ${escolhidos.size} decisor(es) acumulados`);
+    const r = await paginar((pg) => api('POST', '/v2/prospects', { mode: 'full', ...pg, filters: filtrosDecisores(p, faltam, somenteComEmail) }).then((res) => ({ ...res, data: filtrarJaProcessados(res.data ?? [], jaProcessados) })), { businessIds: faltam, escolhidos, max, maxPaginas: paginasMax, extra: { prioridade: p.nome } });
+    devolvidos += r.devolvidos; correlacoes.push(...r.correlacoes);
+    console.log(`  ${p.nome}: ${r.devolvidos} devolvidos em ${r.paginas} página(s) · ${escolhidos.size} escolhidos`);
   }
-  const arq = arg('saida', path.join(PASTA_SAIDA, 'decisores.csv'));
-  escreverCsv(arq, [...escolhidos.values()], ['business_id', 'prospect_id', 'id_eiff', 'empresa', 'nome', 'cargo', 'departamento', 'senioridade', 'linkedin', 'cidade', 'uf', 'prioridade', 'email', 'status_email', 'fonte']);
-  console.log(`Gravado ${arq}: ${escolhidos.size} decisor(es) de ${empresas.size} empresas. Empresas sem decisor encontrado: ${empresas.size - escolhidos.size}.`);
-  await creditos();
+  const depois = await creditosAgora();
+  const saida = [...escolhidos.values()].map((d) => ({ business_id: d.business_id, prospect_id: d.prospect_id, id_eiff: d.id_eiff ?? empresas.get(d.business_id)?.id_eiff ?? '', empresa: d.empresa ?? d.company_name ?? empresas.get(d.business_id)?.nome ?? '', nome: d.nome ?? d.full_name ?? `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim(), cargo: d.cargo ?? d.job_title ?? '', departamento: d.departamento ?? d.job_department_main ?? '', senioridade: d.senioridade ?? d.job_level_main ?? '', linkedin: d.linkedin ?? d.linkedin_url_array?.[0] ?? '', cidade: d.cidade ?? d.city ?? '', uf: d.uf ?? d.region_name ?? '', prioridade: d.prioridade ?? '', email: d.email ?? '', status_email: d.status_email ?? '', fonte: 'VIBE' }));
+  escreverCsv(arqSaida, saida, ['business_id', 'prospect_id', 'id_eiff', 'empresa', 'nome', 'cargo', 'departamento', 'senioridade', 'linkedin', 'cidade', 'uf', 'prioridade', 'email', 'status_email', 'fonte']);
+  console.log(`Gravado ${arqSaida}: ${saida.length} decisor(es) · créditos ${antes.disponiveis} → ${depois.disponiveis} (delta ${antes.disponiveis - depois.disponiveis}; estimado ${e.busca}) · correlation_ids ${correlacoes.slice(-3).join(', ') || '—'}`);
+  logar({ operation: 'decisores', records_requested: max, records_returned: devolvidos, credits_before: antes.disponiveis, credits_after: depois.disponiveis, estimated_credits: e.busca, correlation_id: correlacoes.at(-1) ?? null, status: 'ok', detalhe: `${saida.length} escolhidos${somenteComEmail ? ', somente com e-mail' : ''}` });
 }
 
 async function enriquecer() {
-  const entrada = arg('entrada', path.join(PASTA_SAIDA, 'decisores.csv'));
+  const entrada = arg('entrada', path.join(PASTA, 'decisores.csv'));
   const linhas = lerCsv(fs.readFileSync(entrada, 'utf8'));
-  const alvo = linhas.filter((l) => /^[a-f0-9]{40}$/i.test(col(l, 'prospectid')) && !col(l, 'email'));
-  const tipos = flag('telefone') ? ['email', 'phone'] : ['email'];
-  const custo = alvo.length * (flag('telefone') ? 5 : 2);
-  console.log(`${alvo.length} contato(s) sem e-mail · enriquecimento ${tipos.join('+')} ≈ ${custo} créditos`);
-  if (!flag('executar')) { console.log('Rode com --executar para consumir os créditos.'); return; }
-  const porId = new Map(linhas.map((l) => [col(l, 'prospectid').toLowerCase(), l]));
-  for (let i = 0; i < alvo.length; i += 50) {
-    const lote = alvo.slice(i, i + 50).map((l) => col(l, 'prospectid').toLowerCase());
-    const r = await api('POST', '/v2/prospects/contact_information/enrich', { prospect_ids: lote, parameters: { contact_types: tipos } });
-    for (const d of r.data ?? []) {
-      const l = porId.get((d.prospect_id ?? '').toLowerCase()); if (!l) continue;
-      l.email = d.professional_email ?? d.data?.professional_email ?? ''; l.status_email = d.professional_email_status ?? d.data?.professional_email_status ?? '';
-      if (flag('telefone')) l.celular = d.mobile_phone ?? d.data?.mobile_phone ?? '';
-    }
-    console.log(`lote ${i / 50 + 1}: ${r.data?.length ?? 0} retornados`);
+  const force = arg('force', '') === 'sim';
+  if (flag('force') && !force) throw new Error('--force exige confirmação explícita: use --force sim.');
+  const alvo = linhasParaEnriquecer(linhas, { force });
+  const telefone = flag('telefone');
+  const custo = alvo.length * (telefone ? CUSTO.telefone : CUSTO.email);
+  console.log(`${alvo.length} contato(s) a enriquecer (${linhas.length - alvo.length} já com e-mail válido, não pagos de novo${force ? '; --force sim' : ''}) · ${telefone ? 'e-mail + telefone' : 'e-mail apenas'} · custo estimado ${custo} créditos.`);
+  if (!alvo.length) return;
+  if (!flag('executar')) { console.log('Nada executado. Repita com --executar.'); return; }
+  const antes = await guardar('enriquecer', custo);
+  const porId = new Map(linhas.map((l) => [String(l.prospect_id).toLowerCase(), l]));
+  let retornados = 0; let correlacao = null;
+  for (let i = 0; i < alvo.length; i += LOTE_ENRIQUECIMENTO_MAX) {
+    const lote = alvo.slice(i, i + LOTE_ENRIQUECIMENTO_MAX).map((l) => l.prospect_id);
+    const r = await api('POST', '/v2/prospects/contact_information/enrich', payloadEnriquecimento(lote, telefone ? ['email', 'phone'] : ['email']));
+    correlacao = r.response_context?.correlation_id ?? correlacao;
+    for (const d of normalizarEnriquecimento(r)) { const l = porId.get(d.prospect_id); if (!l) continue; retornados++; if (d.professional_email) { l.email = d.professional_email; l.status_email = d.professional_email_status ?? ''; } if (telefone && d.mobile_phone) l.celular = d.mobile_phone; }
   }
+  const depois = await creditosAgora();
   const arq = arg('saida', entrada.replace(/\.csv$/i, '') + '-enriquecido.csv');
-  const colunas = [...new Set(linhas.flatMap((l) => Object.keys(l)).concat(['email', 'status_email', ...(flag('telefone') ? ['celular'] : [])]))];
+  const colunas = [...new Set(linhas.flatMap((l) => Object.keys(l)).concat(['email', 'status_email', ...(telefone ? ['celular'] : [])]))];
   escreverCsv(arq, linhas, colunas);
-  console.log(`Gravado ${arq}: ${linhas.filter((l) => l.email).length} com e-mail. Importe no EIFF Radar (Contatos) — as colunas business_id/prospect_id e id_eiff preservam a associação.`);
-  await creditos();
+  console.log(`Gravado ${arq}: ${linhas.filter((l) => l.email).length} com e-mail · créditos ${antes.disponiveis} → ${depois.disponiveis} (delta ${antes.disponiveis - depois.disponiveis}; estimado ${custo}) · correlation_id ${correlacao ?? '—'}`);
+  logar({ operation: 'enriquecer', records_requested: alvo.length, records_returned: retornados, credits_before: antes.disponiveis, credits_after: depois.disponiveis, estimated_credits: custo, correlation_id: correlacao, status: 'ok', detalhe: telefone ? 'email+phone' : 'email' });
 }
 
 const cmd = process.argv[2];
-const run = { teste, creditos, autocomplete: () => autocomplete(process.argv[3], process.argv[4]), match, decisores, enriquecer }[cmd];
-if (!run) { console.log('Comandos: teste | creditos | autocomplete <campo> <texto> | match --entrada <csv> [--executar] | decisores --lista <csv> [--max 56] [--amostra 5] [--executar] | enriquecer --entrada <csv> [--telefone] [--executar]'); process.exit(1); }
-run().catch((e) => { console.error(`Erro: ${mascarar(e.message)}`); process.exit(1); });
+const run = { creditos, 'validar-contrato': validarContrato, teste: validarContrato, 'testar-email': testarEmail, autocomplete: () => autocomplete(process.argv[3], process.argv[4]), match, decisores, enriquecer }[cmd];
+if (!run) { console.log('Comandos: creditos | validar-contrato | testar-email --prospect-id <id> [--executar] | autocomplete <campo> <texto> | match --entrada <csv> [--executar] | decisores --lista <csv> [--max 56] [--amostra 5] [--somente-com-email] [--budget 180] [--reserve 20] [--executar] | enriquecer [--entrada <csv>] [--telefone] [--force sim] [--executar]'); process.exit(1); }
+run().catch((e) => { console.error(`Erro: ${mascararChaves(e.message)}`); process.exit(1); });

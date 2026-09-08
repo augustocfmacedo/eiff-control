@@ -47,6 +47,24 @@ função serverless. O front-end nunca recebe a chave nem chama a Explorium dire
 | `POST /v2/prospects/contact_information/enrich` | e-mail profissional (+ status) e/ou telefone (lotes de 50) | 2 créditos (e-mail) · 5 (telefone ou ambos) |
 | `POST /v2/prospects/profiles/enrich` | perfil (LinkedIn, workplace) | ≈ 1 crédito |
 
+## Regras operacionais do cliente (script e função)
+
+- `page_size` nunca passa de 100 (limite da AgentSource v2); a descoberta pagina por `next_cursor` até obter empresas
+  distintas suficientes (uma pessoa por empresa) ou até 5 páginas, sem presumir que 100 prospects = 100 empresas.
+- Enriquecimento: `POST /v2/prospects/contact_information/enrich` com o campo `prospect_id` (string ou lista de até
+  50); a resposta é lida de forma defensiva (`prospect_id`/`entity_id`, no item ou em `data`).
+- Estimativa separa descoberta (provável e máxima), e-mail, telefone (só com `--telefone`), perfil (só se chamado) e
+  reserva; é sempre apresentada como estimativa.
+- Budget guard: antes de qualquer chamada paga consulta `/v2/credits` e bloqueia se o custo máximo projetado passar de
+  `min(--budget, disponíveis − --reserve)` (padrões 180 e 20). Nenhum lote começa parcialmente.
+- `--somente-com-email` aplica `has_contact_details: { value: "email" }` na descoberta (opcional, para não pagar
+  e-mail de quem não tem).
+- Idempotência: prospects já no CSV de saída ou já importados no Radar são excluídos; e-mail válido presente não é
+  pago de novo; `--force sim` é a única forma de repetir, e exige `--executar`.
+- Log de consumo em `dados/vibe/consumo.log` (JSON por linha, ignorado pelo git): timestamp, operação, registros
+  pedidos e devolvidos, créditos antes/depois, delta real, estimativa, correlation_id e status. Sem chave, e-mail
+  completo, telefone ou payload pessoal.
+
 ## Fluxo do lote piloto
 
 1. Exporte do Vibe a lista `eiff_radar_piloto_empresas_<data>` como CSV **com a coluna `business_id`** (e `id_eiff`

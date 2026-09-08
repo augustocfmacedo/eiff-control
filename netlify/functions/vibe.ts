@@ -2,7 +2,7 @@
 // Exige sessao valida do Supabase e papel Administrador ou Diretoria. Cada acao e pequena para caber no tempo da
 // funcao; a tela encadeia as chamadas (match em lotes de 50, um tier de decisores por chamada, enriquecimento em 50).
 // Nada da chave vai para logs ou para a resposta.
-import { PRIORIDADE_DECISORES } from '../../src/core/radar/vibe';
+import { LOTE_ENRIQUECIMENTO_VIBE, PRIORIDADE_DECISORES, normalizarEnriquecimentoVibe, payloadEnriquecimentoVibe, tamanhoPaginaVibe } from '../../src/core/radar/vibe';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
@@ -32,7 +32,7 @@ export default async (req: Request): Promise<Response> => {
   const rows = (await perfil.json().catch(() => [])) as { role?: string }[];
   if (!['Administrador', 'Diretoria'].includes(rows?.[0]?.role ?? '')) return json({ erro: 'sem_permissao', mensagem: 'Só Administrador e Diretoria usam a integração Vibe.' }, 403);
 
-  let corpo: { acao?: string; empresas?: { id: string; nome?: string; dominio?: string }[]; businessIds?: string[]; tier?: number; n?: number; max?: number; prospectIds?: string[]; telefone?: boolean; confirmar?: boolean };
+  let corpo: { acao?: string; empresas?: { id: string; nome?: string; dominio?: string }[]; businessIds?: string[]; tier?: number; n?: number; max?: number; cursor?: string; somenteComEmail?: boolean; prospectIds?: string[]; telefone?: boolean; confirmar?: boolean };
   try { corpo = (await req.json()) as typeof corpo; } catch { return json({ erro: 'corpo_invalido' }, 400); }
   const ids = (corpo.businessIds ?? []).filter((b) => /^[a-f0-9]{32}$/i.test(b)).map((b) => b.toLowerCase()).slice(0, 10000);
   try {
@@ -59,36 +59,39 @@ export default async (req: Request): Promise<Response> => {
       }
       case 'cobertura': {
         if (!ids.length) return json({ erro: 'sem_business_ids' }, 400);
+        const filtroEmail = corpo.somenteComEmail ? { has_contact_details: { value: 'email' } } : {};
         const cobertura: { nome: string; total: number }[] = [];
         for (const p of PRIORIDADE_DECISORES) {
-          const s = await explorium(chave, 'POST', '/v2/prospects/stats', { filters: { business_id: { values: ids }, ...p.filtros } });
+          const s = await explorium(chave, 'POST', '/v2/prospects/stats', { filters: { business_id: { values: ids }, ...p.filtros, ...filtroEmail } });
           cobertura.push({ nome: p.nome, total: Number(s.total_results ?? 0) });
         }
-        return json({ cobertura, empresas: ids.length });
+        return json({ cobertura, empresas: ids.length, somenteComEmail: !!corpo.somenteComEmail });
       }
       case 'amostra': {
         if (!ids.length) return json({ erro: 'sem_business_ids' }, 400);
         const tier = PRIORIDADE_DECISORES[Math.max(0, Math.min(PRIORIDADE_DECISORES.length - 1, corpo.tier ?? 0))];
-        const pv = await explorium(chave, 'POST', '/v2/prospects', { mode: 'preview', page_size: Math.max(1, Math.min(10, corpo.n ?? 5)), page: 1, filters: { business_id: { values: ids }, ...tier.filtros } });
-        return json({ tier: tier.nome, amostra: pv.data ?? [], total: pv.total_results });
+        const filtroEmail = corpo.somenteComEmail ? { has_contact_details: { value: 'email' } } : {};
+        const pv = await explorium(chave, 'POST', '/v2/prospects', { mode: 'preview', page_size: Math.max(1, Math.min(10, corpo.n ?? 5)), page: 1, filters: { business_id: { values: ids }, ...tier.filtros, ...filtroEmail } });
+        return json({ tier: tier.nome, amostra: pv.data ?? [], total: pv.total_results, correlationId: (pv.response_context as { correlation_id?: string } | undefined)?.correlation_id ?? null });
       }
       case 'decisores': {
-        // um tier por chamada (modo full = ~1 credito por registro devolvido); a tela acumula e escolhe 1 por empresa
+        // uma pagina de um tier por chamada (modo full ≈ 1 credito por registro devolvido; page_size ≤ 100);
+        // a tela escolhe 1 por empresa e pede a proxima pagina pelo cursor quando faltarem empresas distintas
         if (!ids.length) return json({ erro: 'sem_business_ids' }, 400);
         if (!corpo.confirmar) return json({ erro: 'confirmar' }, 400);
         const i = Math.max(0, Math.min(PRIORIDADE_DECISORES.length - 1, corpo.tier ?? 0));
-        const tamanho = Math.max(1, Math.min(200, corpo.n ?? 20));
-        const r = await explorium(chave, 'POST', '/v2/prospects', { mode: 'full', page_size: tamanho, page: 1, filters: { business_id: { values: ids }, ...PRIORIDADE_DECISORES[i].filtros } });
-        return json({ tier: PRIORIDADE_DECISORES[i].nome, prospects: r.data ?? [], total: r.total_results });
+        const tamanho = tamanhoPaginaVibe(corpo.n ?? 20);
+        const filtroEmail = corpo.somenteComEmail ? { has_contact_details: { value: 'email' } } : {};
+        const r = await explorium(chave, 'POST', '/v2/prospects', { mode: 'full', page_size: tamanho, ...(corpo.cursor ? { next_cursor: corpo.cursor } : { page: 1 }), filters: { business_id: { values: ids }, ...PRIORIDADE_DECISORES[i].filtros, ...filtroEmail } });
+        return json({ tier: PRIORIDADE_DECISORES[i].nome, prospects: r.data ?? [], total: r.total_results, nextCursor: (r.page as { next_cursor?: string | null } | undefined)?.next_cursor ?? null, correlationId: (r.response_context as { correlation_id?: string } | undefined)?.correlation_id ?? null });
       }
       case 'enriquecer': {
-        const pids = (corpo.prospectIds ?? []).filter((p) => /^[a-f0-9]{40}$/i.test(p)).slice(0, 50);
+        const pids = (corpo.prospectIds ?? []).filter((p) => /^[a-f0-9]{40}$/i.test(p)).slice(0, LOTE_ENRIQUECIMENTO_VIBE);
         if (!pids.length) return json({ erro: 'sem_prospect_ids' }, 400);
         const tipos = corpo.telefone ? ['email', 'phone'] : ['email'];
         if (!corpo.confirmar) return json({ estimativa: { creditos: pids.length * (corpo.telefone ? 5 : 2), registros: pids.length } });
-        const r = await explorium(chave, 'POST', '/v2/prospects/contact_information/enrich', { prospect_ids: pids, parameters: { contact_types: tipos } });
-        const dados = ((r.data as Record<string, unknown>[] | undefined) ?? []).map((d) => { const inner = (d.data as Record<string, unknown> | undefined) ?? d; return { prospect_id: d.prospect_id ?? inner.prospect_id, professional_email: inner.professional_email ?? null, professional_email_status: inner.professional_email_status ?? null, mobile_phone: inner.mobile_phone ?? null }; });
-        return json({ resultados: dados });
+        const r = await explorium(chave, 'POST', '/v2/prospects/contact_information/enrich', payloadEnriquecimentoVibe(pids, tipos));
+        return json({ resultados: normalizarEnriquecimentoVibe(r), correlationId: (r.response_context as { correlation_id?: string } | undefined)?.correlation_id ?? null });
       }
       default: return json({ erro: 'acao_invalida' }, 400);
     }
