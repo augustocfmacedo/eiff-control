@@ -75,9 +75,10 @@ describe('Calibration Pilot 02: FIT com dados reais (simulacao)', () => {
     const fit = (x: Empresa) => fitCalibrado(x, CENARIOS_FIT.BALANCEADO, { naicsDescricao: 'Food Manufacturing' }).score;
     const atual = simularCenario(r, id, HOJE, { nome: 'atual' })!;
     const cal = simularCenario(r, id, HOJE, { nome: 'fit', fit })!;
-    expect(cal.fit).toBeGreaterThan(atual.fit); expect(cal.priorityScore).toBeGreaterThan(atual.priorityScore); expect(cal.timing).toBe(atual.timing); expect(cal.intent).toBe(atual.intent);
+    expect(cal.fit).toBe(atual.fit); expect(cal.priorityScore).toBe(atual.priorityScore); expect(cal.timing).toBe(atual.timing); expect(cal.intent).toBe(atual.intent); // o motor em producao ja usa o FIT balanceado: simulacao e regra coincidem
+    expect(atual.fit).toBeGreaterThan(80);
     // recencia unica (120 d): sinal de 250 dias e "antigo" para a matriz mesmo com score vivo; por familia (540 d) deixa de ser
-    const semFam = simularCenario(r, id, HOJE, { nome: 'a', confiabilidadeFonte: 0.95, janelaPorTipo: JANELAS_FAMILIA_HIPOTESE })!;
+    const semFam = simularCenario(r, id, HOJE, { nome: 'a', confiabilidadeFonte: 0.95, janelaPorTipo: JANELAS_FAMILIA_HIPOTESE, recenciaPorFamilia: { LONG_CYCLE: 120, MEDIUM_CYCLE: 120, SHORT_CYCLE: 120 } })!; // janela unica antiga (120 d)
     const comFam = simularCenario(r, id, HOJE, { nome: 'b', confiabilidadeFonte: 0.95, janelaPorTipo: JANELAS_FAMILIA_HIPOTESE, recenciaPorFamilia: JANELAS_FAMILIA_HIPOTESE })!;
     expect(semFam.timing).toBeGreaterThan(0); expect(['RESEARCH_SIGNALS', 'NURTURE']).toContain(semFam.matriz); expect(['RESEARCH_SIGNALS', 'NURTURE']).not.toContain(comFam.matriz); // sem contato: NURTURE; com recencia por familia o sinal volta a contar
     expect(recomendacaoSignalPilot({ priorityScore: 10, timing: 20, intent: 0, decisionFit: 75, cobertura: 'IDEAL_DECISION_MAKER', sinal: { grupo: 'A', relevancia: 'DIRECT', confianca: 0.9, diasDesde: 250, janelaRecente: 540 } }).conta).toBe('WARM');

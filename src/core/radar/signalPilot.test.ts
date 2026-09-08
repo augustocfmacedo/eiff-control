@@ -81,11 +81,12 @@ describe('Signal Pilot 01: leitura comercial, classificacao e matriz operacional
     expect(recomendacaoSignalPilot({ priorityScore: 5, timing: 0, intent: 0, cobertura: 'NO_CONTACT' })).toMatchObject({ conta: 'NO_EVIDENCE', acao: 'NURTURE' });
   });
   it('7) sinal antigo nao compete com um recente equivalente', () => {
-    const antigo = comSinal(radarPiloto(), 'Cereal Ouro', 'NEW_FACTORY', { confianca: 0.9, eventoEm: '2025-06-01' });
+    const antigo = comSinal(radarPiloto(), 'Cereal Ouro', 'NEW_FACTORY', { confianca: 0.9, eventoEm: '2024-06-01' }); // 830 dias: alem da janela de 540 do ciclo longo
     const recente = comSinal(radarPiloto(), 'Grupo Sinova', 'NEW_FACTORY', { confianca: 0.9, eventoEm: '2026-09-02' });
     const la = linha(antigo, 'Cereal Ouro'); const lr = linha(recente, 'Grupo Sinova');
-    expect(la.diasDesde!).toBeGreaterThan(H.recenteDias); expect(la.matriz?.conta).toBe('NO_EVIDENCE'); expect(la.recommendedAction).toBe('RESEARCH_SIGNALS');
-    expect(la.whyNow).toContain('fora da janela recente');
+    expect(la.diasDesde!).toBeGreaterThan(540); expect(la.janelaRecente).toBe(540); expect(la.matriz?.conta).toBe('NO_EVIDENCE'); expect(la.recommendedAction).toBe('RESEARCH_SIGNALS');
+    expect(la.whyNow).toContain('fora da janela de 540 dias');
+    expect(H.recenteDias).toBe(120); // fallback so para tipos sem familia
     expect(lr.matriz?.conta).toBe('HOT');
     expect(lr.timingScore!).toBeGreaterThan(la.timingScore!); expect(lr.priorityScore!).toBeGreaterThan(la.priorityScore!);
   });

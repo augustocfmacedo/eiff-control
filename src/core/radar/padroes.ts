@@ -53,8 +53,6 @@ export const RESPOSTAS_PADRAO: TipoResposta[] = [
   { codigo: 'NEGATIVE', nome: 'Negativo', sentimento: 'negativo', ativo: true },
 ];
 
-const SETORES_ALVO = ['Indústria', 'Logística', 'Agroindústria', 'Varejo', 'Alimentos', 'Bebidas', 'Química', 'Metalurgia', 'Automotivo', 'Construção', 'Energia', 'Mineração', 'Farmacêutica', 'Papel e celulose', 'Têxtil', 'E-commerce', 'Educação', 'Saúde', 'Fitness'];
-const UFS_ALVO = ['GO', 'DF', 'MG', 'SP', 'TO', 'MT', 'MS', 'BA'];
 
 let n = 0;
 const regra = (nome: string, dimensao: RegraScore['dimensao'], condicao: RegraScore['condicao'], peso: number, decaimentoDias?: number, tipoSinal?: TipoSinal): RegraScore => ({ id: `RS-${String(++n).padStart(3, '0')}`, nome, dimensao, tipoSinal, condicao, peso, decaimento: !!decaimentoDias, decaimentoDias, ativo: true, prioridade: n });
@@ -62,22 +60,23 @@ const sinal = (nome: string, dimensao: RegraScore['dimensao'], tipoSinal: TipoSi
 
 export const REGRAS_PADRAO: RegraScore[] = [
   // FIT: a empresa e o tipo de cliente que compra estrutura metalica?
-  regra('Setor-alvo', 'FIT', { tipo: 'campo', campo: 'setor', op: 'in', valor: SETORES_ALVO }, 35),
-  regra('UF de atuação da EIFF', 'FIT', { tipo: 'campo', campo: 'uf', op: 'in', valor: UFS_ALVO }, 25),
-  regra('Porte: 51 funcionários ou mais', 'FIT', { tipo: 'campo', campo: 'faixaFuncionarios', op: 'in', valor: ['51-200', '201-500', '501-1000', '1001-5000', '5000+'] }, 20),
-  regra('Capital social ≥ R$ 1 mi', 'FIT', { tipo: 'campo', campo: 'capitalSocial', op: 'gte', valor: 1000000 }, 10),
-  regra('Mais de uma unidade', 'FIT', { tipo: 'campo', campo: 'numeroUnidades', op: 'gte', valor: 2 }, 10),
+  // FIT balanceado (Production Calibration 01): geografia 15 · setor 35 (categoria canonica com gate de confianca) · funcionarios 25 · receita 20 · porte industrial 5
+  regra('FIT · Geografia', 'FIT', { tipo: 'fitCalibrado', componente: 'geografia' }, 15),
+  regra('FIT · Setor (categoria canônica com gate de confiança)', 'FIT', { tipo: 'fitCalibrado', componente: 'setor' }, 35),
+  regra('FIT · Porte por funcionários', 'FIT', { tipo: 'fitCalibrado', componente: 'funcionarios' }, 25),
+  regra('FIT · Faixa de receita', 'FIT', { tipo: 'fitCalibrado', componente: 'receita' }, 20),
+  regra('FIT · Porte industrial', 'FIT', { tipo: 'fitCalibrado', componente: 'porteIndustrial' }, 5),
   // TIMING: existe um momento de construir?
-  sinal('Obra nova registrada (CNO)', 'TIMING', 'CNO_NEW', 45, 180),
-  sinal('Expansão registrada (CNO)', 'TIMING', 'CNO_EXPANSION', 35, 180),
-  sinal('Novo galpão', 'TIMING', 'WAREHOUSE', 50, 240),
-  sinal('Nova fábrica', 'TIMING', 'NEW_FACTORY', 55, 270),
-  sinal('Novo centro de distribuição', 'TIMING', 'NEW_DC', 55, 270),
+  sinal('Obra nova registrada (CNO)', 'TIMING', 'CNO_NEW', 45, 540),
+  sinal('Expansão registrada (CNO)', 'TIMING', 'CNO_EXPANSION', 35, 540),
+  sinal('Novo galpão', 'TIMING', 'WAREHOUSE', 50, 540),
+  sinal('Nova fábrica', 'TIMING', 'NEW_FACTORY', 55, 540),
+  sinal('Novo centro de distribuição', 'TIMING', 'NEW_DC', 55, 540),
   sinal('Novo escritório', 'TIMING', 'NEW_OFFICE', 20, 180),
-  sinal('Compra de terreno', 'TIMING', 'LAND_PURCHASE', 40, 365),
-  sinal('Expansão anunciada', 'TIMING', 'EXPANSION', 35, 240),
-  sinal('Licitação pública', 'TIMING', 'PUBLIC_TENDER', 35, 90),
-  sinal('Plano de contratação pública', 'TIMING', 'PUBLIC_PLAN', 20, 180),
+  sinal('Compra de terreno', 'TIMING', 'LAND_PURCHASE', 40, 540),
+  sinal('Expansão anunciada', 'TIMING', 'EXPANSION', 35, 540),
+  sinal('Licitação pública', 'TIMING', 'PUBLIC_TENDER', 35, 270),
+  sinal('Plano de contratação pública', 'TIMING', 'PUBLIC_PLAN', 20, 270),
   regra('Projeto com início em até 12 meses', 'TIMING', { tipo: 'projeto', inicioEmMeses: 12 }, 30, 365),
   regra('Resposta: projeto em andamento', 'TIMING', { tipo: 'resposta', codigos: ['ACTIVE_PROJECT'] }, 45, 120),
   regra('Resposta: projeto futuro', 'TIMING', { tipo: 'resposta', codigos: ['FUTURE_PROJECT'] }, 25, 180),
@@ -86,12 +85,12 @@ export const REGRAS_PADRAO: RegraScore[] = [
   regra('Pediu orçamento', 'INTENT', { tipo: 'resposta', codigos: ['REQUESTED_BUDGET'] }, 60, 120),
   regra('Pediu análise técnica', 'INTENT', { tipo: 'resposta', codigos: ['REQUESTED_TECHNICAL_ANALYSIS'] }, 50, 120),
   regra('Pediu reunião ou apresentação', 'INTENT', { tipo: 'resposta', codigos: ['REQUESTED_MEETING', 'REQUESTED_PRESENTATION'] }, 35, 90),
-  sinal('Projeto identificado', 'INTENT', 'PROJECT_IDENTIFIED', 40, 180),
-  sinal('Investimento anunciado', 'INTENT', 'INVESTMENT', 25, 180),
+  sinal('Projeto identificado', 'INTENT', 'PROJECT_IDENTIFIED', 40, 540),
+  sinal('Investimento anunciado', 'INTENT', 'INVESTMENT', 25, 270),
   sinal('Captação de recursos', 'INTENT', 'FUNDING', 20, 180),
   sinal('Contratando engenharia', 'INTENT', 'HIRING_ENGINEERING', 20, 120),
   sinal('Contratando operações', 'INTENT', 'HIRING_OPERATIONS', 10, 120),
-  sinal('Mudança no site', 'INTENT', 'WEBSITE_CHANGE', 10, 90),
+  sinal('Mudança no site', 'INTENT', 'WEBSITE_CHANGE', 10, 120),
   sinal('Notícia relevante', 'INTENT', 'NEWS', 10, 120),
   regra('Já tem fornecedor ou escolheu concorrente', 'INTENT', { tipo: 'resposta', codigos: ['ALREADY_HAS_SUPPLIER', 'COMPETITOR_SELECTED'] }, -40, 365),
   regra('Sem interesse', 'INTENT', { tipo: 'resposta', codigos: ['NOT_INTERESTED'] }, -35, 180),
@@ -100,7 +99,7 @@ export const REGRAS_PADRAO: RegraScore[] = [
   regra('Contato com e-mail e telefone', 'RELATIONSHIP', { tipo: 'contato', comEmail: true, comTelefone: true }, 15),
   regra('Falou com o decisor', 'RELATIONSHIP', { tipo: 'resposta', codigos: ['DECISION_MAKER_REACHED'] }, 30, 180),
   regra('Reunião ou visita realizada', 'RELATIONSHIP', { tipo: 'atividade', tipos: ['MEETING', 'VISIT', 'PRESENTATION'] }, 35, 365),
-  sinal('Indicação de parceiro', 'RELATIONSHIP', 'PARTNER_REFERRAL', 30, 365),
+  sinal('Indicação de parceiro', 'RELATIONSHIP', 'PARTNER_REFERRAL', 30, 270),
   regra('Contato inválido', 'RELATIONSHIP', { tipo: 'resposta', codigos: ['INVALID_CONTACT'] }, -15, 90),
   // DATA_QUALITY: da para trabalhar a empresa?
   regra('Dados firmográficos', 'DATA_QUALITY', { tipo: 'completude', campos: ['setor', 'faixaFuncionarios', 'cnae', 'faixaReceita', 'capitalSocial'] }, 20),

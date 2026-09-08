@@ -74,17 +74,17 @@ describe('score', () => {
     const r: RadarDataset = { ...base(), empresas: [e], sinais: [{ id: 'S1', empresaId: 'E1', fonteId: 'FONTE-CNO', fonteTipo: 'CNO', tipo: 'NEW_FACTORY', titulo: 'Nova fábrica', descricao: '', eventoEm: '2026-08-09', detectadoEm: AGORA, confianca: 1, scoreBase: 55, scoreEfetivo: 55, verificado: true, criadoEm: AGORA }], contatos: [{ id: 'C1', empresaId: 'E1', nome: 'Ana', email: 'ana@acme.com.br', telefone: '62', decisor: true, qualidade: 80, observacoes: '', ativo: true, criadoEm: AGORA, atualizadoEm: AGORA }] };
     const x = calcularScore({ empresa: e, contatos: r.contatos, sinais: r.sinais, atividades: [], projetos: [] }, r.regrasScore, r.configScore, HOJE);
     const dim = (d: string) => x.dimensoes.find((k) => k.dimensao === d)!;
-    expect(dim('FIT').score).toBe(80); // setor 35 + uf 25 + porte 20
-    expect(dim('TIMING').score).toBeCloseTo(55 * (1 - 30 / 270), 0); // nova fabrica ha 30 dias, decai em 270
+    expect(dim('FIT').score).toBe(32.5); // FIT balanceado: GO 15 + funcionários 201-500 (0,7 x 25 = 17,5); setor 'Indústria' sem evidência no nome/descrição = LOW (gate 0); receita ausente 0
+    expect(dim('TIMING').score).toBeCloseTo(55 * (1 - 30 / 540), 0); // nova fabrica ha 30 dias, decai em 540 (ciclo longo)
     expect(dim('RELATIONSHIP').score).toBe(45); // decisor 30 + email/telefone 15
     expect(dim('DATA_QUALITY').score).toBe(83); // firmograficos 2/5 (8) + dominio 10 + cnpj 10 + local 10 + decisor 15 + canal 15 + sinal 15
-    expect(x.total).toBeCloseTo(0.25 * 80 + 0.35 * dim('TIMING').score + 0.25 * dim('INTENT').score + 0.1 * 45 + 0.05 * dim('DATA_QUALITY').score, 0);
+    expect(x.total).toBeCloseTo(0.25 * dim('FIT').score + 0.35 * dim('TIMING').score + 0.25 * dim('INTENT').score + 0.1 * 45 + 0.05 * dim('DATA_QUALITY').score, 0);
     expect(x.classe).toBe(classificar(x.total, CONFIG_SCORE_PADRAO));
     expect(dim('TIMING').fatores[0].motivo).toContain('Nova fábrica');
     expect(motivoPrioridade(x)).toContain('Nova fábrica');
     // regra desativada some do calculo
-    const semUf = calcularScore({ empresa: e, contatos: [], sinais: [], atividades: [], projetos: [] }, r.regrasScore.map((g) => (g.nome.startsWith('UF') ? { ...g, ativo: false } : g)), r.configScore, HOJE);
-    expect(semUf.dimensoes.find((k) => k.dimensao === 'FIT')!.score).toBe(55);
+    const semUf = calcularScore({ empresa: e, contatos: [], sinais: [], atividades: [], projetos: [] }, r.regrasScore.map((g) => (g.nome.includes('Geografia') ? { ...g, ativo: false } : g)), r.configScore, HOJE);
+    expect(semUf.dimensoes.find((k) => k.dimensao === 'FIT')!.score).toBe(17.5); // 32,5 sem a geografia (15)
     // resposta negativa reduz INTENT
     const neg = calcularScore({ empresa: e, contatos: [], sinais: [], atividades: [{ id: 'A1', empresaId: 'E1', usuarioId: 'u', tipo: 'CALL', canal: 'PHONE', ocorreuEm: AGORA, resultado: 'REQUESTED_BUDGET', notas: '', criadoEm: AGORA }, { id: 'A2', empresaId: 'E1', usuarioId: 'u', tipo: 'CALL', canal: 'PHONE', ocorreuEm: AGORA, resultado: 'COMPETITOR_SELECTED', notas: '', criadoEm: AGORA }], projetos: [] }, r.regrasScore, r.configScore, HOJE);
     expect(neg.dimensoes.find((k) => k.dimensao === 'INTENT')!.score).toBe(20); // 60 - 40
@@ -100,7 +100,7 @@ describe('pipeline', () => {
     expect(oportunidadesSemProximaAcao(r)).toHaveLength(0);
     const { empresa: e2 } = recalcularEmpresa(r.empresas[0], r, HOJE);
     expect(e2.proximaAcaoEm).toBe('2026-09-05');
-    expect(e2.fitScore).toBe(60);
+    expect(e2.fitScore).toBe(15); // FIT balanceado: só a geografia (GO) tem dado; setor sem evidência, faixas ausentes
     expect(recomendarAcao(e2, r, HOJE)).toMatchObject({ acao: 'Ligar para o decisor', tipoTarefa: 'CALL' });
     const fila = filaHoje({ ...r, empresas: [e2] }, HOJE);
     expect(fila[0].vencida).toBe(true);

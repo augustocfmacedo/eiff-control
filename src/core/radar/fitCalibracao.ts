@@ -21,7 +21,21 @@ export function receitaMilhoesDe(faixa?: string): number | undefined {
 export type CategoriaSetor = 'ALIMENTOS_BEBIDAS' | 'BIOENERGIA_USINAS' | 'INDUSTRIA' | 'QUIMICA_FERTILIZANTES' | 'LOGISTICA_DISTRIBUICAO' | 'COOPERATIVA' | 'SEMENTES' | 'DISTRIBUICAO_INSUMOS_AGRO' | 'VAREJO_ATACADO' | 'MAQUINAS_EQUIPAMENTOS' | 'PRODUCAO_AGRICOLA' | 'HOLDING_DIVERSIFICADO' | 'SERVICOS_CONSULTORIA' | 'ASSOCIACAO_ENTIDADE' | 'MINERACAO' | 'CONSTRUCAO_ENGENHARIA' | 'FARMACEUTICA' | 'OUTROS';
 export const CATEGORIAS_SETOR: CategoriaSetor[] = ['ALIMENTOS_BEBIDAS', 'BIOENERGIA_USINAS', 'INDUSTRIA', 'QUIMICA_FERTILIZANTES', 'LOGISTICA_DISTRIBUICAO', 'COOPERATIVA', 'SEMENTES', 'DISTRIBUICAO_INSUMOS_AGRO', 'VAREJO_ATACADO', 'MAQUINAS_EQUIPAMENTOS', 'PRODUCAO_AGRICOLA', 'HOLDING_DIVERSIFICADO', 'SERVICOS_CONSULTORIA', 'ASSOCIACAO_ENTIDADE', 'MINERACAO', 'CONSTRUCAO_ENGENHARIA', 'FARMACEUTICA', 'OUTROS'];
 export interface EntradaSetor { nome?: string; setor?: string; naics?: string; naicsDescricao?: string; sic?: string; sicDescricao?: string; descricao?: string }
-export interface ClassificacaoSetor { categoria: CategoriaSetor; motivo: string; evidencia: 'nome' | 'descricao' | 'naics' | 'sic' | 'padrao'; original: { setor?: string; naics?: string; sic?: string } }
+export type ConfiancaClassificacao = 'HIGH' | 'MEDIUM' | 'LOW';
+export interface ClassificacaoSetor {
+  categoria: CategoriaSetor; motivo: string; evidencia: 'nome' | 'descricao' | 'naics' | 'sic' | 'padrao'; original: { setor?: string; naics?: string; sic?: string };
+  confianca: ConfiancaClassificacao; // hipotese operacional: HIGH nome inequivoco ou descricao especifica; MEDIUM descricao razoavel; LOW so NAICS/SIC, slogan, ambiguidade ou conflito
+  conflito?: string; // nome x descricao x NAICS apontam categorias diferentes
+  revisao: boolean; // LOW ou conflito
+  candidatos: { nome?: CategoriaSetor; descricao?: CategoriaSetor; naics?: CategoriaSetor };
+}
+/** Termos da descricao que dao evidencia razoavel, nao conclusiva (MEDIUM). Os demais termos casados na descricao sao especificos (HIGH). */
+const TERMOS_RAZOAVEIS = /^(lojas|solucoes agricolas|parceiro do produtor|rede de acesso ao mercado|nutricao animal|beneficiamento|graos|soja|algodao|milho|insumos|sementes?|fertiliz\w*|fertilizacao|defensivos|caminhoes|algas|nutrition|irrigacao|bebidas|racao|racoes|plantio|manufactur\w*|industria|fabrica|fabricante)$/;
+const SLOGAN = (desc: string) => desc.trim().length < 40 || /linkedin\.com|pagina inativa|www\./.test(desc);
+/** Gate de confianca no componente de setor do FIT: HIGH 100%, MEDIUM 70%, LOW 0 (ate revisao). */
+export const GATE_CONFIANCA: Record<ConfiancaClassificacao, number> = { HIGH: 1, MEDIUM: 0.7, LOW: 0 };
+/** Sem gate (so para comparar na simulacao). */
+export const SEM_GATE: Record<ConfiancaClassificacao, number> = { HIGH: 1, MEDIUM: 1, LOW: 1 };
 
 const norm = (s?: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
 type Regra = [RegExp, CategoriaSetor, string];
@@ -79,15 +93,39 @@ const REGRAS_NAICS: Regra[] = [
   [/cattle|ranching|farm|crop|agriculture/, 'PRODUCAO_AGRICOLA', 'NAICS/SIC de produção agrícola'],
 ];
 
-/** Classifica de forma deterministica: nome, depois descricao, depois NAICS/SIC; sem evidencia = OUTROS. O original nunca muda. */
+const casar = (texto: string, regras: Regra[]) => { for (const [re, categoria, rotulo] of regras) { const m = texto.match(re); if (m) return { categoria, termo: m[0], rotulo }; } return undefined; };
+/** Categorias especificas o bastante no NAICS/SIC para apontar conflito com o texto. */
+const NAICS_ESPECIFICO = new Set<CategoriaSetor>(['ALIMENTOS_BEBIDAS', 'LOGISTICA_DISTRIBUICAO', 'VAREJO_ATACADO', 'INDUSTRIA']);
+
+/**
+ * Classifica de forma deterministica: nome, depois descricao, depois NAICS/SIC; sem evidencia = OUTROS. O original nunca muda.
+ * Confianca (hipotese operacional): nome = HIGH; descricao = HIGH (termo especifico) ou MEDIUM (termo razoavel); NAICS/SIC ou slogan = LOW.
+ * Conflito entre nome, descricao e NAICS especifico rebaixa para MEDIUM (ou LOW se ja era MEDIUM) e marca revisao.
+ */
 export function classificarSetor(x: EntradaSetor): ClassificacaoSetor {
   const original = { setor: x.setor, naics: x.naics ? `${x.naics} ${x.naicsDescricao ?? ''}`.trim() : x.naicsDescricao, sic: x.sic ? `${x.sic} ${x.sicDescricao ?? ''}`.trim() : x.sicDescricao };
   const nome = norm(x.nome); const desc = norm(x.descricao);
-  for (const [re, categoria, rotulo] of REGRAS_NOME) { const m = nome.match(re); if (m) return { categoria, motivo: `nome contém "${m[0]}" (${rotulo})`, evidencia: 'nome', original }; }
-  for (const [re, categoria, rotulo] of REGRAS_DESCRICAO) { const m = desc.match(re); if (m) return { categoria, motivo: `descrição contém "${m[0]}" (${rotulo})`, evidencia: 'descricao', original }; }
-  const codigo = norm(`${x.naicsDescricao ?? ''} ${x.sicDescricao ?? ''} ${x.setor ?? ''}`);
-  for (const [re, categoria, rotulo] of REGRAS_NAICS) { const m = codigo.match(re); if (m) return { categoria, motivo: `${rotulo}: "${m[0]}" (sem evidência no nome/descrição)`, evidencia: x.naicsDescricao || x.setor ? 'naics' : 'sic', original }; }
-  return { categoria: 'OUTROS', motivo: 'sem evidência de setor', evidencia: 'padrao', original };
+  const cn = casar(nome, REGRAS_NOME); const cd = casar(desc, REGRAS_DESCRICAO); const cc = casar(norm(`${x.naicsDescricao ?? ''} ${x.sicDescricao ?? ''} ${x.setor ?? ''}`), REGRAS_NAICS);
+  const candidatos = { nome: cn?.categoria, descricao: cd?.categoria, naics: cc?.categoria };
+  let categoria: CategoriaSetor; let motivo: string; let evidencia: ClassificacaoSetor['evidencia']; let confianca: ConfiancaClassificacao;
+  if (cn) { categoria = cn.categoria; motivo = `nome contém "${cn.termo}" (${cn.rotulo})`; evidencia = 'nome'; confianca = 'HIGH'; }
+  else if (cd) { categoria = cd.categoria; motivo = `descrição contém "${cd.termo}" (${cd.rotulo})`; evidencia = 'descricao'; confianca = TERMOS_RAZOAVEIS.test(cd.termo) || SLOGAN(desc) ? 'MEDIUM' : 'HIGH'; }
+  else if (cc) { categoria = cc.categoria; motivo = `${cc.rotulo}: "${cc.termo}" (sem evidência no nome/descrição)`; evidencia = x.naicsDescricao || x.setor ? 'naics' : 'sic'; confianca = 'LOW'; }
+  else { categoria = 'OUTROS'; motivo = 'sem evidência de setor'; evidencia = 'padrao'; confianca = 'LOW'; }
+  const conflitos: string[] = [];
+  if (cn && cd && cn.categoria !== cd.categoria) conflitos.push(`nome → ${cn.categoria}, descrição → ${cd.categoria}`);
+  if ((cn || cd) && cc && NAICS_ESPECIFICO.has(cc.categoria) && cc.categoria !== categoria) conflitos.push(`NAICS/SIC → ${cc.categoria}`);
+  if (conflitos.length && confianca !== 'LOW') confianca = confianca === 'HIGH' ? 'MEDIUM' : 'LOW';
+  const conflito = conflitos.length ? conflitos.join('; ') : undefined;
+  return { categoria, motivo, evidencia, original, confianca, conflito, revisao: confianca === 'LOW' || !!conflito, candidatos };
+}
+/** NAICS/SIC/descricao a partir do registro bruto de uma empresa importada do Vibe (chaves business_*). */
+export function brutoEmpresaDe(payload: unknown): EntradaSetor | undefined {
+  const p = payload as Record<string, unknown> | null | undefined;
+  if (!p || typeof p !== 'object') return undefined;
+  const g = (k: string) => { const v = p[k]; return v == null || v === '' ? undefined : String(v); };
+  const out = { naics: g('business_naics'), naicsDescricao: g('business_naics_description'), sic: g('business_sic_code'), sicDescricao: g('business_sic_code_description'), descricao: g('business_business_description') ?? g('descricao') ?? g('description') };
+  return Object.values(out).some(Boolean) ? out : undefined;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -114,26 +152,41 @@ export const CENARIOS_FIT: Record<NomeCenarioFit, CenarioFit> = {
 export const fatorFuncionarios = (n?: number) => (n === undefined ? 0 : n <= 10 ? 0 : n <= 50 ? 0.2 : n <= 200 ? 0.5 : n <= 500 ? 0.7 : n <= 1000 ? 0.85 : 1);
 export const fatorReceita = (m?: number) => (m === undefined ? 0 : m <= 10 ? 0.2 : m <= 25 ? 0.4 : m <= 75 ? 0.6 : m <= 200 ? 0.8 : m <= 500 ? 0.95 : 1);
 
-export interface FatorFit { componente: 'geografia' | 'setor' | 'funcionarios' | 'receita' | 'porteIndustrial'; peso: number; fator: number; pontos: number; motivo: string }
+export type ComponenteFit = 'geografia' | 'setor' | 'funcionarios' | 'receita' | 'porteIndustrial';
+export interface FatorFit { componente: ComponenteFit; peso: number; fator: number; pontos: number; motivo: string }
 export interface ResultadoFit { score: number; categoria: CategoriaSetor; classificacao: ClassificacaoSetor; fatores: FatorFit[]; ausentes: string[] }
 
-/** FIT calibrado (0-100) so com dados presentes. `extra` traz NAICS/SIC/descricao do registro bruto quando houver. */
-export function fitCalibrado(e: Pick<Empresa, 'razaoSocial' | 'nomeFantasia' | 'uf' | 'setor' | 'faixaFuncionarios' | 'faixaReceita'>, cenario: CenarioFit, extra: Partial<EntradaSetor> = {}): ResultadoFit {
-  const cls = classificarSetor({ nome: e.nomeFantasia ?? e.razaoSocial, setor: e.setor, ...extra });
-  const fatores: FatorFit[] = []; const ausentes: string[] = [];
-  const add = (componente: FatorFit['componente'], fator: number, motivo: string) => { const peso = cenario.pesos[componente]; fatores.push({ componente, peso, fator, pontos: Math.round(peso * fator * 10) / 10, motivo }); };
-  if (!e.uf) { ausentes.push('uf'); add('geografia', 0, 'UF ausente'); }
-  else if (cenario.geografia.principal.includes(e.uf)) add('geografia', cenario.geografia.fatorPrincipal, `UF ${e.uf}: base da EIFF`);
-  else if (cenario.geografia.alvo.includes(e.uf)) add('geografia', cenario.geografia.fatorAlvo, `UF ${e.uf}: área de atuação`);
-  else add('geografia', 0, `UF ${e.uf} fora da área de atuação`);
-  const af = cenario.afinidade[cls.categoria];
-  add('setor', af, `${cls.categoria} (${cls.motivo})`);
+/**
+ * Fator (0-1) de um componente do FIT balanceado, com motivo. E o que a regra de score 'fitCalibrado' usa em producao.
+ * Setor: afinidade da categoria canonica x gate de confianca (HIGH 1, MEDIUM 0,7, LOW 0). Dado ausente = 0, nunca inventado.
+ */
+export function fatorComponenteFit(e: Pick<Empresa, 'razaoSocial' | 'nomeFantasia' | 'uf' | 'setor' | 'faixaFuncionarios' | 'faixaReceita'>, componente: ComponenteFit, extra: Partial<EntradaSetor> = {}, cenario: CenarioFit = CENARIOS_FIT.BALANCEADO, gates: Record<ConfiancaClassificacao, number> = GATE_CONFIANCA): { fator: number; motivo: string; classificacao?: ClassificacaoSetor } {
+  const cls = () => classificarSetor({ nome: e.nomeFantasia ?? e.razaoSocial, setor: e.setor, ...extra });
+  if (componente === 'geografia') {
+    if (!e.uf) return { fator: 0, motivo: 'UF ausente' };
+    if (cenario.geografia.principal.includes(e.uf)) return { fator: cenario.geografia.fatorPrincipal, motivo: `UF ${e.uf}: base da EIFF` };
+    if (cenario.geografia.alvo.includes(e.uf)) return { fator: cenario.geografia.fatorAlvo, motivo: `UF ${e.uf}: área de atuação` };
+    return { fator: 0, motivo: `UF ${e.uf} fora da área de atuação` };
+  }
+  if (componente === 'setor') {
+    const c = cls(); const af = cenario.afinidade[c.categoria]; const gate = gates[c.confianca];
+    return { fator: Math.round(af * gate * 1000) / 1000, motivo: `${c.categoria} · confiança ${c.confianca}${gate < 1 ? ` (${Math.round(gate * 100)}% da afinidade${c.confianca === 'LOW' ? ', requer revisão' : ''})` : ''} · ${c.motivo}${c.conflito ? ` · conflito: ${c.conflito}` : ''}`, classificacao: c };
+  }
   const nf = funcionariosDe(e.faixaFuncionarios);
-  if (nf === undefined) { ausentes.push('faixaFuncionarios'); add('funcionarios', 0, 'faixa de funcionários ausente'); } else add('funcionarios', fatorFuncionarios(nf), `faixa ${faixaSemColchetes(e.faixaFuncionarios)}`);
-  const rm = receitaMilhoesDe(e.faixaReceita);
-  if (rm === undefined) { ausentes.push('faixaReceita'); add('receita', 0, 'faixa de receita ausente'); } else add('receita', fatorReceita(rm), `faixa ${faixaSemColchetes(e.faixaReceita)}`);
+  if (componente === 'funcionarios') return nf === undefined ? { fator: 0, motivo: 'faixa de funcionários ausente' } : { fator: fatorFuncionarios(nf), motivo: `faixa ${faixaSemColchetes(e.faixaFuncionarios)}` };
+  if (componente === 'receita') { const rm = receitaMilhoesDe(e.faixaReceita); return rm === undefined ? { fator: 0, motivo: 'faixa de receita ausente' } : { fator: fatorReceita(rm), motivo: `faixa ${faixaSemColchetes(e.faixaReceita)}` }; }
+  const c = cls(); const af = cenario.afinidade[c.categoria] * gates[c.confianca];
   const porte = nf !== undefined && af >= 0.8 ? (nf > 500 ? 1 : nf > 200 ? 0.5 : 0) : 0;
-  add('porteIndustrial', porte, porte ? `≥ ${nf! > 500 ? 501 : 201} funcionários em setor físico-intensivo` : nf === undefined ? 'sem faixa de funcionários' : 'porte ou setor não caracterizam operação física de grande escala');
+  return { fator: porte, motivo: porte ? `≥ ${nf! > 500 ? 501 : 201} funcionários em setor físico-intensivo (${c.categoria})` : nf === undefined ? 'sem faixa de funcionários' : 'porte ou setor não caracterizam operação física de grande escala' };
+}
+
+/** FIT calibrado (0-100) so com dados presentes: soma peso x fator dos 5 componentes (mesma conta das regras 'fitCalibrado'). */
+export function fitCalibrado(e: Pick<Empresa, 'razaoSocial' | 'nomeFantasia' | 'uf' | 'setor' | 'faixaFuncionarios' | 'faixaReceita'>, cenario: CenarioFit, extra: Partial<EntradaSetor> = {}, gates: Record<ConfiancaClassificacao, number> = GATE_CONFIANCA): ResultadoFit {
+  const componentes: ComponenteFit[] = ['geografia', 'setor', 'funcionarios', 'receita', 'porteIndustrial'];
+  const ausentes: string[] = []; if (!e.uf) ausentes.push('uf'); if (funcionariosDe(e.faixaFuncionarios) === undefined) ausentes.push('faixaFuncionarios'); if (receitaMilhoesDe(e.faixaReceita) === undefined) ausentes.push('faixaReceita');
+  let classificacao: ClassificacaoSetor | undefined;
+  const fatores: FatorFit[] = componentes.map((componente) => { const f = fatorComponenteFit(e, componente, extra, cenario, gates); if (f.classificacao) classificacao = f.classificacao; const peso = cenario.pesos[componente]; return { componente, peso, fator: f.fator, pontos: Math.round(peso * f.fator * 10) / 10, motivo: f.motivo }; });
+  const cls = classificacao ?? classificarSetor({ nome: e.nomeFantasia ?? e.razaoSocial, setor: e.setor, ...extra });
   const score = Math.max(0, Math.min(100, Math.round(fatores.reduce((s, f) => s + f.pontos, 0) * 10) / 10));
   return { score, categoria: cls.categoria, classificacao: cls, fatores, ausentes };
 }

@@ -1,6 +1,8 @@
 // Regras do pipeline e leitura operacional do Radar: caches da empresa, regra "oportunidade ativa sem proxima acao",
 // acao recomendada, fila do dia, indicadores do command center e pipeline financeiro.
 import { NOME_ESTAGIO, NOME_SINAL, PROBABILIDADE_ESTAGIO } from './padroes';
+import { sinalAcionavel } from './sinalLeitura';
+import { brutoEmpresaDe } from './fitCalibracao';
 import { calcularScore, diasEntre, motivoPrioridade, type ContextoEmpresa } from './score';
 import { contatoElegivel, sugerirContatoPrincipal, temCanal, type SugestaoContato } from './contatos';
 import type { Atividade, Contato, Empresa, ExplicacaoScore, Oportunidade, RadarDataset, Sinal, TarefaRadar } from './types';
@@ -9,7 +11,8 @@ import { estagioAtivo } from './types';
 export const contextoEmpresa = (r: RadarDataset, empresaId: string): ContextoEmpresa | undefined => {
   const empresa = r.empresas.find((e) => e.id === empresaId);
   if (!empresa) return undefined;
-  return { empresa, contatos: r.contatos.filter((c) => c.empresaId === empresaId), sinais: r.sinais.filter((s) => s.empresaId === empresaId), atividades: r.atividades.filter((a) => a.empresaId === empresaId), projetos: r.projetos.filter((p) => p.empresaId === empresaId) };
+  const bruto = r.registrosFonte.filter((x) => x.tipo === 'empresa' && x.entidadeId === empresaId).at(-1)?.payload;
+  return { empresa, contatos: r.contatos.filter((c) => c.empresaId === empresaId), sinais: r.sinais.filter((s) => s.empresaId === empresaId), atividades: r.atividades.filter((a) => a.empresaId === empresaId), projetos: r.projetos.filter((p) => p.empresaId === empresaId), bruto: brutoEmpresaDe(bruto) };
 };
 
 /** Recalcula os campos de cache da empresa (ultimo sinal/contato, proxima acao) sem tocar no score. */
@@ -59,6 +62,8 @@ export interface Recomendacao { estado: EstadoAcao; acao: string; tipoTarefa: Ta
 /** Contato recomendado da empresa: principal definido pelo usuario ou maior decision fit entre os elegiveis. */
 export const contatoRecomendado = (empresaId: string, r: RadarDataset): SugestaoContato | undefined => { const e = r.empresas.find((x) => x.id === empresaId); return e ? sugerirContatoPrincipal(e, r.contatos, r, undefined) : undefined; };
 const FIT_ADEQUADO = (r: RadarDataset) => r.pesosDecisionFit.find((p) => p.chave === 'fit.adequado')?.valor ?? 40;
+/** Corte de decisor ideal (fit.ideal, configuravel em radar_decision_fit_weight; 70 por padrao). */
+export const fitIdealDe = (r: Pick<RadarDataset, 'pesosDecisionFit'>) => r.pesosDecisionFit.find((p) => p.chave === 'fit.ideal')?.valor ?? 70;
 
 export function recomendarAcao(e: Empresa, r: RadarDataset, hoje: string): Recomendacao {
   if (empresaSuprimida(e.id, r)) return { estado: 'DO_NOT_CONTACT', acao: 'Não contatar', tipoTarefa: 'OTHER', motivo: 'empresa marcada como não contatar' };
@@ -80,6 +85,17 @@ export function recomendarAcao(e: Empresa, r: RadarDataset, hoje: string): Recom
   if (ult?.resultado === 'REFERRED_TO_OTHER_PERSON') return responder('Cadastrar e contatar a pessoa indicada', 'RESEARCH', 'indicou outra pessoa');
   if (ult?.resultado === 'FUTURE_PROJECT') return responder('Agendar follow-up e pedir o cronograma do projeto', 'FOLLOW_UP', 'projeto futuro');
   if (ult?.resultado === 'ACTIVE_PROJECT') return responder('Pedir o projeto e oferecer análise técnica', 'PROPOSAL', 'projeto em andamento');
+  // sinal comercialmente acionavel (grupo A/B, relevancia direta/indireta, confianca >= 40%): so contata com decisor ideal (fit.ideal)
+  const forte = sinalPrincipal(e.id, r, hoje);
+  if (forte && sinalAcionavel(forte)) {
+    const ideal = fitIdealDe(r);
+    const titulo = forte.titulo;
+    if (sug && sug.fit.score >= ideal) {
+      if (!comCanal) return { estado: 'ENRICH_CONTACT', acao: `Conseguir e-mail profissional ou telefone de ${dec!.nome} para falar sobre: ${titulo}`, tipoTarefa: 'RESEARCH', motivo: `sinal acionável e decision fit ${sug.fit.score} ≥ ${ideal}, mas sem canal válido`, contato: sug };
+      return { estado: 'CONTACT_NOW', acao: `Contatar ${dec!.nome.split(' ')[0]}${dec!.whatsapp ? ' por WhatsApp' : dec!.celular || dec!.telefone ? ' por telefone' : ' por e-mail'} sobre: ${titulo}`, tipoTarefa: 'CALL', motivo: `sinal acionável e decision fit ${sug.fit.score} ≥ ${ideal}`, contato: sug };
+    }
+    return { estado: 'SEARCH_DECISION_MAKER', acao: sug ? `Buscar decisor melhor que ${dec!.nome.split(' ')[0]} (fit ${sug.fit.score} < ${ideal}) para: ${titulo}` : `Buscar o decisor para: ${titulo}`, tipoTarefa: 'RESEARCH', motivo: sug ? `sinal acionável, mas decision fit ${sug.fit.score} < ${ideal}` : 'sinal acionável e nenhum contato elegível', contato: sug };
+  }
   // estados de prontidao: decisor adequado? canal? sinal?
   if (!adequado) return { estado: 'SEARCH_DECISION_MAKER', acao: sug ? `Buscar um decisor melhor que ${dec!.nome.split(' ')[0]} (fit ${sug.fit.score})` : 'Pesquisar o decisor (LinkedIn, site, indicação)', tipoTarefa: 'RESEARCH', motivo: sug ? 'contato disponível tem baixo decision fit' : 'sem contato elegível', contato: sug };
   if (!comCanal) return { estado: 'ENRICH_CONTACT', acao: `Conseguir e-mail profissional ou telefone de ${dec!.nome}`, tipoTarefa: 'RESEARCH', motivo: 'decisor identificado sem canal válido', contato: sug };

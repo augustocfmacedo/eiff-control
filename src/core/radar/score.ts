@@ -1,10 +1,11 @@
 // Motor de score do Radar: regras configuraveis (tabela score_rules) avaliadas por dimensao, com decaimento no tempo e
 // explicabilidade (cada fator diz quanto contribuiu e por que). Nada de pesos fixos: tudo vem de regrasScore/configScore.
 import { CONFIG_SCORE_PADRAO } from './padroes';
+import { fatorComponenteFit, type EntradaSetor } from './fitCalibracao';
 import type { Atividade, ClassePrioridade, ConfigScore, Contato, Dimensao, Empresa, ExplicacaoScore, FatorScore, Projeto, RegraScore, Sinal } from './types';
 import { DIMENSOES } from './types';
 
-export interface ContextoEmpresa { empresa: Empresa; contatos: Contato[]; sinais: Sinal[]; atividades: Atividade[]; projetos: Projeto[] }
+export interface ContextoEmpresa { empresa: Empresa; contatos: Contato[]; sinais: Sinal[]; atividades: Atividade[]; projetos: Projeto[]; bruto?: EntradaSetor }
 
 const MS_DIA = 86400000;
 export const diasEntre = (de: string, ate: string) => Math.max(0, Math.floor((new Date(ate).getTime() - new Date(de).getTime()) / MS_DIA));
@@ -76,6 +77,11 @@ function avaliar(r: RegraScore, ctx: ContextoEmpresa, hoje: string): { fator: nu
       const ps = ctx.projetos.filter((p) => (!c.estagios || (p.estagio && c.estagios.includes(p.estagio))) && (!c.valorMinimo || (p.valorEstimado ?? 0) >= c.valorMinimo) && (!c.inicioEmMeses || (p.inicioPrevisto && diasEntre(hoje, p.inicioPrevisto) <= c.inicioEmMeses * 30 && p.inicioPrevisto >= hoje.slice(0, 10))));
       if (!ps.length) return undefined;
       return { fator: 1, motivo: `${ps[0].nome}${ps[0].inicioPrevisto ? `, início ${fmtData(ps[0].inicioPrevisto)}` : ''}` };
+    }
+    case 'fitCalibrado': {
+      const f = fatorComponenteFit(e, c.componente, ctx.bruto);
+      if (f.fator <= 0) return undefined;
+      return { fator: f.fator, motivo: f.motivo };
     }
     case 'completude': {
       const preenchidos = c.campos.filter((k) => { const v = e[k] as unknown; return v !== undefined && v !== null && v !== '' && v !== 0; });

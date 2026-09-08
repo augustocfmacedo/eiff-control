@@ -27,7 +27,7 @@ describe('EIFF Radar (store)', () => {
     expect(radar().registrosFonte.length).toBeGreaterThanOrEqual(3);
     const acme = radar().empresas.find((e) => e.cnpj === '11222333000181')!;
     expect(acme.priorityScore).toBeGreaterThan(0);
-    expect(acme.fitScore).toBe(80);
+    expect(acme.fitScore).toBe(70); // FIT balanceado: GO 15 + INDUSTRIA (nome) 35 + 201-500 17,5 + porte 2,5; receita ausente
     const jc = actions.importarCsvRadar('nome,cargo,email,telefone,empresa,decisor\nJoão Silva,Diretor Industrial,joao@acme.com.br,62999990000,Acme Indústria LTDA,sim\nMaria,Compradora,maria@beta.com,,Beta Logística,\nPedro,,,,Empresa Nova Ltda,', { tipo: 'contatos' });
     expect(jc).toMatchObject({ total: 3, importados: 3, erros: 0 });
     expect(radar().contatos.find((c) => c.email === 'joao@acme.com.br')!.empresaId).toBe(acme.id);
@@ -114,10 +114,10 @@ describe('EIFF Radar (store)', () => {
 
   it('configuracao: regra desativada muda o score ao recalcular; permissao de configuracao', () => {
     const acme = radar().empresas.find((e) => e.cnpj === '11222333000181')!;
-    const regra = radar().regrasScore.find((x) => x.nome === 'Setor-alvo')!;
+    const regra = radar().regrasScore.find((x) => x.condicao.tipo === 'fitCalibrado' && x.condicao.componente === 'setor')!;
     actions.salvarRegraScoreRadar({ ...regra, ativo: false });
     actions.recalcularScoresRadar();
-    expect(radar().empresas.find((e) => e.id === acme.id)!.fitScore).toBe(45);
+    expect(radar().empresas.find((e) => e.id === acme.id)!.fitScore).toBe(35); // 70 sem o componente de setor (35)
     actions.salvarRegraScoreRadar({ ...regra, ativo: true });
     actions.salvarConfigScoreRadar('classe.A+', 90);
     actions.trocarUsuario('u-compras');

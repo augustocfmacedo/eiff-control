@@ -53,6 +53,15 @@ peso (pode ser negativo), decaimento linear em N dias. Score final = Σ dimensã
 com a explicação; na interface o score é clicável e mostra fator por fator, com o motivo e o decaimento aplicado.
 "Recalcular scores" no Command Center reaplica regras e decaimento a toda a base.
 
+### Calibração de produção 01 (setembro/2026)
+
+- **FIT balanceado** por regras `fitCalibrado` (configuráveis como as demais): Geografia 15 (GO 100%, UFs alvo 85%), Setor 35, Porte por funcionários 25, Faixa de receita 20, Porte industrial 5. As regras FIT antigas ficaram inativas (histórico preservado).
+- **Setor canônico com gate de confiança** (`src/core/radar/fitCalibracao.ts`): a categoria é derivada em tempo de execução do nome, da descrição e do NAICS/SIC do registro bruto; confiança HIGH (nome ou termo específico na descrição) recebe 100% da afinidade, MEDIUM (termo genérico, slogan ou conflito entre evidências) 70%, LOW (só NAICS/SIC ou sem evidência) 0 e entra na lista de revisão. O setor original importado nunca é reescrito; faixas com colchetes (`[501-1000]`) são lidas sem alterar o dado.
+- **Decaimento e recência por família** (`src/core/radar/sinalLeitura.ts`): ciclo longo 540 dias (fábrica, CD, armazém, CNO, terreno, expansão, projeto), médio 270 (investimento, plano/licitação pública, indicação), curto 120 (vagas, notícia, site). NEW_OFFICE e FUNDING seguem em 180; MANUAL sem decaimento. O Signal Pilot usa a mesma janela para "sinal recente".
+- **Fonte oficial**: `OFFICIAL_COMPANY_SOURCE` (Comunicado oficial da empresa, 0,95) para releases e páginas institucionais; `WEBSITE` (Site da empresa) segue 0,6 para observações indiretas.
+- **Próxima ação do CRM**: sinal acionável (grupo A/B, relevância DIRECT/INDIRECT, confiança ≥ 0,40) com decision fit do contato ≥ `fit.ideal` → Contatar agora; abaixo → Buscar decisor; sem contato → Buscar decisor. Sem sinal acionável vale a regra anterior.
+- Aplicação em produção por `scripts/radar-calibracao-aplicar.mts --perfil <uuid>` (simula, mostra o diff esperado e só grava com `--executar`, numa transação; aborta se a calibração já existir).
+
 ## Decisores (persona, decision fit, contato principal)
 
 - **Persona** do contato inferida do cargo/departamento pela tabela `radar_persona_rule` (termos por palavra inteira,

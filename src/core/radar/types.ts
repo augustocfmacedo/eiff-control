@@ -271,7 +271,8 @@ export type CondicaoRegra =
   | { tipo: 'resposta'; codigos: CodigoResposta[] }
   | { tipo: 'atividade'; tipos: TipoAtividade[] }
   | { tipo: 'projeto'; estagios?: string[]; valorMinimo?: number; inicioEmMeses?: number }
-  | { tipo: 'completude'; campos: (keyof Empresa)[] };
+  | { tipo: 'completude'; campos: (keyof Empresa)[] }
+  | { tipo: 'fitCalibrado'; componente: 'geografia' | 'setor' | 'funcionarios' | 'receita' | 'porteIndustrial' }; // FIT balanceado (Production Calibration 01): componente avaliado por fitCalibracao
 
 export interface RegraScore {
   id: string;

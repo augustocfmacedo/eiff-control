@@ -2,12 +2,13 @@
 // - credibilidade da fonte (SOURCE_CREDIBILITY) e separada da relevancia estrutural (STRUCTURAL_RELEVANCE);
 // - decaimento por familia de sinal e proxima acao do CRM condicionada ao decision fit sao HIPOTESES DE CALIBRACAO;
 // - conflito entre matriz operacional, analista e CRM e derivado, sem entidade nova.
-import { cortesCobertura, coberturaEmpresa } from './cobertura';
+import { coberturaEmpresa } from './cobertura';
 import { contextoEmpresa, contatoRecomendado, recomendarAcao, sinalPrincipal, type EstadoAcao, type Recomendacao } from './pipeline';
 import { calcularScore, configDe, diasEntre } from './score';
 import { DIMENSOES } from './types';
-import { GRUPO_POR_TIPO, conflitoAcoes, leituraDe, recomendacaoSignalPilot, relevanciaDe, type AcaoSinal, type RelevanciaEstrutural } from './signalPilot';
-import type { ClassePrioridade, Empresa, RadarDataset, RegraScore, Sinal, TipoSinal } from './types';
+import { conflitoAcoes, recomendacaoSignalPilot } from './signalPilot';
+import { GRUPO_POR_TIPO, JANELAS_FAMILIA, janelaPorTipo, leituraDe, relevanciaDe, type AcaoSinal, type FamiliaDecay, type RelevanciaEstrutural } from './sinalLeitura';
+import type { ClassePrioridade, Empresa, RadarDataset, RegraScore, Sinal } from './types';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // 1) Credibilidade da fonte: confidence gravada = confianca informada x confiabilidade da fonte (no registro)
@@ -17,19 +18,11 @@ export const confiancaInformadaDe = (s: Pick<Sinal, 'confianca'>, confiabilidade
 export const confiancaEfetiva = (informada: number, confiabilidadeFonte: number) => Math.max(0, Math.min(1, Math.round(informada * confiabilidadeFonte * 1000) / 1000));
 
 // ---------------------------------------------------------------------------------------------------------------------
-// 3) Decaimento por familia — HIPOTESE DE CALIBRACAO (nao e regra oficial)
+// 3) Decaimento por familia: FAMILIA_POR_TIPO / JANELAS_FAMILIA (producao) vivem em sinalLeitura; aqui so aliases de simulacao
 // ---------------------------------------------------------------------------------------------------------------------
-export type FamiliaDecay = 'LONG_CYCLE' | 'MEDIUM_CYCLE' | 'SHORT_CYCLE';
-export const FAMILIA_POR_TIPO: Partial<Record<TipoSinal, FamiliaDecay>> = {
-  NEW_FACTORY: 'LONG_CYCLE', NEW_DC: 'LONG_CYCLE', WAREHOUSE: 'LONG_CYCLE', CNO_NEW: 'LONG_CYCLE', CNO_EXPANSION: 'LONG_CYCLE', LAND_PURCHASE: 'LONG_CYCLE', EXPANSION: 'LONG_CYCLE', PROJECT_IDENTIFIED: 'LONG_CYCLE',
-  INVESTMENT: 'MEDIUM_CYCLE', PUBLIC_PLAN: 'MEDIUM_CYCLE', PUBLIC_TENDER: 'MEDIUM_CYCLE', PARTNER_REFERRAL: 'MEDIUM_CYCLE',
-  HIRING_ENGINEERING: 'SHORT_CYCLE', HIRING_OPERATIONS: 'SHORT_CYCLE', NEWS: 'SHORT_CYCLE', WEBSITE_CHANGE: 'SHORT_CYCLE',
-};
-/** Janelas sugeridas (dias) — HIPOTESE DE CALIBRACAO: ciclo de obra industrial e longo; vaga/noticia envelhece rapido. */
-export const JANELAS_FAMILIA_HIPOTESE: Record<FamiliaDecay, number> = { LONG_CYCLE: 540, MEDIUM_CYCLE: 270, SHORT_CYCLE: 120 };
+export const JANELAS_FAMILIA_HIPOTESE: Record<FamiliaDecay, number> = JANELAS_FAMILIA;
 /** Alternativa menos agressiva (comparacao). */
 export const JANELAS_FAMILIA_MODERADA: Record<FamiliaDecay, number> = { LONG_CYCLE: 365, MEDIUM_CYCLE: 180, SHORT_CYCLE: 90 };
-export const janelaPorTipo = (tipo: TipoSinal, janelas: Record<FamiliaDecay, number> = JANELAS_FAMILIA_HIPOTESE): number | undefined => { const f = FAMILIA_POR_TIPO[tipo]; return f ? janelas[f] : undefined; };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Simulacao de um cenario (fonte x decaimento) para uma empresa
@@ -59,23 +52,9 @@ export function sinaisComFonte(sinais: Sinal[], fontes: RadarDataset['fontes'], 
 
 export { acaoComparavel, conflitoAcoes } from './signalPilot';
 
-/**
- * 4) Proxima acao do CRM — LOGICA SIMULADA (hipotese): sinal comercialmente acionavel + decision fit >= fit.ideal -> CONTACT_NOW;
- * acionavel com contato abaixo do corte ou sem contato -> SEARCH_DECISION_MAKER; sem sinal acionavel -> regra oficial atual.
- * "Acionavel" = sinal mais forte com relevancia DIRECT/INDIRECT, grupo A/B e confianca >= 40% (mesmo piso da matriz).
- */
-export function proximaAcaoSimulada(e: Empresa, r: RadarDataset, hoje: string): Recomendacao {
-  const oficial = recomendarAcao(e, r, hoje);
-  if (['DO_NOT_CONTACT', 'OVERDUE_TASK', 'PLANNED_ACTION', 'RESPOND'].includes(oficial.estado)) return oficial;
-  const forte = sinalPrincipal(e.id, r, hoje);
-  const rel = forte ? relevanciaDe(forte) : undefined;
-  const acionavel = !!forte && (rel === 'DIRECT' || rel === 'INDIRECT') && (GRUPO_POR_TIPO[forte.tipo] === 'A' || GRUPO_POR_TIPO[forte.tipo] === 'B') && forte.confianca >= 0.4;
-  if (!acionavel) return oficial;
-  const { ideal } = cortesCobertura(r);
-  const sug = contatoRecomendado(e.id, r);
-  if (sug && sug.fit.score >= ideal) return { estado: 'CONTACT_NOW', acao: `Contatar ${sug.contato.nome.split(' ')[0]} sobre ${forte!.titulo}`, tipoTarefa: 'CALL', motivo: `sinal acionável e decision fit ${sug.fit.score} ≥ ${ideal} (hipótese)`, contato: sug };
-  return { estado: 'SEARCH_DECISION_MAKER', acao: sug ? `Buscar decisor melhor que ${sug.contato.nome.split(' ')[0]} (fit ${sug.fit.score} < ${ideal}) para ${forte!.titulo}` : `Buscar o decisor para ${forte!.titulo}`, tipoTarefa: 'RESEARCH', motivo: sug ? `sinal acionável, mas decision fit ${sug.fit.score} < ${ideal} (hipótese)` : 'sinal acionável e nenhum contato (hipótese)', contato: sug };
-}
+/** 4) Proxima acao do CRM: a logica de sinal acionavel + fit.ideal passou a ser a regra oficial (recomendarAcao). Mantido como alias para os relatorios. */
+export function proximaAcaoSimulada(e: Empresa, r: RadarDataset, hoje: string): Recomendacao { return recomendarAcao(e, r, hoje); }
+
 
 /** Simula um cenario para uma empresa: recalcula score com fonte/decaimento alternativos e deriva matriz, CRM atual, CRM simulado e conflito. */
 export function simularCenario(r: RadarDataset, empresaId: string, hoje: string, c: Cenario): ResultadoCenario | undefined {
@@ -103,7 +82,7 @@ export function simularCenario(r: RadarDataset, empresaId: string, hoje: string,
   const fatorDecay = forte ? (janela ? Math.max(0, 1 - dias / janela) : 1) : 0;
   const sug = contatoRecomendado(eSim.id, rFinal);
   const cob = coberturaEmpresa(eSim, rFinal);
-  const matriz = recomendacaoSignalPilot({ priorityScore: eSim.priorityScore, timing: eSim.timingScore, intent: eSim.intentScore, decisionFit: sug?.fit.score, cobertura: cob.nivel, sinal: forte ? { grupo: GRUPO_POR_TIPO[forte.tipo], relevancia: relevanciaDe(forte), confianca: forte.confianca, diasDesde: dias, janelaRecente: c.recenciaPorFamilia ? janelaPorTipo(forte.tipo, c.recenciaPorFamilia) : undefined } : undefined });
+  const matriz = recomendacaoSignalPilot({ priorityScore: eSim.priorityScore, timing: eSim.timingScore, intent: eSim.intentScore, decisionFit: sug?.fit.score, cobertura: cob.nivel, sinal: forte ? { grupo: GRUPO_POR_TIPO[forte.tipo], relevancia: relevanciaDe(forte), confianca: forte.confianca, diasDesde: dias, janelaRecente: janelaPorTipo(forte.tipo, c.recenciaPorFamilia ?? JANELAS_FAMILIA) } : undefined }); // recencia por familia como em producao; c.recenciaPorFamilia troca as janelas na simulacao
   const crmAtual = recomendarAcao(eSim, rFinal, hoje).estado;
   const crmSimulado = proximaAcaoSimulada(eSim, rFinal, hoje).estado;
   const analista = forte ? leituraDe(forte).acaoRecomendada : undefined;

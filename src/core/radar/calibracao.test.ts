@@ -1,6 +1,7 @@
 // CALIBRATION PILOT 01 — simulacoes com dados FICTICIOS, so em memoria.
 import { describe, expect, it } from 'vitest';
-import { CENARIOS_COMBINADOS, FAMILIA_POR_TIPO, JANELAS_FAMILIA_HIPOTESE, confiancaEfetiva, confiancaInformadaDe, conflitoAcoes, janelaPorTipo, proximaAcaoSimulada, regrasComJanela, simularCenario, sinaisComFonte } from './calibracao';
+import { CENARIOS_COMBINADOS, JANELAS_FAMILIA_HIPOTESE, confiancaEfetiva, confiancaInformadaDe, conflitoAcoes, proximaAcaoSimulada, regrasComJanela, simularCenario, sinaisComFonte } from './calibracao';
+import { FAMILIA_POR_TIPO, janelaPorTipo } from './sinalLeitura';
 import { criarIds, importarCsv, recalcularEmpresas } from './importacao';
 import { registrarSinalNormalizado } from './ingestao';
 import { CONFIG_SCORE_PADRAO, FONTES_PADRAO, PESOS_DECISION_FIT_PADRAO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO } from './padroes';
@@ -39,9 +40,9 @@ describe('Calibration Pilot 01 (simulacao pura, dados ficticios)', () => {
     const c1 = simularCenario(r, emp(r, 'Alfa Fictícia').id, HOJE, { nome: 'a', confiabilidadeFonte: 0.6 })!; const c2 = simularCenario(r, emp(r, 'Alfa Fictícia').id, HOJE, { nome: 'b', confiabilidadeFonte: 1 })!;
     expect(c2.confiancaEfetiva).toBeGreaterThan(c1.confiancaEfetiva); expect(c2.timing).toBeGreaterThan(c1.timing); expect(c2.relevancia).toBe(c1.relevancia);
   });
-  it('decaimento: regras atuais tem janela por regra (nova fabrica 270, expansao 240, noticia 120); cenarios trocam so as regras de sinal', () => {
+  it('decaimento: regras padrao por familia (nova fabrica 540, expansao 540, noticia 120); cenarios trocam so as regras de sinal', () => {
     const nf = REGRAS_PADRAO.find((g) => g.tipoSinal === 'NEW_FACTORY')!; const ex = REGRAS_PADRAO.find((g) => g.tipoSinal === 'EXPANSION')!; const nw = REGRAS_PADRAO.find((g) => g.tipoSinal === 'NEWS')!;
-    expect([nf.decaimentoDias, ex.decaimentoDias, nw.decaimentoDias]).toEqual([270, 240, 120]);
+    expect([nf.decaimentoDias, ex.decaimentoDias, nw.decaimentoDias]).toEqual([540, 540, 120]);
     const geral = regrasComJanela(REGRAS_PADRAO, { nome: 'x', janelaDias: 365 });
     expect(geral.find((g) => g.tipoSinal === 'NEW_FACTORY')!.decaimentoDias).toBe(365);
     expect(geral.find((g) => g.condicao.tipo === 'resposta')!.decaimentoDias).toBe(REGRAS_PADRAO.find((g) => g.condicao.tipo === 'resposta')!.decaimentoDias);
@@ -52,14 +53,14 @@ describe('Calibration Pilot 01 (simulacao pura, dados ficticios)', () => {
   it('decay longo mantem o sinal estrutural relevante por mais tempo; noticia antiga perde forca mais rapido', () => {
     const r = comSinal(radar(), 'Alfa Fictícia', 'NEW_FACTORY', '2026-01-01');
     const id = emp(r, 'Alfa Fictícia').id;
-    const j120 = simularCenario(r, id, HOJE, { nome: '120', janelaDias: 120 })!; const j270 = simularCenario(r, id, HOJE, { nome: '270' })!; const j540 = simularCenario(r, id, HOJE, { nome: '540', janelaPorTipo: JANELAS_FAMILIA_HIPOTESE })!;
+    const j120 = simularCenario(r, id, HOJE, { nome: '120', janelaDias: 120 })!; const j270 = simularCenario(r, id, HOJE, { nome: '270', janelaDias: 270 })!; const j540 = simularCenario(r, id, HOJE, { nome: '540', janelaPorTipo: JANELAS_FAMILIA_HIPOTESE })!;
     expect(j120.timing).toBe(0); expect(j270.timing).toBeGreaterThan(0); expect(j540.timing).toBeGreaterThan(j270.timing); expect(j540.janelaAplicada).toBe(540);
     // noticia com a mesma idade, na hipotese por familia (120 d) ja vale zero; a fabrica (540 d) ainda vale
     const rn = comSinal(radar(), 'Beta Fictícia', 'NEWS', '2026-01-01', { fonte: 'NEWS' });
     const n540 = simularCenario(rn, emp(rn, 'Beta Fictícia').id, HOJE, { nome: 'fam', janelaPorTipo: JANELAS_FAMILIA_HIPOTESE })!;
     expect(n540.fatorDecay).toBe(0); expect(j540.fatorDecay).toBeGreaterThan(0.5);
   });
-  it('CRM atual: fit 55 + qualquer sinal -> CONTACT_NOW; logica simulada: abaixo de fit.ideal -> SEARCH_DECISION_MAKER, acima -> CONTACT_NOW, sem contato -> SEARCH_DECISION_MAKER', () => {
+  it('CRM oficial: sinal acionavel + fit abaixo de fit.ideal -> SEARCH_DECISION_MAKER, acima -> CONTACT_NOW, sem contato -> SEARCH_DECISION_MAKER; sem sinal acionavel preserva a regra antiga', () => {
     const r = comSinal(comSinal(comSinal(radar(), 'Alfa Fictícia', 'NEW_FACTORY', '2026-08-20'), 'Beta Fictícia', 'NEW_FACTORY', '2026-08-20'), 'Gama Fictícia', 'NEW_FACTORY', '2026-08-20');
     const alfa = emp(r, 'Alfa Fictícia'); const beta = emp(r, 'Beta Fictícia'); const gama = emp(r, 'Gama Fictícia');
     // CEO em empresa grande: fit 55 (< fit.ideal 70); CEO em empresa media: 75
@@ -67,7 +68,7 @@ describe('Calibration Pilot 01 (simulacao pura, dados ficticios)', () => {
     expect(proximaAcaoSimulada(beta, r, HOJE)).toMatchObject({ estado: 'CONTACT_NOW' });
     expect(proximaAcaoSimulada(gama, r, HOJE)).toMatchObject({ estado: 'SEARCH_DECISION_MAKER' });
     const cAlfa = simularCenario(r, alfa.id, HOJE, { nome: 'atual' })!;
-    expect(cAlfa.crmAtual).toBe('CONTACT_NOW'); expect(cAlfa.crmSimulado).toBe('SEARCH_DECISION_MAKER');
+    expect(cAlfa.crmAtual).toBe('SEARCH_DECISION_MAKER'); expect(cAlfa.crmSimulado).toBe('SEARCH_DECISION_MAKER');
     // o corte vem da configuracao: baixando fit.ideal para 50, Alfa passa a CONTACT_NOW
     const r2 = { ...r, pesosDecisionFit: r.pesosDecisionFit.map((p) => (p.chave === 'fit.ideal' ? { ...p, valor: 50 } : p)) };
     expect(proximaAcaoSimulada(alfa, r2, HOJE).estado).toBe('CONTACT_NOW');
@@ -81,7 +82,8 @@ describe('Calibration Pilot 01 (simulacao pura, dados ficticios)', () => {
     expect(conflitoAcoes({ matriz: 'CONTACT_NOW', crm: 'CONTACT_NOW' })).toMatchObject({ status: 'ALIGNED' });
     const r = comSinal(radar(), 'Alfa Fictícia', 'NEW_FACTORY', '2026-01-01', { leitura: { relevanciaEstrutural: 'DIRECT', acaoRecomendada: 'FIND_BETTER_DECISION_MAKER' } });
     const c = simularCenario(r, emp(r, 'Alfa Fictícia').id, HOJE, { nome: 'atual' })!;
-    expect(c).toMatchObject({ analista: 'FIND_BETTER_DECISION_MAKER', crmAtual: 'CONTACT_NOW', conflito: 'ACTION_CONFLICT' });
+    expect(c).toMatchObject({ analista: 'FIND_BETTER_DECISION_MAKER', crmAtual: 'SEARCH_DECISION_MAKER' }); // CRM alinhado ao analista; a matriz (WARM/RESEARCH_PROJECT) ainda diverge
+    expect(c.conflito).toBe('ACTION_CONFLICT'); expect(c.matriz).toBe('RESEARCH_PROJECT');
     expect(CENARIOS_COMBINADOS.map((x) => x.nome)[0]).toBe('atual');
   });
 });
