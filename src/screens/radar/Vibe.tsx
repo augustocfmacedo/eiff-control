@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CUSTO_VIBE, PRIORIDADE_DECISORES, classificarPool, precisaEnriquecerEmail, type ProspectVibe } from '../../core/radar';
+import { CUSTO_VIBE, MAX_CANDIDATOS_POR_CONTA, NOME_PERSONA, PRIORIDADE_DECISORES, buscarDecisor, classificarPool, precisaEnriquecerEmail, recomendarAcao, type ProspectVibe, type ResultadoBuscaDecisor } from '../../core/radar';
 import { actions, useStore } from '../../data/store';
 import { tokenSessao } from '../../data/supabase';
 import { Badge, Empty, KpiStrip, NumberInput } from '../../ui/components';
@@ -45,6 +45,9 @@ export function VibePainel({ onErro, onOk }: { onErro: (m: string) => void; onOk
   const [forcar, setForcar] = useState(false);
   const [justificativa, setJustificativa] = useState('');
   const [log, setLog] = useState<string[]>([]);
+  // busca de decisor por conta (preview, sem creditos): alvo padrao = empresas cujo CRM pede SEARCH_DECISION_MAKER
+  const [alvoBusca, setAlvoBusca] = useState<string[] | null>(null);
+  const [busca, setBusca] = useState<ResultadoBuscaDecisor[] | null>(null);
 
   const pol = orc?.politica ?? {};
   const politicaOk = !!orc && pol.policy !== null;
@@ -75,6 +78,23 @@ export function VibePainel({ onErro, onOk }: { onErro: (m: string) => void; onOk
     setCobertura(c.cobertura as { nome: string; total: number; validado: boolean }[]);
     if (c.catalogoValidado) { const a = await chamar('amostra', { businessIds: ids, n: 5, somenteComEmail }); setAmostra((a.amostra as ProspectVibe[]) ?? []); registrar(`amostra em preview (DISCOVERY_POOL) · correlation_id ${String(a.correlationId ?? '—')}`); }
     else { setAmostra(null); registrar(`cobertura: catálogo não validado (${(c.rejeitados as string[]).join(', ')}) — valide antes de descobrir`); }
+  });
+
+  const sugeridasBusca = useMemo(() => comId.filter((e) => recomendarAcao(e, r, hoje()).estado === 'SEARCH_DECISION_MAKER').map((e) => e.id), [comId, r]);
+  const alvo = alvoBusca ?? sugeridasBusca;
+  const buscarDecisores = () => rodar('busca', async () => {
+    const emps = comId.filter((e) => alvo.includes(e.id));
+    if (!emps.length) throw new Error('Selecione ao menos uma empresa com business_id.');
+    const out: ResultadoBuscaDecisor[] = [];
+    for (const e of emps) {
+      const a = await chamar('amostra', { businessIds: [e.businessId!.toLowerCase()], n: MAX_CANDIDATOS_POR_CONTA, somenteComEmail });
+      const res = buscarDecisor(e, (a.amostra as ProspectVibe[]) ?? [], r, hoje());
+      out.push(res);
+      registrar(`busca ${e.razaoSocial}: ${res.candidatos.length} candidato(s) em preview (pool ${String(a.total ?? '?')}) · melhor ${res.melhor ? `${res.melhor.nome} fit ${res.melhor.fit}` : '—'} · ${res.recomendacao} · correlation_id ${String(a.correlationId ?? '—')}`);
+    }
+    setBusca(out);
+    await atualizarOrcamento();
+    onOk('Candidatos classificados em preview, sem créditos. Nada foi importado.');
   });
 
   // ---------------------------------------------------------------- reserva em duas etapas
@@ -219,6 +239,34 @@ export function VibePainel({ onErro, onOk }: { onErro: (m: string) => void; onOk
             </div>
           </div>
         )}
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
+        <h2>3b · Busca de decisor por conta (preview, sem créditos, sem importar)</h2>
+        <div className="small muted">Até {MAX_CANDIDATOS_POR_CONTA} candidatos por conta classificados por decision fit, adequação funcional (industrial → engenharia → operações → expansão → facilities → produção → logística → COO) e qualidade de dados. Compras e CEO/Presidente só vencem pelo decision fit. Nada é enriquecido nem importado.</div>
+        <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {comId.filter((e) => sugeridasBusca.includes(e.id) || alvo.includes(e.id)).map((e) => <label key={e.id} className="row small" style={{ gap: 4 }}><input type="checkbox" checked={alvo.includes(e.id)} onChange={(ev) => setAlvoBusca(ev.target.checked ? [...alvo, e.id] : alvo.filter((x) => x !== e.id))} /> {e.nomeFantasia ?? e.razaoSocial}</label>)}
+          <select className="input" value="" onChange={(ev) => { if (ev.target.value && !alvo.includes(ev.target.value)) setAlvoBusca([...alvo, ev.target.value]); }}><option value="">+ outra empresa com business_id…</option>{comId.filter((e) => !alvo.includes(e.id)).map((e) => <option key={e.id} value={e.id}>{e.nomeFantasia ?? e.razaoSocial}</option>)}</select>
+          <button className="btn primary sm" disabled={!!ocupado || !alvo.length || !pol.validated_at} onClick={buscarDecisores}>{ocupado === 'busca' ? 'Buscando…' : `Candidatos em preview (${alvo.length} conta(s))`}</button>
+          {!pol.validated_at && <span className="small"><Badge tone="warn">valide o catálogo antes</Badge></span>}
+        </div>
+        {busca?.map((b) => (
+          <div key={b.empresa.id} style={{ marginTop: 12 }}>
+            <div className="row small" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <b>{b.empresa.nomeFantasia ?? b.empresa.razaoSocial}</b>
+              <span>contato atual: {b.atual ? `${b.atual.contato.nome} · ${NOME_PERSONA[b.atual.persona]} · decision fit ${b.atual.fit}` : 'nenhum'}</span>
+              <span>melhor candidato: {b.melhor ? `${b.melhor.nome} · ${NOME_PERSONA[b.melhor.persona]} · decision fit ${b.melhor.fit}` : '—'}{b.delta !== undefined && <> · delta <b>{b.delta > 0 ? '+' : ''}{b.delta}</b></>}</span>
+              <Badge tone={b.recomendacao === 'ENRICH' ? 'ok' : b.recomendacao === 'RESEARCH_MORE' ? 'warn' : 'muted'}>{b.recomendacao}</Badge>
+              <span className="muted">{b.motivo}{b.custoEnriquecerMelhor ? ` · enriquecer só o melhor: ${b.custoEnriquecerMelhor} créditos (e-mail)` : ''}{b.ignorados ? ` · ${b.ignorados} ignorado(s)` : ''}</span>
+            </div>
+            {!b.candidatos.length ? <div className="muted small">Sem candidatos no preview.</div> : (
+              <div className="table-wrap" style={{ marginTop: 6 }}>
+                <table className="small"><thead><tr><th>Fit</th><th>Prospect</th><th>Cargo</th><th>Job level</th><th>Department</th><th>Persona Radar</th><th className="num">Qualidade</th><th>Razão do fit</th><th>No Radar?</th><th>Contato?</th><th>Melhor?</th><th>Recomendação</th></tr></thead>
+                  <tbody>{b.candidatos.map((c) => <tr key={c.prospect_id}><td className="num"><b>{c.fit}</b></td><td>{c.nome} <span className="muted">{c.prospect_id.slice(0, 8)}…</span></td><td>{c.job_title ?? '—'}</td><td>{c.job_level_main ?? '—'}</td><td>{c.job_department_main ?? '—'}</td><td>{NOME_PERSONA[c.persona]}{c.funcaoDireta ? '' : <span className="muted"> (indireta)</span>}</td><td className="num">{c.qualidadeDados}</td><td className="muted">{c.razoes.join('; ')}</td><td>{c.jaNoRadar ? 'sim' : 'não'}</td><td>{c.contatoDisponivel ? 'sim' : 'não'}</td><td>{c.melhorQueAtual ? <Badge tone="ok">sim</Badge> : <span className="muted">{c.motivoComparacao}</span>}</td><td>{c.recomendacao}</td></tr>)}</tbody></table>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
 
       <div className="card" style={{ marginTop: 12 }}>

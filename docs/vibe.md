@@ -73,6 +73,17 @@ fonte de verdade.
   nova verificação: só Administrador, com justificativa (auditada em `radar_vibe_force_refresh`) e nova
   `idempotencyKey`.
 
+## Busca de decisor por conta (Motor Execution Pilot 01)
+
+Bloco **3b** da aba Vibe Prospecting: escolha as contas (padrão: as que o CRM manda buscar decisor, SEARCH_DECISION_MAKER) e peça
+**Candidatos em preview** — até 10 por conta em  (sem créditos, exige catálogo validado). A regra pura
+ () classifica todos os candidatos pelo decision fit do Radar (persona pelas
+regras de título, depois pelo departamento da Explorium), pela adequação funcional pedida pela EIFF (industrial → engenharia →
+operações → expansão → facilities → produção → logística → COO; compras e CEO/Presidente/Proprietário só vencem pelo fit) e pela
+qualidade de dados sem enrichment; compara o melhor com o contato atual () e recomenda **ENRICH**
+(melhor: fit ≥ , ou +10 com função direta; 2 créditos para o e-mail do melhor), **KEEP_CURRENT** ou
+**RESEARCH_MORE**. Nada é importado, enriquecido ou marcado como principal: a escolha é humana.
+
 ## Alternativa local: script com a chave em `.env.local`
 
 1. Crie o arquivo `.env.local` na raiz do projeto (já ignorado pelo git por `.env.*`):
