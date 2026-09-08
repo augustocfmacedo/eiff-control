@@ -650,6 +650,8 @@ export interface Romaneio {
   criadoEm: string;
 }
 
+import type { RadarDataset } from './radar/types';
+
 // ---------------------------------------------------------------------------
 // Estoque de aco com rastreabilidade de corrida (kg)
 // ---------------------------------------------------------------------------
@@ -756,4 +758,5 @@ export interface Dataset {
   itensEstoque: ItemEstoque[];
   movimentosEstoque: MovimentoEstoque[];
   treinamentos: Treinamento[];
+  radar: RadarDataset; // EIFF Radar (src/core/radar)
 }

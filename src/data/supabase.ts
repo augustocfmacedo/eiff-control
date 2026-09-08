@@ -14,6 +14,8 @@ import type {
   Usuario,
 } from '../core/types';
 import { mapaPlano } from '../core/engine';
+import { radarVazio } from '../core/radar/types';
+import { carregarRadar, persistirRadar } from './radar.supabase';
 
 const URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
 const KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
@@ -335,7 +337,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [],
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], radar: radarVazio(),
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -368,6 +370,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
   ds.movimentosEstoque = stockMovs.map((x) => ({ id: x.id, data: x.moved_on, tipo: x.kind, itemId: x.item_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], quantidade: Number(x.quantity_kg), pecas: x.pieces != null ? Number(x.pieces) : undefined, corrida: x.heat_number ?? undefined, certificado: x.certificate ?? undefined, fornecedor: x.supplier ?? undefined, pedidoId: x.purchase_order_id ?? undefined, notaFiscal: x.invoice ?? undefined, custoUnitario: Number(x.unit_cost ?? 0), origemId: x.origin_id ?? undefined, origemTipo: x.origin_kind ?? undefined, observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.treinamentos = trainingRows.map((x) => ({ id: x.id, usuarioId: x.user_id, licaoId: x.lesson_id, concluidoEm: x.completed_at, acertos: x.score != null ? Number(x.score) : undefined }));
+  ds.radar = await carregarRadar({ sel: selTodos, orgId: org.id });
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
 }
@@ -805,6 +808,14 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     falha('desfazer lição', error);
     r.treinamentos.delete(t.id);
   }
+
+  // EIFF Radar
+  await persistirRadar({
+    sel: selTodos, gravar, orgId: r.orgId, atorId, uuid: uuidOuNulo,
+    perfil: (id) => uuidOuNulo(id) ?? (id ? r.perfisInv.get(id) ?? null : null),
+    inserir: async (tabela, rows) => { const { data, error } = await sb.from(tabela).insert(rows).select('id'); falha(`inserir ${tabela}`, error); return data ?? []; },
+    apagar: async (tabela, id) => { const { error } = await sb.from(tabela).delete().eq('id', id); falha(`apagar ${tabela}`, error); },
+  }, antes.radar, depois.radar);
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)
   const audAntes = new Set(antes.auditoria.map((a) => a.id));

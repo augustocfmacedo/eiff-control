@@ -27,8 +27,13 @@ import Compras from './screens/Compras';
 import Producao from './screens/Producao';
 import Estoque from './screens/Estoque';
 import Capacitacao from './screens/Capacitacao';
+import RadarCommandCenter from './screens/radar/CommandCenter';
+import RadarHoje from './screens/radar/Hoje';
+import RadarEmpresas from './screens/radar/Empresas';
+import RadarEmpresa from './screens/radar/Empresa';
 import { trilhaDe } from './core/capacitacao';
 import { Assistente } from './ui/Assistente';
+import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
 import { Icon, Logotipo, Marca, type IconName } from './ui/icons';
 
 export default function App() {
@@ -60,6 +65,8 @@ export default function App() {
   const pend = ds.aprovacoes.filter((a) => a.status === 'Pendente' && a.etapas.find((e) => e.status === 'Pendente')?.papel === usuario.papel && a.solicitante !== usuario.nome).length;
   const tarefas = ds.tarefas.filter((t) => t.status === 'Aberta' && t.responsavel === usuario.id).length;
   const bancos = pode(usuario, 'ver_bancos');
+  const radarHoje = (ds.radar?.tarefas ?? []).filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) <= ds.params.dataBase).length;
+  const radarAlertas = oportunidadesSemProximaAcao(ds.radar ?? radarVazio()).length + (ds.radar?.duplicatas ?? []).filter((d) => d.status === 'pendente').length;
   const licoesPendentes = trilhaDe(usuario.papel).filter((l) => !ds.treinamentos.some((t) => t.usuarioId === usuario.id && t.licaoId === l.id)).length;
 
   const alternarSidebar = () => {
@@ -69,16 +76,16 @@ export default function App() {
   };
   const ICONES: Record<string, IconName> = {
     '/': 'painel', '/inbox': 'inbox', '/central': 'central', '/obras': 'obras', '/orcamentos': 'orcamento', '/compras': 'compras', '/producao': 'fabrica', '/estoque': 'estoque', '/equipe': 'equipe', '/campo': 'campo', '/pagar': 'pagar', '/receber': 'receber', '/lancamentos': 'lancamentos', '/aprovacoes': 'aprovacoes',
-    '/posicao': 'banco', '/fluxo13': 'fluxo', '/fluxo24': 'calendario', '/conciliacao': 'conciliacao', '/dividas': 'dividas', '/dre': 'dre', '/checks': 'checks', '/cadastros': 'cadastros', '/auditoria': 'auditoria', '/capacitacao': 'capacitacao',
+    '/posicao': 'banco', '/fluxo13': 'fluxo', '/fluxo24': 'calendario', '/conciliacao': 'conciliacao', '/dividas': 'dividas', '/dre': 'dre', '/checks': 'checks', '/cadastros': 'cadastros', '/auditoria': 'auditoria', '/capacitacao': 'capacitacao', '/radar': 'radar', '/radar/hoje': 'hoje', '/radar/empresas': 'empresas',
   };
   const nav = (to: string, label: string, cnt?: number) => (
-    <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && rota.path.startsWith(to)) ? 'active' : ''} title={label}>
+    <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && to !== '/radar' && rota.path.startsWith(to)) ? 'active' : ''} title={label}>
       <span className="nav-ico" aria-hidden="true"><Icon name={ICONES[to] ?? 'obras'} size={17} /></span><span className="nav-label">{label}</span>{cnt ? <span className="cnt">{cnt}</span> : null}
     </a>
   );
 
   let tela: React.ReactNode;
-  const [p0, p1] = rota.partes;
+  const [p0, p1, p2] = rota.partes;
   switch (p0) {
     case undefined: tela = <Dashboard />; break;
     case 'inbox': tela = <CaixaEntrada />; break;
@@ -87,6 +94,7 @@ export default function App() {
     case 'producao': tela = <Producao query={rota.query} key={rota.query.toString()} />; break;
     case 'estoque': tela = <Estoque query={rota.query} key={rota.query.toString()} />; break;
     case 'capacitacao': tela = <Capacitacao licao={p1} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
+    case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
     case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
     case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;
     case 'lancamentos': tela = p1 ? <LancamentoDetalhe id={p1} /> : <Lancamentos modo="todos" query={rota.query} key={rota.query.toString()} />; break;
@@ -142,6 +150,10 @@ export default function App() {
           {nav('/estoque', 'Estoque de aço')}
           {nav('/equipe', 'Equipe e produtividade', ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length)}
           {nav('/campo', 'Modo campo (celular)')}
+          <h3>Comercial</h3>
+          {nav('/radar', 'Radar · Command Center', radarAlertas)}
+          {nav('/radar/hoje', 'Radar · Hoje', radarHoje)}
+          {nav('/radar/empresas', 'Radar · Empresas')}
           <h3>Financeiro</h3>
           {nav('/compras', 'Compras e pedidos', ds.pedidos.filter((p) => p.status === 'Emitido' || p.status === 'Recebido parcial').length)}
           {nav('/pagar', 'Contas a pagar')}

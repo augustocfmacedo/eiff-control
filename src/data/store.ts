@@ -48,6 +48,7 @@ import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
+import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoSuprimido, empresaVazia, encontrarEmpresa, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarEmpresasCsv, normalizarUf, radarVazio, recalcularEmpresa, registrarSinalNormalizado, upsertContato, upsertEmpresa, type Atividade, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type ImportacaoErro, type ImportacaoJob, type ImportacaoLinha, type Oportunidade, type Projeto, type RadarDataset, type RegistroFonte, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -92,6 +93,7 @@ function carregar(): State {
   } catch {
     ds = base;
   }
+  ds = garantirPadroesRadar(ds);
   let usuario = ds.usuarios[0];
   try {
     const uid = localStorage.getItem(USER_KEY);
@@ -173,8 +175,10 @@ export async function inicializar(): Promise<void> {
     state = { ...state, carregando: true, erroInicial: undefined };
     emit();
     try {
-      const { ds, usuario } = await carregarRemoto();
-      baseSincronizada = ds;
+      const { ds: dsRemoto, usuario } = await carregarRemoto();
+      const ds = garantirPadroesRadar(dsRemoto);
+      baseSincronizada = dsRemoto;
+      if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds);
       state = { ...state, ds, usuario, carregando: false, sessao: true, sync: { status: 'ok', em: new Date().toISOString() } };
       emit();
       ajustarDataBase();
@@ -219,6 +223,60 @@ const seq = (prefix: string, ids: string[]): string => {
   return id;
 };
 
+// ---------------------------------------------------------------------------
+// EIFF Radar: helpers (ids, padroes, recalculo de score com snapshot)
+// ---------------------------------------------------------------------------
+function idsRadar(r: RadarDataset): Ids {
+  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte].map((x) => x.id));
+  const contagem: Record<string, number> = {};
+  return {
+    novo: (p) => { let k = (contagem[p] ?? usados.size) + 1; let id = `${p}-${String(k).padStart(5, '0')}`; while (usados.has(id)) id = `${p}-${String(++k).padStart(5, '0')}`; contagem[p] = k; usados.add(id); return id; },
+    hoje: state.ds.params.dataBase, agora: agora(), usuarioId: state.usuario.id,
+  };
+}
+
+/** Preenche fontes, estrategias, tipos de resposta, regras e parametros de score quando vazios (primeira carga). */
+export function garantirPadroesRadar(ds: Dataset): Dataset {
+  const r = ds.radar ?? radarVazio();
+  const radar: RadarDataset = {
+    ...radarVazio(), ...r,
+    fontes: r.fontes?.length ? r.fontes : FONTES_PADRAO,
+    estrategias: r.estrategias?.length ? r.estrategias : ESTRATEGIAS_PADRAO,
+    tiposResposta: r.tiposResposta?.length ? r.tiposResposta : RESPOSTAS_PADRAO,
+    regrasScore: r.regrasScore?.length ? r.regrasScore : REGRAS_PADRAO,
+    configScore: r.configScore?.length ? r.configScore : CONFIG_SCORE_PADRAO,
+  };
+  return { ...ds, radar };
+}
+
+/** Recalcula score e caches das empresas informadas; grava snapshot quando o total ou a classe mudam. */
+function recalcularEmpresasRadar(r: RadarDataset, empresaIds: string[], ids: Ids): RadarDataset {
+  let radar = r;
+  const snapshots = [...r.snapshotsScore];
+  const empresas = r.empresas.map((e) => {
+    if (!empresaIds.includes(e.id) || !e.ativo || e.mescladaEm) return e;
+    const { empresa, explicacao } = recalcularEmpresa(e, radar, ids.hoje);
+    const ultimo = snapshots.filter((s) => s.empresaId === e.id).sort((a, b) => (a.em < b.em ? 1 : -1))[0];
+    if (!ultimo || Math.abs(ultimo.total - explicacao.total) >= 0.5 || ultimo.classe !== explicacao.classe) {
+      const d = (k: string) => explicacao.dimensoes.find((x) => x.dimensao === k)?.score ?? 0;
+      snapshots.push({ id: ids.novo('SNP'), empresaId: e.id, em: ids.agora, fit: d('FIT'), timing: d('TIMING'), intent: d('INTENT'), relationship: d('RELATIONSHIP'), dataQuality: d('DATA_QUALITY'), total: explicacao.total, classe: explicacao.classe, explicacao });
+    }
+    return empresa;
+  });
+  radar = { ...radar, empresas, snapshotsScore: snapshots };
+  return radar;
+}
+
+function fonteRadar(r: RadarDataset, idOuCodigo?: string): Fonte {
+  return r.fontes.find((f) => f.id === idOuCodigo || f.codigo === idOuCodigo) ?? r.fontes.find((f) => f.codigo === 'MANUAL') ?? FONTES_PADRAO[7];
+}
+
+function exigirProximaAcao(o: Oportunidade, tarefas: TarefaRadar[]) {
+  if (estagioAtivo(o.estagio) && !o.proximaAcaoEm && !tarefas.some((t) => t.oportunidadeId === o.id && t.status === 'Aberta')) {
+    throw new RegraDeNegocioError('Oportunidade ativa não pode ficar sem próxima ação: informe o que fazer e quando.');
+  }
+}
+
 function registrar(ds: Dataset, acao: string, entidade: string, entidadeId: string, antes?: unknown, depois?: unknown, motivo?: string): Dataset {
   const a: Auditoria = { id: seq('AUD', ds.auditoria.map((x) => x.id)), ts: agora(), usuario: state.usuario.nome, acao, entidade, entidadeId, antes, depois, motivo };
   return { ...ds, auditoria: [a, ...ds.auditoria] };
@@ -244,7 +302,9 @@ export type Acao =
   | 'comentar'
   | 'exportar'
   | 'orcar'
-  | 'comprar';
+  | 'comprar'
+  | 'radar'
+  | 'radar_config';
 
 const MATRIZ: Record<Acao, Papel[]> = {
   ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
@@ -264,6 +324,8 @@ const MATRIZ: Record<Acao, Papel[]> = {
   exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
   orcar: ['Administrador', 'Diretoria', 'Financeiro', 'Engenharia', 'Compras', 'Gestor de obra'],
   comprar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
+  radar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
+  radar_config: ['Administrador', 'Diretoria'],
 };
 
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {
@@ -381,8 +443,10 @@ export const actions = {
     state = { ...state, carregando: true, erroInicial: undefined };
     emit();
     try {
-      const { ds, usuario } = await carregarRemoto();
-      baseSincronizada = ds;
+      const { ds: dsRemoto, usuario } = await carregarRemoto();
+      const ds = garantirPadroesRadar(dsRemoto);
+      baseSincronizada = dsRemoto;
+      if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds);
       state = { ...state, ds, usuario, carregando: false, sessao: true, sync: { status: 'ok', em: new Date().toISOString() } };
     } catch (e) {
       state = { ...state, carregando: false, erroInicial: (e as Error).message };
@@ -1409,6 +1473,463 @@ export const actions = {
     commit(ds);
   },
 
+  // -------------------------------------------------------------------------
+  // EIFF Radar: empresas, contatos, projetos, sinais, oportunidades, atividades, tarefas, score, importacao
+  // -------------------------------------------------------------------------
+  novaEmpresaRadar(parcial: Partial<Empresa> = {}): Empresa {
+    return { ...empresaVazia(idsRadar(state.ds.radar).novo('EMP'), agora()), ...parcial };
+  },
+
+  /** Cria ou edita uma empresa. Na criacao, CNPJ/dominio/razao social iguais a outra empresa sao recusados (use a existente); nome parecido gera possivel duplicata. */
+  salvarEmpresaRadar(e: Empresa) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!e.razaoSocial.trim()) throw new RegraDeNegocioError('Razão social é obrigatória.');
+    if (e.cnpj && !normalizarCnpj(e.cnpj)) throw new RegraDeNegocioError('CNPJ inválido.');
+    if (e.uf && !normalizarUf(e.uf)) throw new RegraDeNegocioError('UF inválida.');
+    const atual = r.empresas.find((x) => x.id === e.id);
+    const norm: Empresa = { ...e, razaoSocial: e.razaoSocial.trim(), cnpj: normalizarCnpj(e.cnpj), dominio: normalizarDominio(e.dominio ?? e.site), uf: normalizarUf(e.uf), cidade: normalizarCidade(e.cidade), pais: e.pais || 'Brasil', atualizadoEm: agora() };
+    const outras = r.empresas.filter((x) => x.id !== e.id);
+    const match = encontrarEmpresa(norm, outras);
+    if (match && match.nivel !== 'possivel') throw new RegraDeNegocioError(`Já existe a empresa ${match.empresa.razaoSocial} (${match.motivo}). Abra o cadastro dela em vez de criar outra.`);
+    const ids = idsRadar(r);
+    let radar: RadarDataset = { ...r, empresas: atual ? r.empresas.map((x) => (x.id === e.id ? norm : x)) : [...r.empresas, { ...norm, fonteId: norm.fonteId ?? fonteRadar(r, 'MANUAL').id, criadoEm: agora() }] };
+    if (!atual && match) radar = { ...radar, duplicatas: [...radar.duplicatas, { id: ids.novo('DUP'), empresaId: norm.id, candidataId: match.empresa.id, confianca: match.confianca, motivo: match.motivo, status: 'pendente', criadoEm: agora() }] };
+    radar = recalcularEmpresasRadar(radar, [norm.id], ids);
+    ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_empresa' : 'radar_criar_empresa', 'radar_empresa', norm.id, atual, norm);
+    commit(ds);
+    return radar.empresas.find((x) => x.id === norm.id)!;
+  },
+
+  inativarEmpresaRadar(id: string, motivo: string) {
+    let ds = state.ds;
+    exigir('radar');
+    const e = ds.radar.empresas.find((x) => x.id === id);
+    if (!e) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    const radar = { ...ds.radar, empresas: ds.radar.empresas.map((x) => (x.id === id ? { ...x, ativo: false, atualizadoEm: agora() } : x)) };
+    ds = registrar({ ...ds, radar }, 'radar_inativar_empresa', 'radar_empresa', id, e, { ativo: false }, motivo);
+    commit(ds);
+  },
+
+  /** Mescla `mesclarId` em `manterId`: filhos migram, campos vazios da mantida sao preenchidos, a mesclada sai da fila. */
+  mesclarEmpresasRadar(manterId: string, mesclarId: string, motivo = 'duplicata') {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const manter = r.empresas.find((x) => x.id === manterId); const mesclar = r.empresas.find((x) => x.id === mesclarId);
+    if (!manter || !mesclar || manterId === mesclarId) throw new RegraDeNegocioError('Empresas inválidas para mesclar.');
+    const mantida: Empresa = { ...manter, atualizadoEm: agora() };
+    for (const k of ['cnpj', 'nomeFantasia', 'dominio', 'site', 'linkedin', 'setor', 'cnae', 'cidade', 'uf', 'faixaFuncionarios', 'faixaReceita', 'capitalSocial', 'numeroUnidades'] as const) if (!mantida[k] && mesclar[k]) (mantida as unknown as Record<string, unknown>)[k] = mesclar[k];
+    const mover = <T extends { empresaId: string }>(xs: T[]) => xs.map((x) => (x.empresaId === mesclarId ? { ...x, empresaId: manterId } : x));
+    const ids = idsRadar(r);
+    let radar: RadarDataset = {
+      ...r,
+      empresas: r.empresas.map((x) => (x.id === manterId ? mantida : x.id === mesclarId ? { ...x, ativo: false, mescladaEm: manterId, atualizadoEm: agora() } : x)),
+      contatos: mover(r.contatos), projetos: mover(r.projetos), sinais: mover(r.sinais), oportunidades: mover(r.oportunidades), atividades: mover(r.atividades), tarefas: mover(r.tarefas),
+      supressoes: r.supressoes.map((s) => (s.empresaId === mesclarId ? { ...s, empresaId: manterId } : s)),
+      duplicatas: r.duplicatas.map((d) => ((d.empresaId === mesclarId && d.candidataId === manterId) || (d.empresaId === manterId && d.candidataId === mesclarId) ? { ...d, status: 'mesclada' as const, resolvidoEm: agora(), resolvidoPor: state.usuario.id } : d)),
+    };
+    radar = recalcularEmpresasRadar(radar, [manterId], ids);
+    ds = registrar({ ...ds, radar }, 'radar_mesclar_empresas', 'radar_empresa', manterId, { mesclada: mesclarId }, { mantida: manterId }, motivo);
+    commit(ds);
+  },
+
+  resolverDuplicataRadar(id: string, acao: 'mesclar' | 'descartar') {
+    const d = state.ds.radar.duplicatas.find((x) => x.id === id);
+    if (!d) throw new RegraDeNegocioError('Duplicata não encontrada.');
+    if (acao === 'mesclar') { actions.mesclarEmpresasRadar(d.candidataId, d.empresaId, `possível duplicata: ${d.motivo}`); return; }
+    exigir('radar');
+    const radar = { ...state.ds.radar, duplicatas: state.ds.radar.duplicatas.map((x) => (x.id === id ? { ...x, status: 'descartada' as const, resolvidoEm: agora(), resolvidoPor: state.usuario.id } : x)) };
+    commit(registrar({ ...state.ds, radar }, 'radar_descartar_duplicata', 'radar_empresa', d.empresaId, d, { status: 'descartada' }));
+  },
+
+  novoContatoRadar(empresaId: string): Contato {
+    return { id: idsRadar(state.ds.radar).novo('CTT'), empresaId, nome: '', decisor: false, qualidade: 0, observacoes: '', ativo: true, criadoEm: agora(), atualizadoEm: agora() };
+  },
+
+  salvarContatoRadar(c: Contato) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!r.empresas.some((e) => e.id === c.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!c.nome.trim()) throw new RegraDeNegocioError('Nome do contato é obrigatório.');
+    if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) throw new RegraDeNegocioError('E-mail inválido.');
+    const atual = r.contatos.find((x) => x.id === c.id);
+    const qualidade = Math.min(100, 20 + (c.email ? 30 : 0) + (c.telefone || c.celular || c.whatsapp ? 25 : 0) + (c.cargo ? 15 : 0) + (c.linkedin ? 10 : 0) + (c.verificadoEm ? 0 : 0));
+    const novo: Contato = { ...c, nome: c.nome.trim(), email: c.email?.trim().toLowerCase() || undefined, qualidade, fonteId: c.fonteId ?? fonteRadar(r, 'MANUAL').id, atualizadoEm: agora() };
+    const ids = idsRadar(r);
+    let radar: RadarDataset = { ...r, contatos: atual ? r.contatos.map((x) => (x.id === c.id ? novo : x)) : [...r.contatos, novo] };
+    radar = recalcularEmpresasRadar(radar, [c.empresaId], ids);
+    ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_contato' : 'radar_criar_contato', 'radar_contato', c.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  novoProjetoRadar(empresaId: string): Projeto {
+    return { id: idsRadar(state.ds.radar).novo('PRJ'), empresaId, nome: '', observacoes: '', criadoEm: agora(), atualizadoEm: agora() };
+  },
+
+  salvarProjetoRadar(p: Projeto) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!r.empresas.some((e) => e.id === p.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!p.nome.trim()) throw new RegraDeNegocioError('Nome do projeto é obrigatório.');
+    const atual = r.projetos.find((x) => x.id === p.id);
+    const novo: Projeto = { ...p, nome: p.nome.trim(), uf: normalizarUf(p.uf), fonteId: p.fonteId ?? fonteRadar(r, 'MANUAL').id, atualizadoEm: agora() };
+    let radar: RadarDataset = { ...r, projetos: atual ? r.projetos.map((x) => (x.id === p.id ? novo : x)) : [...r.projetos, novo] };
+    radar = recalcularEmpresasRadar(radar, [p.empresaId], idsRadar(r));
+    ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_projeto' : 'radar_criar_projeto', 'radar_projeto', p.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  /** Sinal registrado pela equipe (ou por um adapter ja normalizado). Sinal igual (fonte + externo, ou tipo + titulo + data) e ignorado. */
+  registrarSinalRadar(s: { empresaId: string; tipo: TipoSinal; titulo: string; descricao?: string; eventoEm: string; confianca?: number; url?: string; projetoId?: string; fonteId?: string; externoId?: string; payload?: unknown; verificado?: boolean }) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!r.empresas.some((e) => e.id === s.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!s.titulo.trim()) throw new RegraDeNegocioError('Título do sinal é obrigatório.');
+    if (!s.eventoEm) throw new RegraDeNegocioError('Informe a data do sinal.');
+    if (!TIPOS_SINAL.includes(s.tipo)) throw new RegraDeNegocioError('Tipo de sinal inválido.');
+    if (s.projetoId && !r.projetos.some((p) => p.id === s.projetoId && p.empresaId === s.empresaId)) throw new RegraDeNegocioError('Projeto não pertence à empresa.');
+    const fonte = fonteRadar(r, s.fonteId);
+    const ids = idsRadar(r);
+    const res = registrarSinalNormalizado(r, s.empresaId, { tipo: s.tipo, titulo: s.titulo.trim(), descricao: s.descricao, eventoEm: s.eventoEm, confianca: s.confianca ?? 1, url: s.url, externoId: s.externoId }, fonte, ids, { projetoId: s.projetoId, payload: s.payload, verificado: s.verificado ?? fonte.codigo === 'MANUAL' });
+    if (res.resultado === 'ignorada') throw new RegraDeNegocioError('Este sinal já está registrado.');
+    const radar = recalcularEmpresasRadar(res.radar, [s.empresaId], ids);
+    ds = registrar({ ...ds, radar }, 'radar_registrar_sinal', 'radar_sinal', res.sinal.id, undefined, { tipo: s.tipo, titulo: s.titulo, empresaId: s.empresaId });
+    commit(ds);
+    return res.sinal;
+  },
+
+  verificarSinalRadar(id: string) {
+    let ds = state.ds;
+    exigir('radar');
+    const s = ds.radar.sinais.find((x) => x.id === id);
+    if (!s) throw new RegraDeNegocioError('Sinal não encontrado.');
+    const radar = recalcularEmpresasRadar({ ...ds.radar, sinais: ds.radar.sinais.map((x) => (x.id === id ? { ...x, verificado: true, verificadoPor: state.usuario.id } : x)) }, [s.empresaId], idsRadar(ds.radar));
+    ds = registrar({ ...ds, radar }, 'radar_verificar_sinal', 'radar_sinal', id, { verificado: false }, { verificado: true });
+    commit(ds);
+  },
+
+  novaOportunidadeRadar(empresaId: string): Oportunidade {
+    const e = state.ds.radar.empresas.find((x) => x.id === empresaId);
+    return { id: idsRadar(state.ds.radar).novo('OPP'), empresaId, titulo: e ? `Estrutura metálica · ${e.nomeFantasia ?? e.razaoSocial}` : '', estagio: 'DETECTED', probabilidade: PROBABILIDADE_ESTAGIO.DETECTED, responsavelId: state.usuario.id, observacoes: '', criadoEm: agora(), atualizadoEm: agora() };
+  },
+
+  /** Cria ou edita a oportunidade. Regra critica: ativa exige proxima acao (data + descricao ou tarefa aberta). */
+  salvarOportunidadeRadar(o: Oportunidade) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!r.empresas.some((e) => e.id === o.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!o.titulo.trim()) throw new RegraDeNegocioError('Título da oportunidade é obrigatório.');
+    if (!ESTAGIOS.includes(o.estagio)) throw new RegraDeNegocioError('Estágio inválido.');
+    if (o.proximaAcaoEm && !o.proximaAcao?.trim()) throw new RegraDeNegocioError('Descreva a próxima ação.');
+    const atual = r.oportunidades.find((x) => x.id === o.id);
+    const novo: Oportunidade = { ...o, titulo: o.titulo.trim(), probabilidade: o.probabilidade || PROBABILIDADE_ESTAGIO[o.estagio], atualizadoEm: agora() };
+    exigirProximaAcao(novo, r.tarefas);
+    const ids = idsRadar(r);
+    let radar: RadarDataset = { ...r, oportunidades: atual ? r.oportunidades.map((x) => (x.id === o.id ? novo : x)) : [...r.oportunidades, novo] };
+    if (!atual || atual.estagio !== novo.estagio) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: atual?.estagio, para: novo.estagio, usuarioId: state.usuario.id, em: agora() }] };
+    radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
+    ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_oportunidade' : 'radar_criar_oportunidade', 'radar_oportunidade', o.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  /** Muda o estagio registrando historico. WON/LOST exigem motivo; estagio ativo exige proxima acao. */
+  mudarEstagioRadar(id: string, para: Estagio, dados: { motivo?: string; proximaAcao?: string; proximaAcaoEm?: string; valorEstimado?: number } = {}) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const o = r.oportunidades.find((x) => x.id === id);
+    if (!o) throw new RegraDeNegocioError('Oportunidade não encontrada.');
+    if (!ESTAGIOS.includes(para)) throw new RegraDeNegocioError('Estágio inválido.');
+    if ((para === 'WON' || para === 'LOST') && !dados.motivo?.trim()) throw new RegraDeNegocioError(`Informe o motivo para marcar como ${para === 'WON' ? 'ganha' : 'perdida'}.`);
+    const fechado = para === 'WON' || para === 'LOST';
+    const novo: Oportunidade = { ...o, estagio: para, probabilidade: PROBABILIDADE_ESTAGIO[para], valorEstimado: dados.valorEstimado ?? o.valorEstimado, proximaAcao: fechado ? undefined : dados.proximaAcao ?? o.proximaAcao, proximaAcaoEm: fechado ? undefined : dados.proximaAcaoEm ?? o.proximaAcaoEm, motivoFechamento: fechado ? dados.motivo : o.motivoFechamento, fechadoEm: fechado ? agora() : undefined, atualizadoEm: agora() };
+    exigirProximaAcao(novo, r.tarefas);
+    const ids = idsRadar(r);
+    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo, em: agora() }] };
+    if (fechado) radar = { ...radar, tarefas: radar.tarefas.map((t) => (t.oportunidadeId === id && t.status === 'Aberta' ? { ...t, status: 'Cancelada' as const } : t)) };
+    radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
+    ds = registrar({ ...ds, radar }, 'radar_mudar_estagio', 'radar_oportunidade', id, { estagio: o.estagio }, { estagio: para }, dados.motivo);
+    commit(ds);
+    return novo;
+  },
+
+  novaAtividadeRadar(empresaId: string, parcial: Partial<Atividade> = {}): Atividade {
+    return { id: idsRadar(state.ds.radar).novo('ATV'), empresaId, usuarioId: state.usuario.id, tipo: 'CALL', canal: 'PHONE', ocorreuEm: agora(), notas: '', criadoEm: agora(), ...parcial };
+  },
+
+  /**
+   * Registra a interacao e, opcionalmente, a proxima tarefa. Contato com do_not_contact/opt_out e recusado.
+   * INVALID_CONTACT com contato marca supressao invalid_phone (ou email_bounced no canal e-mail).
+   */
+  registrarAtividadeRadar(a: Atividade, proxima?: { tipo: TipoTarefa; venceEm: string; descricao: string; prioridade?: TarefaRadar['prioridade'] }) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!r.empresas.some((e) => e.id === a.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!a.ocorreuEm) throw new RegraDeNegocioError('Informe quando a atividade ocorreu.');
+    if (!CANAIS.includes(a.canal) || !TIPOS_ATIVIDADE.includes(a.tipo)) throw new RegraDeNegocioError('Tipo ou canal inválido.');
+    if (a.resultado && !r.tiposResposta.some((t) => t.codigo === a.resultado && t.ativo)) throw new RegraDeNegocioError('Resultado inválido.');
+    const contato = a.contatoId ? r.contatos.find((c) => c.id === a.contatoId && c.empresaId === a.empresaId) : undefined;
+    if (a.contatoId && !contato) throw new RegraDeNegocioError('Contato não pertence à empresa.');
+    if (contato && contatoSuprimido(contato, r) && a.canal !== 'REFERRAL') throw new RegraDeNegocioError(`${contato.nome} está marcado como não contatar.`);
+    if (a.oportunidadeId && !r.oportunidades.some((o) => o.id === a.oportunidadeId && o.empresaId === a.empresaId)) throw new RegraDeNegocioError('Oportunidade não pertence à empresa.');
+    if (r.atividades.some((x) => x.id === a.id)) throw new RegraDeNegocioError('Atividade já registrada.');
+    const ids = idsRadar(r);
+    let radar: RadarDataset = { ...r, atividades: [...r.atividades, { ...a, notas: a.notas ?? '', criadoEm: agora() }] };
+    if (proxima) {
+      if (!proxima.descricao.trim() || !proxima.venceEm) throw new RegraDeNegocioError('Próxima ação exige descrição e data.');
+      radar = { ...radar, tarefas: [...radar.tarefas, { id: ids.novo('TSK'), empresaId: a.empresaId, contatoId: a.contatoId, oportunidadeId: a.oportunidadeId, responsavelId: state.usuario.id, tipo: proxima.tipo, prioridade: proxima.prioridade ?? 'Normal', venceEm: proxima.venceEm, status: 'Aberta', descricao: proxima.descricao.trim(), criadoEm: agora() }] };
+    }
+    if (contato && a.resultado === 'INVALID_CONTACT') radar = { ...radar, supressoes: [...radar.supressoes, { id: ids.novo('SUP'), contatoId: contato.id, tipo: a.canal === 'EMAIL' ? 'email_bounced' : 'invalid_phone', motivo: 'Resultado INVALID_CONTACT na atividade', criadoPor: state.usuario.id, criadoEm: agora() }] };
+    if (contato && a.resultado === 'DECISION_MAKER_REACHED' && !contato.decisor) radar = { ...radar, contatos: radar.contatos.map((c) => (c.id === contato.id ? { ...c, decisor: true, verificadoEm: agora(), atualizadoEm: agora() } : c)) };
+    radar = recalcularEmpresasRadar(radar, [a.empresaId], ids);
+    ds = registrar({ ...ds, radar }, 'radar_registrar_atividade', 'radar_atividade', a.id, undefined, { tipo: a.tipo, canal: a.canal, resultado: a.resultado, empresaId: a.empresaId });
+    commit(ds);
+    return radar.atividades.find((x) => x.id === a.id)!;
+  },
+
+  novaTarefaRadar(empresaId: string, parcial: Partial<TarefaRadar> = {}): TarefaRadar {
+    return { id: idsRadar(state.ds.radar).novo('TSK'), empresaId, responsavelId: state.usuario.id, tipo: 'FOLLOW_UP', prioridade: 'Normal', venceEm: state.ds.params.dataBase, status: 'Aberta', descricao: '', criadoEm: agora(), ...parcial };
+  },
+
+  salvarTarefaRadar(t: TarefaRadar) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!r.empresas.some((e) => e.id === t.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!t.descricao.trim()) throw new RegraDeNegocioError('Descreva a tarefa.');
+    if (!t.venceEm) throw new RegraDeNegocioError('Informe o prazo.');
+    if (!t.responsavelId) throw new RegraDeNegocioError('Informe o responsável.');
+    const atual = r.tarefas.find((x) => x.id === t.id);
+    const novo = { ...t, descricao: t.descricao.trim() };
+    const radar = recalcularEmpresasRadar({ ...r, tarefas: atual ? r.tarefas.map((x) => (x.id === t.id ? novo : x)) : [...r.tarefas, novo] }, [t.empresaId], idsRadar(r));
+    ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_tarefa' : 'radar_criar_tarefa', 'radar_tarefa', t.id, atual, novo);
+    commit(ds);
+    return novo;
+  },
+
+  /** Conclui a tarefa; se ela era a unica proxima acao de uma oportunidade ativa, exige a proxima. */
+  concluirTarefaRadar(id: string, proxima?: { tipo: TipoTarefa; venceEm: string; descricao: string }) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const t = r.tarefas.find((x) => x.id === id);
+    if (!t || t.status !== 'Aberta') throw new RegraDeNegocioError('Tarefa não encontrada ou já encerrada.');
+    const ids = idsRadar(r);
+    let tarefas = r.tarefas.map((x) => (x.id === id ? { ...x, status: 'Concluída' as const, concluidaEm: agora() } : x));
+    if (proxima) {
+      if (!proxima.descricao.trim() || !proxima.venceEm) throw new RegraDeNegocioError('Próxima ação exige descrição e data.');
+      tarefas = [...tarefas, { id: ids.novo('TSK'), empresaId: t.empresaId, contatoId: t.contatoId, oportunidadeId: t.oportunidadeId, responsavelId: state.usuario.id, tipo: proxima.tipo, prioridade: 'Normal' as const, venceEm: proxima.venceEm, status: 'Aberta' as const, descricao: proxima.descricao.trim(), criadoEm: agora() }];
+    }
+    const opp = t.oportunidadeId ? r.oportunidades.find((o) => o.id === t.oportunidadeId) : undefined;
+    if (opp) exigirProximaAcao({ ...opp, proximaAcaoEm: opp.proximaAcaoEm && opp.proximaAcaoEm >= ids.hoje ? opp.proximaAcaoEm : undefined }, tarefas);
+    const radar = recalcularEmpresasRadar({ ...r, tarefas }, [t.empresaId], ids);
+    ds = registrar({ ...ds, radar }, 'radar_concluir_tarefa', 'radar_tarefa', id, t, { status: 'Concluída', proxima: proxima?.descricao });
+    commit(ds);
+  },
+
+  cancelarTarefaRadar(id: string, motivo: string) {
+    let ds = state.ds;
+    exigir('radar');
+    const t = ds.radar.tarefas.find((x) => x.id === id);
+    if (!t) throw new RegraDeNegocioError('Tarefa não encontrada.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    const radar = recalcularEmpresasRadar({ ...ds.radar, tarefas: ds.radar.tarefas.map((x) => (x.id === id ? { ...x, status: 'Cancelada' as const } : x)) }, [t.empresaId], idsRadar(ds.radar));
+    ds = registrar({ ...ds, radar }, 'radar_cancelar_tarefa', 'radar_tarefa', id, t, { status: 'Cancelada' }, motivo);
+    commit(ds);
+  },
+
+  adicionarSupressaoRadar(s: { contatoId?: string; empresaId?: string; tipo: TipoSupressao; motivo: string }) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    if (!s.contatoId && !s.empresaId) throw new RegraDeNegocioError('Informe o contato ou a empresa.');
+    if (s.contatoId && !r.contatos.some((c) => c.id === s.contatoId)) throw new RegraDeNegocioError('Contato não encontrado.');
+    if (s.empresaId && !r.empresas.some((e) => e.id === s.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+    const novo: Supressao = { id: idsRadar(r).novo('SUP'), contatoId: s.contatoId, empresaId: s.empresaId ?? r.contatos.find((c) => c.id === s.contatoId)?.empresaId, tipo: s.tipo, motivo: s.motivo, criadoPor: state.usuario.id, criadoEm: agora() };
+    ds = registrar({ ...ds, radar: { ...r, supressoes: [...r.supressoes, novo] } }, 'radar_suprimir', 'radar_contato', s.contatoId ?? s.empresaId!, undefined, novo, s.motivo);
+    commit(ds);
+    return novo;
+  },
+
+  removerSupressaoRadar(id: string, motivo: string) {
+    let ds = state.ds;
+    exigir('radar');
+    const s = ds.radar.supressoes.find((x) => x.id === id);
+    if (!s) throw new RegraDeNegocioError('Supressão não encontrada.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
+    ds = registrar({ ...ds, radar: { ...ds.radar, supressoes: ds.radar.supressoes.filter((x) => x.id !== id) } }, 'radar_remover_supressao', 'radar_contato', s.contatoId ?? s.empresaId!, s, undefined, motivo);
+    commit(ds);
+  },
+
+  // --- configuracao (Administrador/Diretoria)
+  salvarEstrategiaRadar(e: Estrategia) {
+    let ds = state.ds;
+    exigir('radar_config');
+    if (!e.codigo.trim() || !e.nome.trim()) throw new RegraDeNegocioError('Código e nome são obrigatórios.');
+    const r = ds.radar;
+    const atual = r.estrategias.find((x) => x.id === e.id);
+    if (r.estrategias.some((x) => x.id !== e.id && x.codigo === e.codigo)) throw new RegraDeNegocioError('Código já usado.');
+    const novo = { ...e, codigo: e.codigo.trim().toUpperCase().replace(/\s+/g, '_') };
+    ds = registrar({ ...ds, radar: { ...r, estrategias: atual ? r.estrategias.map((x) => (x.id === e.id ? novo : x)) : [...r.estrategias, novo] } }, 'radar_salvar_estrategia', 'radar_estrategia', e.id, atual, novo);
+    commit(ds);
+  },
+
+  salvarRegraScoreRadar(regra: RegraScore) {
+    let ds = state.ds;
+    exigir('radar_config');
+    if (!regra.nome.trim()) throw new RegraDeNegocioError('Nome da regra é obrigatório.');
+    if (!DIMENSOES.includes(regra.dimensao)) throw new RegraDeNegocioError('Dimensão inválida.');
+    if (!Number.isFinite(regra.peso)) throw new RegraDeNegocioError('Peso inválido.');
+    if (regra.decaimento && !(regra.decaimentoDias && regra.decaimentoDias > 0)) throw new RegraDeNegocioError('Decaimento exige dias > 0.');
+    const r = ds.radar;
+    const atual = r.regrasScore.find((x) => x.id === regra.id);
+    const radar = { ...r, regrasScore: atual ? r.regrasScore.map((x) => (x.id === regra.id ? regra : x)) : [...r.regrasScore, regra] };
+    ds = registrar({ ...ds, radar }, 'radar_salvar_regra_score', 'radar_score_rule', regra.id, atual, regra);
+    commit(ds);
+  },
+
+  salvarConfigScoreRadar(chave: string, valor: number) {
+    let ds = state.ds;
+    exigir('radar_config');
+    if (!Number.isFinite(valor) || valor < 0) throw new RegraDeNegocioError('Valor inválido.');
+    const r = ds.radar;
+    const existe = r.configScore.some((c) => c.chave === chave);
+    ds = registrar({ ...ds, radar: { ...r, configScore: existe ? r.configScore.map((c) => (c.chave === chave ? { chave, valor } : c)) : [...r.configScore, { chave, valor }] } }, 'radar_salvar_config_score', 'radar_score_setting', chave, r.configScore.find((c) => c.chave === chave), { chave, valor });
+    commit(ds);
+  },
+
+  salvarFonteRadar(f: Fonte) {
+    let ds = state.ds;
+    exigir('radar_config');
+    if (!f.codigo.trim() || !f.nome.trim()) throw new RegraDeNegocioError('Código e nome são obrigatórios.');
+    const r = ds.radar;
+    const atual = r.fontes.find((x) => x.id === f.id);
+    ds = registrar({ ...ds, radar: { ...r, fontes: atual ? r.fontes.map((x) => (x.id === f.id ? f : x)) : [...r.fontes, f] } }, 'radar_salvar_fonte', 'radar_fonte', f.id, atual, f);
+    commit(ds);
+  },
+
+  salvarExperimentoRadar(x: Experimento) {
+    let ds = state.ds;
+    exigir('radar');
+    if (!x.nome.trim()) throw new RegraDeNegocioError('Nome do experimento é obrigatório.');
+    const r = ds.radar;
+    const atual = r.experimentos.find((e) => e.id === x.id);
+    ds = registrar({ ...ds, radar: { ...r, experimentos: atual ? r.experimentos.map((e) => (e.id === x.id ? x : e)) : [...r.experimentos, x] } }, 'radar_salvar_experimento', 'radar_experimento', x.id, atual, x);
+    commit(ds);
+  },
+
+  /** Recalcula o score de todas as empresas ativas (apos mudar regras/pesos ou pelo decaimento diario). */
+  recalcularScoresRadar() {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const antes = new Map(r.empresas.map((e) => [e.id, `${e.priorityScore}|${e.priorityClass}`]));
+    const radar = recalcularEmpresasRadar(r, r.empresas.filter((e) => e.ativo && !e.mescladaEm).map((e) => e.id), idsRadar(r));
+    const mudaram = radar.empresas.filter((e) => antes.get(e.id) !== `${e.priorityScore}|${e.priorityClass}`).length;
+    ds = registrar({ ...ds, radar }, 'radar_recalcular_scores', 'radar_score', 'todas', undefined, { empresas: radar.empresas.length, mudaram });
+    commit(ds);
+    return { empresas: radar.empresas.length, mudaram };
+  },
+
+  /** Importa CSV de empresas ou contatos: cria o job, linhas e erros; deduplica; sinaliza possiveis duplicatas. */
+  importarCsvRadar(texto: string, opts: { tipo: 'empresas' | 'contatos'; fonteId?: string; arquivo?: string }) {
+    let ds = state.ds;
+    exigir('radar');
+    let r = ds.radar;
+    const fonte = fonteRadar(r, opts.fonteId ?? 'CSV');
+    const ids = idsRadar(r);
+    const job: ImportacaoJob = { id: ids.novo('IMP'), fonteId: fonte.id, tipo: opts.tipo, arquivo: opts.arquivo ?? 'colado', status: 'Processando', total: 0, importados: 0, atualizados: 0, duplicados: 0, erros: 0, criadoPor: state.usuario.id, criadoEm: agora() };
+    const linhas: ImportacaoLinha[] = []; const erros: ImportacaoErro[] = []; const afetadas = new Set<string>();
+    if (opts.tipo === 'empresas') {
+      const { empresas, colunas } = normalizarEmpresasCsv(texto);
+      if (!colunas.some((c) => c === 'razaoSocial' || c === 'nomeFantasia')) throw new RegraDeNegocioError('Não encontrei a coluna de razão social/empresa no cabeçalho.');
+      job.total = empresas.length;
+      for (const e of empresas) {
+        if (e.erros.some((x) => x.campo === 'razaoSocial')) { for (const er of e.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: e.numero, campo: er.campo, mensagem: er.mensagem }); linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: e.numero, dados: e.dados, status: 'erro', mensagem: e.erros.map((x) => x.mensagem).join('; ') }); job.erros++; continue; }
+        for (const er of e.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: e.numero, campo: er.campo, mensagem: er.mensagem });
+        const registro: RegistroFonte = { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'empresa', externoId: e.fonteExternaId, payload: e.dados, recebidoEm: agora() };
+        try {
+          const up = upsertEmpresa(r, { cnpj: e.cnpj, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, dominio: e.dominio, site: e.site, linkedin: e.linkedin, setor: e.setor, cnae: e.cnae, cidade: e.cidade, uf: e.uf, pais: e.pais, faixaFuncionarios: e.faixaFuncionarios, faixaReceita: e.faixaReceita, capitalSocial: e.capitalSocial, numeroUnidades: e.numeroUnidades, externoId: e.fonteExternaId, observacoes: e.observacoes }, fonte.id, ids);
+          r = { ...up.radar, registrosFonte: [...up.radar.registrosFonte, { ...registro, entidadeId: up.empresa.id }] };
+          afetadas.add(up.empresa.id);
+          if (up.resultado === 'importada') job.importados++; else if (up.resultado === 'atualizada') job.atualizados++; else if (up.resultado === 'duplicata_possivel') { job.duplicados++; job.importados++; }
+          linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: e.numero, dados: e.dados, status: up.resultado, entidadeId: up.empresa.id, mensagem: up.match ? `${up.match.nivel}: ${up.match.motivo}` : undefined });
+        } catch (err) {
+          job.erros++; erros.push({ id: ids.novo('IER'), jobId: job.id, numero: e.numero, mensagem: (err as Error).message }); linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: e.numero, dados: e.dados, status: 'erro', mensagem: (err as Error).message });
+        }
+      }
+    } else {
+      const { contatos, colunas } = normalizarContatosCsv(texto);
+      if (!colunas.includes('nome')) throw new RegraDeNegocioError('Não encontrei a coluna de nome do contato no cabeçalho.');
+      job.total = contatos.length;
+      for (const c of contatos) {
+        if (c.erros.length) { for (const er of c.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: c.numero, campo: er.campo, mensagem: er.mensagem }); }
+        if (c.erros.some((x) => x.campo === 'nome' || x.campo === 'empresa')) { linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: 'erro', mensagem: c.erros.map((x) => x.mensagem).join('; ') }); job.erros++; continue; }
+        const match = encontrarEmpresa({ cnpj: c.empresaCnpj, dominio: c.empresaDominio, razaoSocial: c.empresaNome }, r.empresas);
+        if (!match || match.nivel === 'possivel') {
+          // empresa desconhecida: cria a partir dos dados do contato (a linha fica marcada para revisao)
+          if (!c.empresaNome && !c.empresaCnpj) { linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: 'erro', mensagem: 'Empresa não encontrada e sem nome para criar' }); job.erros++; continue; }
+          const up = upsertEmpresa(r, { cnpj: c.empresaCnpj, razaoSocial: c.empresaNome ?? c.empresaDominio ?? '', dominio: c.empresaDominio }, fonte.id, ids);
+          r = up.radar; afetadas.add(up.empresa.id);
+          if (up.resultado === 'duplicata_possivel') job.duplicados++;
+          const ct = upsertContato(r, up.empresa.id, { nome: c.nome, cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email: c.email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, decisor: c.decisor, poderDecisao: c.poderDecisao, externoId: c.fonteExternaId, observacoes: c.observacoes }, fonte.id, ids);
+          r = { ...ct.radar, registrosFonte: [...ct.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'contato', externoId: c.fonteExternaId, payload: c.dados, recebidoEm: agora(), entidadeId: ct.contato.id }] };
+          if (ct.resultado === 'importada') job.importados++; else job.atualizados++;
+          linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: ct.resultado === 'importada' ? 'importada' : 'atualizada', entidadeId: ct.contato.id, mensagem: `empresa criada: ${up.empresa.razaoSocial}` });
+          continue;
+        }
+        const ct = upsertContato(r, match.empresa.id, { nome: c.nome, cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email: c.email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, decisor: c.decisor, poderDecisao: c.poderDecisao, externoId: c.fonteExternaId, observacoes: c.observacoes }, fonte.id, ids);
+        r = { ...ct.radar, registrosFonte: [...ct.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'contato', externoId: c.fonteExternaId, payload: c.dados, recebidoEm: agora(), entidadeId: ct.contato.id }] };
+        afetadas.add(match.empresa.id);
+        if (ct.resultado === 'importada') job.importados++; else job.atualizados++;
+        linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: ct.resultado === 'importada' ? 'importada' : 'atualizada', entidadeId: ct.contato.id });
+      }
+    }
+    job.status = job.erros === 0 ? 'Concluída' : job.erros === job.total ? 'Falhou' : 'Com erros';
+    job.concluidoEm = agora();
+    r = { ...r, importacoes: [...r.importacoes, job], importacaoLinhas: [...r.importacaoLinhas, ...linhas], importacaoErros: [...r.importacaoErros, ...erros] };
+    r = recalcularEmpresasRadar(r, [...afetadas], ids);
+    ds = registrar({ ...ds, radar: r }, 'radar_importar_csv', 'radar_importacao', job.id, undefined, { tipo: job.tipo, total: job.total, importados: job.importados, atualizados: job.atualizados, duplicados: job.duplicados, erros: job.erros });
+    commit(ds);
+    return job;
+  },
+
+  /** Ingere registros brutos de uma fonte pelo adapter dela (base para as integracoes CNO/PNCP/CNPJ/B2B/noticias). */
+  ingerirRegistrosRadar(fonteCodigo: string, brutos: unknown[]) {
+    let ds = state.ds;
+    exigir('radar');
+    let r = ds.radar;
+    const fonte = fonteRadar(r, fonteCodigo);
+    const adapter = adapterDe(fonte.tipo);
+    if (!adapter) throw new RegraDeNegocioError(`Fonte ${fonte.codigo} não tem adapter.`);
+    const ids = idsRadar(r);
+    const afetadas = new Set<string>();
+    let importadas = 0; let atualizadas = 0; let duplicadas = 0; let sinais = 0; let ignoradas = 0;
+    for (const bruto of brutos) {
+      const reg = adapter.normalizar(bruto);
+      if (!reg) { ignoradas++; continue; }
+      const res = ingerirRegistro(r, reg, fonte, ids);
+      r = res.radar; sinais += res.sinais;
+      if (res.empresaId) afetadas.add(res.empresaId);
+      if (res.resultado === 'importada') importadas++; else if (res.resultado === 'atualizada') atualizadas++; else if (res.resultado === 'duplicata_possivel') { duplicadas++; importadas++; } else ignoradas++;
+    }
+    r = recalcularEmpresasRadar(r, [...afetadas], ids);
+    ds = registrar({ ...ds, radar: r }, 'radar_ingerir_fonte', 'radar_fonte', fonte.id, undefined, { registros: brutos.length, importadas, atualizadas, duplicadas, sinais, ignoradas });
+    commit(ds);
+    return { importadas, atualizadas, duplicadas, sinais, ignoradas };
+  },
+
   // Medicoes / cronograma fisico-financeiro
   // ---------------------------------------------------------------------------
   novaMedicao(codigoObra: string): Medicao {
@@ -1672,7 +2193,7 @@ export const actions = {
 
   restaurarPlanilha() {
     exigir('administrar');
-    const ds = clone(seed) as unknown as Dataset;
+    const ds = garantirPadroesRadar(clone(seed) as unknown as Dataset);
     commit(registrar(ds, 'restaurar_seed', 'dataset', 'seed'));
   },
 };

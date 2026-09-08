@@ -252,6 +252,7 @@ const dataset = {
   aprovacoes: [], auditoria: [{ id: 'aud-0001', ts: now, usuario: 'migracao', acao: 'carga_planilha', entidade: 'dataset', entidadeId: path.basename(src), depois: report.aceitos }],
   comentarios: [], tarefas: [], usuarios, fechamentos: [],
   servicos, demandas: [], ordens: [], colaboradores: [], apontamentos: [], medicoes: [], insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [],
+  radar: { fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [] },
 };
 
 fs.mkdirSync(path.join(root, 'src', 'data'), { recursive: true });
