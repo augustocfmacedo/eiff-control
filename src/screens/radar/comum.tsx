@@ -266,7 +266,42 @@ export function OportunidadeForm({ inicial, onClose, onErro, onOk }: FormProps<O
 // ---------------------------------------------------------------------------
 // Importacao CSV
 // ---------------------------------------------------------------------------
-export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void }) {
+/** Contexto que pode ir para o log: tipo, contagem de linhas, cabecalho e mensagem. Nunca o conteudo do CSV, e-mails ou nomes. */
+export function contextoImportacaoSanitizado(x: { tipo: string; arquivo: string; texto: string; erro: unknown }): Record<string, unknown> {
+  const primeiraLinha = x.texto.split(/\r?\n/, 1)[0] ?? '';
+  const e = x.erro as { message?: string; stack?: string } | undefined;
+  return { onde: 'radar/importacao', tipo: x.tipo, arquivo: x.arquivo.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '***@***'), linhas: Math.max(0, x.texto.split(/\r?\n/).filter((l) => l.trim()).length - 1), bytes: x.texto.length, cabecalho: primeiraLinha.slice(0, 400).split(/[;,\t]/).map((c) => c.trim()).slice(0, 60), mensagem: String(e?.message ?? x.erro).slice(0, 300), stack: String(e?.stack ?? '').split('\n').slice(0, 4).join(' | ').slice(0, 600) };
+}
+
+interface ErroImportacaoState { erro?: unknown }
+/** Error boundary do importador: nao esconde o erro (mostra na tela) e registra so contexto sanitizado no console. */
+class ErroImportacao extends React.Component<{ contexto: () => Record<string, unknown>; onClose: () => void; children: React.ReactNode }, ErroImportacaoState> {
+  state: ErroImportacaoState = {};
+  static getDerivedStateFromError(erro: unknown): ErroImportacaoState { return { erro }; }
+  componentDidCatch(erro: unknown) { console.error('[radar/importacao] erro de interface', { ...this.props.contexto(), mensagem: String((erro as Error)?.message ?? erro).slice(0, 300) }); }
+  render() {
+    if (!this.state.erro) return this.props.children;
+    const m = String((this.state.erro as Error)?.message ?? this.state.erro);
+    return (
+      <div className="form">
+        <p><b>Erro de interface no importador:</b> {m}</p>
+        <p className="small muted">A importação em si pode ter sido concluída: confira em Command Center › Importações. O contexto sanitizado (tipo, contagem de linhas, cabeçalho e mensagem, sem dados pessoais) foi registrado no console do navegador.</p>
+        <div className="foot"><button className="btn primary" onClick={this.props.onClose}>Fechar</button></div>
+      </div>
+    );
+  }
+}
+
+export function ImportarForm(props: { onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const ctx = React.useRef<() => Record<string, unknown>>(() => ({ onde: 'radar/importacao' }));
+  return (
+    <Modal title="Importar planilha (CSV)" onClose={props.onClose} wide>
+      <ErroImportacao contexto={() => ctx.current()} onClose={props.onClose}><ImportarFormInterno {...props} contexto={ctx} /></ErroImportacao>
+    </Modal>
+  );
+}
+
+function ImportarFormInterno({ onClose, onErro, onOk, contexto }: { onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void; contexto: React.MutableRefObject<() => Record<string, unknown>> }) {
   const { ds } = useStore();
   const [tipo, setTipo] = useState<'empresas' | 'contatos'>('empresas');
   const [fonteId, setFonteId] = useState(ds.radar.fontes.find((f) => f.codigo === 'CSV')?.id ?? '');
@@ -278,8 +313,9 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
   const colunas = previa ? previa.cabecalho.map((c, i) => ({ c, campo: previa.colunas[i] })) : [];
   const ler = (f: File) => { const r = new FileReader(); r.onload = () => { setTexto(String(r.result ?? '')); setArquivo(f.name); }; r.readAsText(f, 'utf-8'); };
   const linhas = previa ? ('empresas' in previa ? previa.empresas.length : previa.contatos.length) : 0;
+  contexto.current = () => contextoImportacaoSanitizado({ tipo, arquivo, texto, erro: undefined });
   return (
-    <Modal title="Importar planilha (CSV)" onClose={onClose} wide>
+    <>
       {job ? (
         <>
           <p><b>Importação {job.status.toLowerCase()}</b> · {job.total} linha(s): {job.importados} nova(s), {job.atualizados} atualizada(s), {job.duplicados} possível(is) duplicata(s), {job.revisao ?? 0} para revisão, {job.erros} erro(s).</p>
@@ -316,10 +352,10 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
             </div>
           )}
           <p className="small muted" style={{ marginTop: 8 }}>Deduplicação por CNPJ, domínio, razão social + cidade/UF e nome parecido. Empresas iguais são atualizadas só nos campos vazios; parecidas entram como possíveis duplicatas para revisão. Cada linha bruta fica guardada com a fonte.</p>
-          <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button>{tipo === 'contatos' && <button className="btn" disabled={!linhas} onClick={() => tentar(() => { setDry(dryRunContatosCsv(texto, ds.radar, ds.params.dataBase)); }, onErro)}>Dry run (simular sem gravar)</button>}<button className="btn primary" disabled={!linhas} onClick={() => tentar(() => { const j = actions.importarCsvRadar(texto, { tipo, fonteId, arquivo }); setJob(j); onOk(`Importação: ${j.importados} nova(s), ${j.atualizados} atualizada(s).`); }, onErro)}>Importar {linhas ? `${linhas} linha(s)` : ''}</button></div>
+          <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button>{tipo === 'contatos' && <button className="btn" disabled={!linhas} onClick={() => tentar(() => { setDry(dryRunContatosCsv(texto, ds.radar, ds.params.dataBase)); }, onErro)}>Dry run (simular sem gravar)</button>}<button className="btn primary" disabled={!linhas} onClick={() => tentar(() => { try { const j = actions.importarCsvRadar(texto, { tipo, fonteId, arquivo }); setJob(j); onOk(`Importação: ${j.importados} nova(s), ${j.atualizados} atualizada(s).`); } catch (e) { console.error('[radar/importacao] falha na importação', contextoImportacaoSanitizado({ tipo, arquivo, texto, erro: e })); throw e; } }, onErro)}>Importar {linhas ? `${linhas} linha(s)` : ''}</button></div>
         </>
       )}
-    </Modal>
+    </>
   );
 }
 

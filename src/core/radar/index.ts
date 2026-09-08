@@ -12,3 +12,5 @@ export * from './vibeServidor';
 export * from './dryrun';
 export * from './economia';
 export * from './cobertura';
+export * from './importacao';
+export * from './signalPilot';

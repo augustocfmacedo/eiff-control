@@ -6,8 +6,9 @@ import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, Pr
 import { ImportarForm, ScorePill, d, dh, nomeUsuario } from './comum';
 import { VibePainel } from './Vibe';
 import { CoberturaDecisores } from './Cobertura';
+import { SignalPilot } from './SignalPilot';
 
-type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe';
+type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe' | 'signal';
 
 export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const { ds, usuario } = useStore();
@@ -78,7 +79,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         ]} />
       </div>
       <div style={{ height: 16 }} />
-      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }] : [])]} />
+      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }, { id: 'signal' as const, label: 'Signal Pilot' }] : [])]} />
 
       {aba === 'visao' && (
         <div className="grid cols-2">
@@ -167,6 +168,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
 
       {aba === 'decisores' && <><CoberturaDecisores /><ConfigDecisores podeConfig={podeConfig} onErro={toast} onOk={toast} /></>}
       {aba === 'vibe' && podeConfig && <VibePainel onErro={toast} onOk={toast} />}
+      {aba === 'signal' && <SignalPilot />}
 
       {aba === 'revisao' && (
         <div className="card table-wrap">

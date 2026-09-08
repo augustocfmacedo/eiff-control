@@ -74,6 +74,12 @@ export async function carregarRadar(h: Pick<HelpersRadar, 'sel' | 'orgId'>): Pro
   return ds;
 }
 
+/** Mapeamentos expostos para scripts de carga (mesmas regras da persistencia do app). */
+export function linhaDb(chave: Chave, obj: { id: string }, ref: (chave: Chave, id?: string) => string | null, h: HelpersRadar): Row { const sp = SPECS.find((x) => x.chave === chave); if (!sp) throw new Error(`sem spec para ${chave}`); return sp.db(obj as never, ref, h); }
+export function tabelaDe(chave: Chave): string { const sp = SPECS.find((x) => x.chave === chave); if (!sp) throw new Error(`sem spec para ${chave}`); return sp.tabela; }
+export function linhaApp(chave: Chave, row: Row): { id: string } { const sp = SPECS.find((x) => x.chave === chave); if (!sp) throw new Error(`sem spec para ${chave}`); return sp.app(row); }
+export type { Chave as ChaveRadar };
+
 const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | undefined, depois: RadarDataset | undefined): Promise<void> {
