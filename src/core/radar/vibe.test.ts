@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { PAGE_SIZE_MAX_VIBE, PRIORIDADE_DECISORES, budgetGuardVibe, escolherDecisores, estimarCreditos, normalizarEnriquecimentoVibe, payloadEnriquecimentoVibe, prospectParaContato, senioridadeVibe, statusEmailVibe, tamanhoPaginaVibe } from './vibe';
+import { PAGE_SIZE_MAX_VIBE, PRIORIDADE_DECISORES, budgetGuardVibe, classificarPool, escolherDecisores, estimarCreditos, normalizarEnriquecimentoVibe, payloadEnriquecimentoVibe, prospectParaContato, senioridadeVibe, statusEmailVibe, tamanhoPaginaVibe } from './vibe';
+import { PESOS_DECISION_FIT_PADRAO, REGRAS_PERSONA_PADRAO } from './padroes';
+import type { Empresa } from './types';
 
 describe('vibe', () => {
   it('ordem de prioridade e escolha de 1 decisor por empresa', () => {
@@ -15,6 +17,25 @@ describe('vibe', () => {
     expect(esc.map((p) => p.prospect_id[0])).toEqual(['1', '3']);
     expect(esc[0].prioridade).toBe('engenharia'); expect(esc[1].prioridade).toBe('direção industrial');
     expect(escolherDecisores(porTier, [B1, B2, B3], 10)).toHaveLength(3);
+  });
+  it('DISCOVERY_POOL: classifica pelo decision fit e escolhe 1 por empresa; sem candidato vai para o fallback', () => {
+    const B1 = 'a'.repeat(32); const B2 = 'b'.repeat(32); const B3 = 'c'.repeat(32);
+    const emp = (id: string, bid: string, porte: string): Empresa => ({ id, razaoSocial: id, pais: 'Brasil', observacoes: '', ativo: true, criadoEm: '', atualizadoEm: '', fitScore: 0, intentScore: 0, timingScore: 0, relationshipScore: 0, dataQualityScore: 0, priorityScore: 0, priorityClass: 'D', businessId: bid, faixaFuncionarios: porte });
+    const empresas = new Map([[B1, emp('E1', B1, '1001-5000')], [B2, emp('E2', B2, '11-50')], [B3, emp('E3', B3, '51-200')]]);
+    const r = { pesosDecisionFit: PESOS_DECISION_FIT_PADRAO, regrasPersona: REGRAS_PERSONA_PADRAO, projetos: [] };
+    const cands = [
+      { prospect_id: '1'.repeat(40), business_id: B1, job_title: 'Comprador', job_department_main: 'procurement', job_level_main: 'manager' },
+      { prospect_id: '2'.repeat(40), business_id: B1, job_title: 'Diretor Industrial', job_department_main: 'manufacturing', job_level_main: 'director' },
+      { prospect_id: '3'.repeat(40), business_id: B2, job_title: 'Sócio proprietário', job_level_main: 'owner' },
+      { prospect_id: '9'.repeat(40), business_id: 'z'.repeat(32), job_title: 'x' },
+    ];
+    const { escolhidos, semCandidato } = classificarPool(cands, empresas, r, 10);
+    expect(escolhidos.map((p) => p.prospect_id[0])).toEqual(expect.arrayContaining(['2', '3']));
+    expect(escolhidos).toHaveLength(2);
+    expect(escolhidos.find((p) => p.business_id === B1)!.prospect_id[0]).toBe('2'); // diretor industrial vence comprador na grande
+    expect(escolhidos.every((p) => p.prioridade === 'DISCOVERY_POOL' && p.fit > 0 && p.razoes.length)).toBe(true);
+    expect(semCandidato).toEqual([B3]);
+    expect(classificarPool(cands, empresas, r, 1)).toMatchObject({ escolhidos: [{ business_id: expect.any(String) }] });
   });
   it('estimativa e conversao de prospect em contato', () => {
     const e = estimarCreditos({ empresasSemId: 10, decisores: 56, cobertura: 300, email: true });

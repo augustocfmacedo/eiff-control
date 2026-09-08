@@ -2044,9 +2044,14 @@ export const actions = {
   },
 
   /** Aplica e-mail/telefone enriquecidos aos contatos pelo prospect_id (fonteExternaId). */
-  aplicarEnriquecimentoVibe(resultados: { prospect_id: string; professional_email?: string | null; professional_email_status?: string | null; mobile_phone?: string | null }[]) {
+  aplicarEnriquecimentoVibe(resultados: { prospect_id: string; professional_email?: string | null; professional_email_status?: string | null; mobile_phone?: string | null }[], opts: { forcado?: { justificativa: string; idempotencyKey: string } } = {}) {
     let ds = state.ds;
     exigir('radar');
+    if (opts.forcado) {
+      if (state.usuario.papel !== 'Administrador') throw new RegraDeNegocioError('Só Administrador pode forçar nova verificação de e-mail.');
+      if (!opts.forcado.justificativa.trim()) throw new RegraDeNegocioError('Justificativa é obrigatória para forçar.');
+      ds = registrar(ds, 'radar_vibe_force_refresh', 'radar_contato', 'lote', undefined, { prospects: resultados.length, idempotencyKey: opts.forcado.idempotencyKey }, opts.forcado.justificativa);
+    }
     const r = ds.radar;
     const porExt = new Map(resultados.map((x) => [x.prospect_id.toLowerCase(), x]));
     let aplicados = 0;

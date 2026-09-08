@@ -8,3 +8,4 @@ export * from './adapters';
 export * from './ingestao';
 export * from './contatos';
 export * from './vibe';
+export * from './vibeServidor';

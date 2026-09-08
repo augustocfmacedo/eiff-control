@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUDGET_PADRAO, PAGE_SIZE_MAX, RESERVA_PADRAO, budgetGuard, escolherPorEmpresa, estimar, filtrarJaProcessados, filtrosDecisores, linhasParaEnriquecer, normalizarEnriquecimento, paginar, payloadEnriquecimento, registroConsumo, tamanhoPagina } from '../../../scripts/vibe-core.mjs';
+import { BUDGET_PADRAO, PAGE_SIZE_MAX, POOL_JOB_LEVEL, RESERVA_PADRAO, budgetGuard, cursorDe, dentroDoCache, escolherPorEmpresa, estimar, filtrarJaProcessados, filtrosDecisores, filtrosPool, filtrosValidados, linhasParaEnriquecer, normalizarEnriquecimento, paginar, payloadEnriquecimento, registroConsumo, tamanhoPagina } from '../../../scripts/vibe-core.mjs';
 
 const B = (n: number) => n.toString(16).padStart(32, '0');
 const P = (n: number) => n.toString(16).padStart(40, '0');
@@ -27,16 +27,43 @@ describe('vibe-core: pagina, paginacao e uma pessoa por empresa', () => {
     const r = await paginar(async (p) => { chamadas.push(p); return paginas[i++]; }, { businessIds: [B(1), B(2), B(3), B(4)], escolhidos: esc, max: 56 });
     expect(chamadas[0].page_size).toBe(100);
     expect(chamadas[1].next_cursor).toBe('c2');
-    expect(r.paginas).toBe(2); // segunda pagina veio menor que o tamanho pedido: fim dos resultados
-    expect(esc.size).toBe(3); expect(r.devolvidos).toBe(102); expect(r.correlacoes).toEqual(['x1', 'x2']);
+    expect(r.paginas).toBe(3); // segunda pagina menor mas com cursor: segue; terceira sem cursor e menor: fim
+    expect(r.motivo).toBe('fim_sem_cursor');
+    expect(esc.size).toBe(4); expect(r.devolvidos).toBe(103); expect(r.correlacoes).toEqual(['x1', 'x2']);
     // para quando atinge max
     const esc2 = new Map(); i = 0;
     await paginar(async () => paginas[i++], { businessIds: [B(1), B(2)], escolhidos: esc2, max: 1 });
     expect(esc2.size).toBe(1);
-    // respeita maxPaginas
+    // respeita maxPaginas (mesma pagina repetida: ids ja vistos -> para sem progresso na 2a)
     const esc3 = new Map(); i = 0;
     const r3 = await paginar(async () => ({ ...paginas[0], page: { next_cursor: 'sempre' } }), { businessIds: [B(1), B(2)], escolhidos: esc3, max: 2, maxPaginas: 3 });
-    expect(r3.paginas).toBe(3);
+    expect(r3.paginas).toBe(2); expect(r3.motivo).toBe('sem_novos_ids');
+  });
+  it('API sem cursor: pagina por page numerica, nunca repete a page 1, e para no fim', async () => {
+    const chamadas: { page_size: number; page?: number; next_cursor?: string }[] = [];
+    let n = 0;
+    const esc = new Map();
+    // pagina 1 cheia (sem cursor): segue para page=2; pagina 2 completa o maximo
+    const r = await paginar(async (p) => { chamadas.push(p); n++; return n === 1 ? { data: Array.from({ length: p.page_size }, (_, i) => ({ prospect_id: P(i), business_id: B(i) })) } : { data: [{ prospect_id: P(50), business_id: B(50) }] }; }, { businessIds: [B(0), B(1), B(2), B(3), B(50)], escolhidos: esc, max: 5 });
+    expect(chamadas.map((c) => c.page)).toEqual([1, 2]); expect(chamadas.every((c) => !c.next_cursor)).toBe(true);
+    expect(r.motivo).toBe('max_atingido'); expect(esc.size).toBe(5);
+    // pagina vazia encerra
+    const esc2 = new Map();
+    expect((await paginar(async () => ({ data: [] }), { businessIds: [B(1)], escolhidos: esc2, max: 5 })).motivo).toBe('pagina_vazia');
+    // cap global e orcamento interrompem antes de pedir mais
+    const esc3 = new Map();
+    const r3 = await paginar(async (p) => ({ data: Array.from({ length: p.page_size }, (_, i) => ({ prospect_id: P(100 + i), business_id: B(100 + i) })), next_cursor: 'c' }), { businessIds: Array.from({ length: 50 }, (_, i) => B(100 + i)), escolhidos: esc3, max: 50, cap: 7 });
+    expect(r3.devolvidos).toBe(7); expect(r3.motivo).toBe('cap_atingido');
+    const esc4 = new Map();
+    const r4 = await paginar(async (p) => ({ data: Array.from({ length: p.page_size }, (_, i) => ({ prospect_id: P(200 + i), business_id: B(200 + i) })), next_cursor: 'c' }), { businessIds: Array.from({ length: 50 }, (_, i) => B(200 + i)), escolhidos: esc4, max: 50, orcamento: 5 });
+    expect(r4.devolvidos).toBe(5); expect(r4.motivo).toBe('orcamento_atingido');
+  });
+  it('catalogo validado e pool de descoberta', () => {
+    expect(filtrosPool([B(1)], null)).toMatchObject({ erro: 'catalogo_nao_validado' });
+    const pool = filtrosPool([B(1)], { job_level: POOL_JOB_LEVEL, job_department: ['engineering'] }, true) as { filtros: Record<string, unknown> };
+    expect(pool.filtros).toMatchObject({ job_level: { values: POOL_JOB_LEVEL }, job_department: { values: ['engineering'] }, has_contact_details: { value: 'email' } });
+    expect(filtrosValidados({ job_level: ['cxo', 'director'] }, { job_level: ['director'] }).rejeitados).toEqual(['cxo']);
+    expect(cursorDe({ pagination: { next_cursor: 'p' } })).toBe('p');
   });
   it('filtro somente com e-mail e opcional', () => {
     const tier = { filtros: { job_department: { values: ['engineering'] } } };
@@ -86,9 +113,11 @@ describe('vibe-core: estimativa, budget guard, idempotencia e log', () => {
   });
   it('idempotencia: exclui ja processados e nao paga de novo por e-mail valido', () => {
     expect(filtrarJaProcessados([{ prospect_id: P(1) }, { prospect_id: P(2).toUpperCase() }, { prospect_id: P(3) }], [P(2)]).map((p) => p.prospect_id)).toEqual([P(1), P(3)]);
-    const linhas = [{ prospect_id: P(1), email: 'a@x.com', status_email: 'valid' }, { prospect_id: P(2), email: 'b@x.com', status_email: 'invalid' }, { prospect_id: P(3), email: '' }, { prospect_id: 'zzz', email: '' }];
-    expect(linhasParaEnriquecer(linhas).map((l) => l.prospect_id)).toEqual([P(2), P(3)]);
-    expect(linhasParaEnriquecer(linhas, { force: true })).toHaveLength(3);
+    const linhas = [{ prospect_id: P(1), email: 'a@x.com', status_email: 'valid', verificado_em: '2026-09-01' }, { prospect_id: P(2), email: 'b@x.com', status_email: 'invalid' }, { prospect_id: P(3), email: '' }, { prospect_id: 'zzz', email: '' }, { prospect_id: P(4), email: 'c@x.com', status_email: 'valid', verificado_em: '2026-01-01' }];
+    expect(linhasParaEnriquecer(linhas, { hoje: '2026-09-08' }).map((l) => l.prospect_id)).toEqual([P(2), P(3), P(4)]); // P(4): valido mas fora do cache de 90 dias
+    expect(linhasParaEnriquecer(linhas, { hoje: '2026-09-08', cacheDias: 400 }).map((l) => l.prospect_id)).toEqual([P(2), P(3)]);
+    expect(dentroDoCache({ email: 'a@x.com', status_email: 'valid', verificado_em: '2026-09-01' }, '2026-09-08')).toBe(true);
+    expect(linhasParaEnriquecer(linhas, { force: true })).toHaveLength(4);
   });
   it('log de consumo sem chave, e-mail completo nem telefone', () => {
     const r = registroConsumo({ operation: 'enriquecer', records_requested: 2, records_returned: 2, credits_before: 100, credits_after: 96, estimated_credits: 4, correlation_id: 'abc', detalhe: 'api_key=CHAVEFICTICIAQWERTYUIOPASDFGHJKLZXCVB roberto@acme.com.br +55 62 99999-0001' });

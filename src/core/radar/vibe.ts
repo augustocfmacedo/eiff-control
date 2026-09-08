@@ -1,15 +1,16 @@
 // Vibe Prospecting (Explorium Data API): prioridades de decisores, estimativa de creditos e conversao de prospects
 // em contatos do Radar. Puro: usado pela funcao Netlify (servidor) e pela tela. A chave da API nunca passa por aqui.
-import type { Contato, Persona } from './types';
+import type { Contato, Empresa, Persona, RadarDataset } from './types';
+import { calcularDecisionFit, tipoProjetoPrincipal } from './contatos';
 
 export interface PrioridadeDecisor { nome: string; filtros: Record<string, unknown> }
 
 /** Ordem pedida pela EIFF: engenharia → direção industrial → expansão → operações → facilities → COO → proprietário → presidente → CEO → supply chain → logística → compras. */
 export const PRIORIDADE_DECISORES: PrioridadeDecisor[] = [
-  { nome: 'engenharia', filtros: { job_department: { values: ['engineering'] }, job_level: { values: ['cxo', 'vp', 'director', 'manager'] } } },
+  { nome: 'engenharia', filtros: { job_department: { values: ['engineering'] }, job_level: { values: ['director', 'manager'] } } },
   { nome: 'direção industrial', filtros: { job_title: { values: ['diretor industrial', 'industrial director', 'plant director', 'diretor de produção', 'diretor fabril'], include_related_job_titles: true } } },
-  { nome: 'expansão', filtros: { job_title: { values: ['diretor de expansão', 'expansion director', 'gerente de expansão', 'head of expansion', 'novos negócios'], include_related_job_titles: true } } },
-  { nome: 'operações', filtros: { job_department: { values: ['operations'] }, job_level: { values: ['cxo', 'vp', 'director', 'manager'] } } },
+  { nome: 'expansão', filtros: { job_title: { values: ['diretor de expansão', 'expansion director', 'gerente de expansão', 'head of expansion'], include_related_job_titles: true } } },
+  { nome: 'operações', filtros: { job_department: { values: ['operations'] }, job_level: { values: ['director', 'manager'] } } },
   { nome: 'facilities', filtros: { job_title: { values: ['facilities', 'gerente de facilities', 'infraestrutura', 'manutenção predial'], include_related_job_titles: true } } },
   { nome: 'COO', filtros: { job_title: { values: ['COO', 'chief operating officer', 'diretor de operações'], include_related_job_titles: false } } },
   { nome: 'proprietário', filtros: { job_level: { values: ['owner', 'partner'] } } },
@@ -105,6 +106,25 @@ export function prospectParaContato(p: ProspectVibe, hoje: string) {
     linkedin: p.linkedin ?? p.linkedin_url_array?.[0], externoId: p.prospect_id, verificadoEm: hoje,
     observacoes: p.prioridade ? `Vibe: prioridade ${p.prioridade}` : undefined,
   };
+}
+
+/**
+ * DISCOVERY_POOL: classifica os candidatos do pool pelo decision fit do Radar (persona x porte, senioridade, area,
+ * projeto) e escolhe no maximo uma pessoa por empresa. Empresas sem candidato ficam para os tiers especificos.
+ */
+export function classificarPool(candidatos: ProspectVibe[], empresasPorBusinessId: Map<string, Empresa>, r: Pick<RadarDataset, 'pesosDecisionFit' | 'regrasPersona' | 'projetos'>, max: number): { escolhidos: (ProspectVibe & { fit: number; razoes: string[] })[]; semCandidato: string[] } {
+  const porEmpresa = new Map<string, (ProspectVibe & { fit: number; razoes: string[] })[]>();
+  for (const p of candidatos) {
+    const bid = (p.business_id ?? '').toLowerCase();
+    const e = empresasPorBusinessId.get(bid);
+    if (!e || !/^[a-f0-9]{40}$/i.test(p.prospect_id ?? '')) continue;
+    const c = prospectParaContato(p, '');
+    const df = calcularDecisionFit({ cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, persona: personaPorDepartamentoVibe(p.job_department_main) }, e, r.pesosDecisionFit, r.regrasPersona, tipoProjetoPrincipal(e.id, r.projetos));
+    porEmpresa.set(bid, [...(porEmpresa.get(bid) ?? []), { ...p, business_id: bid, prioridade: 'DISCOVERY_POOL', fit: df.score, razoes: df.razoes }]);
+  }
+  const escolhidos = [...porEmpresa.values()].map((lista) => lista.sort((a, b) => b.fit - a.fit)[0]).sort((a, b) => b.fit - a.fit).slice(0, max);
+  const comCandidato = new Set(escolhidos.map((p) => p.business_id));
+  return { escolhidos, semCandidato: [...empresasPorBusinessId.keys()].filter((b) => !comCandidato.has(b)) };
 }
 
 /** Escolhe 1 decisor por empresa seguindo a ordem de prioridade; `porTier[i]` sao os prospects retornados para o tier i. */
