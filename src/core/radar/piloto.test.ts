@@ -126,3 +126,29 @@ describe('piloto: UF por nome do estado e pais', () => {
     expect(e).toMatchObject({ uf: 'GO', pais: 'Brasil', erros: [] });
   });
 });
+
+describe('piloto: importacao pura e Signal Pilot', () => {
+  it('importarCsv (core) gera job, linhas, registros brutos e recalcula; Signal Pilot sem sinais mostra 0, — e RESEARCH_SIGNALS', async () => {
+    const { importarCsv, recalcularEmpresas, criarIds } = await import('./importacao');
+    const { visaoSignalPilot } = await import('./signalPilot');
+    const { FONTES_PADRAO, REGRAS_PADRAO, CONFIG_SCORE_PADRAO } = await import('./padroes');
+    let r: RadarDataset = { ...base(), fontes: FONTES_PADRAO, regrasScore: REGRAS_PADRAO, configScore: CONFIG_SCORE_PADRAO };
+    const fonte = r.fontes.find((f) => f.codigo === 'VIBE')!;
+    const idsC = criarIds(r, { hoje: HOJE, agora: ids.agora, usuarioId: 'U1' });
+    const e1 = importarCsv(r, ['business_name,business_domain,business_region,business_country_name,business_number_of_employees_range,business_id', `Cereal Ouro,cerealouro.com.br,goiás,brazil,201-500,${B(1)}`, `Fiagril Ltda.,fiagril.com.br,mato grosso,brazil,501-1000,${B(2)}`].join('\n'), { tipo: 'empresas', fonte, arquivo: 'ds-empresas', usuarioId: 'U1', agora: ids.agora }, idsC);
+    r = recalcularEmpresas(e1.radar, e1.afetadas, idsC);
+    expect(e1.job).toMatchObject({ tipo: 'empresas', arquivo: 'ds-empresas', total: 2, importados: 2, erros: 0, status: 'Concluída', fonteId: fonte.id });
+    expect(r.empresas.map((e) => [e.uf, e.pais, e.businessId])).toEqual([['GO', 'Brasil', B(1)], ['MT', 'Brasil', B(2)]]);
+    expect(r.registrosFonte.filter((x) => x.tipo === 'empresa').map((x) => x.externoId)).toEqual([B(1), B(2)]);
+    expect(r.snapshotsScore).toHaveLength(2);
+    const e2 = importarCsv(r, ['prospect_id,prospect_full_name,prospect_job_title,prospect_job_seniority_level,contact_professional_email,contact_professional_email_status,business_id,business_name', `${P(1)},André Schwening,Chief executive officer,cxo,andre@cerealouro.com.br,valid,${B(1)},Cereal Ouro`].join('\n'), { tipo: 'contatos', fonte, arquivo: 'ds-contatos', usuarioId: 'U1', agora: ids.agora }, idsC);
+    r = recalcularEmpresas(e2.radar, e2.afetadas, idsC);
+    expect(e2.job).toMatchObject({ tipo: 'contatos', total: 1, importados: 1, erros: 0 });
+    expect(r.contatos[0]).toMatchObject({ fonteExternaId: P(1), persona: 'CEO', senioridade: 'C-level', statusEmail: 'valido' });
+    expect(r.importacaoLinhas).toHaveLength(3); expect(r.registrosFonte).toHaveLength(3); expect(r.oportunidades).toHaveLength(0);
+    const v = visaoSignalPilot(r, HOJE, ['Cereal Ouro', 'Fiagril', 'Inexistente SA']);
+    expect(v[0]).toMatchObject({ encontrada: true, signalCount: 0, strongestSignal: undefined, recommendedAction: 'RESEARCH_SIGNALS', contato: 'André Schwening', decisionFit: 75, timingScore: 0, intentScore: 0 });
+    expect(v[1]).toMatchObject({ encontrada: true, signalCount: 0, recommendedAction: 'SEARCH_DECISION_MAKER', contato: undefined });
+    expect(v[2]).toMatchObject({ encontrada: false, signalCount: 0, recommendedAction: '—' });
+  });
+});
