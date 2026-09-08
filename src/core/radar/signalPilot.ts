@@ -82,7 +82,7 @@ export const HIPOTESE_SIGNAL_PILOT = {
   recenteDias: 120, // sinal mais antigo que isso nao compete com um equivalente recente
 } as const;
 export type ContaSignalPilot = 'HOT' | 'WARM' | 'NO_EVIDENCE';
-export interface EntradaMatriz { priorityScore: number; timing: number; intent: number; decisionFit?: number; cobertura: NivelCobertura; sinal?: { grupo: GrupoSinal; relevancia?: RelevanciaEstrutural; confianca: number; diasDesde: number } }
+export interface EntradaMatriz { priorityScore: number; timing: number; intent: number; decisionFit?: number; cobertura: NivelCobertura; sinal?: { grupo: GrupoSinal; relevancia?: RelevanciaEstrutural; confianca: number; diasDesde: number; janelaRecente?: number } }
 export interface SaidaMatriz { conta: ContaSignalPilot; acao: AcaoSinal; motivo: string }
 
 export function recomendacaoSignalPilot(x: EntradaMatriz): SaidaMatriz {
@@ -91,7 +91,8 @@ export function recomendacaoSignalPilot(x: EntradaMatriz): SaidaMatriz {
   const temContato = x.cobertura !== 'NO_CONTACT';
   if (!s) return { conta: 'NO_EVIDENCE', acao: temContato ? 'RESEARCH_SIGNALS' : 'NURTURE', motivo: temContato ? 'sem sinal registrado; contato disponível para quando surgir' : 'sem sinal e sem contato' };
   if (s.confianca < H.confiancaDescartar) return { conta: 'NO_EVIDENCE', acao: 'WATCH', motivo: `confiança ${Math.round(s.confianca * 100)}% < ${H.confiancaDescartar * 100}%: não eleva prioridade comercial` };
-  const recente = s.diasDesde <= H.recenteDias;
+  const janela = s.janelaRecente ?? H.recenteDias; // janela por familia quando informada (simulacao), senao a hipotese unica
+  const recente = s.diasDesde <= janela;
   const forte = s.grupo === 'A' || s.grupo === 'B';
   const hot = forte && s.relevancia === 'DIRECT' && s.confianca >= H.confiancaMinima && x.timing >= H.timingAlto && recente;
   if (hot) {
@@ -103,7 +104,7 @@ export function recomendacaoSignalPilot(x: EntradaMatriz): SaidaMatriz {
     if (s.relevancia === 'DIRECT' || s.relevancia === 'INDIRECT') return { conta: 'WARM', acao: 'RESEARCH_PROJECT', motivo: `sinal ${s.relevancia === 'DIRECT' ? 'direto' : 'indireto'} com timing ${Math.round(x.timing)} e intent ${Math.round(x.intent)}: confirmar se há projeto físico` };
     return { conta: 'WARM', acao: 'WATCH', motivo: 'sinal contextual com movimento recente: acompanhar' };
   }
-  if (!recente) return { conta: 'NO_EVIDENCE', acao: temContato ? 'RESEARCH_SIGNALS' : 'NURTURE', motivo: `sinal mais forte tem ${s.diasDesde} dias (> ${H.recenteDias}): buscar sinal recente` };
+  if (!recente) return { conta: 'NO_EVIDENCE', acao: temContato ? 'RESEARCH_SIGNALS' : 'NURTURE', motivo: `sinal mais forte tem ${s.diasDesde} dias (> ${janela}): buscar sinal recente` };
   return { conta: 'NO_EVIDENCE', acao: s.relevancia === 'NONE' ? 'IGNORE' : temContato ? 'RESEARCH_SIGNALS' : 'NURTURE', motivo: s.relevancia === 'NONE' ? 'sinal sem relevância estrutural' : 'sinal fraco ou sem relevância clara' };
 }
 

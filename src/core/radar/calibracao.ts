@@ -4,7 +4,8 @@
 // - conflito entre matriz operacional, analista e CRM e derivado, sem entidade nova.
 import { cortesCobertura, coberturaEmpresa } from './cobertura';
 import { contextoEmpresa, contatoRecomendado, recomendarAcao, sinalPrincipal, type EstadoAcao, type Recomendacao } from './pipeline';
-import { calcularScore, diasEntre } from './score';
+import { calcularScore, configDe, diasEntre } from './score';
+import { DIMENSOES } from './types';
 import { GRUPO_POR_TIPO, conflitoAcoes, leituraDe, recomendacaoSignalPilot, relevanciaDe, type AcaoSinal, type RelevanciaEstrutural } from './signalPilot';
 import type { ClassePrioridade, Empresa, RadarDataset, RegraScore, Sinal, TipoSinal } from './types';
 
@@ -26,15 +27,17 @@ export const FAMILIA_POR_TIPO: Partial<Record<TipoSinal, FamiliaDecay>> = {
 };
 /** Janelas sugeridas (dias) — HIPOTESE DE CALIBRACAO: ciclo de obra industrial e longo; vaga/noticia envelhece rapido. */
 export const JANELAS_FAMILIA_HIPOTESE: Record<FamiliaDecay, number> = { LONG_CYCLE: 540, MEDIUM_CYCLE: 270, SHORT_CYCLE: 120 };
+/** Alternativa menos agressiva (comparacao). */
+export const JANELAS_FAMILIA_MODERADA: Record<FamiliaDecay, number> = { LONG_CYCLE: 365, MEDIUM_CYCLE: 180, SHORT_CYCLE: 90 };
 export const janelaPorTipo = (tipo: TipoSinal, janelas: Record<FamiliaDecay, number> = JANELAS_FAMILIA_HIPOTESE): number | undefined => { const f = FAMILIA_POR_TIPO[tipo]; return f ? janelas[f] : undefined; };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Simulacao de um cenario (fonte x decaimento) para uma empresa
 // ---------------------------------------------------------------------------------------------------------------------
-export interface Cenario { nome: string; confiabilidadeFonte?: number; janelaDias?: number; janelaPorTipo?: Record<FamiliaDecay, number> }
+export interface Cenario { nome: string; confiabilidadeFonte?: number; janelaDias?: number; janelaPorTipo?: Record<FamiliaDecay, number>; fit?: (e: Empresa) => number; recenciaPorFamilia?: Record<FamiliaDecay, number> }
 export interface ResultadoCenario {
   cenario: string; confiancaInformada: number; confiancaEfetiva: number; effectiveScore: number; fatorDecay: number; janelaAplicada?: number;
-  timing: number; intent: number; priorityScore: number; priorityClass: ClassePrioridade;
+  fit: number; timing: number; intent: number; relationship: number; dataQuality: number; priorityScore: number; priorityClass: ClassePrioridade; decisionFit?: number;
   matriz: AcaoSinal; conta: string; crmAtual: EstadoAcao; crmSimulado: EstadoAcao; analista?: AcaoSinal; conflito: 'ALIGNED' | 'ACTION_CONFLICT';
   relevancia?: RelevanciaEstrutural;
 }
@@ -84,7 +87,13 @@ export function simularCenario(r: RadarDataset, empresaId: string, hoje: string,
   const ctx = contextoEmpresa(rSim, e.id)!;
   const x = calcularScore(ctx, regras, r.configScore, hoje);
   const d = (k: string) => x.dimensoes.find((z) => z.dimensao === k)?.score ?? 0;
-  const eSim: Empresa = { ...e, fitScore: d('FIT'), timingScore: d('TIMING'), intentScore: d('INTENT'), relationshipScore: d('RELATIONSHIP'), dataQualityScore: d('DATA_QUALITY'), priorityScore: x.total, priorityClass: x.classe };
+  // FIT calibrado (simulacao): substitui a dimensao FIT e recompoe o total com os pesos configurados
+  const fitSim = c.fit ? c.fit(e) : d('FIT');
+  const { pesos, classes } = configDe(r.configScore);
+  const somaPesos = DIMENSOES.reduce((s, k) => s + pesos[k], 0) || 1;
+  const totalSim = c.fit ? Math.round(((fitSim * pesos.FIT + d('TIMING') * pesos.TIMING + d('INTENT') * pesos.INTENT + d('RELATIONSHIP') * pesos.RELATIONSHIP + d('DATA_QUALITY') * pesos.DATA_QUALITY) / somaPesos) * 10) / 10 : x.total;
+  const classeSim = c.fit ? (classes.find((k) => totalSim >= k.minimo)?.classe ?? 'D') : x.classe;
+  const eSim: Empresa = { ...e, fitScore: fitSim, timingScore: d('TIMING'), intentScore: d('INTENT'), relationshipScore: d('RELATIONSHIP'), dataQualityScore: d('DATA_QUALITY'), priorityScore: totalSim, priorityClass: classeSim };
   const rFinal: RadarDataset = { ...rSim, empresas: rSim.empresas.map((z) => (z.id === e.id ? eSim : z)) };
   const forte = sinalPrincipal(eSim.id, rFinal, hoje);
   const fonteForte = forte ? r.fontes.find((f) => f.id === forte.fonteId) : undefined;
@@ -94,14 +103,14 @@ export function simularCenario(r: RadarDataset, empresaId: string, hoje: string,
   const fatorDecay = forte ? (janela ? Math.max(0, 1 - dias / janela) : 1) : 0;
   const sug = contatoRecomendado(eSim.id, rFinal);
   const cob = coberturaEmpresa(eSim, rFinal);
-  const matriz = recomendacaoSignalPilot({ priorityScore: eSim.priorityScore, timing: eSim.timingScore, intent: eSim.intentScore, decisionFit: sug?.fit.score, cobertura: cob.nivel, sinal: forte ? { grupo: GRUPO_POR_TIPO[forte.tipo], relevancia: relevanciaDe(forte), confianca: forte.confianca, diasDesde: dias } : undefined });
+  const matriz = recomendacaoSignalPilot({ priorityScore: eSim.priorityScore, timing: eSim.timingScore, intent: eSim.intentScore, decisionFit: sug?.fit.score, cobertura: cob.nivel, sinal: forte ? { grupo: GRUPO_POR_TIPO[forte.tipo], relevancia: relevanciaDe(forte), confianca: forte.confianca, diasDesde: dias, janelaRecente: c.recenciaPorFamilia ? janelaPorTipo(forte.tipo, c.recenciaPorFamilia) : undefined } : undefined });
   const crmAtual = recomendarAcao(eSim, rFinal, hoje).estado;
   const crmSimulado = proximaAcaoSimulada(eSim, rFinal, hoje).estado;
   const analista = forte ? leituraDe(forte).acaoRecomendada : undefined;
   const informadaOriginal = forte ? confiancaInformadaDe(r.sinais.find((s) => s.id === forte.id) ?? forte, fonteForte?.confiabilidade ?? 1) : 0;
   return {
     cenario: c.nome, confiancaInformada: informadaOriginal, confiancaEfetiva: forte?.confianca ?? 0, effectiveScore: forte?.scoreEfetivo ?? 0, fatorDecay: Math.round(fatorDecay * 1000) / 1000, janelaAplicada: janela,
-    timing: eSim.timingScore, intent: eSim.intentScore, priorityScore: eSim.priorityScore, priorityClass: eSim.priorityClass,
+    fit: eSim.fitScore, timing: eSim.timingScore, intent: eSim.intentScore, relationship: eSim.relationshipScore, dataQuality: eSim.dataQualityScore, priorityScore: eSim.priorityScore, priorityClass: eSim.priorityClass, decisionFit: sug?.fit.score,
     matriz: matriz.acao, conta: matriz.conta, crmAtual, crmSimulado, analista, conflito: conflitoAcoes({ matriz: matriz.acao, analista, crm: crmAtual }).status, relevancia: forte ? relevanciaDe(forte) : undefined,
   };
 }
