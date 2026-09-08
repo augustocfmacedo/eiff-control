@@ -37,6 +37,22 @@ export function inferirSenioridade(cargo?: string, senioridade?: string): Senior
   return 'Outro';
 }
 
+/** Dominio canonico de departamento (chaves de `departamento.<chave>` na matriz). Aceita portugues e os departamentos da Explorium; sem equivalente -> indefinido. */
+export const DEPARTAMENTOS_CANONICOS = ['engenharia', 'industrial', 'producao', 'expansao', 'operacoes', 'facilities', 'compras', 'logistica', 'supply_chain', 'real_estate'] as const;
+export type DepartamentoCanonico = typeof DEPARTAMENTOS_CANONICOS[number];
+const SINONIMOS_DEPARTAMENTO: [RegExp, DepartamentoCanonico][] = [
+  [/\b(engineering|engenharia|engineer)\b/, 'engenharia'], [/\bindustrial\b/, 'industrial'], [/\b(manufacturing|production|producao|manufatura|fabrica|plant)\b/, 'producao'],
+  [/\b(expansion|expansao|novos negocios|business development)\b/, 'expansao'], [/\b(operations|operacoes|operacao|operational|operacional)\b/, 'operacoes'], [/\b(facilities|facility|infraestrutura|manutencao predial)\b/, 'facilities'],
+  [/\b(procurement|purchasing|compras|suprimentos|sourcing)\b/, 'compras'], [/\b(logistics|logistica|distribuicao|warehouse|armazem)\b/, 'logistica'], [/\b(supply chain|supply|cadeia de suprimentos)\b/, 'supply_chain'], [/\b(real estate|imobiliario|imoveis|patrimonio)\b/, 'real_estate'],
+];
+/** Nao altera o valor original: so devolve a chave canonica equivalente (ou indefinido, ex.: "Trades", "Sales"). */
+export function departamentoCanonico(departamento?: string): DepartamentoCanonico | undefined {
+  const d = norm(departamento);
+  if (!d) return undefined;
+  for (const [re, chave] of SINONIMOS_DEPARTAMENTO) if (re.test(d)) return chave;
+  return undefined;
+}
+
 export function porteDe(e: Pick<Empresa, 'faixaFuncionarios' | 'faixaReceita' | 'capitalSocial'>, pesos: PesoDecisionFit[] = []): Porte {
   const v = (k: string, padrao: number) => pesos.find((p) => p.chave === k)?.valor ?? padrao;
   const f = e.faixaFuncionarios ?? '';
@@ -67,9 +83,10 @@ export function calcularDecisionFit(c: Pick<Contato, 'persona' | 'cargo' | 'depa
   razoes.push(`${NOME_PERSONA[persona]} em empresa de ${NOME_PORTE[porte]}`);
   const bs = v(`senioridade.${senioridade}`) ?? 0;
   if (bs) { score += bs; razoes.push(senioridade === 'C-level' ? 'nível C' : senioridade === 'Diretor' ? 'diretoria' : senioridade === 'Gerente' ? 'gerência' : senioridade.toLowerCase()); }
-  const dep = norm(c.departamento);
-  const linhaDep = pesos.filter((p) => p.chave.startsWith('departamento.')).find((p) => dep.includes(p.chave.slice('departamento.'.length)));
-  if (linhaDep && dep) { score += linhaDep.valor; razoes.push(`área ${c.departamento}`); }
+  // bonus de departamento pela chave canonica (portugues ou Explorium); sem equivalente canonico nao ha bonus
+  const canon = departamentoCanonico(c.departamento);
+  const linhaDep = canon ? pesos.find((p) => p.chave === `departamento.${canon}`) : undefined;
+  if (linhaDep) { score += linhaDep.valor; razoes.push(`área ${c.departamento}${canon !== norm(c.departamento) ? ` (${canon})` : ''}`); }
   const tp = tipoProjetoChave(tipoProjeto);
   const bp = tipoProjeto ? v(`projeto.${tp}.${persona}`) ?? 0 : 0;
   if (bp) { score += bp; razoes.push(`oportunidade de ${tp === 'expansao' ? 'expansão' : tp === 'fabrica' ? 'fábrica' : tp === 'galpao' ? 'galpão' : tp === 'cd' ? 'centro de distribuição' : tp}`); }

@@ -23,11 +23,11 @@ describe('busca de decisor por conta', () => {
     ], r, HOJE);
     expect(res.ignorados).toBe(2);
     expect(res.candidatos.map((c) => c.nome)).toEqual(['Bruno Industrial', 'Davi Engenharia', 'Carla Presidente', 'Ana Compras']);
-    expect(res.candidatos[0]).toMatchObject({ persona: 'INDUSTRIAL_DIRECTOR', fit: 84, adequacao: 1, funcaoDireta: true, melhorQueAtual: true, recomendacao: 'ENRICH', jaNoRadar: false, contatoDisponivel: false });
+    expect(res.candidatos[0]).toMatchObject({ persona: 'INDUSTRIAL_DIRECTOR', fit: 90, adequacao: 1, funcaoDireta: true, melhorQueAtual: true, recomendacao: 'ENRICH', jaNoRadar: false, contatoDisponivel: false });
     expect(res.candidatos[2]).toMatchObject({ persona: 'PRESIDENT', fit: 55, melhorQueAtual: false }); // presidente nao vence por senioridade
     expect(res.atual).toMatchObject({ fit: 55, persona: 'CEO' });
-    // departamento da Explorium vem em ingles ('manufacturing'): nao recebe o bonus de area (chaves em portugues), como nos contatos ja importados
-    expect(res).toMatchObject({ delta: 29, fitIdeal: 70, recomendacao: 'ENRICH', custoEnriquecerMelhor: 2 });
+    // departamento 'manufacturing' da Explorium recebe o bonus canonico de producao (+6)
+    expect(res).toMatchObject({ delta: 35, fitIdeal: 70, recomendacao: 'ENRICH', custoEnriquecerMelhor: 2 });
     expect(res.candidatos[0].qualidadeDados).toBeGreaterThan(res.candidatos[3].qualidadeDados); // linkedin conta na qualidade
   });
   it('criterio de sucesso: fit >= ideal, ou materialmente superior com funcao direta; compras/CEO nao vencem por delta', () => {

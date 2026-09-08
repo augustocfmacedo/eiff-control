@@ -1,7 +1,7 @@
 // Vibe Prospecting (Explorium Data API): prioridades de decisores, estimativa de creditos e conversao de prospects
 // em contatos do Radar. Puro: usado pela funcao Netlify (servidor) e pela tela. A chave da API nunca passa por aqui.
 import type { Contato, Empresa, Persona, RadarDataset } from './types';
-import { calcularDecisionFit, tipoProjetoPrincipal } from './contatos';
+import { calcularDecisionFit, inferirSenioridade, tipoProjetoPrincipal } from './contatos';
 
 export interface PrioridadeDecisor { nome: string; filtros: Record<string, unknown> }
 
@@ -97,11 +97,19 @@ export const senioridadeVibe = (nivel?: string): string | undefined => { const n
 export const statusEmailVibe = (s?: string): Contato['statusEmail'] => { const v = (s ?? '').toLowerCase(); if (!v) return undefined; if (v === 'valid') return 'valido'; if (v === 'catch_all') return 'catch_all'; if (v === 'invalid') return 'invalido'; return 'desconhecido'; };
 export const personaPorDepartamentoVibe = (dep?: string): Persona | undefined => { const d = (dep ?? '').toLowerCase(); if (!d) return undefined; if (d.includes('engineering')) return 'ENGINEERING'; if (d.includes('operations')) return 'OPERATIONS'; if (d.includes('supply')) return 'SUPPLY_CHAIN'; if (d.includes('logist')) return 'LOGISTICS'; if (d.includes('procure') || d.includes('purchas')) return 'PROCUREMENT'; if (d.includes('manufactur') || d.includes('production')) return 'MANUFACTURING'; if (d.includes('facilit')) return 'FACILITIES'; if (d.includes('real estate')) return 'REAL_ESTATE'; return undefined; };
 
-/** Campos normalizados de contato a partir de um prospect (para upsertContato). */
+/** Senioridade do prospect: job_level valido da Explorium; senao, inferida do titulo pela regra do Radar (Outro -> indefinida, nunca inventada). */
+export function senioridadeProspectVibe(p: Pick<ProspectVibe, 'job_level_main' | 'job_title'>): string | undefined {
+  const porNivel = senioridadeVibe(p.job_level_main);
+  if (porNivel) return porNivel;
+  const porTitulo = inferirSenioridade(p.job_title);
+  return porTitulo === 'Outro' ? undefined : porTitulo;
+}
+
+/** Campos normalizados de contato a partir de um prospect (para upsertContato). O departamento bruto da Explorium e preservado. */
 export function prospectParaContato(p: ProspectVibe, hoje: string) {
   const nome = (p.full_name ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`).trim();
   return {
-    nome, cargo: p.job_title, departamento: p.job_department_main, senioridade: senioridadeVibe(p.job_level_main),
+    nome, cargo: p.job_title, departamento: p.job_department_main, senioridade: senioridadeProspectVibe(p),
     email: p.professional_email, statusEmail: statusEmailVibe(p.professional_email_status), celular: p.mobile_phone, statusTelefone: p.mobile_phone ? ('desconhecido' as const) : undefined,
     linkedin: p.linkedin ?? p.linkedin_url_array?.[0], externoId: p.prospect_id, verificadoEm: hoje,
     observacoes: p.prioridade ? `Vibe: prioridade ${p.prioridade}` : undefined,
