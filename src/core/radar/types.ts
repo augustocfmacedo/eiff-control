@@ -415,6 +415,9 @@ export interface RadarDataset {
   duplicatas: PossivelDuplicata[];
   supressoes: Supressao[];
   registrosFonte: RegistroFonte[];
+  comunicacoes: ComunicacaoRadar[]; // rascunhos gerados para revisao humana (sem persistencia nesta fase)
 }
+/** Comunicacao gerada (estrutura completa em comunicacaoGeracao.ts; aqui so o contrato do dataset). */
+export interface ComunicacaoRadar { id: string; empresaId: string; contatoId: string; canal: Canal; objetivo: string; playbook: string; estado: 'DRAFT' | 'READY_FOR_REVIEW' | 'APPROVED' | 'REJECTED' | 'SENT' | 'REPLIED' | 'CANCELLED'; spec: unknown; resultado: { versaoPrincipal: string; versoesAlternativas: string[]; assunto?: string; roteiroLigacao?: string; objecoes: { gatilho: string; resposta: string }[]; metadados: Record<string, unknown> }; textoEditado?: string; assuntoEditado?: string; criadoEm: string; atualizadoEm: string; criadoPor: string; historico: { de: string; para: string; em: string; por: string; motivo?: string }[] }
 
-export const radarVazio = (): RadarDataset => ({ operacoesVibe: [], fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [] });
+export const radarVazio = (): RadarDataset => ({ operacoesVibe: [], fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [], comunicacoes: [] });

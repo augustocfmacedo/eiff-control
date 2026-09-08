@@ -53,6 +53,19 @@ peso (pode ser negativo), decaimento linear em N dias. Score final = Σ dimensã
 com a explicação; na interface o score é clicável e mostra fator por fator, com o motivo e o decaimento aplicado.
 "Recalcular scores" no Command Center reaplica regras e decaimento a toda a base.
 
+### Communication Intelligence 01 (setembro/2026)
+
+Motor de contexto de comunicação, reutilizável para qualquer conta, contato, sinal, estágio e resultado. Nada é enviado.
+
+- **Fatos** (`fatosDaEmpresa`, `fatosDoContato`, `fatosDoSinal`): cada fato carrega origem, fonte, `verificado`, confiança, data e URL. Só fato verificado entra em "fatos permitidos"; a leitura "por que importa" é interpretação e nunca vira fato.
+- **Objetivos** (`OBJETIVOS`): condição de sucesso, CTA, estágio mínimo/máximo e personas adequadas.
+- **Playbooks** (`PLAYBOOKS`): ACCESS_VIA_EXECUTIVE, REFERRAL_INTRODUCTION, TECHNICAL_DISCOVERY, OPERATIONS_DISCOVERY, PROCUREMENT_ROUTING, NO_RESPONSE_FOLLOWUP, FUTURE_PROJECT_NURTURE, PROJECT_CAPTURE, PRELIMINARY_ENGINEERING. Regras e intenção (fazer, não fazer, tom, elementos obrigatórios e proibidos, objeções), nunca texto fechado.
+- **Seleção** (`selecionarPlaybook`): último resultado (`TRANSICOES_RESULTADO`) → indicação recebida → compras → persona técnica/operacional → executivo (decision fit ≥ fit.ideal é o decisor; abaixo disso, pedir indicação).
+- **Canal** (`recomendarCanal`): executivo WhatsApp → telefone → e-mail; técnico/operacional telefone → WhatsApp → e-mail; compras e-mail; estágios avançados ligam; sem resposta alterna o canal; indicação vira canal secundário REFERRAL; sem canal válido → enriquecer.
+- **Content spec** (`montarContentSpec`): objetivo, playbook, canal, audiência, remetente, tom, limite de palavras, fatos a usar e a evitar, CTA, histórico, indicação, elementos obrigatórios/proibidos, alegações proibidas. É a entrada futura do LLM.
+- **Geração** (`generateCommunication`): interface de provedor. Hoje só o determinístico (compõe identificação, fato do sinal, frase da EIFF e CTA). O provedor LLM entrará por função Netlify protegida, nunca com chave no navegador.
+- **Revisão humana**: `gerarComunicacaoRadar` deixa o rascunho em READY_FOR_REVIEW; Aprovar / Editar / Rejeitar no painel "Abordagem" (página da empresa e fila Hoje). SENT e REPLIED estão bloqueados nesta fase: o envio é manual e o resultado é registrado como atividade.
+
 ### Calibração de produção 01 (setembro/2026)
 
 - **FIT balanceado** por regras `fitCalibrado` (configuráveis como as demais): Geografia 15 (GO 100%, UFs alvo 85%), Setor 35, Porte por funcionários 25, Faixa de receita 20, Porte industrial 5. As regras FIT antigas ficaram inativas (histórico preservado).

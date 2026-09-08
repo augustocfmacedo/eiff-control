@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { NOME_ESTADO_ACAO, NOME_ESTAGIO, NOME_SINAL, NOME_TIPO_ATIVIDADE, filaHoje, oportunidadesSemProximaAcao, type Empresa, type ItemFila, type TarefaRadar } from '../../core/radar';
 import { pode, useStore } from '../../data/store';
-import { Badge, Empty, KpiStrip, Link, PageHead, Select, useToast } from '../../ui/components';
+import { Badge, Empty, KpiStrip, Link, Modal, PageHead, Select, useToast } from '../../ui/components';
+import { Abordagem } from './Abordagem';
 import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaForm, d } from './comum';
 import { actions } from '../../data/store';
 
@@ -16,6 +17,7 @@ export default function RadarHoje() {
   const [atividade, setAtividade] = useState<ItemFila | null>(null);
   const [concluir, setConcluir] = useState<TarefaRadar | null>(null);
   const [tarefa, setTarefa] = useState<TarefaRadar | null>(null);
+  const [abordagem, setAbordagem] = useState<ItemFila | null>(null);
   const podeAgir = pode(usuario, 'radar');
   const fila = filaHoje(ds.radar, hoje, somenteMinhas ? usuario.id : undefined).filter((i) => !classe || i.empresa.priorityClass === classe);
   const vencidas = fila.filter((i) => i.vencida).length;
@@ -62,6 +64,7 @@ export default function RadarHoje() {
                 </div>
                 <div className="actions" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
                   {podeAgir && <button className="btn sm primary" onClick={() => setAtividade(i)}>Registrar</button>}
+                  {podeAgir && <button className="btn sm" onClick={() => setAbordagem(i)}>Abordagem</button>}
                   {podeAgir && t && <button className="btn sm" onClick={() => setConcluir(t)}>Concluir tarefa</button>}
                   {podeAgir && !t && <button className="btn sm" onClick={() => setTarefa(actions.novaTarefaRadar(i.empresa.id, { tipo: i.recomendacao.tipoTarefa, descricao: i.recomendacao.acao, oportunidadeId: i.oportunidade?.id, contatoId: i.recomendacao.contato?.contato.id }))}>Agendar</button>}
                 </div>
@@ -72,6 +75,7 @@ export default function RadarHoje() {
         </div>
       )}
       {score && <ScoreModal e={score} onClose={() => setScore(null)} />}
+      {abordagem && <Modal title={`Abordagem · ${abordagem.empresa.nomeFantasia ?? abordagem.empresa.razaoSocial}`} onClose={() => setAbordagem(null)} wide><Abordagem empresaId={abordagem.empresa.id} contatoId={abordagem.recomendacao.contato?.contato.id} /></Modal>}
       {atividade && <AtividadeForm empresaId={atividade.empresa.id} contatoId={atividade.recomendacao.contato?.contato.id} oportunidadeId={atividade.oportunidade?.id} onClose={() => setAtividade(null)} onErro={toast} onOk={toast} />}
       {concluir && <ConcluirTarefaForm tarefa={concluir} onClose={() => setConcluir(null)} onErro={toast} onOk={toast} />}
       {tarefa && <TarefaForm inicial={tarefa} onClose={() => setTarefa(null)} onErro={toast} onOk={toast} />}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { NOME_CANAL, NOME_ESTAGIO, NOME_ESTADO_ACAO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, calcularScore, contatoElegivel, contatoRecomendado, contatoSuprimido, contextoEmpresa, empresaSuprimida, estagioAtivo, formatarCnpj, lerEmpresa, type Contato, type Empresa, type Oportunidade, type Projeto, type TarefaRadar } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, KpiStrip, Link, PageHead, ProgressRow, Tabs, money, tentar, useToast } from '../../ui/components';
+import { Abordagem } from './Abordagem';
 import { AtividadeForm, ConcluirTarefaForm, ContatoForm, EmpresaForm, OportunidadeForm, ProjetoForm, RESPOSTA_NOME, ScoreModal, ScorePill, SinalForm, TONE_ESTAGIO, TarefaForm, d, dh, nomeUsuario, toneClasse, valor } from './comum';
 
 type Aba = 'overview' | 'contatos' | 'projetos' | 'sinais' | 'atividades' | 'oportunidades' | 'inteligencia';
@@ -58,6 +59,7 @@ export default function RadarEmpresa({ id, query }: { id: string; query: URLSear
       <div style={{ height: 16 }} />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'overview', label: 'Overview' }, { id: 'contatos', label: `Contatos (${contatos.length})` }, { id: 'projetos', label: `Projetos (${projetos.length})` }, { id: 'sinais', label: `Sinais (${sinais.length})` }, { id: 'atividades', label: `Atividades (${atividades.length})` }, { id: 'oportunidades', label: `Oportunidades (${opps.length})` }, { id: 'inteligencia', label: 'Inteligência' }]} />
 
+      {aba === 'overview' && <div style={{ marginBottom: 12 }}><Abordagem empresaId={e.id} contatoId={sugestao?.contato.id} /></div>}
       {aba === 'overview' && (
         <div className="grid cols-2">
           <div className="card">

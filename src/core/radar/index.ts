@@ -17,3 +17,5 @@ export * from './signalPilot';
 export * from './buscaDecisor';
 export * from './calibracao';
 export * from './fitCalibracao';
+export * from './comunicacao';
+export * from './comunicacaoGeracao';

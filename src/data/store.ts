@@ -48,6 +48,8 @@ import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
+import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, gerarComunicacaoSincrona, montarContentSpec, transicaoComunicacaoValida, validarGeracao, type Canal, type EstadoComunicacao } from '../core/radar';
+import type { ComunicacaoRadar } from '../core/radar/types';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
@@ -226,6 +228,9 @@ const seq = (prefix: string, ids: string[]): string => {
 // ---------------------------------------------------------------------------
 // EIFF Radar: helpers (ids, padroes, recalculo de score com snapshot)
 // ---------------------------------------------------------------------------
+/** Cidade da EIFF nas identificacoes (dado da organizacao, nao de conta). */
+const REMETENTE_CIDADE_PADRAO = 'Goiânia';
+
 function idsRadar(r: RadarDataset): Ids {
   const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte].map((x) => x.id));
   const contagem: Record<string, number> = {};
@@ -1752,6 +1757,57 @@ export const actions = {
     ds = registrar({ ...ds, radar }, 'radar_registrar_atividade', 'radar_atividade', a.id, undefined, { tipo: a.tipo, canal: a.canal, resultado: a.resultado, empresaId: a.empresaId });
     commit(ds);
     return radar.atividades.find((x) => x.id === a.id)!;
+  },
+
+  /** Gera a abordagem (contexto -> spec -> texto) e a deixa em READY_FOR_REVIEW. Nada e enviado. */
+  gerarComunicacaoRadar(empresaId: string, opts: { contatoId?: string; canal?: Canal } = {}) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const ctx = contextoComunicacaoDe(r, empresaId, ds.params.dataBase, opts);
+    if (!ctx) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!ctx.comunicar || !ctx.contato) throw new RegraDeNegocioError(`Sem abordagem a gerar: ${ctx.motivoSelecao}`);
+    const canal = opts.canal ?? ctx.canal.primario;
+    if (!canal) throw new RegraDeNegocioError(`Sem canal: ${ctx.canal.motivo}`);
+    const spec = montarContentSpec(ctx, canal, { nome: state.usuario.nome, empresa: ds.params.empresa || ds.params.organizacao, cidade: REMETENTE_CIDADE_PADRAO });
+    const resultado = gerarComunicacaoSincrona(spec);
+    const v = validarGeracao(spec, resultado);
+    if (!v.ok) throw new RegraDeNegocioError(`Geração reprovada: ${v.problemas.join('; ')}`);
+    const c: ComunicacaoRadar = { id: idsRadar(r).novo('COM'), empresaId, contatoId: ctx.contato.id, canal, objetivo: spec.objetivo, playbook: spec.playbook, estado: ESTADO_MAXIMO_AUTOMATICO, spec, resultado, criadoEm: agora(), atualizadoEm: agora(), criadoPor: state.usuario.id, historico: [{ de: 'DRAFT', para: ESTADO_MAXIMO_AUTOMATICO, em: agora(), por: state.usuario.nome }] };
+    ds = registrar({ ...ds, radar: { ...r, comunicacoes: [...r.comunicacoes, c] } }, 'radar_gerar_comunicacao', 'radar_comunicacao', c.id, undefined, { empresaId, contatoId: c.contatoId, canal, objetivo: c.objetivo, playbook: c.playbook, estado: c.estado });
+    commit(ds);
+    return c;
+  },
+
+  /** Revisao humana: APPROVED, REJECTED, CANCELLED ou volta a READY_FOR_REVIEW. SENT nao e permitido nesta fase (sem integracao de envio). */
+  transicionarComunicacaoRadar(id: string, para: EstadoComunicacao, opts: { motivo?: string; textoEditado?: string; assuntoEditado?: string } = {}) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const c = r.comunicacoes.find((x) => x.id === id);
+    if (!c) throw new RegraDeNegocioError('Comunicação não encontrada.');
+    if (para === 'SENT' || para === 'REPLIED') throw new RegraDeNegocioError('Envio não está habilitado nesta fase: registre o contato como atividade.');
+    if (!transicaoComunicacaoValida(c.estado, para)) throw new RegraDeNegocioError(`Transição ${c.estado} → ${para} não permitida.`);
+    if (para === 'REJECTED' && !opts.motivo?.trim()) throw new RegraDeNegocioError('Motivo da rejeição é obrigatório.');
+    const novo: ComunicacaoRadar = { ...c, estado: para, textoEditado: opts.textoEditado ?? c.textoEditado, assuntoEditado: opts.assuntoEditado ?? c.assuntoEditado, atualizadoEm: agora(), historico: [...c.historico, { de: c.estado, para, em: agora(), por: state.usuario.nome, motivo: opts.motivo }] };
+    ds = registrar({ ...ds, radar: { ...r, comunicacoes: r.comunicacoes.map((x) => (x.id === id ? novo : x)) } }, 'radar_revisar_comunicacao', 'radar_comunicacao', id, { estado: c.estado }, { estado: para, motivo: opts.motivo });
+    commit(ds);
+    return novo;
+  },
+
+  /** Edicao do texto pelo revisor (mantem READY_FOR_REVIEW). */
+  editarComunicacaoRadar(id: string, texto: string, assunto?: string) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const c = r.comunicacoes.find((x) => x.id === id);
+    if (!c) throw new RegraDeNegocioError('Comunicação não encontrada.');
+    if (c.estado !== 'READY_FOR_REVIEW' && c.estado !== 'REJECTED') throw new RegraDeNegocioError('Só rascunhos em revisão podem ser editados.');
+    if (!texto.trim()) throw new RegraDeNegocioError('Texto vazio.');
+    const novo: ComunicacaoRadar = { ...c, estado: 'READY_FOR_REVIEW', textoEditado: texto, assuntoEditado: assunto ?? c.assuntoEditado, atualizadoEm: agora(), historico: c.estado === 'REJECTED' ? [...c.historico, { de: 'REJECTED', para: 'READY_FOR_REVIEW', em: agora(), por: state.usuario.nome, motivo: 'editado' }] : c.historico };
+    ds = registrar({ ...ds, radar: { ...r, comunicacoes: r.comunicacoes.map((x) => (x.id === id ? novo : x)) } }, 'radar_editar_comunicacao', 'radar_comunicacao', id, undefined, { chars: texto.length });
+    commit(ds);
+    return novo;
   },
 
   novaTarefaRadar(empresaId: string, parcial: Partial<TarefaRadar> = {}): TarefaRadar {
