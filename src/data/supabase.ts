@@ -113,10 +113,12 @@ async function sel(tabela: string, colunas = '*', filtro?: (q: any) => any): Pro
 }
 
 /** Le a tabela inteira em paginas de 1000 linhas (limite padrao do PostgREST). */
-async function selTodos(tabela: string, ordem: string): Promise<Row[]> {
+async function selTodos(tabela: string, ordem: string, comId = true): Promise<Row[]> {
   const out: Row[] = [];
   for (let de = 0; ; de += 1000) {
-    const { data, error } = await supabase!.from(tabela).select('*').order(ordem).order('id').range(de, de + 999);
+    let q = supabase!.from(tabela).select('*').order(ordem);
+    if (comId) q = q.order('id'); // tabelas de chave composta nao tem id
+    const { data, error } = await q.range(de, de + 999);
     falha(`ler ${tabela}`, error);
     out.push(...((data ?? []) as Row[]));
     if (!data || data.length < 1000) break;

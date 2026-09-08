@@ -6,7 +6,7 @@ import type { RadarDataset } from '../core/radar/types';
 
 type Row = Record<string, any>;
 export interface HelpersRadar {
-  sel: (tabela: string, ordem: string) => Promise<Row[]>;
+  sel: (tabela: string, ordem: string, comId?: boolean) => Promise<Row[]>;
   gravar: (tabela: string, filtro: Record<string, string | null | undefined>, row: Row, extraInsert?: Row) => Promise<Row | undefined>;
   inserir: (tabela: string, rows: Row[]) => Promise<Row[]>;
   apagar: (tabela: string, id: string) => Promise<void>;
@@ -59,7 +59,8 @@ let refs: Map<Chave, Map<string, string>> | null = null;
 
 export async function carregarRadar(h: Pick<HelpersRadar, 'sel' | 'orgId'>): Promise<RadarDataset> {
   const linhas = await Promise.all(SPECS.map((sp) => h.sel(sp.tabela, sp.ordem)));
-  const [tiposResposta, configScore, pesosFit] = await Promise.all([h.sel('radar_response_type', 'code'), h.sel('radar_score_setting', 'key'), h.sel('radar_decision_fit_weight', 'key')]);
+  // tabelas de chave composta (sem coluna id): ordenar so pela chave de negocio
+  const [tiposResposta, configScore, pesosFit] = await Promise.all([h.sel('radar_response_type', 'code', false), h.sel('radar_score_setting', 'key', false), h.sel('radar_decision_fit_weight', 'key', false)]);
   refs = new Map(SPECS.map((sp, i) => [sp.chave, new Map(linhas[i].map((x) => [x.id, x.id]))]));
   const ds = Object.fromEntries(SPECS.map((sp, i) => [sp.chave, linhas[i].map(sp.app)])) as unknown as RadarDataset;
   ds.tiposResposta = tiposResposta.map((x) => ({ codigo: x.code, nome: x.name, sentimento: x.sentiment, ativo: !!x.active }));
