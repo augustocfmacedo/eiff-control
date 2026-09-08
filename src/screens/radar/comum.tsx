@@ -138,9 +138,11 @@ export function ProjetoForm({ inicial, onClose, onErro, onOk }: FormProps<Projet
   );
 }
 
+/** Dados brutos digitados: JSON quando parseavel, senao texto livre. */
+const brutoDe = (t: string): unknown => { try { return JSON.parse(t); } catch { return { texto: t.trim() }; } };
 export function SinalForm({ empresaId, onClose, onErro, onOk }: { empresaId: string; onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void }) {
   const { ds } = useStore();
-  const [s, setS] = useState<{ tipo: TipoSinal; titulo: string; descricao: string; eventoEm: string; confianca: number; url: string; projetoId: string; fonteId: string }>({ tipo: 'PROJECT_IDENTIFIED', titulo: '', descricao: '', eventoEm: ds.params.dataBase, confianca: 1, url: '', projetoId: '', fonteId: ds.radar.fontes.find((f) => f.codigo === 'MANUAL')?.id ?? '' });
+  const [s, setS] = useState<{ tipo: TipoSinal; titulo: string; descricao: string; eventoEm: string; confianca: number; url: string; projetoId: string; fonteId: string; verificado: boolean; bruto: string }>({ tipo: 'PROJECT_IDENTIFIED', titulo: '', descricao: '', eventoEm: ds.params.dataBase, confianca: 1, url: '', projetoId: '', verificado: true, bruto: '', fonteId: ds.radar.fontes.find((f) => f.codigo === 'MANUAL')?.id ?? '' });
   const up = (p: Partial<typeof s>) => setS({ ...s, ...p });
   return (
     <Modal title="Registrar sinal" onClose={onClose}>
@@ -153,8 +155,10 @@ export function SinalForm({ empresaId, onClose, onErro, onOk }: { empresaId: str
         <Field label="Confiança (0-1)"><NumberInput value={s.confianca} onChange={(v) => up({ confianca: Math.max(0, Math.min(1, v)) })} step={0.1} /></Field>
         <Field label="Projeto"><Select value={s.projetoId} onChange={(v) => up({ projetoId: v })} options={ds.radar.projetos.filter((p) => p.empresaId === empresaId).map((p) => ({ value: p.id, label: p.nome }))} allowEmpty="—" /></Field>
         <Field label="Link"><Input value={s.url} onChange={(ev) => up({ url: ev.target.value })} /></Field>
+        <Field label="Verificado" hint="confirmado na fonte"><label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={s.verificado} onChange={(ev) => up({ verificado: ev.target.checked })} /> sim</label></Field>
+        <Field label="Dados brutos da fonte" hint="trecho, JSON ou anotação; guardado como raw_payload" full><textarea value={s.bruto} onChange={(ev) => up({ bruto: ev.target.value })} rows={3} style={{ width: '100%', fontSize: 12 }} /></Field>
       </div>
-      <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => { actions.registrarSinalRadar({ empresaId, tipo: s.tipo, titulo: s.titulo, descricao: s.descricao, eventoEm: s.eventoEm, confianca: s.confianca, url: s.url || undefined, projetoId: s.projetoId || undefined, fonteId: s.fonteId || undefined }); onOk('Sinal registrado e score atualizado.'); }, onErro, onClose)}>Registrar</button></div>
+      <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => { actions.registrarSinalRadar({ empresaId, tipo: s.tipo, titulo: s.titulo, descricao: s.descricao, eventoEm: s.eventoEm, confianca: s.confianca, url: s.url || undefined, projetoId: s.projetoId || undefined, fonteId: s.fonteId || undefined, verificado: s.verificado, payload: s.bruto.trim() ? brutoDe(s.bruto) : undefined }); onOk('Sinal registrado e score atualizado.'); }, onErro, onClose)}>Registrar</button></div>
     </Modal>
   );
 }
