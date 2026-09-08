@@ -533,6 +533,28 @@ export const actions = {
     commit(ds);
   },
 
+  /**
+   * Troca a conta financeira do titulo em qualquer status nao cancelado (inclusive Realizado, quando exige alcada de liquidar).
+   * As liquidacoes do titulo acompanham a conta nova, para o caixa por conta ficar coerente. Titulo conciliado com o extrato
+   * nao troca de conta (a transacao bancaria e o fato): desfaca a conciliacao antes.
+   */
+  alterarContaLancamento(id: string, conta: string, motivo = '') {
+    let ds = state.ds;
+    const atual = ds.lancamentos.find((l) => l.id === id);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    if (atual.status === 'Cancelado') throw new RegraDeNegocioError('Lançamento cancelado não pode ser alterado.');
+    exigir(atual.status === 'Realizado' ? 'liquidar' : 'editar_lancamento', atual.codigoObra || undefined);
+    if (!ds.contas.some((c) => c.ativa && c.instituicao === conta)) throw new RegraDeNegocioError('Conta financeira inválida ou inativa.');
+    if (conta === atual.contaFinanceira) return atual;
+    if (periodoFechado(ds, atual.competencia)) throw new RegraDeNegocioError('Período fechado.');
+    if (ds.transacoes.some((t) => t.lancamentoIds.includes(id))) throw new RegraDeNegocioError('Lançamento conciliado com o extrato: desfaça a conciliação antes de trocar a conta.');
+    const l: Lancamento = { ...atual, contaFinanceira: conta, atualizadoEm: agora(), atualizadoPor: state.usuario.nome, versao: atual.versao + 1 };
+    ds = { ...ds, lancamentos: ds.lancamentos.map((x) => (x.id === id ? l : x)), liquidacoes: ds.liquidacoes.map((q) => (q.lancamentoId === id ? { ...q, conta } : q)) };
+    ds = registrar(ds, 'alterar_conta_lancamento', 'lancamento', id, atual, l, motivo || `conta ${atual.contaFinanceira} → ${conta}`);
+    commit(ds);
+    return l;
+  },
+
   /** FIN-005: liquidacao parcial ou total; exige conta, data, valor e evidencia. */
   liquidar(lancamentoId: string, dados: { data: string; valor: number; conta: string; documento: string }) {
     let ds = state.ds;
@@ -552,6 +574,8 @@ export const actions = {
       valorRealizado: total,
       realizacao: total >= liquido - 0.005 ? dados.data : atual.realizacao,
       status: total >= liquido - 0.005 ? 'Realizado' : atual.status,
+      // o caixa segue a conta em que o dinheiro efetivamente entrou/saiu: ao realizar, a conta do titulo passa a ser a da liquidacao
+      contaFinanceira: total >= liquido - 0.005 ? dados.conta : atual.contaFinanceira,
       atualizadoEm: agora(),
       atualizadoPor: state.usuario.nome,
       versao: atual.versao + 1,

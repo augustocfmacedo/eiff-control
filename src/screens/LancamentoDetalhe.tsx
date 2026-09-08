@@ -12,6 +12,7 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
   const [editando, setEditando] = useState(false);
   const [liq, setLiq] = useState<{ data: string; valor: number; conta: string; documento: string } | null>(null);
   const [cancel, setCancel] = useState<string | null>(null);
+  const [conta, setConta] = useState<{ conta: string; motivo: string } | null>(null);
   const base = ds.lancamentos.find((x) => x.id === id);
   if (!base) return <Empty>Lançamento {id} não encontrado. <Link to="/lancamentos">Voltar</Link></Empty>;
   const l = calcLancamento(base, ds);
@@ -21,6 +22,7 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
   const editavel = l.status !== 'Cancelado' && l.status !== 'Realizado' && pode(usuario, 'editar_lancamento', l.codigoObra || undefined);
   const podeLiquidar = pode(usuario, 'liquidar') && (l.status === 'Aprovado' || l.status === 'Programado');
   const trans = ds.transacoes.filter((t) => t.lancamentoIds.includes(id));
+  const podeAlterarConta = l.status !== 'Cancelado' && pode(usuario, l.status === 'Realizado' ? 'liquidar' : 'editar_lancamento', l.codigoObra || undefined);
 
   return (
     <>
@@ -28,6 +30,7 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
         <button className="btn" onClick={() => navegar(l.tipo === 'Entrada' ? '/receber' : '/pagar')}>← Lista</button>
         {editavel && <button className="btn" onClick={() => setEditando(true)}>Editar</button>}
         {podeLiquidar && <button className="btn primary" onClick={() => setLiq({ data: ds.params.dataBase, valor: l.saldoAberto, conta: l.contaFinanceira, documento: '' })}>Liquidar</button>}
+        {podeAlterarConta && verBancos && <button className="btn" onClick={() => setConta({ conta: l.contaFinanceira, motivo: '' })}>Alterar conta</button>}
         {(editavel || (l.status === 'Realizado' && pode(usuario, 'liquidar'))) && <button className="btn danger" onClick={() => setCancel('')}>{l.status === 'Realizado' ? 'Estornar' : 'Cancelar'}</button>}
       </PageHead>
       {l.status === 'Pendente' && <div className="alert warn">Aguardando aprovação: fora das visões oficiais de caixa até ser aprovado. <Link to={`/aprovacoes?id=${aprov[0]?.id ?? ''}`}>Ver aprovação</Link></div>}
@@ -108,6 +111,16 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
             <Field label="Evidência (comprovante / documento)" req><Input value={liq.documento} onChange={(e) => setLiq({ ...liq, documento: e.target.value })} placeholder="ex.: comprovante PIX 123" /></Field>
           </div>
           <div className="foot"><button className="btn" onClick={() => setLiq(null)}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.liquidar(id, liq), toast, () => { setLiq(null); toast('Liquidação registrada.'); })}>Confirmar liquidação</button></div>
+        </Modal>
+      )}
+      {conta && (
+        <Modal title={`Alterar conta de ${l.id}`} onClose={() => setConta(null)}>
+          <p className="small">Conta atual: <b>{l.contaFinanceira}</b>. {l.status === 'Realizado' ? 'O título está realizado: as liquidações passam para a conta nova e o caixa por conta é recalculado.' : 'O caixa projetado passa a contar na conta nova.'} {trans.length > 0 && 'Este título está conciliado com o extrato e não pode trocar de conta.'}</p>
+          <div className="form">
+            <Field label="Nova conta" req><Select value={conta.conta} onChange={(v) => setConta({ ...conta, conta: v })} options={ds.contas.filter((c) => c.ativa).map((c) => c.instituicao)} /></Field>
+            <Field label="Motivo" full><Input value={conta.motivo} onChange={(e) => setConta({ ...conta, motivo: e.target.value })} placeholder="opcional, fica na auditoria" /></Field>
+          </div>
+          <div className="foot"><button className="btn" onClick={() => setConta(null)}>Voltar</button><button className="btn primary" disabled={trans.length > 0 || conta.conta === l.contaFinanceira} onClick={() => tentar(() => actions.alterarContaLancamento(id, conta.conta, conta.motivo), toast, () => { setConta(null); toast('Conta alterada.'); })}>Confirmar</button></div>
         </Modal>
       )}
       {cancel !== null && (

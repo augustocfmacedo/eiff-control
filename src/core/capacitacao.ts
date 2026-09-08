@@ -127,6 +127,7 @@ export const LICOES: Licao[] = [
       'Liquidação parcial: informe o valor pago; o saldo continua em aberto com o mesmo vencimento.',
       'Errou? Use Estornar informando o motivo; o título volta a aberto e o estorno fica na auditoria.',
       'Prefira liquidar a partir da transação bancária em Bancos e conciliação: já nasce conciliado.',
+      'A conta informada na liquidação total vira a conta do título (o caixa segue o banco em que o dinheiro entrou). Errou a conta? No detalhe do título use Alterar conta: vale em qualquer status, as liquidações acompanham e fica na auditoria; título conciliado com o extrato não troca de conta.',
     ],
     obrigatorios: ['Data', 'Valor maior que zero', 'Conta', 'Evidência (documento)'],
     regras: ['Só Financeiro e Administrador liquidam.', 'Período fechado bloqueia liquidação e estorno.', 'Divergência entre valor previsto e pago exige justificativa.'],
