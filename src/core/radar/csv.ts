@@ -1,6 +1,6 @@
 // Leitura de CSV/TSV colado ou enviado: detecta separador, aspas e cabecalho; mapeia colunas por sinonimos (PT/EN) para
 // os campos normalizados de empresa e contato. Nao decide nada: devolve linhas normalizadas + erros por campo.
-import { normalizarCidade, normalizarCnpj, normalizarDominio, normalizarUf, semAcento } from './normalizar';
+import { normalizarCidade, normalizarCnpj, normalizarDominio, normalizarUf, semAcento, normalizarPais } from './normalizar';
 
 export function lerCsv(texto: string): { cabecalho: string[]; linhas: string[][]; separador: string } {
   const t = texto.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
@@ -112,7 +112,7 @@ export function normalizarEmpresasCsv(texto: string): { colunas: (string | undef
     if (!razaoSocial) erros.push({ campo: 'razaoSocial', mensagem: 'Razão social ausente' });
     const dominio = normalizarDominio(g('dominio') ?? g('site') ?? g('email'));
     const uf = normalizarUf(g('uf')); if (g('uf') && !uf) erros.push({ campo: 'uf', mensagem: `UF inválida: ${g('uf')}` });
-    return { numero: i + 2, dados: d, cnpj, razaoSocial, nomeFantasia: g('nomeFantasia'), dominio, site: g('site'), linkedin: g('linkedin'), setor: g('setor'), cnae: g('cnae'), cidade: normalizarCidade(g('cidade')), uf, pais: g('pais') ?? 'Brasil', faixaFuncionarios: faixaFunc(g('faixaFuncionarios')), faixaReceita: g('faixaReceita'), capitalSocial: numero(g('capitalSocial')), numeroUnidades: numero(g('numeroUnidades')), fonteExternaId: g('fonteExternaId'), businessId: businessIdDe(g('businessId')), telefone: g('telefone'), email: g('email'), observacoes: g('observacoes'), erros };
+    return { numero: i + 2, dados: d, cnpj, razaoSocial, nomeFantasia: g('nomeFantasia'), dominio, site: g('site'), linkedin: g('linkedin'), setor: g('setor'), cnae: g('cnae'), cidade: normalizarCidade(g('cidade')), uf, pais: normalizarPais(g('pais')) ?? 'Brasil', faixaFuncionarios: faixaFunc(g('faixaFuncionarios')), faixaReceita: g('faixaReceita'), capitalSocial: numero(g('capitalSocial')), numeroUnidades: numero(g('numeroUnidades')), fonteExternaId: g('fonteExternaId'), businessId: businessIdDe(g('businessId')), telefone: g('telefone'), email: g('email'), observacoes: g('observacoes'), erros };
   });
   return { colunas, cabecalho, empresas };
 }

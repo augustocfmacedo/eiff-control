@@ -38,7 +38,12 @@ export function normalizarNome(v?: string | null): string {
   return semAcento((v ?? '').toLowerCase()).replace(/[^a-z0-9 ]+/g, ' ').replace(SUFIXOS, ' ').replace(/\b(e|de|da|do|dos|das|em)\b/g, ' ').replace(/\b[a-z]\b/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-export const normalizarUf = (v?: string | null) => { const s = semAcento((v ?? '').trim().toUpperCase()); return /^[A-Z]{2}$/.test(s) ? s : undefined; };
+/** Nome do estado (como vem de bases B2B: 'goiás', 'mato grosso do sul') -> sigla. */
+const UF_POR_NOME: Record<string, string> = { ACRE: 'AC', ALAGOAS: 'AL', AMAPA: 'AP', AMAZONAS: 'AM', BAHIA: 'BA', CEARA: 'CE', 'DISTRITO FEDERAL': 'DF', 'ESPIRITO SANTO': 'ES', GOIAS: 'GO', MARANHAO: 'MA', 'MATO GROSSO': 'MT', 'MATO GROSSO DO SUL': 'MS', 'MINAS GERAIS': 'MG', PARA: 'PA', PARAIBA: 'PB', PARANA: 'PR', PERNAMBUCO: 'PE', PIAUI: 'PI', 'RIO DE JANEIRO': 'RJ', 'RIO GRANDE DO NORTE': 'RN', 'RIO GRANDE DO SUL': 'RS', RONDONIA: 'RO', RORAIMA: 'RR', 'SANTA CATARINA': 'SC', 'SAO PAULO': 'SP', SERGIPE: 'SE', TOCANTINS: 'TO' };
+const UFS = new Set(Object.values(UF_POR_NOME));
+export const normalizarUf = (v?: string | null) => { const s = semAcento((v ?? '').trim().toUpperCase()).replace(/s+/g, ' '); if (!s) return undefined; if (UFS.has(s)) return s; return UF_POR_NOME[s]; };
+/** Pais: 'brazil'/'brasil'/'br' -> Brasil; demais com inicial maiuscula. */
+export const normalizarPais = (v?: string | null) => { const s = (v ?? '').trim(); if (!s) return undefined; if (/^(brazil|brasil|br)$/i.test(s)) return 'Brasil'; return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); };
 const MINUSCULAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
 export const normalizarCidade = (v?: string | null) => {
   const s = (v ?? '').trim().replace(/\s+/g, ' ');

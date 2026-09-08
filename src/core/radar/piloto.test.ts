@@ -115,3 +115,14 @@ describe('piloto: cobertura de decisores e semantica de e-mail', () => {
     expect(e).toMatchObject({ emailsAvailable: 4, validEmails: 2, emailsCatchAll: 1, emailsInvalid: 1, accountsCovered: 1 });
   });
 });
+
+describe('piloto: UF por nome do estado e pais', () => {
+  it('aceita sigla e nome do estado (com/sem acento); pais brazil -> Brasil', async () => {
+    const { normalizarUf, normalizarPais } = await import('./normalizar');
+    expect(normalizarUf('GO')).toBe('GO'); expect(normalizarUf('goiás')).toBe('GO'); expect(normalizarUf('Mato Grosso do Sul')).toBe('MS'); expect(normalizarUf('distrito federal')).toBe('DF'); expect(normalizarUf('mato grosso')).toBe('MT'); expect(normalizarUf('xx')).toBeUndefined(); expect(normalizarUf('')).toBeUndefined();
+    expect(normalizarPais('brazil')).toBe('Brasil'); expect(normalizarPais('BR')).toBe('Brasil'); expect(normalizarPais('argentina')).toBe('Argentina');
+    const { normalizarEmpresasCsv } = await import('./csv');
+    const e = normalizarEmpresasCsv('business_name,business_region,business_country_name,business_id\nX,goiás,brazil,' + 'a'.repeat(32)).empresas[0];
+    expect(e).toMatchObject({ uf: 'GO', pais: 'Brasil', erros: [] });
+  });
+});
