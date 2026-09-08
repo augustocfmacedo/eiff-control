@@ -10,6 +10,7 @@
     "preview": "vite preview --port 5173",
     "test": "vitest run",
     "migrate:planilha": "node scripts/migrate-spreadsheet.mjs",
+    "radar:dry-run": "vite-node scripts/radar-dry-run.mts --",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
     "lint": "eslint src"

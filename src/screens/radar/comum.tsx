@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA, NOME_CANAL, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, PERSONAS, TIPOS_ATIVIDADE, TIPOS_SINAL, TIPOS_TAREFA, calcularDecisionFit, calcularScore, contextoEmpresa, normalizarContatosCsv, tipoProjetoPrincipal, normalizarEmpresasCsv, type Atividade, type Canal, type Contato, type Empresa, type Estagio, type ExplicacaoScore, type ImportacaoJob, type Oportunidade, type Projeto, type TarefaRadar, type TipoAtividade, type TipoSinal, type TipoTarefa } from '../../core/radar';
 import { actions, useStore } from '../../data/store';
+import { dryRunContatosCsv, relatorioDryRun, type DryRunContatos } from '../../core/radar/dryrun';
 import { Badge, Field, Input, Modal, NumberInput, Select, money, tentar, type Tone } from '../../ui/components';
 
 export const d = (s?: string) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '—');
@@ -272,6 +273,7 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
   const [texto, setTexto] = useState('');
   const [arquivo, setArquivo] = useState('colado');
   const [job, setJob] = useState<ImportacaoJob | null>(null);
+  const [dry, setDry] = useState<DryRunContatos | null>(null);
   const previa = texto.trim() ? (tipo === 'empresas' ? normalizarEmpresasCsv(texto) : normalizarContatosCsv(texto)) : undefined;
   const colunas = previa ? previa.cabecalho.map((c, i) => ({ c, campo: previa.colunas[i] })) : [];
   const ler = (f: File) => { const r = new FileReader(); r.onload = () => { setTexto(String(r.result ?? '')); setArquivo(f.name); }; r.readAsText(f, 'utf-8'); };
@@ -299,8 +301,21 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
               <b>{linhas} linha(s)</b> · colunas reconhecidas: {colunas.map(({ c, campo }) => <Badge key={c} tone={campo ? 'ok' : 'muted'}>{c}{campo ? ` → ${campo}` : ' (ignorada)'}</Badge>)}
             </div>
           )}
+          {dry && tipo === 'contatos' && (
+            <div className="card small" style={{ marginTop: 8 }}>
+              <b>Dry run (nada foi gravado)</b>
+              <div className="grid cols-2" style={{ marginTop: 6 }}>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>{relatorioDryRun(dry).map((l) => <li key={l}>{l}</li>)}</ul>
+                <div style={{ maxHeight: 260, overflow: 'auto' }}>
+                  <table className="small"><thead><tr><th>#</th><th>Contato</th><th>Empresa</th><th>Associação</th><th>Persona</th><th className="num">Fit</th><th>Status</th></tr></thead>
+                    <tbody>{dry.detalhes.map((x) => <tr key={x.numero}><td>{x.numero}</td><td>{x.nome}</td><td>{x.empresa}</td><td>{x.associacao || '—'}</td><td>{x.persona ? NOME_PERSONA[x.persona] : '—'}</td><td className="num">{x.decisionFit ?? '—'}</td><td><Badge tone={x.status === 'ok' ? 'ok' : x.status === 'invalido' ? 'bad' : 'warn'}>{x.status}</Badge>{x.mensagem ? <span className="muted"> {x.mensagem}</span> : null}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
           <p className="small muted" style={{ marginTop: 8 }}>Deduplicação por CNPJ, domínio, razão social + cidade/UF e nome parecido. Empresas iguais são atualizadas só nos campos vazios; parecidas entram como possíveis duplicatas para revisão. Cada linha bruta fica guardada com a fonte.</p>
-          <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" disabled={!linhas} onClick={() => tentar(() => { const j = actions.importarCsvRadar(texto, { tipo, fonteId, arquivo }); setJob(j); onOk(`Importação: ${j.importados} nova(s), ${j.atualizados} atualizada(s).`); }, onErro)}>Importar {linhas ? `${linhas} linha(s)` : ''}</button></div>
+          <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button>{tipo === 'contatos' && <button className="btn" disabled={!linhas} onClick={() => tentar(() => { setDry(dryRunContatosCsv(texto, ds.radar, ds.params.dataBase)); }, onErro)}>Dry run (simular sem gravar)</button>}<button className="btn primary" disabled={!linhas} onClick={() => tentar(() => { const j = actions.importarCsvRadar(texto, { tipo, fonteId, arquivo }); setJob(j); onOk(`Importação: ${j.importados} nova(s), ${j.atualizados} atualizada(s).`); }, onErro)}>Importar {linhas ? `${linhas} linha(s)` : ''}</button></div>
         </>
       )}
     </Modal>

@@ -3,7 +3,7 @@
 // O payload bruto nunca e descartado: vai para registrosFonte (source_records) e para signal.payload.
 import type { TipoFonte, TipoSinal } from './types';
 
-export interface EmpresaNormalizada { cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais?: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; externoId?: string }
+export interface EmpresaNormalizada { businessId?: string; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais?: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; externoId?: string }
 export interface ContatoNormalizado { nome: string; cargo?: string; email?: string; telefone?: string; celular?: string; linkedin?: string; decisor?: boolean; externoId?: string }
 export interface ProjetoNormalizado { nome: string; tipo?: string; cidade?: string; uf?: string; endereco?: string; areaM2?: number; valorEstimado?: number; estagio?: string; inicioPrevisto?: string; externoId?: string }
 export interface SinalNormalizado { tipo: TipoSinal; titulo: string; descricao?: string; eventoEm: string; confianca: number; url?: string; externoId?: string }

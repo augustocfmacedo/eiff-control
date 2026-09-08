@@ -1838,7 +1838,9 @@ export const actions = {
     exigir('radar');
     const r = ds.radar;
     const antes = new Map(r.empresas.map((e) => [e.id, `${e.priorityScore}|${e.priorityClass}`]));
-    const radar = recalcularEmpresasRadar(r, r.empresas.filter((e) => e.ativo && !e.mescladaEm).map((e) => e.id), idsRadar(r));
+    // contatos primeiro: persona (salvo manual), decision fit e qualidade; depois empresas: score, data quality, contato principal e proxima acao
+    const contatos = r.contatos.map((c) => enriquecerContato(c, r.empresas.find((e) => e.id === c.empresaId), r, ds.params.dataBase));
+    const radar = recalcularEmpresasRadar({ ...r, contatos }, r.empresas.filter((e) => e.ativo && !e.mescladaEm).map((e) => e.id), idsRadar(r));
     const mudaram = radar.empresas.filter((e) => antes.get(e.id) !== `${e.priorityScore}|${e.priorityClass}`).length;
     ds = registrar({ ...ds, radar }, 'radar_recalcular_scores', 'radar_score', 'todas', undefined, { empresas: radar.empresas.length, mudaram });
     commit(ds);
@@ -1863,7 +1865,7 @@ export const actions = {
         for (const er of e.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: e.numero, campo: er.campo, mensagem: er.mensagem });
         const registro: RegistroFonte = { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'empresa', externoId: e.fonteExternaId, payload: e.dados, recebidoEm: agora() };
         try {
-          const up = upsertEmpresa(r, { cnpj: e.cnpj, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, dominio: e.dominio, site: e.site, linkedin: e.linkedin, setor: e.setor, cnae: e.cnae, cidade: e.cidade, uf: e.uf, pais: e.pais, faixaFuncionarios: e.faixaFuncionarios, faixaReceita: e.faixaReceita, capitalSocial: e.capitalSocial, numeroUnidades: e.numeroUnidades, externoId: e.fonteExternaId, observacoes: e.observacoes }, fonte.id, ids);
+          const up = upsertEmpresa(r, { businessId: e.businessId, cnpj: e.cnpj, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, dominio: e.dominio, site: e.site, linkedin: e.linkedin, setor: e.setor, cnae: e.cnae, cidade: e.cidade, uf: e.uf, pais: e.pais, faixaFuncionarios: e.faixaFuncionarios, faixaReceita: e.faixaReceita, capitalSocial: e.capitalSocial, numeroUnidades: e.numeroUnidades, externoId: e.fonteExternaId, observacoes: e.observacoes }, fonte.id, ids);
           r = { ...up.radar, registrosFonte: [...up.radar.registrosFonte, { ...registro, entidadeId: up.empresa.id }] };
           afetadas.add(up.empresa.id);
           if (up.resultado === 'importada') job.importados++; else if (up.resultado === 'atualizada') job.atualizados++; else if (up.resultado === 'duplicata_possivel') { job.duplicados++; job.importados++; }

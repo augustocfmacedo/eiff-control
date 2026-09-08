@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { economiaInteligencia } from '../../core/radar/economia';
 import { DIMENSOES, FAIXAS_FUNCIONARIOS, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, PERSONAS, TIPOS_SINAL, calcularDecisionFit, configDe, filaHoje, oportunidadesSemProximaAcao, resumoRadar, type CondicaoRegra, type Dimensao, type Estrategia, type ImportacaoLinha, type Persona, type RegraPersona, type RegraScore } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast } from '../../ui/components';
@@ -13,6 +14,8 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const hoje = ds.params.dataBase;
   const r = ds.radar;
   const res = resumoRadar(r, hoje);
+  const eco = economiaInteligencia(r);
+  const razao = (v: number | null) => (v == null ? '—' : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 }));
   const [aba, setAba] = useState<Aba>((aba0 as Aba) || 'visao');
   const [importar, setImportar] = useState(false);
   const podeAgir = pode(usuario, 'radar');
@@ -58,6 +61,21 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         { label: 'Sem decisor', value: res.semDecisor, to: '/radar/empresas?situacao=sem-decisor' },
         { label: 'Fila de revisão', value: res.revisoesPendentes, tone: res.revisoesPendentes ? 'warn' : undefined, to: '/radar?aba=revisao' },
       ]} />
+      <div style={{ height: 16 }} />
+      <div className="card">
+        <h2>Intelligence economics</h2>
+        <div className="small muted">Custo real da inteligência comercial, lido do ledger de operações do Vibe (radar_vibe_operation). Sem consumo registrado, os valores ficam em 0 e as razões em "—". Contas cobertas vêm dos contatos do Radar com prospect_id.</div>
+        <KpiStrip itens={[
+          { label: 'Créditos consumidos', value: eco.creditsConsumed, hint: `credits_consumed · ${eco.operacoes.concluidas} operação(ões) concluída(s)${eco.creditsUncertain ? ` · ${eco.creditsUncertain} a reconciliar` : ''}`, tone: eco.creditsUncertain ? 'warn' : undefined },
+          { label: 'Empresas pesquisadas', value: eco.companiesResearched, hint: 'companies_researched' },
+          { label: 'Prospects descobertos', value: eco.prospectsDiscovered, hint: 'prospects_discovered' },
+          { label: 'E-mails válidos', value: eco.validEmails, hint: 'valid_emails' },
+          { label: 'Contas cobertas', value: eco.accountsCovered, hint: 'accounts_covered' },
+          { label: 'Créditos por prospect', value: razao(eco.creditsPerProspect), hint: 'credits_per_prospect' },
+          { label: 'Créditos por e-mail válido', value: razao(eco.creditsPerValidEmail), hint: 'credits_per_valid_email' },
+          { label: 'Créditos por conta coberta', value: razao(eco.creditsPerCoveredAccount), hint: 'credits_per_covered_account' },
+        ]} />
+      </div>
       <div style={{ height: 16 }} />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }] : [])]} />
 

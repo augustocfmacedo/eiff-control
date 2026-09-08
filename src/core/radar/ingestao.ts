@@ -18,7 +18,7 @@ export const empresaVazia = (id: string, agora: string): Empresa => ({ id, razao
  * sobrescreve dado ja curado); 'possivel' cria a nova e registra possible_duplicate para revisao humana.
  */
 export function upsertEmpresa(r: RadarDataset, dados: EmpresaNormalizada & { linkedin?: string; numeroUnidades?: number; observacoes?: string }, fonteId: string | undefined, ids: Ids, opts: { sobrescrever?: boolean } = {}): { radar: RadarDataset; empresa: Empresa; resultado: ResultadoUpsert; match?: ReturnType<typeof encontrarEmpresa> } {
-  const norm = limpo({ cnpj: normalizarCnpj(dados.cnpj), razaoSocial: (dados.razaoSocial ?? '').trim(), nomeFantasia: dados.nomeFantasia?.trim(), dominio: normalizarDominio(dados.dominio ?? dados.site), site: dados.site?.trim(), linkedin: dados.linkedin?.trim(), setor: dados.setor?.trim(), cnae: dados.cnae?.trim(), cidade: normalizarCidade(dados.cidade), uf: normalizarUf(dados.uf), pais: dados.pais?.trim() || 'Brasil', faixaFuncionarios: dados.faixaFuncionarios, faixaReceita: dados.faixaReceita, capitalSocial: dados.capitalSocial, numeroUnidades: dados.numeroUnidades, fonteExternaId: dados.externoId, observacoes: dados.observacoes });
+  const norm = limpo({ businessId: dados.businessId && /^[a-f0-9]{32}$/i.test(dados.businessId) ? dados.businessId.toLowerCase() : undefined, cnpj: normalizarCnpj(dados.cnpj), razaoSocial: (dados.razaoSocial ?? '').trim(), nomeFantasia: dados.nomeFantasia?.trim(), dominio: normalizarDominio(dados.dominio ?? dados.site), site: dados.site?.trim(), linkedin: dados.linkedin?.trim(), setor: dados.setor?.trim(), cnae: dados.cnae?.trim(), cidade: normalizarCidade(dados.cidade), uf: normalizarUf(dados.uf), pais: dados.pais?.trim() || 'Brasil', faixaFuncionarios: dados.faixaFuncionarios, faixaReceita: dados.faixaReceita, capitalSocial: dados.capitalSocial, numeroUnidades: dados.numeroUnidades, fonteExternaId: dados.externoId, observacoes: dados.observacoes });
   if (!norm.razaoSocial) throw new Error('Razão social é obrigatória.');
   const match = encontrarEmpresa(norm, r.empresas);
   if (match && match.nivel !== 'possivel') {
@@ -78,6 +78,12 @@ export function associarEmpresaContato(dados: { empresaExternoId?: string; empre
   const cnpj = normalizarCnpj(dados.empresaCnpj);
   if (cnpj) { const e = ativas.find((x) => x.cnpj === cnpj); if (e) return { empresa: e, nivel: 'certo', motivo: 'CNPJ', candidatos: [] }; }
   const extId = dados.empresaExternoId?.trim();
+  if (extId && /^[a-f0-9]{32}$/i.test(extId)) {
+    // business_id da Explorium (32 hex): casa com o business_id gravado na empresa (match ou lista importada do Vibe)
+    const es = ativas.filter((x) => x.businessId && x.businessId === extId.toLowerCase());
+    if (es.length === 1) return { empresa: es[0], nivel: 'certo', motivo: `business_id ${extId.toLowerCase()}`, candidatos: [] };
+    if (es.length > 1) return { nivel: 'ambiguo', motivo: `business_id ${extId.toLowerCase()} em ${es.length} empresas`, candidatos: es.map((e) => ({ empresaId: e.id, motivo: 'mesmo business_id', confianca: 0.6 })) };
+  }
   if (extId) {
     const es = ativas.filter((x) => x.fonteExternaId && x.fonteExternaId === extId);
     if (es.length === 1) return { empresa: es[0], nivel: 'certo', motivo: `id externo ${dados.empresaExternoId}`, candidatos: [] };

@@ -27,9 +27,9 @@ export const CAMPOS_EMPRESA: Record<string, string[]> = {
   cnpj: ['cnpj', 'cnpjcpf', 'documento', 'taxid'],
   razaoSocial: ['razaosocial', 'razao', 'empresa', 'nome', 'nomeempresa', 'company', 'companyname', 'legalname', 'name'],
   nomeFantasia: ['nomefantasia', 'fantasia', 'tradename', 'marca'],
-  dominio: ['dominio', 'domain'],
-  site: ['site', 'website', 'url', 'web', 'homepage'],
-  linkedin: ['linkedin', 'linkedinurl', 'linkedinempresa'],
+  dominio: ['dominio', 'domain', 'companydomain'],
+  site: ['site', 'website', 'url', 'web', 'homepage', 'companywebsite'],
+  linkedin: ['linkedin', 'linkedinurl', 'linkedinempresa', 'companylinkedin'],
   setor: ['setor', 'segmento', 'industria', 'industry', 'ramo', 'atividade'],
   cnae: ['cnae', 'cnaeprincipal', 'cnaefiscal'],
   cidade: ['cidade', 'municipio', 'city'],
@@ -40,6 +40,7 @@ export const CAMPOS_EMPRESA: Record<string, string[]> = {
   capitalSocial: ['capitalsocial', 'capital'],
   numeroUnidades: ['unidades', 'filiais', 'numerodeunidades', 'locations', 'numberoflocations'],
   fonteExternaId: ['id', 'idexterno', 'externalid', 'sourceid', 'codigo'],
+  businessId: ['businessid', 'exploriumbusinessid', 'idexplorium', 'vibebusinessid'],
   telefone: ['telefone', 'phone', 'telefoneempresa'],
   email: ['email', 'emailempresa'],
   observacoes: ['observacoes', 'obs', 'notes', 'notas'],
@@ -48,25 +49,25 @@ export const CAMPOS_EMPRESA: Record<string, string[]> = {
 export const CAMPOS_CONTATO: Record<string, string[]> = {
   nome: ['nome', 'contato', 'nomecontato', 'fullname', 'name', 'nomecompleto'],
   cargo: ['cargo', 'jobtitle', 'title', 'funcao', 'position'],
-  departamento: ['departamento', 'department', 'area'],
-  senioridade: ['senioridade', 'seniority', 'nivel'],
-  email: ['email', 'emailcontato', 'e-mail'],
+  departamento: ['departamento', 'department', 'area', 'jobdepartmentmain', 'jobdepartment'],
+  senioridade: ['senioridade', 'seniority', 'nivel', 'joblevelmain', 'joblevel'],
+  email: ['email', 'emailcontato', 'e-mail', 'professionalemail', 'workemail'],
   telefone: ['telefone', 'phone', 'fone', 'telefonefixo'],
   celular: ['celular', 'mobile', 'mobilephone', 'cel'],
   whatsapp: ['whatsapp', 'zap', 'wpp'],
-  linkedin: ['linkedin', 'linkedinurl', 'perfil'],
+  linkedin: ['linkedin', 'linkedinurl', 'perfil', 'linkedinurlarray'],
   decisor: ['decisor', 'decisionmaker', 'isdecisionmaker', 'decide'],
   poderDecisao: ['poderdecisao', 'decisionpower', 'poder'],
   persona: ['persona'],
   statusEmail: ['statusemail', 'emailstatus', 'statusdoemail', 'emailverificado', 'emailvalido', 'professionalemailstatus'],
   statusTelefone: ['statustelefone', 'phonestatus', 'statusdotelefone'],
   verificadoEm: ['verificadoem', 'lastverifiedat', 'ultimaverificacao', 'dataverificacao'],
-  empresaExternoId: ['empresaid', 'idempresa', 'companyid', 'businessid', 'businessexternalid', 'companyexternalid', 'idexternoempresa'],
+  empresaExternoId: ['empresaid', 'idempresa', 'companyid', 'businessid', 'businessexternalid', 'companyexternalid', 'idexternoempresa', 'ideiff'],
   empresaCnpj: ['cnpj', 'cnpjempresa', 'companycnpj'],
   empresaNome: ['empresa', 'razaosocial', 'company', 'companyname', 'nomeempresa'],
-  empresaDominio: ['dominio', 'domain', 'site', 'website', 'companydomain'],
+  empresaDominio: ['dominio', 'domain', 'site', 'website', 'companydomain', 'companywebsite'],
   fonte: ['fonte', 'source', 'origem'],
-  fonteExternaId: ['id', 'idexterno', 'externalid', 'contactid'],
+  fonteExternaId: ['id', 'idexterno', 'externalid', 'contactid', 'prospectid'],
   observacoes: ['observacoes', 'obs', 'notes'],
 };
 
@@ -86,12 +87,16 @@ export function mapearColunas(cabecalho: string[], campos: Record<string, string
   });
 }
 
-export interface EmpresaCsv { numero: number; dados: Record<string, string>; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; linkedin?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; numeroUnidades?: number; fonteExternaId?: string; telefone?: string; email?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }
+export interface EmpresaCsv { numero: number; dados: Record<string, string>; businessId?: string; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; linkedin?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; numeroUnidades?: number; fonteExternaId?: string; telefone?: string; email?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }
 export interface ContatoCsv { numero: number; dados: Record<string, string>; nome: string; cargo?: string; departamento?: string; senioridade?: string; email?: string; telefone?: string; celular?: string; whatsapp?: string; linkedin?: string; decisor: boolean; poderDecisao?: 'Baixo' | 'Médio' | 'Alto'; persona?: string; statusEmail?: 'valido' | 'invalido' | 'devolvido' | 'desconhecido' | 'catch_all'; statusTelefone?: 'valido' | 'invalido' | 'desconhecido'; verificadoEm?: string; empresaExternoId?: string; empresaCnpj?: string; empresaNome?: string; empresaDominio?: string; fonte?: string; fonteExternaId?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }
 
 const numero = (v?: string) => { if (!v) return undefined; const n = Number(v.replace(/[R$\s.]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : undefined; };
 const faixaFunc = (v?: string) => { if (!v) return undefined; const n = numero(v); if (n === undefined) return v; return n <= 10 ? '1-10' : n <= 50 ? '11-50' : n <= 200 ? '51-200' : n <= 500 ? '201-500' : n <= 1000 ? '501-1000' : n <= 5000 ? '1001-5000' : '5000+'; };
 const sim = (v?: string) => /^(s|sim|y|yes|true|1|x)$/i.test((v ?? '').trim());
+/** business_id da Explorium: 32 caracteres hexadecimais; qualquer outra coisa e ignorada. */
+export const businessIdDe = (v?: string) => { const s = (v ?? '').trim().toLowerCase(); return /^[a-f0-9]{32}$/.test(s) ? s : undefined; };
+/** Senioridade na escala do Radar; aceita os niveis da Explorium (cxo, vp, director, manager, senior, entry, owner...). */
+export const senioridadeDe = (v?: string): string | undefined => { const s = (v ?? '').trim(); if (!s) return undefined; const k = s.toLowerCase(); if (/^(analista|coordenador|gerente|diretor|c-level|s[oó]cio)$/i.test(s)) return s; if (/owner|partner|founder|s[oó]cio|propriet/.test(k)) return 'Sócio'; if (/cxo|c-level|chief|presiden/.test(k)) return 'C-level'; if (/\bvp\b|vice|director|diretor/.test(k)) return 'Diretor'; if (/manager|head|gerente/.test(k)) return 'Gerente'; if (/senior|lead|coorden|supervis/.test(k)) return 'Coordenador'; if (/entry|junior|staff|non-managerial|analista|assistente/.test(k)) return 'Analista'; return s; };
 const emailValido = (v?: string) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
 export function normalizarEmpresasCsv(texto: string): { colunas: (string | undefined)[]; cabecalho: string[]; empresas: EmpresaCsv[] } {
@@ -108,7 +113,7 @@ export function normalizarEmpresasCsv(texto: string): { colunas: (string | undef
     if (!razaoSocial) erros.push({ campo: 'razaoSocial', mensagem: 'Razão social ausente' });
     const dominio = normalizarDominio(g('dominio') ?? g('site') ?? g('email'));
     const uf = normalizarUf(g('uf')); if (g('uf') && !uf) erros.push({ campo: 'uf', mensagem: `UF inválida: ${g('uf')}` });
-    return { numero: i + 2, dados: d, cnpj, razaoSocial, nomeFantasia: g('nomeFantasia'), dominio, site: g('site'), linkedin: g('linkedin'), setor: g('setor'), cnae: g('cnae'), cidade: normalizarCidade(g('cidade')), uf, pais: g('pais') ?? 'Brasil', faixaFuncionarios: faixaFunc(g('faixaFuncionarios')), faixaReceita: g('faixaReceita'), capitalSocial: numero(g('capitalSocial')), numeroUnidades: numero(g('numeroUnidades')), fonteExternaId: g('fonteExternaId'), telefone: g('telefone'), email: g('email'), observacoes: g('observacoes'), erros };
+    return { numero: i + 2, dados: d, cnpj, razaoSocial, nomeFantasia: g('nomeFantasia'), dominio, site: g('site'), linkedin: g('linkedin'), setor: g('setor'), cnae: g('cnae'), cidade: normalizarCidade(g('cidade')), uf, pais: g('pais') ?? 'Brasil', faixaFuncionarios: faixaFunc(g('faixaFuncionarios')), faixaReceita: g('faixaReceita'), capitalSocial: numero(g('capitalSocial')), numeroUnidades: numero(g('numeroUnidades')), fonteExternaId: g('fonteExternaId'), businessId: businessIdDe(g('businessId')), telefone: g('telefone'), email: g('email'), observacoes: g('observacoes'), erros };
   });
   return { colunas, cabecalho, empresas };
 }
@@ -129,7 +134,7 @@ export function normalizarContatosCsv(texto: string): { colunas: (string | undef
     if (!cnpj && !empresaNome && !empresaDominio && !empresaExternoId) erros.push({ campo: 'empresa', mensagem: 'Sem empresa (id, CNPJ, nome ou domínio)' });
     const pd = (g('poderDecisao') ?? '').toLowerCase();
     const poderDecisao: ContatoCsv['poderDecisao'] = pd.startsWith('a') || pd.startsWith('h') ? 'Alto' : pd.startsWith('m') ? 'Médio' : pd.startsWith('b') || pd.startsWith('l') ? 'Baixo' : undefined;
-    return { numero: i + 2, dados: d, nome, cargo: g('cargo'), departamento: g('departamento'), senioridade: g('senioridade'), email, telefone: g('telefone'), celular: g('celular'), whatsapp: g('whatsapp'), linkedin: g('linkedin'), decisor: sim(g('decisor')), poderDecisao, persona: g('persona')?.toUpperCase().replace(/\s+/g, '_'), statusEmail: statusEmailDe(g('statusEmail')), statusTelefone: statusTelefoneDe(g('statusTelefone')), verificadoEm: dataIso(g('verificadoEm')), empresaExternoId, empresaCnpj: cnpj, empresaNome, empresaDominio, fonte: g('fonte'), fonteExternaId: g('fonteExternaId'), observacoes: g('observacoes'), erros };
+    return { numero: i + 2, dados: d, nome, cargo: g('cargo'), departamento: g('departamento'), senioridade: senioridadeDe(g('senioridade')), email, telefone: g('telefone'), celular: g('celular'), whatsapp: g('whatsapp'), linkedin: g('linkedin'), decisor: sim(g('decisor')), poderDecisao, persona: g('persona')?.toUpperCase().replace(/\s+/g, '_'), statusEmail: statusEmailDe(g('statusEmail')), statusTelefone: statusTelefoneDe(g('statusTelefone')), verificadoEm: dataIso(g('verificadoEm')), empresaExternoId, empresaCnpj: cnpj, empresaNome, empresaDominio, fonte: g('fonte'), fonteExternaId: g('fonteExternaId'), observacoes: g('observacoes'), erros };
   });
   return { colunas, cabecalho, contatos };
 }

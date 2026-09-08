@@ -1,7 +1,7 @@
 // Persistencia do EIFF Radar no Supabase: mapeamento generico entidade <-> tabela (prefixo radar_).
 // Leitura converte linhas em RadarDataset; escrita grava so as diferencas (update-senao-insert nas mutaveis,
 // insert nas imutaveis). Recebe os helpers do provider principal para nao criar ciclo de import.
-import type { RadarDataset } from '../core/radar/types';
+import type { OperacaoVibeLedger, RadarDataset } from '../core/radar/types';
 
 
 type Row = Record<string, any>;
@@ -65,6 +65,9 @@ export async function carregarRadar(h: Pick<HelpersRadar, 'sel' | 'orgId'>): Pro
   const [tiposResposta, configScore, pesosFit] = await Promise.all([h.sel('radar_response_type', 'code', false), h.sel('radar_score_setting', 'key', false), h.sel('radar_decision_fit_weight', 'key', false)]);
   refs = new Map(SPECS.map((sp, i) => [sp.chave, new Map(linhas[i].map((x) => [x.id, x.id]))]));
   const ds = Object.fromEntries(SPECS.map((sp, i) => [sp.chave, linhas[i].map(sp.app)])) as unknown as RadarDataset;
+  // ledger do Vibe: somente leitura (RLS de select por organizacao; escrita so pelas RPCs server-only)
+  const ops = await h.sel('radar_vibe_operation', 'created_at').catch(() => [] as Row[]);
+  ds.operacoesVibe = ops.map((x) => ({ id: String(x.id), tipo: x.operation_type as OperacaoVibeLedger['tipo'], status: x.status as OperacaoVibeLedger['status'], creditosEstimados: Number(x.estimated_credits ?? 0), creditosReservados: Number(x.reserved_credits ?? 0), creditosReais: n(x.actual_credits), creditosAntes: n(x.credits_before), creditosDepois: n(x.credits_after), registrosPedidos: Number(x.records_requested ?? 0), registrosDevolvidos: Number(x.records_returned ?? 0), tetoRegistros: n(x.paid_record_cap), resumo: (x.result_summary as Record<string, unknown> | null) ?? undefined, criadoEm: String(x.created_at), concluidoEm: s(x.finished_at) }));
   ds.tiposResposta = tiposResposta.map((x) => ({ codigo: x.code, nome: x.name, sentimento: x.sentiment, ativo: !!x.active }));
   ds.configScore = configScore.map((x) => ({ chave: x.key, valor: Number(x.value) }));
   ds.pesosDecisionFit = pesosFit.map((x) => ({ chave: x.key, valor: Number(x.value) }));

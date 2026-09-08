@@ -383,7 +383,14 @@ export interface RegistroFonte {
   recebidoEm: string;
 }
 
+/** Linha do ledger radar_vibe_operation (somente leitura no app; escrita so pela funcao Netlify). */
+export interface OperacaoVibeLedger {
+  id: string; tipo: 'match' | 'discovery' | 'discovery_pool' | 'enrich_email' | 'enrich_phone' | 'test_email'; status: 'PLANNED' | 'RESERVED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNCERTAIN' | 'CANCELLED';
+  creditosEstimados: number; creditosReservados: number; creditosReais?: number; creditosAntes?: number; creditosDepois?: number;
+  registrosPedidos: number; registrosDevolvidos: number; tetoRegistros?: number; resumo?: Record<string, unknown>; criadoEm: string; concluidoEm?: string;
+}
 export interface RadarDataset {
+  operacoesVibe: OperacaoVibeLedger[]; // ledger (somente leitura)
   fontes: Fonte[];
   empresas: Empresa[];
   contatos: Contato[];
@@ -409,4 +416,4 @@ export interface RadarDataset {
   registrosFonte: RegistroFonte[];
 }
 
-export const radarVazio = (): RadarDataset => ({ fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [] });
+export const radarVazio = (): RadarDataset => ({ operacoesVibe: [], fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [] });

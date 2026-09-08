@@ -132,6 +132,14 @@ função serverless. O front-end nunca recebe a chave nem chama a Explorium dire
 
 ## Fluxo do lote piloto
 
+Antes de importar qualquer lote de decisores no Radar, rode o **dry run** (nada é gravado, nenhuma chamada à Explorium):
+`npm run radar:dry-run -- --contatos dados/vibe/decisores.csv --empresas dados/vibe/empresas.csv --total 91 --detalhes`
+ou, na tela, Command Center › Importar CSV › Contatos › **Dry run**. O relatório traz linhas, contatos únicos, empresas
+únicas, associações (exatas, por business_id, por domínio, prováveis), ambiguidades, duplicatas, inválidos, e-mails
+válidos, distribuição por persona e senioridade, decision fit médio, empresas cobertas e cobertura. O bloco
+**Intelligence economics** do Command Center mostra o custo real (ledger `radar_vibe_operation`): sem consumo, 0 e "—".
+
+
 1. Exporte do Vibe a lista `eiff_radar_piloto_empresas_<data>` como CSV **com a coluna `business_id`** (e `id_eiff`
    ou o id externo da empresa no Radar, se existir). Salve em `dados/vibe/` (pasta ignorada pelo git).
 2. `node scripts/vibe.mjs decisores --lista dados/vibe/lista.csv --max 56 --amostra 5`

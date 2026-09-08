@@ -67,8 +67,10 @@ export interface MatchEmpresa { empresa: Empresa; nivel: NivelMatch; confianca: 
  * Identifica uma empresa existente para os dados recebidos, na ordem: CNPJ, dominio, razao social normalizada + localizacao,
  * matching aproximado. 'certo' e 'provavel' podem atualizar a existente; 'possivel' vira possible_duplicate.
  */
-export function encontrarEmpresa(dados: { cnpj?: string; dominio?: string; razaoSocial?: string; nomeFantasia?: string; cidade?: string; uf?: string }, empresas: Empresa[], limiar = 0.82): MatchEmpresa | undefined {
+export function encontrarEmpresa(dados: { businessId?: string; cnpj?: string; dominio?: string; razaoSocial?: string; nomeFantasia?: string; cidade?: string; uf?: string }, empresas: Empresa[], limiar = 0.82): MatchEmpresa | undefined {
   const ativas = empresas.filter((e) => e.ativo && !e.mescladaEm);
+  const bid = dados.businessId?.toLowerCase();
+  if (bid && /^[a-f0-9]{32}$/.test(bid)) { const e = ativas.find((x) => x.businessId === bid); if (e) return { empresa: e, nivel: 'certo', confianca: 1, motivo: 'business_id igual' }; }
   const cnpj = normalizarCnpj(dados.cnpj);
   if (cnpj) { const e = ativas.find((x) => x.cnpj === cnpj); if (e) return { empresa: e, nivel: 'certo', confianca: 1, motivo: 'CNPJ igual' }; }
   const dom = normalizarDominio(dados.dominio);

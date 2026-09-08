@@ -181,7 +181,7 @@ export default async (req: Request): Promise<Response> => {
       const r = await explorium(chave, 'POST', '/v2/prospects', { mode: 'full', ...proximaPagina(estado, pageSize), filters: filtros });
       const dados = (r.data as Row[] | undefined) ?? [];
       const depois = await creditos();
-      await registrar('RUNNING', { credits_after: depois, records_delta: dados.length, correlation_ids: [correlacao(r)].filter(Boolean) });
+      await registrar('RUNNING', { credits_after: depois, records_delta: dados.length, correlation_ids: [correlacao(r)].filter(Boolean), ...(Number(est.records_returned ?? 0) === 0 ? { result_summary: { empresas_alvo: ids.length, estrategia: tipo } } : {}) });
       const cursor = ((r.page as { next_cursor?: string | null } | undefined)?.next_cursor ?? (r.next_cursor as string | null | undefined) ?? (r.pagination as { next_cursor?: string | null } | undefined)?.next_cursor) ?? null;
       return json({ prospects: dados, pageSize, nextCursor: cursor, pagina: estado.pagina + 1, total: r.total_results, creditosAntes: antes, creditosDepois: depois, correlationId: correlacao(r), operationId: opId });
     } catch (e) {
