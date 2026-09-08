@@ -48,9 +48,15 @@ function avaliar(r: RegraScore, ctx: ContextoEmpresa, hoje: string): { fator: nu
       return ok ? { fator: 1, motivo: `${String(c.campo)} = ${String(v)}` } : undefined;
     }
     case 'contato': {
-      const cs = ctx.contatos.filter((x) => x.ativo && (!c.decisor || x.decisor) && (!c.comEmail || !!x.email) && (!c.comTelefone || !!(x.telefone || x.celular || x.whatsapp)) && (!c.verificado || !!x.verificadoEm));
+      const canal = (x: typeof ctx.contatos[number]) => (!!x.email && x.statusEmail !== 'invalido' && x.statusEmail !== 'devolvido') || ((!!x.telefone || !!x.celular || !!x.whatsapp) && x.statusTelefone !== 'invalido');
+      const cs = ctx.contatos.filter((x) => x.ativo && (!x.situacao || x.situacao === 'ATIVO') && (!c.decisor || x.decisor) && (!c.comEmail || !!x.email) && (!c.comTelefone || !!(x.telefone || x.celular || x.whatsapp)) && (!c.comCanal || canal(x)) && (!c.verificado || !!x.verificadoEm) && (!c.fitMinimo || (x.decisionFitScore ?? 0) >= c.fitMinimo)).sort((a, b) => (b.decisionFitScore ?? 0) - (a.decisionFitScore ?? 0));
       if (!cs.length) return undefined;
       return { fator: 1, motivo: `${cs[0].nome}${cs[0].cargo ? ` (${cs[0].cargo})` : ''}${cs.length > 1 ? ` e mais ${cs.length - 1}` : ''}` };
+    }
+    case 'sinalQualquer': {
+      const ss = ctx.sinais.filter((s) => !c.diasMax || diasEntre(s.eventoEm, hoje) <= c.diasMax).sort((a, b) => (a.eventoEm < b.eventoEm ? 1 : -1));
+      if (!ss.length) return undefined;
+      return { fator: 1, motivo: `${ss[0].titulo} em ${fmtData(ss[0].eventoEm)}${ss.length > 1 ? `, +${ss.length - 1}` : ''}` };
     }
     case 'resposta': {
       const as = ctx.atividades.filter((a) => a.resultado && c.codigos.includes(a.resultado)).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1));

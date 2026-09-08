@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NOME_CANAL, NOME_ESTAGIO, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, calcularScore, contatoSuprimido, contextoEmpresa, empresaSuprimida, estagioAtivo, formatarCnpj, lerEmpresa, type Contato, type Empresa, type Oportunidade, type Projeto, type TarefaRadar } from '../../core/radar';
+import { NOME_CANAL, NOME_ESTAGIO, NOME_ESTADO_ACAO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, calcularScore, contatoElegivel, contatoRecomendado, contatoSuprimido, contextoEmpresa, empresaSuprimida, estagioAtivo, formatarCnpj, lerEmpresa, type Contato, type Empresa, type Oportunidade, type Projeto, type TarefaRadar } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, KpiStrip, Link, PageHead, ProgressRow, Tabs, money, tentar, useToast } from '../../ui/components';
 import { AtividadeForm, ConcluirTarefaForm, ContatoForm, EmpresaForm, OportunidadeForm, ProjetoForm, RESPOSTA_NOME, ScoreModal, ScorePill, SinalForm, TONE_ESTAGIO, TarefaForm, d, dh, nomeUsuario, toneClasse, valor } from './comum';
@@ -27,7 +27,8 @@ export default function RadarEmpresa({ id, query }: { id: string; query: URLSear
   const item = lerEmpresa(e, r, hoje);
   const ctx = contextoEmpresa(r, e.id)!;
   const x = calcularScore(ctx, r.regrasScore, r.configScore, hoje);
-  const contatos = r.contatos.filter((c) => c.empresaId === e.id).sort((a, b) => Number(b.decisor) - Number(a.decisor) || b.qualidade - a.qualidade);
+  const contatos = r.contatos.filter((c) => c.empresaId === e.id).sort((a, b) => Number(!!b.isPrimario) - Number(!!a.isPrimario) || (b.decisionFitScore ?? 0) - (a.decisionFitScore ?? 0) || b.qualidade - a.qualidade);
+  const sugestao = contatoRecomendado(e.id, r);
   const projetos = r.projetos.filter((p) => p.empresaId === e.id);
   const sinais = r.sinais.filter((s) => s.empresaId === e.id).sort((a, b) => (a.eventoEm < b.eventoEm ? 1 : -1));
   const atividades = r.atividades.filter((a) => a.empresaId === e.id).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1));
@@ -61,8 +62,9 @@ export default function RadarEmpresa({ id, query }: { id: string; query: URLSear
         <div className="grid cols-2">
           <div className="card">
             <h2>Ação recomendada</h2>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>{item.recomendacao.acao}</div>
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}><Badge tone={item.recomendacao.estado === 'CONTACT_NOW' ? 'ok' : item.recomendacao.estado === 'OVERDUE_TASK' ? 'bad' : 'info'}>{NOME_ESTADO_ACAO[item.recomendacao.estado]}</Badge><div style={{ fontSize: 16, fontWeight: 700 }}>{item.recomendacao.acao}</div></div>
             <div className="small muted">{item.recomendacao.motivo}{sugerida ? ` · estratégia sugerida: ${sugerida.nome}` : ''}</div>
+            {item.recomendacao.contato && <div className="small" style={{ marginTop: 6 }}>Contato recomendado: <b>{item.recomendacao.contato.contato.nome}</b>{item.recomendacao.contato.contato.cargo ? ` · ${item.recomendacao.contato.contato.cargo}` : ''} · fit {item.recomendacao.contato.fit.score} <span className="muted">({item.recomendacao.contato.fit.razoes.join(', ')})</span></div>}
             {item.semProximaAcao && <div style={{ marginTop: 8 }}><Badge tone="warn">oportunidade ativa sem próxima ação</Badge></div>}
             {podeAgir && !tarefas.some((t) => t.status === 'Aberta') && <button className="btn sm" style={{ marginTop: 8 }} onClick={() => setTarefa(actions.novaTarefaRadar(e.id, { tipo: item.recomendacao.tipoTarefa, descricao: item.recomendacao.acao, contatoId: item.decisor?.id, oportunidadeId: item.oportunidade?.id }))}>Agendar esta ação</button>}
             <h3 style={{ marginTop: 14 }}>Próximas tarefas</h3>
@@ -94,9 +96,32 @@ export default function RadarEmpresa({ id, query }: { id: string; query: URLSear
       {aba === 'contatos' && (
         <div className="card table-wrap">
           <div className="row" style={{ marginBottom: 8 }}><span className="spacer" />{podeAgir && <button className="btn primary sm" onClick={() => setContato(actions.novoContatoRadar(e.id))}>+ Contato</button>}</div>
+          {sugestao && (
+            <div className="card" style={{ padding: 12, marginBottom: 10, background: 'var(--surface-2)' }}>
+              <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span className="score-pill A">{sugestao.fit.score}<span className="cls">FIT</span></span>
+                <div style={{ flex: 1 }}><b>{sugestao.contato.nome}</b>{sugestao.contato.cargo ? ` · ${sugestao.contato.cargo}` : ''} <span className="muted small">· {sugestao.contato.isPrimario ? 'contato principal' : 'sugerido como contato principal'} ({sugestao.motivo})</span>
+                  <div className="small muted">Razões: {sugestao.fit.razoes.join(' · ')}</div></div>
+                {podeAgir && !sugestao.contato.isPrimario && <button className="btn sm primary" onClick={() => tentar(() => actions.definirContatoPrincipalRadar(sugestao.contato.id), toast, () => toast(`${sugestao.contato.nome} definido como contato principal.`))}>Definir como principal</button>}
+              </div>
+            </div>
+          )}
           {!contatos.length ? <Empty icone="equipe" titulo="Sem contatos">Cadastre o decisor ou importe a base de contatos.</Empty> : (
-            <table><thead><tr><th>Nome</th><th>Cargo</th><th>Decisor</th><th>E-mail</th><th>Telefones</th><th className="num">Qualidade</th><th>Verificado</th><th /></tr></thead>
-              <tbody>{contatos.map((c) => <tr key={c.id} style={{ opacity: c.ativo ? 1 : 0.5 }}><td><b>{c.nome}</b>{contatoSuprimido(c, r) && <> <Badge tone="bad">não contatar</Badge></>}</td><td className="small">{c.cargo ?? '—'}{c.departamento ? ` · ${c.departamento}` : ''}</td><td>{c.decisor ? <Badge tone="ok">{c.poderDecisao ?? 'sim'}</Badge> : '—'}</td><td className="small">{c.email ?? '—'}</td><td className="small">{[c.telefone, c.celular, c.whatsapp && `WA ${c.whatsapp}`].filter(Boolean).join(' · ') || '—'}</td><td className="num">{c.qualidade}</td><td className="small">{d(c.verificadoEm)}</td><td className="actions">{podeAgir && <><button className="btn sm" onClick={() => setContato(c)}>Editar</button><button className="btn sm" onClick={() => setAtividade({ contatoId: c.id, oportunidadeId: item.oportunidade?.id })}>Registrar</button>{!contatoSuprimido(c, r) && <button className="btn sm" onClick={() => { const m = window.prompt(`Motivo para marcar ${c.nome} como não contatar:`); if (m) tentar(() => actions.adicionarSupressaoRadar({ contatoId: c.id, tipo: 'do_not_contact', motivo: m }), toast, () => toast('Contato marcado como não contatar.')); }}>Não contatar</button>}</>}</td></tr>)}</tbody></table>
+            <table><thead><tr><th>Nome</th><th>Cargo</th><th>Persona</th><th>Senioridade</th><th className="num">Decision fit</th><th>E-mail</th><th>Telefone</th><th className="num">Qualidade</th><th>Verificado</th><th>Principal</th><th /></tr></thead>
+              <tbody>{contatos.map((c) => { const eleg = contatoElegivel(c, r.supressoes); return (
+                <tr key={c.id} style={{ opacity: eleg ? 1 : 0.55 }}>
+                  <td><b>{c.nome}</b>{contatoSuprimido(c, r) && <> <Badge tone="bad">não contatar</Badge></>}{c.situacao === 'SAIU_DA_EMPRESA' && <> <Badge tone="muted">saiu</Badge></>}{c.situacao === 'INVALIDO' && <> <Badge tone="bad">inválido</Badge></>}</td>
+                  <td className="small">{c.cargo ?? '—'}{c.departamento ? <div className="muted">{c.departamento}</div> : null}</td>
+                  <td className="small">{c.persona ? NOME_PERSONA[c.persona] : '—'}{c.personaManual && <span className="muted"> (fixa)</span>}</td>
+                  <td className="small">{c.senioridade ?? '—'}</td>
+                  <td className="num"><b>{c.decisionFitScore ?? 0}</b>{c.decisor && <div><Badge tone="ok">decisor</Badge></div>}</td>
+                  <td className="small">{c.email ?? '—'}{c.email && <div><Badge tone={c.statusEmail === 'valido' ? 'ok' : c.statusEmail === 'invalido' || c.statusEmail === 'devolvido' ? 'bad' : 'muted'}>{c.statusEmail ?? 'não verificado'}</Badge></div>}</td>
+                  <td className="small">{[c.telefone, c.celular, c.whatsapp && `WA ${c.whatsapp}`].filter(Boolean).join(' · ') || '—'}{(c.telefone || c.celular || c.whatsapp) && <div><Badge tone={c.statusTelefone === 'valido' ? 'ok' : c.statusTelefone === 'invalido' ? 'bad' : 'muted'}>{c.statusTelefone ?? 'não verificado'}</Badge></div>}</td>
+                  <td className="num">{c.qualidade}</td><td className="small">{d(c.verificadoEm)}</td>
+                  <td>{c.isPrimario ? <Badge tone="info">principal</Badge> : podeAgir && eleg ? <button className="btn sm" onClick={() => tentar(() => actions.definirContatoPrincipalRadar(c.id), toast, () => toast('Contato principal definido.'))}>Definir</button> : '—'}</td>
+                  <td className="actions">{podeAgir && <><button className="btn sm" onClick={() => setContato(c)}>Editar</button>{eleg && <button className="btn sm" onClick={() => setAtividade({ contatoId: c.id, oportunidadeId: item.oportunidade?.id })}>Registrar</button>}{!contatoSuprimido(c, r) && <button className="btn sm" onClick={() => { const m = window.prompt(`Motivo para marcar ${c.nome} como não contatar:`); if (m) tentar(() => actions.adicionarSupressaoRadar({ contatoId: c.id, tipo: 'do_not_contact', motivo: m }), toast, () => toast('Contato marcado como não contatar.')); }}>Não contatar</button>}</>}</td>
+                </tr>
+              ); })}</tbody></table>
           )}
         </div>
       )}

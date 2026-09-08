@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA, NOME_CANAL, NOME_ESTAGIO, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, TIPOS_ATIVIDADE, TIPOS_SINAL, TIPOS_TAREFA, calcularScore, contextoEmpresa, normalizarContatosCsv, normalizarEmpresasCsv, type Atividade, type Canal, type Contato, type Empresa, type Estagio, type ExplicacaoScore, type ImportacaoJob, type Oportunidade, type Projeto, type TarefaRadar, type TipoAtividade, type TipoSinal, type TipoTarefa } from '../../core/radar';
+import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA, NOME_CANAL, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, PERSONAS, TIPOS_ATIVIDADE, TIPOS_SINAL, TIPOS_TAREFA, calcularDecisionFit, calcularScore, contextoEmpresa, normalizarContatosCsv, tipoProjetoPrincipal, normalizarEmpresasCsv, type Atividade, type Canal, type Contato, type Empresa, type Estagio, type ExplicacaoScore, type ImportacaoJob, type Oportunidade, type Projeto, type TarefaRadar, type TipoAtividade, type TipoSinal, type TipoTarefa } from '../../core/radar';
 import { actions, useStore } from '../../data/store';
 import { Badge, Field, Input, Modal, NumberInput, Select, money, tentar, type Tone } from '../../ui/components';
 
@@ -83,8 +83,11 @@ export function EmpresaForm({ inicial, onClose, onErro, onOk }: FormProps<Empres
 }
 
 export function ContatoForm({ inicial, onClose, onErro, onOk }: FormProps<Contato>) {
+  const { ds } = useStore();
   const [c, setC] = useState(inicial);
   const up = (p: Partial<Contato>) => setC({ ...c, ...p });
+  const emp = ds.radar.empresas.find((e) => e.id === c.empresaId);
+  const fit = emp ? calcularDecisionFit({ ...c, persona: c.personaManual ? c.persona : undefined }, emp, ds.radar.pesosDecisionFit, ds.radar.regrasPersona, tipoProjetoPrincipal(c.empresaId, ds.radar.projetos)) : undefined;
   return (
     <Modal title={c.nome ? c.nome : 'Novo contato'} onClose={onClose}>
       <div className="form">
@@ -92,8 +95,12 @@ export function ContatoForm({ inicial, onClose, onErro, onOk }: FormProps<Contat
         <Field label="Cargo"><Input value={c.cargo ?? ''} onChange={(ev) => up({ cargo: ev.target.value || undefined })} /></Field>
         <Field label="Departamento"><Input value={c.departamento ?? ''} onChange={(ev) => up({ departamento: ev.target.value || undefined })} /></Field>
         <Field label="Senioridade"><Select value={c.senioridade ?? ''} onChange={(v) => up({ senioridade: v || undefined })} options={['Analista', 'Coordenador', 'Gerente', 'Diretor', 'C-level', 'Sócio/Proprietário']} allowEmpty="—" /></Field>
+        <Field label="Persona" hint={fit ? `decision fit ${fit.score}: ${fit.razoes.join(' · ')}` : 'inferida do cargo; escolha para fixar'}><Select value={c.persona ?? ''} onChange={(v) => up({ persona: (v || undefined) as Contato['persona'], personaManual: !!v })} options={PERSONAS.map((p) => ({ value: p, label: NOME_PERSONA[p] }))} allowEmpty="— automática —" /></Field>
         <Field label="Decisor"><Select value={c.decisor ? 'Sim' : 'Não'} onChange={(v) => up({ decisor: v === 'Sim' })} options={['Sim', 'Não']} /></Field>
         <Field label="Poder de decisão"><Select value={c.poderDecisao ?? ''} onChange={(v) => up({ poderDecisao: (v || undefined) as Contato['poderDecisao'] })} options={['Baixo', 'Médio', 'Alto']} allowEmpty="—" /></Field>
+        <Field label="Situação"><Select value={c.situacao ?? 'ATIVO'} onChange={(v) => up({ situacao: v as Contato['situacao'] })} options={[{ value: 'ATIVO', label: 'Ativo' }, { value: 'INVALIDO', label: 'Inválido' }, { value: 'SAIU_DA_EMPRESA', label: 'Saiu da empresa' }]} /></Field>
+        <Field label="Status do e-mail"><Select value={c.statusEmail ?? ''} onChange={(v) => up({ statusEmail: (v || undefined) as Contato['statusEmail'] })} options={[{ value: 'valido', label: 'Válido' }, { value: 'desconhecido', label: 'Não verificado' }, { value: 'catch_all', label: 'Catch-all' }, { value: 'invalido', label: 'Inválido' }, { value: 'devolvido', label: 'Devolvido (bounce)' }]} allowEmpty="—" /></Field>
+        <Field label="Status do telefone"><Select value={c.statusTelefone ?? ''} onChange={(v) => up({ statusTelefone: (v || undefined) as Contato['statusTelefone'] })} options={[{ value: 'valido', label: 'Válido' }, { value: 'desconhecido', label: 'Não verificado' }, { value: 'invalido', label: 'Inválido' }]} allowEmpty="—" /></Field>
         <Field label="E-mail"><Input value={c.email ?? ''} onChange={(ev) => up({ email: ev.target.value || undefined })} /></Field>
         <Field label="Telefone"><Input value={c.telefone ?? ''} onChange={(ev) => up({ telefone: ev.target.value || undefined })} /></Field>
         <Field label="Celular"><Input value={c.celular ?? ''} onChange={(ev) => up({ celular: ev.target.value || undefined })} /></Field>
@@ -273,8 +280,9 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
     <Modal title="Importar planilha (CSV)" onClose={onClose} wide>
       {job ? (
         <>
-          <p><b>Importação {job.status.toLowerCase()}</b> · {job.total} linha(s): {job.importados} nova(s), {job.atualizados} atualizada(s), {job.duplicados} possível(is) duplicata(s), {job.erros} erro(s).</p>
+          <p><b>Importação {job.status.toLowerCase()}</b> · {job.total} linha(s): {job.importados} nova(s), {job.atualizados} atualizada(s), {job.duplicados} possível(is) duplicata(s), {job.revisao ?? 0} para revisão, {job.erros} erro(s).</p>
           {!!job.duplicados && <p className="small">Revise as duplicatas em Command Center › Duplicatas antes de trabalhar essas empresas.</p>}
+          {!!job.revisao && <p className="small">{job.revisao} contato(s) com empresa ambígua ou não encontrada foram para Command Center › Fila de revisão: nenhuma empresa foi criada automaticamente.</p>}
           {!!job.erros && <div style={{ maxHeight: 220, overflow: 'auto' }}><table className="small"><thead><tr><th>Linha</th><th>Campo</th><th>Erro</th></tr></thead><tbody>{ds.radar.importacaoErros.filter((e) => e.jobId === job.id).map((e) => <tr key={e.id}><td>{e.numero}</td><td>{e.campo ?? '—'}</td><td>{e.mensagem}</td></tr>)}</tbody></table></div>}
           <div className="foot"><button className="btn primary" onClick={onClose}>Fechar</button></div>
         </>
@@ -284,7 +292,7 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
             <Field label="O que a planilha contém"><Select value={tipo} onChange={(v) => setTipo(v as 'empresas')} options={[{ value: 'empresas', label: 'Empresas' }, { value: 'contatos', label: 'Contatos (com a empresa em cada linha)' }]} /></Field>
             <Field label="Fonte" hint="fica registrada em cada empresa e contato"><Select value={fonteId} onChange={setFonteId} options={ds.radar.fontes.filter((f) => f.ativo).map((f) => ({ value: f.id, label: f.nome }))} /></Field>
             <Field label="Arquivo CSV" full><input type="file" accept=".csv,.txt,.tsv" onChange={(ev) => { const f = ev.target.files?.[0]; if (f) ler(f); }} /></Field>
-            <Field label="Ou cole o conteúdo (com cabeçalho)" full><textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} rows={7} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} placeholder={tipo === 'empresas' ? 'Razão Social;CNPJ;Cidade;UF;Setor;Funcionários;Site' : 'Nome;Cargo;E-mail;Telefone;Empresa;CNPJ;Decisor'} /></Field>
+            <Field label="Ou cole o conteúdo (com cabeçalho)" full><textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} rows={7} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} placeholder={tipo === 'empresas' ? 'Razão Social;CNPJ;Cidade;UF;Setor;Funcionários;Site' : 'Empresa ID;Empresa;Domínio;Nome;Cargo;Departamento;Senioridade;E-mail;Status do e-mail;Celular;LinkedIn;Fonte'} /></Field>
           </div>
           {!!colunas.length && (
             <div className="small" style={{ marginTop: 8 }}>

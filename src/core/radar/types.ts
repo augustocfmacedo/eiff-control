@@ -69,15 +69,41 @@ export interface Contato {
   whatsapp?: string;
   linkedin?: string;
   decisor: boolean;
-  poderDecisao?: PoderDecisao;
-  qualidade: number; // 0-100
+  poderDecisao?: PoderDecisao; // decision_power
+  persona?: Persona;
+  personaManual?: boolean; // true quando o usuario escolheu a persona (nao reinferir)
+  decisionFitScore?: number; // 0-100, relevancia comercial para a oportunidade da empresa
+  isPrimario?: boolean; // is_primary_contact (um por empresa)
+  qualidade: number; // contact_data_quality 0-100
+  statusEmail?: StatusEmail; // professional_email_status
+  statusTelefone?: StatusTelefone; // phone_status
+  situacao?: SituacaoContato; // ATIVO | INVALIDO | SAIU_DA_EMPRESA
   fonteId?: string;
-  verificadoEm?: string;
+  verificadoEm?: string; // last_verified_at
   observacoes: string;
   ativo: boolean;
   criadoEm: string;
   atualizadoEm: string;
 }
+
+export type Persona = 'OWNER' | 'CEO' | 'PRESIDENT' | 'COO' | 'INDUSTRIAL_DIRECTOR' | 'ENGINEERING_DIRECTOR' | 'OPERATIONS_DIRECTOR' | 'EXPANSION_DIRECTOR' | 'FACILITIES' | 'ENGINEERING' | 'OPERATIONS' | 'MANUFACTURING' | 'LOGISTICS' | 'SUPPLY_CHAIN' | 'PROCUREMENT' | 'REAL_ESTATE' | 'OTHER';
+export type StatusEmail = 'valido' | 'invalido' | 'devolvido' | 'desconhecido' | 'catch_all';
+export type StatusTelefone = 'valido' | 'invalido' | 'desconhecido';
+export type SituacaoContato = 'ATIVO' | 'INVALIDO' | 'SAIU_DA_EMPRESA';
+
+/** Regra configuravel cargo/departamento -> persona (primeira que casa, por prioridade). */
+export interface RegraPersona {
+  id: string;
+  persona: Persona;
+  campo: 'cargo' | 'departamento' | 'ambos';
+  termos: string[]; // palavras/expressoes (sem acento, minusculas); casa por palavra inteira
+  excluir?: string[]; // se o texto contiver, nao casa
+  prioridade: number;
+  ativo: boolean;
+}
+
+/** Matriz de pesos do decision fit (persona.<PERSONA>.<porte>, senioridade.<nivel>, departamento.<termo>, projeto.<tipo>.<PERSONA>, porte.*.max). */
+export interface PesoDecisionFit { chave: string; valor: number }
 
 export interface Projeto {
   id: string;
@@ -238,7 +264,8 @@ export type Dimensao = (typeof DIMENSOES)[number];
 export type CondicaoRegra =
   | { tipo: 'sinal'; tipoSinal: TipoSinal; confiancaMinima?: number; somenteVerificado?: boolean }
   | { tipo: 'campo'; campo: keyof Empresa; op: 'eq' | 'in' | 'contem' | 'gte' | 'lte' | 'existe' | 'prefixo'; valor?: string | number | string[] }
-  | { tipo: 'contato'; decisor?: boolean; comEmail?: boolean; comTelefone?: boolean; verificado?: boolean }
+  | { tipo: 'contato'; decisor?: boolean; comEmail?: boolean; comTelefone?: boolean; comCanal?: boolean; verificado?: boolean; fitMinimo?: number }
+  | { tipo: 'sinalQualquer'; diasMax?: number }
   | { tipo: 'resposta'; codigos: CodigoResposta[] }
   | { tipo: 'atividade'; tipos: TipoAtividade[] }
   | { tipo: 'projeto'; estagios?: string[]; valorMinimo?: number; inicioEmMeses?: number }
@@ -295,6 +322,7 @@ export interface ImportacaoJob {
   atualizados: number;
   duplicados: number; // possiveis duplicatas sinalizadas
   erros: number;
+  revisao?: number; // linhas na fila de revisao (empresa ambigua)
   criadoPor: string;
   criadoEm: string;
   concluidoEm?: string;
@@ -305,9 +333,10 @@ export interface ImportacaoLinha {
   jobId: string;
   numero: number;
   dados: Record<string, string>;
-  status: 'importada' | 'atualizada' | 'duplicata_possivel' | 'erro' | 'ignorada';
+  status: 'importada' | 'atualizada' | 'duplicata_possivel' | 'erro' | 'ignorada' | 'revisao';
   entidadeId?: string;
   mensagem?: string;
+  candidatos?: { empresaId: string; motivo: string; confianca: number }[]; // fila de revisao: empresas possiveis
 }
 
 export interface ImportacaoErro {
@@ -367,6 +396,8 @@ export interface RadarDataset {
   experimentos: Experimento[];
   regrasScore: RegraScore[];
   configScore: ConfigScore[];
+  regrasPersona: RegraPersona[];
+  pesosDecisionFit: PesoDecisionFit[];
   snapshotsScore: SnapshotScore[];
   importacoes: ImportacaoJob[];
   importacaoLinhas: ImportacaoLinha[];
@@ -376,4 +407,4 @@ export interface RadarDataset {
   registrosFonte: RegistroFonte[];
 }
 
-export const radarVazio = (): RadarDataset => ({ fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [] });
+export const radarVazio = (): RadarDataset => ({ fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [] });

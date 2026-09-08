@@ -57,12 +57,22 @@ export const CAMPOS_CONTATO: Record<string, string[]> = {
   linkedin: ['linkedin', 'linkedinurl', 'perfil'],
   decisor: ['decisor', 'decisionmaker', 'isdecisionmaker', 'decide'],
   poderDecisao: ['poderdecisao', 'decisionpower', 'poder'],
+  persona: ['persona'],
+  statusEmail: ['statusemail', 'emailstatus', 'statusdoemail', 'emailverificado', 'emailvalido', 'professionalemailstatus'],
+  statusTelefone: ['statustelefone', 'phonestatus', 'statusdotelefone'],
+  verificadoEm: ['verificadoem', 'lastverifiedat', 'ultimaverificacao', 'dataverificacao'],
+  empresaExternoId: ['empresaid', 'idempresa', 'companyid', 'businessid', 'businessexternalid', 'companyexternalid', 'idexternoempresa'],
   empresaCnpj: ['cnpj', 'cnpjempresa', 'companycnpj'],
   empresaNome: ['empresa', 'razaosocial', 'company', 'companyname', 'nomeempresa'],
-  empresaDominio: ['dominio', 'domain', 'site', 'website'],
+  empresaDominio: ['dominio', 'domain', 'site', 'website', 'companydomain'],
+  fonte: ['fonte', 'source', 'origem'],
   fonteExternaId: ['id', 'idexterno', 'externalid', 'contactid'],
   observacoes: ['observacoes', 'obs', 'notes'],
 };
+
+const statusEmailDe = (v?: string): 'valido' | 'invalido' | 'devolvido' | 'desconhecido' | 'catch_all' | undefined => { const s = (v ?? '').trim().toLowerCase(); if (!s) return undefined; if (/^(valid|válido|valido|verified|verificado|ok|deliverable|sim|yes|true)/.test(s)) return 'valido'; if (/bounce|devolv/.test(s)) return 'devolvido'; if (/^(invalid|inválido|invalido|undeliverable|nao|não|no|false)/.test(s)) return 'invalido'; if (/catch/.test(s)) return 'catch_all'; return 'desconhecido'; };
+const statusTelefoneDe = (v?: string): 'valido' | 'invalido' | 'desconhecido' | undefined => { const s = (v ?? '').trim().toLowerCase(); if (!s) return undefined; if (/^(valid|válido|valido|ok|verificado|sim|yes|true)/.test(s)) return 'valido'; if (/^(invalid|inválido|invalido|nao|não|no|false)/.test(s)) return 'invalido'; return 'desconhecido'; };
+const dataIso = (v?: string) => { const s = (v ?? '').trim(); if (!s) return undefined; const m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if (m) return `${m[3]}-${m[2]}-${m[1]}`; return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : undefined; };
 
 /** Mapeia cada coluna do cabecalho para um campo conhecido (ou undefined). Cabecalho exato vence sinonimo parcial. */
 export function mapearColunas(cabecalho: string[], campos: Record<string, string[]>): (string | undefined)[] {
@@ -77,7 +87,7 @@ export function mapearColunas(cabecalho: string[], campos: Record<string, string
 }
 
 export interface EmpresaCsv { numero: number; dados: Record<string, string>; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; linkedin?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; numeroUnidades?: number; fonteExternaId?: string; telefone?: string; email?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }
-export interface ContatoCsv { numero: number; dados: Record<string, string>; nome: string; cargo?: string; departamento?: string; senioridade?: string; email?: string; telefone?: string; celular?: string; whatsapp?: string; linkedin?: string; decisor: boolean; poderDecisao?: 'Baixo' | 'Médio' | 'Alto'; empresaCnpj?: string; empresaNome?: string; empresaDominio?: string; fonteExternaId?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }
+export interface ContatoCsv { numero: number; dados: Record<string, string>; nome: string; cargo?: string; departamento?: string; senioridade?: string; email?: string; telefone?: string; celular?: string; whatsapp?: string; linkedin?: string; decisor: boolean; poderDecisao?: 'Baixo' | 'Médio' | 'Alto'; persona?: string; statusEmail?: 'valido' | 'invalido' | 'devolvido' | 'desconhecido' | 'catch_all'; statusTelefone?: 'valido' | 'invalido' | 'desconhecido'; verificadoEm?: string; empresaExternoId?: string; empresaCnpj?: string; empresaNome?: string; empresaDominio?: string; fonte?: string; fonteExternaId?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }
 
 const numero = (v?: string) => { if (!v) return undefined; const n = Number(v.replace(/[R$\s.]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : undefined; };
 const faixaFunc = (v?: string) => { if (!v) return undefined; const n = numero(v); if (n === undefined) return v; return n <= 10 ? '1-10' : n <= 50 ? '11-50' : n <= 200 ? '51-200' : n <= 500 ? '201-500' : n <= 1000 ? '501-1000' : n <= 5000 ? '1001-5000' : '5000+'; };
@@ -115,11 +125,11 @@ export function normalizarContatosCsv(texto: string): { colunas: (string | undef
     if (!nome) erros.push({ campo: 'nome', mensagem: 'Nome ausente' });
     const email = g('email'); if (!emailValido(email)) erros.push({ campo: 'email', mensagem: `E-mail inválido: ${email}` });
     const cnpj = normalizarCnpj(g('empresaCnpj'));
-    const empresaNome = g('empresaNome'); const empresaDominio = normalizarDominio(g('empresaDominio') ?? email);
-    if (!cnpj && !empresaNome && !empresaDominio) erros.push({ campo: 'empresa', mensagem: 'Sem empresa (CNPJ, nome ou domínio)' });
+    const empresaNome = g('empresaNome'); const empresaDominio = normalizarDominio(g('empresaDominio') ?? email); const empresaExternoId = g('empresaExternoId');
+    if (!cnpj && !empresaNome && !empresaDominio && !empresaExternoId) erros.push({ campo: 'empresa', mensagem: 'Sem empresa (id, CNPJ, nome ou domínio)' });
     const pd = (g('poderDecisao') ?? '').toLowerCase();
     const poderDecisao: ContatoCsv['poderDecisao'] = pd.startsWith('a') || pd.startsWith('h') ? 'Alto' : pd.startsWith('m') ? 'Médio' : pd.startsWith('b') || pd.startsWith('l') ? 'Baixo' : undefined;
-    return { numero: i + 2, dados: d, nome, cargo: g('cargo'), departamento: g('departamento'), senioridade: g('senioridade'), email, telefone: g('telefone'), celular: g('celular'), whatsapp: g('whatsapp'), linkedin: g('linkedin'), decisor: sim(g('decisor')), poderDecisao, empresaCnpj: cnpj, empresaNome, empresaDominio, fonteExternaId: g('fonteExternaId'), observacoes: g('observacoes'), erros };
+    return { numero: i + 2, dados: d, nome, cargo: g('cargo'), departamento: g('departamento'), senioridade: g('senioridade'), email, telefone: g('telefone'), celular: g('celular'), whatsapp: g('whatsapp'), linkedin: g('linkedin'), decisor: sim(g('decisor')), poderDecisao, persona: g('persona')?.toUpperCase().replace(/\s+/g, '_'), statusEmail: statusEmailDe(g('statusEmail')), statusTelefone: statusTelefoneDe(g('statusTelefone')), verificadoEm: dataIso(g('verificadoEm')), empresaExternoId, empresaCnpj: cnpj, empresaNome, empresaDominio, fonte: g('fonte'), fonteExternaId: g('fonteExternaId'), observacoes: g('observacoes'), erros };
   });
   return { colunas, cabecalho, contatos };
 }

@@ -53,6 +53,35 @@ peso (pode ser negativo), decaimento linear em N dias. Score final = Σ dimensã
 com a explicação; na interface o score é clicável e mostra fator por fator, com o motivo e o decaimento aplicado.
 "Recalcular scores" no Command Center reaplica regras e decaimento a toda a base.
 
+## Decisores (persona, decision fit, contato principal)
+
+- **Persona** do contato inferida do cargo/departamento pela tabela `radar_persona_rule` (termos por palavra inteira,
+  exclusões, prioridade); o usuário pode fixar a persona no formulário (`personaManual`). Personas: OWNER, CEO,
+  PRESIDENT, COO, INDUSTRIAL_DIRECTOR, ENGINEERING_DIRECTOR, OPERATIONS_DIRECTOR, EXPANSION_DIRECTOR, FACILITIES,
+  ENGINEERING, OPERATIONS, MANUFACTURING, LOGISTICS, SUPPLY_CHAIN, PROCUREMENT, REAL_ESTATE, OTHER.
+- **Decision fit 0-100** (`calcularDecisionFit`): base por persona × porte da empresa (pequena ≤ 50, média ≤ 500,
+  grande) + senioridade + departamento + tipo de projeto × persona. Todos os pesos vêm de `radar_decision_fit_weight`
+  (chaves `persona.<P>.<porte>`, `senioridade.<nível>`, `departamento.<termo>`, `projeto.<tipo>.<P>`, `porte.*.max`,
+  `fit.adequado`), editáveis em Command Center › Personas e decision fit, com simulador. Em empresas pequenas
+  OWNER/CEO/PRESIDENT lideram; em médias e grandes sobem as diretorias industrial/engenharia/operações/expansão e
+  facilities; compras pesa menos.
+- **Contato principal** (`is_primary_contact`, um por empresa): o sistema sugere o maior decision fit entre os
+  elegíveis com as razões (persona × porte, senioridade, área, tipo de projeto); o usuário pode definir outro na aba
+  Contatos. Nunca são selecionados contatos com do_not_contact/opt_out, situação INVALIDO ou SAIU_DA_EMPRESA.
+- **Qualidade do contato 0-100**: nome completo, cargo, empresa confirmada (CNPJ ou domínio), departamento,
+  senioridade, e-mail profissional e status, telefone e status, LinkedIn, verificação recente.
+- **Qualidade da empresa** (dimensão DATA_QUALITY): firmográficos, domínio, CNPJ, localização, decisor adequado,
+  contato com canal válido, sinal identificado.
+- **Next best action** (`recomendarAcao`, campo `estado`): SEARCH_DECISION_MAKER (sem contato adequado),
+  ENRICH_CONTACT (decisor sem canal), RESEARCH_SIGNALS (decisor e canal, sem sinal), CONTACT_NOW (sinal + decisor),
+  além de OVERDUE_TASK, PLANNED_ACTION, RESPOND, FOLLOW_UP, OPEN_OPPORTUNITY, WAIT e DO_NOT_CONTACT.
+- **Importação de contatos**: colunas id da empresa, empresa, domínio, nome, cargo, departamento, senioridade, e-mail,
+  status do e-mail, celular, LinkedIn, fonte. Associação por id externo → domínio → razão social (+ UF). Mais de uma
+  candidata, ou só nome parecido, vai para a **fila de revisão** (Command Center) sem criar empresa; empresa
+  inexistente sem ambiguidade é criada a partir da linha.
+- **Métricas** (Command Center): empresas, com contato, com decisor adequado, com canal, precisam de pesquisa, precisam
+  de enriquecimento, sem decisor, fila de revisão; taxas de cobertura em `resumoRadar` e view `v_radar_contact_coverage`.
+
 ## Telas
 
 - **Command Center** (`#/radar`): pipeline ponderado, leads A+/A, novos sinais, follow-ups vencidos, oportunidades sem

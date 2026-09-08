@@ -48,7 +48,7 @@ import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
-import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoSuprimido, empresaVazia, encontrarEmpresa, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarEmpresasCsv, normalizarUf, radarVazio, recalcularEmpresa, registrarSinalNormalizado, upsertContato, upsertEmpresa, type Atividade, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type ImportacaoErro, type ImportacaoJob, type ImportacaoLinha, type Oportunidade, type Projeto, type RadarDataset, type RegistroFonte, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa } from '../core/radar';
+import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, associarEmpresaContato, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarEmpresasCsv, normalizarUf, radarVazio, recalcularEmpresa, registrarSinalNormalizado, upsertContato, upsertEmpresa, type Atividade, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type ImportacaoErro, type ImportacaoJob, type ImportacaoLinha, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegistroFonte, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -245,6 +245,8 @@ export function garantirPadroesRadar(ds: Dataset): Dataset {
     tiposResposta: r.tiposResposta?.length ? r.tiposResposta : RESPOSTAS_PADRAO,
     regrasScore: r.regrasScore?.length ? r.regrasScore : REGRAS_PADRAO,
     configScore: r.configScore?.length ? r.configScore : CONFIG_SCORE_PADRAO,
+    regrasPersona: r.regrasPersona?.length ? r.regrasPersona : REGRAS_PERSONA_PADRAO,
+    pesosDecisionFit: r.pesosDecisionFit?.length ? r.pesosDecisionFit : PESOS_DECISION_FIT_PADRAO,
   };
   return { ...ds, radar };
 }
@@ -1557,10 +1559,11 @@ export const actions = {
     if (!c.nome.trim()) throw new RegraDeNegocioError('Nome do contato é obrigatório.');
     if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) throw new RegraDeNegocioError('E-mail inválido.');
     const atual = r.contatos.find((x) => x.id === c.id);
-    const qualidade = Math.min(100, 20 + (c.email ? 30 : 0) + (c.telefone || c.celular || c.whatsapp ? 25 : 0) + (c.cargo ? 15 : 0) + (c.linkedin ? 10 : 0) + (c.verificadoEm ? 0 : 0));
-    const novo: Contato = { ...c, nome: c.nome.trim(), email: c.email?.trim().toLowerCase() || undefined, qualidade, fonteId: c.fonteId ?? fonteRadar(r, 'MANUAL').id, atualizadoEm: agora() };
+    const empresa = r.empresas.find((e) => e.id === c.empresaId);
+    const personaManual = c.personaManual ?? (!!c.persona && c.persona !== atual?.persona);
+    const novo: Contato = enriquecerContato({ ...c, personaManual, nome: c.nome.trim(), email: c.email?.trim().toLowerCase() || undefined, situacao: c.situacao ?? 'ATIVO', ativo: c.ativo && (c.situacao ?? 'ATIVO') === 'ATIVO', fonteId: c.fonteId ?? fonteRadar(r, 'MANUAL').id, atualizadoEm: agora() }, empresa, r, ds.params.dataBase);
     const ids = idsRadar(r);
-    let radar: RadarDataset = { ...r, contatos: atual ? r.contatos.map((x) => (x.id === c.id ? novo : x)) : [...r.contatos, novo] };
+    let radar: RadarDataset = { ...r, contatos: (atual ? r.contatos.map((x) => (x.id === c.id ? novo : x)) : [...r.contatos, novo]).map((x) => (novo.isPrimario && x.empresaId === novo.empresaId && x.id !== novo.id && x.isPrimario ? { ...x, isPrimario: false } : x)) };
     radar = recalcularEmpresasRadar(radar, [c.empresaId], ids);
     ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_contato' : 'radar_criar_contato', 'radar_contato', c.id, atual, novo);
     commit(ds);
@@ -1876,33 +1879,128 @@ export const actions = {
       for (const c of contatos) {
         if (c.erros.length) { for (const er of c.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: c.numero, campo: er.campo, mensagem: er.mensagem }); }
         if (c.erros.some((x) => x.campo === 'nome' || x.campo === 'empresa')) { linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: 'erro', mensagem: c.erros.map((x) => x.mensagem).join('; ') }); job.erros++; continue; }
-        const match = encontrarEmpresa({ cnpj: c.empresaCnpj, dominio: c.empresaDominio, razaoSocial: c.empresaNome }, r.empresas);
-        if (!match || match.nivel === 'possivel') {
-          // empresa desconhecida: cria a partir dos dados do contato (a linha fica marcada para revisao)
-          if (!c.empresaNome && !c.empresaCnpj) { linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: 'erro', mensagem: 'Empresa não encontrada e sem nome para criar' }); job.erros++; continue; }
-          const up = upsertEmpresa(r, { cnpj: c.empresaCnpj, razaoSocial: c.empresaNome ?? c.empresaDominio ?? '', dominio: c.empresaDominio }, fonte.id, ids);
-          r = up.radar; afetadas.add(up.empresa.id);
-          if (up.resultado === 'duplicata_possivel') job.duplicados++;
-          const ct = upsertContato(r, up.empresa.id, { nome: c.nome, cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email: c.email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, decisor: c.decisor, poderDecisao: c.poderDecisao, externoId: c.fonteExternaId, observacoes: c.observacoes }, fonte.id, ids);
-          r = { ...ct.radar, registrosFonte: [...ct.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'contato', externoId: c.fonteExternaId, payload: c.dados, recebidoEm: agora(), entidadeId: ct.contato.id }] };
-          if (ct.resultado === 'importada') job.importados++; else job.atualizados++;
-          linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: ct.resultado === 'importada' ? 'importada' : 'atualizada', entidadeId: ct.contato.id, mensagem: `empresa criada: ${up.empresa.razaoSocial}` });
+        const assoc = associarEmpresaContato({ empresaExternoId: c.empresaExternoId, empresaDominio: c.empresaDominio, empresaNome: c.empresaNome, empresaCnpj: c.empresaCnpj }, r.empresas);
+        const fonteLinha = c.fonte ? r.fontes.find((f) => f.codigo.toLowerCase() === c.fonte!.toLowerCase() || f.nome.toLowerCase() === c.fonte!.toLowerCase()) ?? fonte : fonte;
+        const dadosContato = { nome: c.nome, cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email: c.email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, decisor: c.decisor, poderDecisao: c.poderDecisao, persona: c.persona && PERSONAS.includes(c.persona as Persona) ? (c.persona as Persona) : undefined, statusEmail: c.statusEmail, statusTelefone: c.statusTelefone, verificadoEm: c.verificadoEm, externoId: c.fonteExternaId, observacoes: c.observacoes };
+        if (assoc.nivel === 'ambiguo') {
+          // ambiguidade relevante: nunca cria empresa; vai para a fila de revisao com as candidatas
+          linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: 'revisao', mensagem: assoc.motivo, candidatos: assoc.candidatos });
+          job.revisao = (job.revisao ?? 0) + 1;
           continue;
         }
-        const ct = upsertContato(r, match.empresa.id, { nome: c.nome, cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email: c.email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, decisor: c.decisor, poderDecisao: c.poderDecisao, externoId: c.fonteExternaId, observacoes: c.observacoes }, fonte.id, ids);
-        r = { ...ct.radar, registrosFonte: [...ct.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'contato', externoId: c.fonteExternaId, payload: c.dados, recebidoEm: agora(), entidadeId: ct.contato.id }] };
-        afetadas.add(match.empresa.id);
+        let empresaId = assoc.empresa?.id;
+        let nota: string | undefined = assoc.empresa ? undefined : undefined;
+        if (!empresaId) {
+          if (!c.empresaNome && !c.empresaCnpj) { linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: 'revisao', mensagem: 'Empresa não encontrada (id, domínio e nome não casaram)', candidatos: [] }); job.revisao = (job.revisao ?? 0) + 1; continue; }
+          const up = upsertEmpresa(r, { cnpj: c.empresaCnpj, razaoSocial: c.empresaNome ?? c.empresaDominio ?? '', dominio: c.empresaDominio, externoId: c.empresaExternoId }, fonteLinha.id, ids);
+          r = up.radar; empresaId = up.empresa.id; nota = `empresa criada: ${up.empresa.razaoSocial}`;
+          if (up.resultado === 'duplicata_possivel') job.duplicados++;
+        }
+        const ct = upsertContato(r, empresaId, dadosContato, fonteLinha.id, ids);
+        r = { ...ct.radar, registrosFonte: [...ct.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonteLinha.id, tipo: 'contato', externoId: c.fonteExternaId, payload: c.dados, recebidoEm: agora(), entidadeId: ct.contato.id }] };
+        afetadas.add(empresaId);
         if (ct.resultado === 'importada') job.importados++; else job.atualizados++;
-        linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: ct.resultado === 'importada' ? 'importada' : 'atualizada', entidadeId: ct.contato.id });
+        linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: c.numero, dados: c.dados, status: ct.resultado === 'importada' ? 'importada' : 'atualizada', entidadeId: ct.contato.id, mensagem: nota ?? (assoc.nivel === 'provavel' ? `empresa por ${assoc.motivo}` : undefined) });
       }
     }
-    job.status = job.erros === 0 ? 'Concluída' : job.erros === job.total ? 'Falhou' : 'Com erros';
+    job.status = job.erros === 0 && !job.revisao ? 'Concluída' : job.erros === job.total ? 'Falhou' : 'Com erros';
     job.concluidoEm = agora();
     r = { ...r, importacoes: [...r.importacoes, job], importacaoLinhas: [...r.importacaoLinhas, ...linhas], importacaoErros: [...r.importacaoErros, ...erros] };
     r = recalcularEmpresasRadar(r, [...afetadas], ids);
     ds = registrar({ ...ds, radar: r }, 'radar_importar_csv', 'radar_importacao', job.id, undefined, { tipo: job.tipo, total: job.total, importados: job.importados, atualizados: job.atualizados, duplicados: job.duplicados, erros: job.erros });
     commit(ds);
     return job;
+  },
+
+  /** Resolve uma linha da fila de revisao: associa a uma empresa escolhida, cria a empresa a partir da linha ou ignora. */
+  resolverLinhaRevisaoRadar(linhaId: string, decisao: { empresaId?: string; criar?: boolean; ignorar?: boolean; motivo?: string }) {
+    let ds = state.ds;
+    exigir('radar');
+    let r = ds.radar;
+    const linha = r.importacaoLinhas.find((l) => l.id === linhaId);
+    if (!linha || linha.status !== 'revisao') throw new RegraDeNegocioError('Linha não está na fila de revisão.');
+    const job = r.importacoes.find((j) => j.id === linha.jobId);
+    const fonte = fonteRadar(r, job?.fonteId ?? 'CSV');
+    const ids = idsRadar(r);
+    if (decisao.ignorar) {
+      r = { ...r, importacaoLinhas: r.importacaoLinhas.map((l) => (l.id === linhaId ? { ...l, status: 'ignorada' as const, mensagem: decisao.motivo ?? 'ignorada na revisão' } : l)) };
+      ds = registrar({ ...ds, radar: r }, 'radar_revisar_linha', 'radar_importacao', linhaId, linha, { status: 'ignorada' }, decisao.motivo);
+      commit(ds); return;
+    }
+    const cab = Object.keys(linha.dados); const csv = `${cab.join(';')}\n${cab.map((k) => `"${(linha.dados[k] ?? '').replace(/"/g, '""')}"`).join(';')}`;
+    const c = (job?.tipo === 'contatos' ? normalizarContatosCsv(csv).contatos[0] : undefined);
+    if (!c) throw new RegraDeNegocioError('Só linhas de contatos podem ser revisadas aqui.');
+    let empresaId = decisao.empresaId;
+    if (!empresaId && decisao.criar) {
+      if (!c.empresaNome && !c.empresaCnpj) throw new RegraDeNegocioError('A linha não tem nome nem CNPJ da empresa para criar.');
+      const up = upsertEmpresa(r, { cnpj: c.empresaCnpj, razaoSocial: c.empresaNome ?? '', dominio: c.empresaDominio, externoId: c.empresaExternoId }, fonte.id, ids);
+      r = up.radar; empresaId = up.empresa.id;
+    }
+    if (!empresaId || !r.empresas.some((e) => e.id === empresaId)) throw new RegraDeNegocioError('Escolha a empresa ou crie uma nova.');
+    const ct = upsertContato(r, empresaId, { nome: c.nome, cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email: c.email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, decisor: c.decisor, poderDecisao: c.poderDecisao, persona: c.persona && PERSONAS.includes(c.persona as Persona) ? (c.persona as Persona) : undefined, statusEmail: c.statusEmail, statusTelefone: c.statusTelefone, verificadoEm: c.verificadoEm, externoId: c.fonteExternaId, observacoes: c.observacoes }, fonte.id, ids);
+    r = { ...ct.radar, registrosFonte: [...ct.radar.registrosFonte, { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'contato', externoId: c.fonteExternaId, payload: linha.dados, recebidoEm: agora(), entidadeId: ct.contato.id }], importacaoLinhas: ct.radar.importacaoLinhas.map((l) => (l.id === linhaId ? { ...l, status: ct.resultado === 'importada' ? 'importada' as const : 'atualizada' as const, entidadeId: ct.contato.id, mensagem: 'resolvida na revisão' } : l)) };
+    r = recalcularEmpresasRadar(r, [empresaId], ids);
+    ds = registrar({ ...ds, radar: r }, 'radar_revisar_linha', 'radar_importacao', linhaId, linha, { status: 'importada', empresaId }, decisao.motivo);
+    commit(ds);
+    return ct.contato;
+  },
+
+  /** Define (ou remove) o contato principal da empresa; so um por empresa. */
+  definirContatoPrincipalRadar(contatoId: string, principal = true) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const c = r.contatos.find((x) => x.id === contatoId);
+    if (!c) throw new RegraDeNegocioError('Contato não encontrado.');
+    if (principal && !contatoElegivel(c, r.supressoes)) throw new RegraDeNegocioError('Contato inválido, saiu da empresa ou marcado como não contatar não pode ser o principal.');
+    const contatos = r.contatos.map((x) => (x.id === contatoId ? { ...x, isPrimario: principal, atualizadoEm: agora() } : x.empresaId === c.empresaId && principal && x.isPrimario ? { ...x, isPrimario: false } : x));
+    const radar = recalcularEmpresasRadar({ ...r, contatos }, [c.empresaId], idsRadar(r));
+    ds = registrar({ ...ds, radar }, 'radar_definir_contato_principal', 'radar_contato', contatoId, { isPrimario: !!c.isPrimario }, { isPrimario: principal });
+    commit(ds);
+  },
+
+  /** Reaplica persona, senioridade, qualidade e decision fit a todos os contatos (apos mudar regras/pesos). */
+  recalcularContatosRadar() {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const contatos = r.contatos.map((c) => enriquecerContato(c, r.empresas.find((e) => e.id === c.empresaId), r, ds.params.dataBase));
+    const radar = recalcularEmpresasRadar({ ...r, contatos }, [...new Set(contatos.map((c) => c.empresaId))], idsRadar(r));
+    ds = registrar({ ...ds, radar }, 'radar_recalcular_contatos', 'radar_contato', 'todos', undefined, { contatos: contatos.length });
+    commit(ds);
+    return contatos.length;
+  },
+
+  salvarRegraPersonaRadar(g: RegraPersona) {
+    let ds = state.ds;
+    exigir('radar_config');
+    if (!PERSONAS.includes(g.persona)) throw new RegraDeNegocioError('Persona inválida.');
+    if (!g.termos.filter((t) => t.trim()).length) throw new RegraDeNegocioError('Informe pelo menos um termo.');
+    const r = ds.radar;
+    const atual = r.regrasPersona.find((x) => x.id === g.id);
+    const novo = { ...g, termos: g.termos.map((t) => t.trim()).filter(Boolean) };
+    ds = registrar({ ...ds, radar: { ...r, regrasPersona: atual ? r.regrasPersona.map((x) => (x.id === g.id ? novo : x)) : [...r.regrasPersona, novo] } }, 'radar_salvar_regra_persona', 'radar_persona_rule', g.id, atual, novo);
+    commit(ds);
+  },
+
+  salvarPesoDecisionFitRadar(chave: string, valor: number) {
+    let ds = state.ds;
+    exigir('radar_config');
+    if (!Number.isFinite(valor)) throw new RegraDeNegocioError('Valor inválido.');
+    const r = ds.radar;
+    const existe = r.pesosDecisionFit.some((p) => p.chave === chave);
+    ds = registrar({ ...ds, radar: { ...r, pesosDecisionFit: existe ? r.pesosDecisionFit.map((p) => (p.chave === chave ? { chave, valor } : p)) : [...r.pesosDecisionFit, { chave, valor }] } }, 'radar_salvar_peso_decision_fit', 'radar_decision_fit_weight', chave, r.pesosDecisionFit.find((p) => p.chave === chave), { chave, valor });
+    commit(ds);
+  },
+
+  /** Restaura os padroes de uma configuracao (regras de score, regras de persona ou pesos do decision fit). */
+  restaurarPadroesRadar(qual: 'regrasScore' | 'regrasPersona' | 'pesosDecisionFit') {
+    let ds = state.ds;
+    exigir('radar_config');
+    const r = ds.radar;
+    const radar: RadarDataset = qual === 'regrasScore' ? { ...r, regrasScore: REGRAS_PADRAO } : qual === 'regrasPersona' ? { ...r, regrasPersona: REGRAS_PERSONA_PADRAO } : { ...r, pesosDecisionFit: PESOS_DECISION_FIT_PADRAO };
+    ds = registrar({ ...ds, radar }, 'radar_restaurar_padroes', 'radar_config', qual, undefined, { qual });
+    commit(ds);
   },
 
   /** Ingere registros brutos de uma fonte pelo adapter dela (base para as integracoes CNO/PNCP/CNPJ/B2B/noticias). */

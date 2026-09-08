@@ -1,7 +1,8 @@
 // Ingestao normalizada: upsert de empresa/contato/projeto/sinal com deduplicacao e linhagem. Funcoes puras sobre o
 // RadarDataset (recebem geradores de id do store) para serem testaveis e reutilizadas por CSV e adapters.
 import type { ContatoNormalizado, EmpresaNormalizada, ProjetoNormalizado, RegistroNormalizado, SinalNormalizado } from './adapters';
-import { encontrarEmpresa, normalizarCidade, normalizarCnpj, normalizarDominio, normalizarUf } from './normalizar';
+import { encontrarEmpresa, normalizarCidade, normalizarCnpj, normalizarDominio, normalizarNome, normalizarUf, similaridade } from './normalizar';
+import { enriquecerContato } from './contatos';
 import { pesoBaseSinal } from './score';
 import type { Contato, Empresa, PossivelDuplicata, Projeto, RadarDataset, Sinal, TipoFonte } from './types';
 
@@ -44,24 +45,62 @@ export function upsertEmpresa(r: RadarDataset, dados: EmpresaNormalizada & { lin
 }
 
 /** Contato: casa por e-mail, senao por nome normalizado na mesma empresa. */
-export function upsertContato(r: RadarDataset, empresaId: string, c: ContatoNormalizado & { departamento?: string; senioridade?: string; whatsapp?: string; poderDecisao?: Contato['poderDecisao']; observacoes?: string }, fonteId: string | undefined, ids: Ids): { radar: RadarDataset; contato: Contato; resultado: ResultadoUpsert } {
+export function upsertContato(r: RadarDataset, empresaId: string, c: ContatoNormalizado & { departamento?: string; senioridade?: string; whatsapp?: string; poderDecisao?: Contato['poderDecisao']; statusEmail?: Contato['statusEmail']; statusTelefone?: Contato['statusTelefone']; persona?: Contato['persona']; verificadoEm?: string; observacoes?: string }, fonteId: string | undefined, ids: Ids): { radar: RadarDataset; contato: Contato; resultado: ResultadoUpsert } {
   const nome = (c.nome ?? '').trim();
   if (!nome) throw new Error('Nome do contato é obrigatório.');
   const email = c.email?.trim().toLowerCase() || undefined;
   const chaveNome = nome.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
   const atual = r.contatos.find((x) => x.empresaId === empresaId && ((email && x.email?.toLowerCase() === email) || x.nome.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '') === chaveNome));
-  const dados = limpo({ cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, poderDecisao: c.poderDecisao, observacoes: c.observacoes });
-  const qualidade = Math.min(100, 20 + (email ? 30 : 0) + (c.telefone || c.celular || c.whatsapp ? 25 : 0) + (c.cargo ? 15 : 0) + (c.linkedin ? 10 : 0));
+  const dados = limpo({ cargo: c.cargo, departamento: c.departamento, senioridade: c.senioridade, email, telefone: c.telefone, celular: c.celular, whatsapp: c.whatsapp, linkedin: c.linkedin, poderDecisao: c.poderDecisao, statusEmail: c.statusEmail, statusTelefone: c.statusTelefone, persona: c.persona, verificadoEm: c.verificadoEm, observacoes: c.observacoes });
+  const empresa = r.empresas.find((e) => e.id === empresaId);
   if (atual) {
     const merged: Contato = { ...atual };
     for (const [k, v] of Object.entries(dados)) { const chave = k as keyof Contato; if (!atual[chave]) (merged as unknown as Record<string, unknown>)[chave] = v; }
     merged.decisor = atual.decisor || !!c.decisor;
-    merged.qualidade = Math.max(atual.qualidade, qualidade);
     merged.atualizadoEm = ids.agora;
-    return { radar: { ...r, contatos: r.contatos.map((x) => (x.id === atual.id ? merged : x)) }, contato: merged, resultado: 'atualizada' };
+    const enr = enriquecerContato(merged, empresa, r, ids.hoje);
+    return { radar: { ...r, contatos: r.contatos.map((x) => (x.id === atual.id ? enr : x)) }, contato: enr, resultado: 'atualizada' };
   }
-  const contato: Contato = { id: ids.novo('CTT'), empresaId, nome, ...dados, decisor: !!c.decisor, qualidade, fonteId, observacoes: c.observacoes ?? '', ativo: true, criadoEm: ids.agora, atualizadoEm: ids.agora };
+  const base: Contato = { id: ids.novo('CTT'), empresaId, nome, ...dados, decisor: !!c.decisor, qualidade: 0, situacao: 'ATIVO', fonteId, observacoes: c.observacoes ?? '', ativo: true, criadoEm: ids.agora, atualizadoEm: ids.agora };
+  const contato = enriquecerContato(base, empresa, r, ids.hoje);
   return { radar: { ...r, contatos: [...r.contatos, contato] }, contato, resultado: 'importada' };
+}
+
+export interface AssociacaoEmpresa { empresa?: Empresa; nivel?: 'certo' | 'provavel' | 'ambiguo' | 'nenhum'; motivo: string; candidatos: { empresaId: string; motivo: string; confianca: number }[] }
+
+/**
+ * Associa um contato importado a uma empresa: 1) id externo da empresa (business identifier), 2) dominio,
+ * 3) razao social normalizada (+ cidade/UF quando houver). Mais de uma candidata ou so match aproximado = ambiguo
+ * (vai para a fila de revisao; nunca cria empresa automaticamente).
+ */
+export function associarEmpresaContato(dados: { empresaExternoId?: string; empresaDominio?: string; empresaNome?: string; empresaCnpj?: string; cidade?: string; uf?: string }, empresas: Empresa[]): AssociacaoEmpresa {
+  const ativas = empresas.filter((e) => e.ativo && !e.mescladaEm);
+  const cnpj = normalizarCnpj(dados.empresaCnpj);
+  if (cnpj) { const e = ativas.find((x) => x.cnpj === cnpj); if (e) return { empresa: e, nivel: 'certo', motivo: 'CNPJ', candidatos: [] }; }
+  const extId = dados.empresaExternoId?.trim();
+  if (extId) {
+    const es = ativas.filter((x) => x.fonteExternaId && x.fonteExternaId === extId);
+    if (es.length === 1) return { empresa: es[0], nivel: 'certo', motivo: `id externo ${dados.empresaExternoId}`, candidatos: [] };
+    if (es.length > 1) return { nivel: 'ambiguo', motivo: `id externo ${dados.empresaExternoId} em ${es.length} empresas`, candidatos: es.map((e) => ({ empresaId: e.id, motivo: 'mesmo id externo', confianca: 0.6 })) };
+  }
+  const dom = normalizarDominio(dados.empresaDominio);
+  if (dom) {
+    const es = ativas.filter((x) => x.dominio === dom);
+    if (es.length === 1) return { empresa: es[0], nivel: 'certo', motivo: `domínio ${dom}`, candidatos: [] };
+    if (es.length > 1) return { nivel: 'ambiguo', motivo: `domínio ${dom} em ${es.length} empresas`, candidatos: es.map((e) => ({ empresaId: e.id, motivo: 'mesmo domínio', confianca: 0.6 })) };
+  }
+  const nome = normalizarNome(dados.empresaNome);
+  if (nome) {
+    const es = ativas.filter((x) => normalizarNome(x.razaoSocial) === nome || (x.nomeFantasia && normalizarNome(x.nomeFantasia) === nome));
+    const uf = normalizarUf(dados.uf);
+    const local = uf ? es.filter((x) => x.uf === uf) : es;
+    if (local.length === 1) return { empresa: local[0], nivel: 'provavel', motivo: 'razão social igual', candidatos: [] };
+    if (es.length === 1) return { empresa: es[0], nivel: 'provavel', motivo: 'razão social igual', candidatos: [] };
+    if (es.length > 1) return { nivel: 'ambiguo', motivo: `razão social igual em ${es.length} empresas`, candidatos: es.map((e) => ({ empresaId: e.id, motivo: `${e.cidade ?? ''}/${e.uf ?? ''}`, confianca: 0.5 })) };
+    const parecidas = ativas.map((x) => ({ x, s: Math.max(similaridade(nome, x.razaoSocial), x.nomeFantasia ? similaridade(nome, x.nomeFantasia) : 0) })).filter((k) => k.s >= 0.8).sort((a, b) => b.s - a.s).slice(0, 3);
+    if (parecidas.length) return { nivel: 'ambiguo', motivo: 'nome parecido, sem correspondência exata', candidatos: parecidas.map((k) => ({ empresaId: k.x.id, motivo: `${Math.round(k.s * 100)}% parecido`, confianca: k.s })) };
+  }
+  return { nivel: 'nenhum', motivo: 'empresa não encontrada', candidatos: [] };
 }
 
 export function upsertProjeto(r: RadarDataset, empresaId: string, p: ProjetoNormalizado, fonteId: string | undefined, ids: Ids): { radar: RadarDataset; projeto: Projeto; resultado: ResultadoUpsert } {

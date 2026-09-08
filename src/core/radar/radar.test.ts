@@ -77,7 +77,7 @@ describe('score', () => {
     expect(dim('FIT').score).toBe(80); // setor 35 + uf 25 + porte 20
     expect(dim('TIMING').score).toBeCloseTo(55 * (1 - 30 / 270), 0); // nova fabrica ha 30 dias, decai em 270
     expect(dim('RELATIONSHIP').score).toBe(45); // decisor 30 + email/telefone 15
-    expect(dim('DATA_QUALITY').score).toBe(80); // 7 de 7 campos + contato
+    expect(dim('DATA_QUALITY').score).toBe(83); // firmograficos 2/5 (8) + dominio 10 + cnpj 10 + local 10 + decisor 15 + canal 15 + sinal 15
     expect(x.total).toBeCloseTo(0.25 * 80 + 0.35 * dim('TIMING').score + 0.25 * dim('INTENT').score + 0.1 * 45 + 0.05 * dim('DATA_QUALITY').score, 0);
     expect(x.classe).toBe(classificar(x.total, CONFIG_SCORE_PADRAO));
     expect(dim('TIMING').fatores[0].motivo).toContain('Nova fábrica');

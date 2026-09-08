@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { DIMENSOES, NOME_ESTAGIO, NOME_SINAL, TIPOS_SINAL, configDe, filaHoje, oportunidadesSemProximaAcao, resumoRadar, type CondicaoRegra, type Dimensao, type Estrategia, type RegraScore } from '../../core/radar';
+import { DIMENSOES, FAIXAS_FUNCIONARIOS, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, PERSONAS, TIPOS_SINAL, calcularDecisionFit, configDe, filaHoje, oportunidadesSemProximaAcao, resumoRadar, type CondicaoRegra, type Dimensao, type Estrategia, type ImportacaoLinha, type Persona, type RegraPersona, type RegraScore } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
-import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, ProgressRow, Select, Tabs, money, tentar, useToast } from '../../ui/components';
+import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast } from '../../ui/components';
 import { ImportarForm, ScorePill, d, dh, nomeUsuario } from './comum';
 
-type Aba = 'visao' | 'alertas' | 'regras' | 'estrategias' | 'importacoes' | 'duplicatas' | 'supressoes';
+type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'revisao' | 'duplicatas' | 'supressoes';
 
 export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const { ds, usuario } = useStore();
@@ -22,7 +22,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const cfg = configDe(r.configScore);
   const empresaNome = (id: string) => { const e = r.empresas.find((x) => x.id === id); return e ? e.nomeFantasia ?? e.razaoSocial : id; };
   const salvarRegra = (g: RegraScore) => tentar(() => actions.salvarRegraScoreRadar(g), toast);
-  const descreveCondicao = (c: CondicaoRegra) => c.tipo === 'sinal' ? `sinal ${NOME_SINAL[c.tipoSinal]}` : c.tipo === 'campo' ? `${String(c.campo)} ${c.op} ${Array.isArray(c.valor) ? c.valor.slice(0, 4).join(', ') + (c.valor.length > 4 ? '…' : '') : String(c.valor ?? '')}` : c.tipo === 'contato' ? `contato${c.decisor ? ' decisor' : ''}${c.comEmail ? ' com e-mail' : ''}${c.comTelefone ? ' e telefone' : ''}${c.verificado ? ' verificado' : ''}` : c.tipo === 'resposta' ? `resposta ${c.codigos.join('/')}` : c.tipo === 'atividade' ? `atividade ${c.tipos.join('/')}` : c.tipo === 'projeto' ? `projeto${c.inicioEmMeses ? ` em ${c.inicioEmMeses} meses` : ''}` : `completude de ${c.campos.length} campos`;
+  const descreveCondicao = (c: CondicaoRegra) => c.tipo === 'sinal' ? `sinal ${NOME_SINAL[c.tipoSinal]}` : c.tipo === 'campo' ? `${String(c.campo)} ${c.op} ${Array.isArray(c.valor) ? c.valor.slice(0, 4).join(', ') + (c.valor.length > 4 ? '…' : '') : String(c.valor ?? '')}` : c.tipo === 'contato' ? `contato${c.decisor ? ' decisor' : ''}${c.comEmail ? ' com e-mail' : ''}${c.comTelefone ? ' e telefone' : ''}${c.verificado ? ' verificado' : ''}` : c.tipo === 'resposta' ? `resposta ${c.codigos.join('/')}` : c.tipo === 'atividade' ? `atividade ${c.tipos.join('/')}` : c.tipo === 'projeto' ? `projeto${c.inicioEmMeses ? ` em ${c.inicioEmMeses} meses` : ''}` : c.tipo === 'sinalQualquer' ? `qualquer sinal${c.diasMax ? ` em ${c.diasMax} dias` : ''}` : `completude de ${c.campos.length} campos`;
   return (
     <>
       <PageHead title="Radar · Command Center" subtitle="Inteligência comercial da EIFF: empresas e sinais de mercado viram oportunidades priorizadas por score explicável. Aqui ficam os indicadores, os alertas e a configuração de regras.">
@@ -47,8 +47,18 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         { label: 'Atividades (7 d)', value: res.atividades7d, hint: `${res.atividades30d} em 30 d` }, { label: 'Respostas (30 d)', value: res.respostas30d, hint: `${res.respostasPositivas30d} positivas` }, { label: 'Reuniões (30 d)', value: res.reunioes30d },
         { label: 'Projetos recebidos', value: res.projetosRecebidos30d }, { label: 'Propostas (30 d)', value: res.propostas30d }, { label: 'Pipeline', value: money(res.pipeline, true), hint: `ponderado ${money(res.pipelinePonderado, true)}` },
       ]} />
+      <div style={{ height: 8 }} />
+      <KpiStrip itens={[
+        { label: 'Empresas', value: res.empresas, hint: `${res.comContato} com contato (${pct(res.coberturaContato)})`, to: '/radar/empresas' },
+        { label: 'Com decisor adequado', value: res.comDecisor, hint: `cobertura ${pct(res.coberturaDecisor)}`, to: '/radar/empresas?situacao=sem-decisor' },
+        { label: 'Com canal de contato', value: res.comCanal, hint: `${pct(res.contatavel)} contatáveis` },
+        { label: 'Precisam de pesquisa', value: res.precisamPesquisa, hint: 'sem decisor adequado ou sem sinal', tone: res.precisamPesquisa ? 'warn' : undefined },
+        { label: 'Precisam de enriquecimento', value: res.precisamEnriquecimento, hint: 'decisor sem e-mail/telefone válido' },
+        { label: 'Sem decisor', value: res.semDecisor, to: '/radar/empresas?situacao=sem-decisor' },
+        { label: 'Fila de revisão', value: res.revisoesPendentes, tone: res.revisoesPendentes ? 'warn' : undefined, to: '/radar?aba=revisao' },
+      ]} />
       <div style={{ height: 16 }} />
-      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }]} />
+      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }]} />
 
       {aba === 'visao' && (
         <div className="grid cols-2">
@@ -135,6 +145,18 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         </div>
       )}
 
+      {aba === 'decisores' && <ConfigDecisores podeConfig={podeConfig} onErro={toast} onOk={toast} />}
+
+      {aba === 'revisao' && (
+        <div className="card table-wrap">
+          <div className="small muted" style={{ marginBottom: 8 }}>Contatos importados cuja empresa ficou ambígua ou não foi encontrada. Nenhuma empresa é criada automaticamente: escolha a empresa certa, crie uma nova a partir da linha ou ignore.</div>
+          {!r.importacaoLinhas.some((l) => l.status === 'revisao') ? <Empty icone="aprovacoes" titulo="Fila vazia">Todas as linhas importadas foram associadas.</Empty> : (
+            <table><thead><tr><th>Linha</th><th>Contato</th><th>Empresa na planilha</th><th>Motivo</th><th>Candidatas</th><th /></tr></thead>
+              <tbody>{r.importacaoLinhas.filter((l) => l.status === 'revisao').map((l) => <LinhaRevisao key={l.id} l={l} podeAgir={podeAgir} onErro={toast} onOk={toast} />)}</tbody></table>
+          )}
+        </div>
+      )}
+
       {aba === 'duplicatas' && (
         <div className="card table-wrap">
           {!r.duplicatas.some((x) => x.status === 'pendente') ? <Empty icone="aprovacoes" titulo="Sem duplicatas pendentes">A deduplicação por CNPJ, domínio e nome não achou casos para revisar.</Empty> : (
@@ -160,6 +182,101 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
       {importar && <ImportarForm onClose={() => setImportar(false)} onErro={toast} onOk={toast} />}
       {el}
     </>
+  );
+}
+
+function LinhaRevisao({ l, podeAgir, onErro, onOk }: { l: ImportacaoLinha; podeAgir: boolean; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { ds } = useStore();
+  const [empresaId, setEmpresaId] = useState(l.candidatos?.[0]?.empresaId ?? '');
+  const g = (...ks: string[]) => { for (const k of Object.keys(l.dados)) if (ks.some((x) => k.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').includes(x))) return l.dados[k]; return ''; };
+  const nome = (id: string) => { const e = ds.radar.empresas.find((x) => x.id === id); return e ? `${e.nomeFantasia ?? e.razaoSocial}${e.cidade || e.uf ? ` (${[e.cidade, e.uf].filter(Boolean).join('/')})` : ''}` : id; };
+  const opcoes = [...(l.candidatos ?? []).map((c) => ({ value: c.empresaId, label: `${nome(c.empresaId)} · ${c.motivo}` })), ...ds.radar.empresas.filter((e) => e.ativo && !e.mescladaEm && !(l.candidatos ?? []).some((c) => c.empresaId === e.id)).sort((a, b) => a.razaoSocial.localeCompare(b.razaoSocial)).map((e) => ({ value: e.id, label: nome(e.id) }))];
+  return (
+    <tr>
+      <td className="num">{l.numero}</td>
+      <td><b>{g('nome', 'name', 'contato')}</b><div className="small muted">{g('cargo', 'title')}{g('email') ? ` · ${g('email')}` : ''}</div></td>
+      <td className="small">{g('empresa', 'company', 'razao') || '—'}{g('dominio', 'domain', 'site') ? <div className="muted">{g('dominio', 'domain', 'site')}</div> : null}</td>
+      <td className="small muted">{l.mensagem}</td>
+      <td style={{ minWidth: 260 }}>{podeAgir ? <Select value={empresaId} onChange={setEmpresaId} options={opcoes} allowEmpty="— escolha a empresa —" /> : (l.candidatos ?? []).map((c) => nome(c.empresaId)).join('; ')}</td>
+      <td className="actions">{podeAgir && <>
+        <button className="btn sm primary" disabled={!empresaId} onClick={() => tentar(() => { actions.resolverLinhaRevisaoRadar(l.id, { empresaId }); onOk('Contato associado.'); }, onErro)}>Associar</button>
+        <button className="btn sm" onClick={() => tentar(() => { actions.resolverLinhaRevisaoRadar(l.id, { criar: true }); onOk('Empresa criada e contato associado.'); }, onErro)}>Criar empresa</button>
+        <button className="btn sm" onClick={() => { const m = window.prompt('Motivo para ignorar a linha:'); if (m) tentar(() => { actions.resolverLinhaRevisaoRadar(l.id, { ignorar: true, motivo: m }); onOk('Linha ignorada.'); }, onErro); }}>Ignorar</button>
+      </>}</td>
+    </tr>
+  );
+}
+
+function ConfigDecisores({ podeConfig, onErro, onOk }: { podeConfig: boolean; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { ds } = useStore();
+  const r = ds.radar;
+  const peso = (chave: string) => r.pesosDecisionFit.find((p) => p.chave === chave)?.valor ?? 0;
+  const salvarPeso = (chave: string, v: number) => tentar(() => actions.salvarPesoDecisionFitRadar(chave, v), onErro);
+  const [teste, setTeste] = useState({ cargo: 'Diretor Industrial', departamento: 'Industrial', porte: '1001-5000', projeto: 'Fábrica' });
+  const previa = calcularDecisionFit({ cargo: teste.cargo, departamento: teste.departamento }, { faixaFuncionarios: teste.porte }, r.pesosDecisionFit, r.regrasPersona, teste.projeto);
+  const [novaRegra, setNovaRegra] = useState<{ persona: Persona; campo: RegraPersona['campo']; termos: string }>({ persona: 'OTHER', campo: 'ambos', termos: '' });
+  const projetos = ['expansao', 'fabrica', 'galpao', 'cd', 'escritorio', 'retrofit'];
+  return (
+    <>
+      <div className="card">
+        <h2>Simular decision fit</h2>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <label className="small">Cargo <Input value={teste.cargo} onChange={(e) => setTeste({ ...teste, cargo: e.target.value })} /></label>
+          <label className="small">Departamento <Input value={teste.departamento} onChange={(e) => setTeste({ ...teste, departamento: e.target.value })} /></label>
+          <label className="small">Porte <Select value={teste.porte} onChange={(v) => setTeste({ ...teste, porte: v })} options={FAIXAS_FUNCIONARIOS} /></label>
+          <label className="small">Projeto <Input value={teste.projeto} onChange={(e) => setTeste({ ...teste, projeto: e.target.value })} /></label>
+          <span className="score-pill A">{previa.score}<span className="cls">FIT</span></span>
+          <span className="small">{NOME_PERSONA[previa.persona]} · {previa.senioridade} · {previa.razoes.join(' · ')}</span>
+        </div>
+      </div>
+      <div className="grid cols-2" style={{ marginTop: 12 }}>
+        <div className="card table-wrap">
+          <div className="row"><h2 style={{ margin: 0 }}>Persona × porte (pontos base)</h2><span className="spacer" />{podeConfig && <button className="btn sm" onClick={() => tentar(() => { actions.restaurarPadroesRadar('pesosDecisionFit'); onOk('Pesos restaurados.'); }, onErro)}>Restaurar padrão</button>}</div>
+          <table className="small"><thead><tr><th>Persona</th><th className="num">Pequena</th><th className="num">Média</th><th className="num">Grande</th></tr></thead>
+            <tbody>{PERSONAS.map((p) => <tr key={p}><td>{NOME_PERSONA[p]}</td>{(['pequena', 'media', 'grande'] as const).map((porte) => <td key={porte} className="num"><NumberInput value={peso(`persona.${p}.${porte}`)} disabled={!podeConfig} onChange={(v) => salvarPeso(`persona.${p}.${porte}`, v)} style={{ width: 64, textAlign: 'right' }} /></td>)}</tr>)}</tbody></table>
+          <div className="small muted" style={{ marginTop: 6 }}>Porte pela faixa de funcionários: pequena ≤ {peso('porte.pequena.max')}, média ≤ {peso('porte.media.max')}, grande acima. Fit adequado a partir de {r.pesosDecisionFit.find((p) => p.chave === 'fit.adequado')?.valor ?? 40}.</div>
+        </div>
+        <div className="card">
+          <h2>Bônus</h2>
+          <h3>Senioridade</h3>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>{(['C-level', 'Diretor', 'Gerente', 'Coordenador', 'Analista'] as const).map((s) => <label key={s} className="small">{s} <NumberInput value={peso(`senioridade.${s}`)} disabled={!podeConfig} onChange={(v) => salvarPeso(`senioridade.${s}`, v)} style={{ width: 60 }} /></label>)}</div>
+          <h3 style={{ marginTop: 10 }}>Departamento (termo contido)</h3>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>{r.pesosDecisionFit.filter((p) => p.chave.startsWith('departamento.')).map((p) => <label key={p.chave} className="small">{p.chave.slice(13)} <NumberInput value={p.valor} disabled={!podeConfig} onChange={(v) => salvarPeso(p.chave, v)} style={{ width: 60 }} /></label>)}</div>
+          <h3 style={{ marginTop: 10 }}>Tipo de projeto × persona</h3>
+          <table className="small"><thead><tr><th>Projeto</th><th>Persona</th><th className="num">Bônus</th></tr></thead>
+            <tbody>{projetos.flatMap((tp) => r.pesosDecisionFit.filter((p) => p.chave.startsWith(`projeto.${tp}.`)).map((p) => <tr key={p.chave}><td>{tp}</td><td>{NOME_PERSONA[p.chave.split('.')[2] as Persona] ?? p.chave.split('.')[2]}</td><td className="num"><NumberInput value={p.valor} disabled={!podeConfig} onChange={(v) => salvarPeso(p.chave, v)} style={{ width: 60, textAlign: 'right' }} /></td></tr>))}</tbody></table>
+          {podeConfig && <button className="btn sm" style={{ marginTop: 8 }} onClick={() => tentar(() => { const n = actions.recalcularContatosRadar(); onOk(`${n} contato(s) recalculado(s).`); }, onErro)}>Recalcular contatos</button>}
+        </div>
+      </div>
+      <div className="card table-wrap" style={{ marginTop: 12 }}>
+        <div className="row"><h2 style={{ margin: 0 }}>Mapeamento cargo/departamento → persona</h2><span className="spacer" />{podeConfig && <button className="btn sm" onClick={() => tentar(() => { actions.restaurarPadroesRadar('regrasPersona'); onOk('Regras restauradas.'); }, onErro)}>Restaurar padrão</button>}</div>
+        <table className="small"><thead><tr><th>Ativa</th><th className="num">Ordem</th><th>Persona</th><th>Campo</th><th>Termos (palavra inteira)</th><th>Excluir se contiver</th></tr></thead>
+          <tbody>{[...r.regrasPersona].sort((a, b) => a.prioridade - b.prioridade).map((g) => <LinhaRegraPersona key={g.id} g={g} podeConfig={podeConfig} onErro={onErro} />)}</tbody></table>
+        {podeConfig && (
+          <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <b className="small">Nova regra:</b>
+            <Select value={novaRegra.persona} onChange={(v) => setNovaRegra({ ...novaRegra, persona: v as Persona })} options={PERSONAS.map((p) => ({ value: p, label: NOME_PERSONA[p] }))} />
+            <Select value={novaRegra.campo} onChange={(v) => setNovaRegra({ ...novaRegra, campo: v as RegraPersona['campo'] })} options={[{ value: 'cargo', label: 'no cargo' }, { value: 'departamento', label: 'no departamento' }, { value: 'ambos', label: 'em qualquer um' }]} />
+            <Input placeholder="termos separados por vírgula" value={novaRegra.termos} onChange={(e) => setNovaRegra({ ...novaRegra, termos: e.target.value })} style={{ width: 300 }} />
+            <button className="btn sm primary" disabled={!novaRegra.termos.trim()} onClick={() => tentar(() => { actions.salvarRegraPersonaRadar({ id: `RP-${Date.now().toString(36)}`, persona: novaRegra.persona, campo: novaRegra.campo, termos: novaRegra.termos.split(',').map((t) => t.trim()).filter(Boolean), prioridade: 0, ativo: true }); onOk('Regra criada (ordem 0 = avaliada primeiro).'); setNovaRegra({ ...novaRegra, termos: '' }); }, onErro)}>Adicionar</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function LinhaRegraPersona({ g, podeConfig, onErro }: { g: RegraPersona; podeConfig: boolean; onErro: (m: string) => void }) {
+  const [x, setX] = useState({ termos: g.termos.join(', '), excluir: (g.excluir ?? []).join(', ') });
+  const salvar = (p: Partial<RegraPersona>) => tentar(() => actions.salvarRegraPersonaRadar({ ...g, ...p }), onErro);
+  return (
+    <tr style={{ opacity: g.ativo ? 1 : 0.55 }}>
+      <td><input type="checkbox" checked={g.ativo} disabled={!podeConfig} onChange={(e) => salvar({ ativo: e.target.checked })} /></td>
+      <td className="num"><NumberInput value={g.prioridade} disabled={!podeConfig} onChange={(v) => salvar({ prioridade: v })} style={{ width: 56, textAlign: 'right' }} /></td>
+      <td>{NOME_PERSONA[g.persona]}</td><td>{g.campo}</td>
+      <td><Input value={x.termos} disabled={!podeConfig} onChange={(e) => setX({ ...x, termos: e.target.value })} onBlur={() => salvar({ termos: x.termos.split(',').map((t) => t.trim()).filter(Boolean) })} /></td>
+      <td><Input value={x.excluir} disabled={!podeConfig} onChange={(e) => setX({ ...x, excluir: e.target.value })} onBlur={() => salvar({ excluir: x.excluir.split(',').map((t) => t.trim()).filter(Boolean) })} /></td>
+    </tr>
   );
 }
 

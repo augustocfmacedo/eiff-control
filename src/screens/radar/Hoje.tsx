@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NOME_ESTAGIO, NOME_SINAL, NOME_TIPO_ATIVIDADE, filaHoje, oportunidadesSemProximaAcao, type Empresa, type ItemFila, type TarefaRadar } from '../../core/radar';
+import { NOME_ESTADO_ACAO, NOME_ESTAGIO, NOME_SINAL, NOME_TIPO_ATIVIDADE, filaHoje, oportunidadesSemProximaAcao, type Empresa, type ItemFila, type TarefaRadar } from '../../core/radar';
 import { pode, useStore } from '../../data/store';
 import { Badge, Empty, KpiStrip, Link, PageHead, Select, useToast } from '../../ui/components';
 import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaForm, d } from './comum';
@@ -50,20 +50,20 @@ export default function RadarHoje() {
                 </div>
                 <div>
                   <div className="k">Sinal principal</div><div className="v">{i.sinal ? `${NOME_SINAL[i.sinal.tipo]} · ${d(i.sinal.eventoEm)}` : '—'}</div>
-                  <div className="k" style={{ marginTop: 6 }}>Decisor</div><div className="v">{i.decisor ? `${i.decisor.nome}${i.decisor.cargo ? ` · ${i.decisor.cargo}` : ''}` : <span className="muted">não identificado</span>}</div>
+                  <div className="k" style={{ marginTop: 6 }}>Contato recomendado</div><div className="v">{i.recomendacao.contato ? <>{i.recomendacao.contato.contato.nome}{i.recomendacao.contato.contato.cargo ? ` · ${i.recomendacao.contato.contato.cargo}` : ''} <span className="muted small">fit {i.recomendacao.contato.fit.score}</span><div className="small muted">{i.recomendacao.contato.fit.razoes.slice(0, 3).join(' · ')}</div></> : <span className="muted">nenhum contato elegível</span>}</div>
                 </div>
                 <div>
                   <div className="k">Última interação</div><div className="v">{i.ultimaAtividade ? `${d(i.ultimaAtividade.ocorreuEm)} · ${NOME_TIPO_ATIVIDADE[i.ultimaAtividade.tipo]}${i.ultimaAtividade.resultado ? ` · ${RESPOSTA_NOME(i.ultimaAtividade.resultado, ds.radar.tiposResposta)}` : ''}` : <span className="muted">nenhuma</span>}</div>
                   <div className="k" style={{ marginTop: 6 }}>Próxima ação</div><div className="v">{i.proximaAcaoEm ? <><span className={i.vencida ? 'neg' : ''}>{d(i.proximaAcaoEm)}</span>{i.proximaAcao ? ` · ${i.proximaAcao}` : ''}</> : <span className="muted">nenhuma</span>}{i.oportunidade && <div className="small muted">{i.oportunidade.titulo} · {NOME_ESTAGIO[i.oportunidade.estagio]}</div>}</div>
                 </div>
                 <div>
-                  <div className="k">Ação recomendada</div><div className="v"><b>{i.recomendacao.acao}</b></div><div className="small muted">{i.recomendacao.motivo}</div>
+                  <div className="k">Ação recomendada</div><div className="v"><Badge tone={i.recomendacao.estado === 'CONTACT_NOW' ? 'ok' : i.recomendacao.estado === 'OVERDUE_TASK' ? 'bad' : i.recomendacao.estado === 'DO_NOT_CONTACT' ? 'bad' : 'info'}>{NOME_ESTADO_ACAO[i.recomendacao.estado]}</Badge> <b>{i.recomendacao.acao}</b></div><div className="small muted">{i.recomendacao.motivo}</div>
                   {i.semProximaAcao && <Badge tone="warn">oportunidade sem próxima ação</Badge>}
                 </div>
                 <div className="actions" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
                   {podeAgir && <button className="btn sm primary" onClick={() => setAtividade(i)}>Registrar</button>}
                   {podeAgir && t && <button className="btn sm" onClick={() => setConcluir(t)}>Concluir tarefa</button>}
-                  {podeAgir && !t && <button className="btn sm" onClick={() => setTarefa(actions.novaTarefaRadar(i.empresa.id, { tipo: i.recomendacao.tipoTarefa, descricao: i.recomendacao.acao, oportunidadeId: i.oportunidade?.id, contatoId: i.decisor?.id }))}>Agendar</button>}
+                  {podeAgir && !t && <button className="btn sm" onClick={() => setTarefa(actions.novaTarefaRadar(i.empresa.id, { tipo: i.recomendacao.tipoTarefa, descricao: i.recomendacao.acao, oportunidadeId: i.oportunidade?.id, contatoId: i.recomendacao.contato?.contato.id }))}>Agendar</button>}
                 </div>
               </div>
             );
@@ -72,7 +72,7 @@ export default function RadarHoje() {
         </div>
       )}
       {score && <ScoreModal e={score} onClose={() => setScore(null)} />}
-      {atividade && <AtividadeForm empresaId={atividade.empresa.id} contatoId={atividade.decisor?.id} oportunidadeId={atividade.oportunidade?.id} onClose={() => setAtividade(null)} onErro={toast} onOk={toast} />}
+      {atividade && <AtividadeForm empresaId={atividade.empresa.id} contatoId={atividade.recomendacao.contato?.contato.id} oportunidadeId={atividade.oportunidade?.id} onClose={() => setAtividade(null)} onErro={toast} onOk={toast} />}
       {concluir && <ConcluirTarefaForm tarefa={concluir} onClose={() => setConcluir(null)} onErro={toast} onOk={toast} />}
       {tarefa && <TarefaForm inicial={tarefa} onClose={() => setTarefa(null)} onErro={toast} onOk={toast} />}
       {el}

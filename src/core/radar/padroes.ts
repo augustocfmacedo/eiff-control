@@ -1,6 +1,6 @@
 // Valores iniciais configuraveis do Radar: fontes, estrategias, tipos de resposta, regras de score e parametros.
 // Sao gravados no banco/estado na primeira carga (garantirPadroesRadar) e depois editados pela tela; nada fica fixo no codigo.
-import type { ConfigScore, Estagio, Estrategia, Fonte, RegraScore, TipoResposta, TipoSinal } from './types';
+import type { ConfigScore, Estagio, Estrategia, Fonte, PesoDecisionFit, RegraPersona, RegraScore, TipoResposta, TipoSinal } from './types';
 
 const T = '2026-09-08T00:00:00.000Z';
 
@@ -103,9 +103,58 @@ export const REGRAS_PADRAO: RegraScore[] = [
   sinal('Indicação de parceiro', 'RELATIONSHIP', 'PARTNER_REFERRAL', 30, 365),
   regra('Contato inválido', 'RELATIONSHIP', { tipo: 'resposta', codigos: ['INVALID_CONTACT'] }, -15, 90),
   // DATA_QUALITY: da para trabalhar a empresa?
-  regra('Cadastro completo', 'DATA_QUALITY', { tipo: 'completude', campos: ['cnpj', 'dominio', 'setor', 'cidade', 'uf', 'faixaFuncionarios', 'site'] }, 60),
-  regra('Tem contato cadastrado', 'DATA_QUALITY', { tipo: 'contato' }, 20),
-  regra('Contato verificado', 'DATA_QUALITY', { tipo: 'contato', verificado: true }, 20),
+  regra('Dados firmográficos', 'DATA_QUALITY', { tipo: 'completude', campos: ['setor', 'faixaFuncionarios', 'cnae', 'faixaReceita', 'capitalSocial'] }, 20),
+  regra('Domínio conhecido', 'DATA_QUALITY', { tipo: 'campo', campo: 'dominio', op: 'existe' }, 10),
+  regra('CNPJ conhecido', 'DATA_QUALITY', { tipo: 'campo', campo: 'cnpj', op: 'existe' }, 10),
+  regra('Localização', 'DATA_QUALITY', { tipo: 'completude', campos: ['cidade', 'uf'] }, 10),
+  regra('Decisor identificado', 'DATA_QUALITY', { tipo: 'contato', decisor: true }, 15),
+  regra('Contato profissional com canal', 'DATA_QUALITY', { tipo: 'contato', comCanal: true }, 15),
+  regra('Sinal identificado', 'DATA_QUALITY', { tipo: 'sinalQualquer' }, 15),
+  regra('Contato verificado', 'DATA_QUALITY', { tipo: 'contato', verificado: true }, 5),
+];
+
+// ---------------------------------------------------------------------------
+// Personas: mapeamento configuravel cargo/departamento -> persona
+// ---------------------------------------------------------------------------
+let np = 0;
+const rp = (persona: RegraPersona['persona'], campo: RegraPersona['campo'], termos: string[], excluir?: string[]): RegraPersona => ({ id: `RP-${String(++np).padStart(3, '0')}`, persona, campo, termos, excluir, prioridade: np, ativo: true });
+export const REGRAS_PERSONA_PADRAO: RegraPersona[] = [
+  rp('OWNER', 'cargo', ['socio', 'socia', 'proprietario', 'proprietaria', 'dono', 'dona', 'owner', 'fundador', 'fundadora', 'founder', 'socio diretor', 'socia diretora']),
+  rp('CEO', 'cargo', ['ceo', 'diretor geral', 'diretora geral', 'diretor executivo', 'diretora executiva', 'chief executive']),
+  rp('PRESIDENT', 'cargo', ['presidente', 'president', 'vice presidente', 'vice president', 'vp']),
+  rp('COO', 'cargo', ['coo', 'chief operating', 'diretor de operacoes', 'diretora de operacoes'], ['gerente']),
+  rp('INDUSTRIAL_DIRECTOR', 'cargo', ['diretor industrial', 'diretora industrial', 'diretor de producao', 'diretora de producao', 'diretor fabril', 'diretor de manufatura', 'plant director', 'industrial director']),
+  rp('ENGINEERING_DIRECTOR', 'cargo', ['diretor de engenharia', 'diretora de engenharia', 'diretor tecnico', 'diretora tecnica', 'engineering director', 'cto']),
+  rp('OPERATIONS_DIRECTOR', 'cargo', ['diretor de operacoes', 'diretora de operacoes', 'operations director', 'diretor operacional']),
+  rp('EXPANSION_DIRECTOR', 'cargo', ['diretor de expansao', 'diretora de expansao', 'expansion director', 'diretor de novos negocios', 'diretor de desenvolvimento', 'head de expansao', 'gerente de expansao']),
+  rp('FACILITIES', 'ambos', ['facilities', 'facility', 'infraestrutura', 'manutencao predial', 'utilidades', 'patrimonio']),
+  rp('REAL_ESTATE', 'ambos', ['real estate', 'imobiliario', 'imoveis', 'obras', 'construcao']),
+  rp('PROCUREMENT', 'ambos', ['compras', 'suprimentos', 'procurement', 'purchasing', 'comprador', 'compradora', 'sourcing']),
+  rp('SUPPLY_CHAIN', 'ambos', ['supply chain', 'supply', 'cadeia de suprimentos', 'planejamento logistico']),
+  rp('LOGISTICS', 'ambos', ['logistica', 'logistics', 'distribuicao', 'transportes', 'armazem', 'cd']),
+  rp('MANUFACTURING', 'ambos', ['producao', 'manufatura', 'fabrica', 'fabril', 'manufacturing', 'plant', 'pcp']),
+  rp('ENGINEERING', 'ambos', ['engenharia', 'engineering', 'engenheiro', 'engenheira', 'projetos', 'manutencao']),
+  rp('OPERATIONS', 'ambos', ['operacoes', 'operacao', 'operations', 'operacional']),
+];
+
+// ---------------------------------------------------------------------------
+// Decision fit: matriz de pesos (persona x porte, senioridade, departamento, projeto x persona)
+// ---------------------------------------------------------------------------
+const P = (chave: string, valor: number): PesoDecisionFit => ({ chave, valor });
+const trio = (persona: string, pequena: number, media: number, grande: number) => [P(`persona.${persona}.pequena`, pequena), P(`persona.${persona}.media`, media), P(`persona.${persona}.grande`, grande)];
+export const PESOS_DECISION_FIT_PADRAO: PesoDecisionFit[] = [
+  P('porte.pequena.max', 50), P('porte.media.max', 500),
+  ...trio('OWNER', 70, 55, 35), ...trio('CEO', 68, 55, 35), ...trio('PRESIDENT', 66, 52, 35), ...trio('COO', 55, 55, 45),
+  ...trio('INDUSTRIAL_DIRECTOR', 50, 62, 66), ...trio('ENGINEERING_DIRECTOR', 50, 62, 66), ...trio('OPERATIONS_DIRECTOR', 48, 60, 62), ...trio('EXPANSION_DIRECTOR', 50, 64, 68), ...trio('FACILITIES', 40, 55, 60),
+  ...trio('ENGINEERING', 35, 45, 48), ...trio('OPERATIONS', 32, 42, 45), ...trio('MANUFACTURING', 32, 42, 45), ...trio('LOGISTICS', 30, 38, 40), ...trio('SUPPLY_CHAIN', 25, 33, 36), ...trio('PROCUREMENT', 25, 30, 32), ...trio('REAL_ESTATE', 35, 45, 50), ...trio('OTHER', 10, 10, 10),
+  P('senioridade.C-level', 20), P('senioridade.Diretor', 18), P('senioridade.Gerente', 10), P('senioridade.Coordenador', 4), P('senioridade.Analista', 0), P('senioridade.Outro', 0),
+  P('departamento.engenharia', 8), P('departamento.industrial', 8), P('departamento.producao', 6), P('departamento.expansao', 10), P('departamento.operacoes', 6), P('departamento.facilities', 6), P('departamento.compras', 2), P('departamento.logistica', 4),
+  P('projeto.expansao.EXPANSION_DIRECTOR', 15), P('projeto.expansao.INDUSTRIAL_DIRECTOR', 8), P('projeto.expansao.OWNER', 6), P('projeto.expansao.CEO', 6),
+  P('projeto.fabrica.INDUSTRIAL_DIRECTOR', 15), P('projeto.fabrica.ENGINEERING_DIRECTOR', 10), P('projeto.fabrica.MANUFACTURING', 6), P('projeto.fabrica.ENGINEERING', 6),
+  P('projeto.galpao.LOGISTICS', 10), P('projeto.galpao.OPERATIONS_DIRECTOR', 8), P('projeto.galpao.FACILITIES', 8), P('projeto.galpao.EXPANSION_DIRECTOR', 8),
+  P('projeto.cd.LOGISTICS', 12), P('projeto.cd.SUPPLY_CHAIN', 8), P('projeto.cd.OPERATIONS_DIRECTOR', 8), P('projeto.cd.EXPANSION_DIRECTOR', 8),
+  P('projeto.escritorio.FACILITIES', 12), P('projeto.escritorio.REAL_ESTATE', 10),
+  P('projeto.retrofit.FACILITIES', 12), P('projeto.retrofit.ENGINEERING', 8),
 ];
 
 export const CONFIG_SCORE_PADRAO: ConfigScore[] = [

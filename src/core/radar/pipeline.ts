@@ -2,6 +2,7 @@
 // acao recomendada, fila do dia, indicadores do command center e pipeline financeiro.
 import { NOME_ESTAGIO, NOME_SINAL, PROBABILIDADE_ESTAGIO } from './padroes';
 import { calcularScore, diasEntre, motivoPrioridade, type ContextoEmpresa } from './score';
+import { contatoElegivel, sugerirContatoPrincipal, temCanal, type SugestaoContato } from './contatos';
 import type { Atividade, Contato, Empresa, ExplicacaoScore, Oportunidade, RadarDataset, Sinal, TarefaRadar } from './types';
 import { estagioAtivo } from './types';
 
@@ -42,39 +43,53 @@ export const oportunidadesSemProximaAcao = (r: RadarDataset) => r.oportunidades.
 // ---------------------------------------------------------------------------
 export const contatoSuprimido = (c: Contato, r: RadarDataset) => r.supressoes.some((s) => (s.contatoId === c.id || (s.empresaId === c.empresaId && !s.contatoId)) && (s.tipo === 'do_not_contact' || s.tipo === 'opt_out'));
 export const empresaSuprimida = (empresaId: string, r: RadarDataset) => r.supressoes.some((s) => s.empresaId === empresaId && !s.contatoId && (s.tipo === 'do_not_contact' || s.tipo === 'opt_out'));
-export const decisorDe = (empresaId: string, r: RadarDataset): Contato | undefined => r.contatos.filter((c) => c.empresaId === empresaId && c.ativo && !contatoSuprimido(c, r)).sort((a, b) => Number(b.decisor) - Number(a.decisor) || (b.qualidade - a.qualidade))[0];
+/** Decisor a exibir: o contato recomendado (principal ou maior decision fit), nunca suprimido/invalido/saiu da empresa. */
+export const decisorDe = (empresaId: string, r: RadarDataset): Contato | undefined => contatoRecomendado(empresaId, r)?.contato;
+export const contatosElegiveis = (empresaId: string, r: RadarDataset): Contato[] => r.contatos.filter((c) => c.empresaId === empresaId && contatoElegivel(c, r.supressoes));
 export const sinalPrincipal = (empresaId: string, r: RadarDataset, hoje: string): Sinal | undefined => r.sinais.filter((s) => s.empresaId === empresaId).map((s) => ({ s, v: s.scoreEfetivo * Math.max(0.1, 1 - diasEntre(s.eventoEm, hoje) / 365) })).sort((a, b) => b.v - a.v)[0]?.s;
 export const ultimaAtividade = (empresaId: string, r: RadarDataset): Atividade | undefined => r.atividades.filter((a) => a.empresaId === empresaId).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1))[0];
 
 // ---------------------------------------------------------------------------
 // Acao recomendada (heuristica explicavel; a IA entra depois por cima disto)
 // ---------------------------------------------------------------------------
-export interface Recomendacao { acao: string; tipoTarefa: TarefaRadar['tipo']; motivo: string }
+export type EstadoAcao = 'DO_NOT_CONTACT' | 'OVERDUE_TASK' | 'PLANNED_ACTION' | 'RESPOND' | 'SEARCH_DECISION_MAKER' | 'ENRICH_CONTACT' | 'RESEARCH_SIGNALS' | 'CONTACT_NOW' | 'FOLLOW_UP' | 'OPEN_OPPORTUNITY' | 'WAIT';
+export const NOME_ESTADO_ACAO: Record<EstadoAcao, string> = { DO_NOT_CONTACT: 'Não contatar', OVERDUE_TASK: 'Tarefa vencida', PLANNED_ACTION: 'Ação planejada', RESPOND: 'Responder ao cliente', SEARCH_DECISION_MAKER: 'Buscar decisor', ENRICH_CONTACT: 'Enriquecer contato', RESEARCH_SIGNALS: 'Pesquisar sinais', CONTACT_NOW: 'Contatar agora', FOLLOW_UP: 'Follow-up', OPEN_OPPORTUNITY: 'Abrir oportunidade', WAIT: 'Aguardar' };
+export interface Recomendacao { estado: EstadoAcao; acao: string; tipoTarefa: TarefaRadar['tipo']; motivo: string; contato?: SugestaoContato }
+
+/** Contato recomendado da empresa: principal definido pelo usuario ou maior decision fit entre os elegiveis. */
+export const contatoRecomendado = (empresaId: string, r: RadarDataset): SugestaoContato | undefined => { const e = r.empresas.find((x) => x.id === empresaId); return e ? sugerirContatoPrincipal(e, r.contatos, r, undefined) : undefined; };
+const FIT_ADEQUADO = (r: RadarDataset) => r.pesosDecisionFit.find((p) => p.chave === 'fit.adequado')?.valor ?? 40;
 
 export function recomendarAcao(e: Empresa, r: RadarDataset, hoje: string): Recomendacao {
-  if (empresaSuprimida(e.id, r)) return { acao: 'Não contatar', tipoTarefa: 'OTHER', motivo: 'empresa marcada como não contatar' };
+  if (empresaSuprimida(e.id, r)) return { estado: 'DO_NOT_CONTACT', acao: 'Não contatar', tipoTarefa: 'OTHER', motivo: 'empresa marcada como não contatar' };
   const opp = r.oportunidades.filter((o) => o.empresaId === e.id && estagioAtivo(o.estagio)).sort((a, b) => b.probabilidade - a.probabilidade)[0];
   const ult = ultimaAtividade(e.id, r);
-  const dec = decisorDe(e.id, r);
-  const contatos = r.contatos.filter((c) => c.empresaId === e.id && c.ativo);
+  const sug = contatoRecomendado(e.id, r);
+  const dec = sug?.contato;
+  const adequado = !!sug && sug.fit.score >= FIT_ADEQUADO(r);
+  const comCanal = !!dec && temCanal(dec);
+  const temSinal = r.sinais.some((s) => s.empresaId === e.id);
   const tarefaVencida = r.tarefas.find((t) => t.empresaId === e.id && t.status === 'Aberta' && t.venceEm < hoje);
-  if (tarefaVencida) return { acao: tarefaVencida.descricao || 'Concluir tarefa vencida', tipoTarefa: tarefaVencida.tipo, motivo: `tarefa vencida em ${tarefaVencida.venceEm.slice(0, 10).split('-').reverse().join('/')}` };
-  if (opp && opp.proximaAcao) return { acao: opp.proximaAcao, tipoTarefa: 'FOLLOW_UP', motivo: `próxima ação da oportunidade em ${NOME_ESTAGIO[opp.estagio]}` };
-  if (ult?.resultado === 'REQUESTED_BUDGET') return { acao: 'Preparar e enviar o orçamento', tipoTarefa: 'PROPOSAL', motivo: 'pediu orçamento' };
-  if (ult?.resultado === 'REQUESTED_TECHNICAL_ANALYSIS') return { acao: 'Agendar análise técnica com a engenharia', tipoTarefa: 'MEETING', motivo: 'pediu análise técnica' };
-  if (ult?.resultado === 'REQUESTED_MEETING' || ult?.resultado === 'REQUESTED_PRESENTATION') return { acao: 'Agendar a reunião ou apresentação', tipoTarefa: 'MEETING', motivo: ult.resultado === 'REQUESTED_MEETING' ? 'pediu reunião' : 'pediu apresentação' };
-  if (ult?.resultado === 'CALL_BACK') return { acao: 'Retornar a ligação', tipoTarefa: 'CALL', motivo: 'pediu retorno' };
-  if (ult?.resultado === 'REFERRED_TO_OTHER_PERSON') return { acao: 'Cadastrar e contatar a pessoa indicada', tipoTarefa: 'RESEARCH', motivo: 'indicou outra pessoa' };
-  if (ult?.resultado === 'GATEKEEPER' || ult?.resultado === 'NO_RESPONSE') return { acao: 'Tentar outro canal ou horário', tipoTarefa: 'CALL', motivo: ult.resultado === 'GATEKEEPER' ? 'barrado na recepção' : 'sem resposta' };
-  if (ult?.resultado === 'FUTURE_PROJECT') return { acao: 'Agendar follow-up e pedir o cronograma do projeto', tipoTarefa: 'FOLLOW_UP', motivo: 'projeto futuro' };
-  if (ult?.resultado === 'ACTIVE_PROJECT') return { acao: 'Pedir o projeto e oferecer análise técnica', tipoTarefa: 'PROPOSAL', motivo: 'projeto em andamento' };
-  if (!contatos.length) return { acao: 'Pesquisar o decisor (LinkedIn, site, indicação)', tipoTarefa: 'RESEARCH', motivo: 'sem contatos cadastrados' };
-  if (!dec?.decisor) return { acao: 'Identificar o decisor de engenharia ou expansão', tipoTarefa: 'RESEARCH', motivo: 'nenhum contato marcado como decisor' };
-  if (!ult) return { acao: `Primeiro contato com ${dec.nome.split(' ')[0]}${dec.whatsapp ? ' por WhatsApp' : dec.telefone || dec.celular ? ' por telefone' : dec.email ? ' por e-mail' : ''}`, tipoTarefa: 'CALL', motivo: 'decisor identificado e nunca contatado' };
+  if (tarefaVencida) return { estado: 'OVERDUE_TASK', acao: tarefaVencida.descricao || 'Concluir tarefa vencida', tipoTarefa: tarefaVencida.tipo, motivo: `tarefa vencida em ${tarefaVencida.venceEm.slice(0, 10).split('-').reverse().join('/')}`, contato: sug };
+  if (opp && opp.proximaAcao) return { estado: 'PLANNED_ACTION', acao: opp.proximaAcao, tipoTarefa: 'FOLLOW_UP', motivo: `próxima ação da oportunidade em ${NOME_ESTAGIO[opp.estagio]}`, contato: sug };
+  const responder = (acao: string, tipoTarefa: TarefaRadar['tipo'], motivo: string): Recomendacao => ({ estado: 'RESPOND', acao, tipoTarefa, motivo, contato: sug });
+  if (ult?.resultado === 'REQUESTED_BUDGET') return responder('Preparar e enviar o orçamento', 'PROPOSAL', 'pediu orçamento');
+  if (ult?.resultado === 'REQUESTED_TECHNICAL_ANALYSIS') return responder('Agendar análise técnica com a engenharia', 'MEETING', 'pediu análise técnica');
+  if (ult?.resultado === 'REQUESTED_MEETING' || ult?.resultado === 'REQUESTED_PRESENTATION') return responder('Agendar a reunião ou apresentação', 'MEETING', ult.resultado === 'REQUESTED_MEETING' ? 'pediu reunião' : 'pediu apresentação');
+  if (ult?.resultado === 'CALL_BACK') return responder('Retornar a ligação', 'CALL', 'pediu retorno');
+  if (ult?.resultado === 'REFERRED_TO_OTHER_PERSON') return responder('Cadastrar e contatar a pessoa indicada', 'RESEARCH', 'indicou outra pessoa');
+  if (ult?.resultado === 'FUTURE_PROJECT') return responder('Agendar follow-up e pedir o cronograma do projeto', 'FOLLOW_UP', 'projeto futuro');
+  if (ult?.resultado === 'ACTIVE_PROJECT') return responder('Pedir o projeto e oferecer análise técnica', 'PROPOSAL', 'projeto em andamento');
+  // estados de prontidao: decisor adequado? canal? sinal?
+  if (!adequado) return { estado: 'SEARCH_DECISION_MAKER', acao: sug ? `Buscar um decisor melhor que ${dec!.nome.split(' ')[0]} (fit ${sug.fit.score})` : 'Pesquisar o decisor (LinkedIn, site, indicação)', tipoTarefa: 'RESEARCH', motivo: sug ? 'contato disponível tem baixo decision fit' : 'sem contato elegível', contato: sug };
+  if (!comCanal) return { estado: 'ENRICH_CONTACT', acao: `Conseguir e-mail profissional ou telefone de ${dec!.nome}`, tipoTarefa: 'RESEARCH', motivo: 'decisor identificado sem canal válido', contato: sug };
+  if (!temSinal) return { estado: 'RESEARCH_SIGNALS', acao: 'Pesquisar sinais: obras (CNO), notícias, vagas, expansão', tipoTarefa: 'RESEARCH', motivo: 'decisor e canal prontos, mas sem sinal de momento', contato: sug };
+  if (!ult) return { estado: 'CONTACT_NOW', acao: `Contatar ${dec!.nome.split(' ')[0]}${dec!.whatsapp ? ' por WhatsApp' : dec!.celular || dec!.telefone ? ' por telefone' : ' por e-mail'}`, tipoTarefa: 'CALL', motivo: `sinal relevante e decisor adequado (fit ${sug!.fit.score})`, contato: sug };
+  if (ult?.resultado === 'GATEKEEPER' || ult?.resultado === 'NO_RESPONSE') return { estado: 'CONTACT_NOW', acao: 'Tentar outro canal ou horário', tipoTarefa: 'CALL', motivo: ult.resultado === 'GATEKEEPER' ? 'barrado na recepção' : 'sem resposta', contato: sug };
   const dias = diasEntre(ult.ocorreuEm, hoje);
-  if (dias >= 14) return { acao: 'Follow-up: retomar a conversa', tipoTarefa: 'FOLLOW_UP', motivo: `${dias} dias sem contato` };
-  if (e.timingScore >= 40 && !opp) return { acao: 'Abrir oportunidade e confirmar a necessidade', tipoTarefa: 'FOLLOW_UP', motivo: 'sinal de momento sem oportunidade aberta' };
-  return { acao: 'Manter o cadastro e aguardar a próxima ação', tipoTarefa: 'FOLLOW_UP', motivo: 'contato recente' };
+  if (dias >= 14) return { estado: 'FOLLOW_UP', acao: 'Follow-up: retomar a conversa', tipoTarefa: 'FOLLOW_UP', motivo: `${dias} dias sem contato`, contato: sug };
+  if (e.timingScore >= 40 && !opp) return { estado: 'OPEN_OPPORTUNITY', acao: 'Abrir oportunidade e confirmar a necessidade', tipoTarefa: 'FOLLOW_UP', motivo: 'sinal de momento sem oportunidade aberta', contato: sug };
+  return { estado: 'WAIT', acao: 'Manter o cadastro e aguardar a próxima ação', tipoTarefa: 'FOLLOW_UP', motivo: 'contato recente', contato: sug };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,8 +141,11 @@ export interface ResumoRadar {
   atividades7d: number; atividades30d: number; respostas30d: number; respostasPositivas30d: number; reunioes30d: number;
   projetosRecebidos30d: number; propostas30d: number; ganhas90d: number; perdidas90d: number;
   pipeline: number; pipelinePonderado: number; porEstagio: { estagio: Oportunidade['estagio']; nome: string; quantidade: number; valor: number }[];
-  duplicatasPendentes: number; importacoes: number;
+  duplicatasPendentes: number; importacoes: number; revisoesPendentes: number;
   topSinais: { tipo: string; nome: string; quantidade: number }[];
+  // cobertura de contatos
+  empresas: number; comContato: number; comDecisor: number; comCanal: number; precisamPesquisa: number; precisamEnriquecimento: number; semDecisor: number;
+  coberturaContato: number; coberturaDecisor: number; contatavel: number;
 }
 
 export function resumoRadar(r: RadarDataset, hoje: string): ResumoRadar {
@@ -142,6 +160,18 @@ export function resumoRadar(r: RadarDataset, hoje: string): ResumoRadar {
   const porEstagio = (Object.keys(NOME_ESTAGIO) as Oportunidade['estagio'][]).map((estagio) => { const os = r.oportunidades.filter((o) => o.estagio === estagio); return { estagio, nome: NOME_ESTAGIO[estagio], quantidade: os.length, valor: os.reduce((s, o) => s + (o.valorEstimado ?? 0), 0) }; }).filter((x) => x.quantidade);
   const sin30 = r.sinais.filter((s) => dias(s.detectadoEm) <= 30);
   const cont = new Map<string, number>(); for (const s of sin30) cont.set(s.tipo, (cont.get(s.tipo) ?? 0) + 1);
+  const fitMin = FIT_ADEQUADO(r);
+  let comContato = 0; let comDecisor = 0; let comCanal = 0; let precisamPesquisa = 0; let precisamEnriquecimento = 0;
+  for (const e of ativas) {
+    const el = contatosElegiveis(e.id, r);
+    if (el.length) comContato++;
+    const sug = contatoRecomendado(e.id, r);
+    const adequado = !!sug && sug.fit.score >= fitMin;
+    if (adequado) comDecisor++;
+    if (el.some(temCanal)) comCanal++;
+    if (!adequado || !r.sinais.some((s) => s.empresaId === e.id)) precisamPesquisa++;
+    if (adequado && !temCanal(sug!.contato)) precisamEnriquecimento++;
+  }
   return {
     aMais: cls('A+'), a: cls('A'), b: cls('B'), c: cls('C'), d: cls('D'),
     novosSinais7d: r.sinais.filter((s) => dias(s.detectadoEm) <= 7).length, sinais30d: sin30.length,
@@ -152,7 +182,9 @@ export function resumoRadar(r: RadarDataset, hoje: string): ResumoRadar {
     reunioes30d: ats30.filter((a) => a.tipo === 'MEETING' || a.tipo === 'VISIT' || a.tipo === 'PRESENTATION').length,
     projetosRecebidos30d: alcancou('PROJECT_RECEIVED', 30), propostas30d: alcancou('PROPOSAL_SENT', 30), ganhas90d: alcancou('WON', 90), perdidas90d: alcancou('LOST', 90),
     pipeline: opps.reduce((s, o) => s + (o.valorEstimado ?? 0), 0), pipelinePonderado: opps.reduce((s, o) => s + (o.valorEstimado ?? 0) * (o.probabilidade ?? PROBABILIDADE_ESTAGIO[o.estagio]), 0), porEstagio,
-    duplicatasPendentes: r.duplicatas.filter((x) => x.status === 'pendente').length, importacoes: r.importacoes.length,
+    duplicatasPendentes: r.duplicatas.filter((x) => x.status === 'pendente').length, importacoes: r.importacoes.length, revisoesPendentes: r.importacaoLinhas.filter((l) => l.status === 'revisao').length,
+    empresas: ativas.length, comContato, comDecisor, comCanal, precisamPesquisa, precisamEnriquecimento, semDecisor: ativas.length - comDecisor,
+    coberturaContato: ativas.length ? comContato / ativas.length : 0, coberturaDecisor: ativas.length ? comDecisor / ativas.length : 0, contatavel: ativas.length ? comCanal / ativas.length : 0,
     topSinais: [...cont.entries()].map(([tipo, quantidade]) => ({ tipo, nome: NOME_SINAL[tipo as keyof typeof NOME_SINAL] ?? tipo, quantidade })).sort((a, b) => b.quantidade - a.quantidade).slice(0, 5),
   };
 }
