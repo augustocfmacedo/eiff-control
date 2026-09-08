@@ -9,8 +9,7 @@ const radar = () => getState().ds.radar;
 describe('nota interna no Radar', () => {
   beforeAll(() => { actions.trocarUsuario('u-admin'); actions.restaurarPlanilha(); });
   it('NOTE não vira último contato, não altera score nem cria oportunidade; a tarefa vira próxima ação na fila', () => {
-    actions.importarCsvRadar('Razão Social;CNPJ;Cidade;UF;Setor;Funcionários
-Nota Fictícia Indústria LTDA;11.222.333/0001-81;Goiânia;GO;Indústria;300', { tipo: 'empresas' });
+    actions.importarCsvRadar(['Razão Social;CNPJ;Cidade;UF;Setor;Funcionários', 'Nota Fictícia Indústria LTDA;11.222.333/0001-81;Goiânia;GO;Indústria;300'].join('\n'), { tipo: 'empresas' });
     const acme = radar().empresas.find((e) => e.cnpj === '11222333000181')!;
     const antes = { priority: acme.priorityScore, classe: acme.priorityClass, ultimoContato: acme.ultimoContatoEm, opps: radar().oportunidades.length, snaps: radar().snapshotsScore.length };
     const estrategia = radar().estrategias.find((s) => s.codigo === 'PRELIMINARY_ENGINEERING')!;
