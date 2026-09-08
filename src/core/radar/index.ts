@@ -14,3 +14,4 @@ export * from './economia';
 export * from './cobertura';
 export * from './importacao';
 export * from './signalPilot';
+export * from './calibracao';

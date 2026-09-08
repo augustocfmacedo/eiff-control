@@ -72,7 +72,7 @@ export function SignalPilot() {
         <div className="small muted">Mesmas 10 empresas, ordenadas por ação recomendada (contatar → buscar decisor → pesquisar projeto → acompanhar → pesquisar sinais → nutrir → ignorar), priority score, timing e confiança. "O que aconteceu" e "por que importa" só aparecem quando o analista registrou; nunca são gerados.</div>
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table className="small">
-            <thead><tr><th>#</th><th>Empresa</th><th className="num">Priority</th><th className="num">Fit</th><th className="num">Timing</th><th className="num">Intent</th><th className="num">Decision fit</th><th>Sinal mais forte</th><th>Relevância</th><th>Confiança</th><th>Data</th><th>Ação recomendada</th><th>Why now</th><th>O que aconteceu</th><th>Por que importa para a EIFF</th></tr></thead>
+            <thead><tr><th>#</th><th>Empresa</th><th className="num">Priority</th><th className="num">Fit</th><th className="num">Timing</th><th className="num">Intent</th><th className="num">Decision fit</th><th>Sinal mais forte</th><th>Relevância</th><th>Confiança</th><th>Data</th><th>Ação recomendada</th><th>Matriz</th><th>Analista</th><th>CRM</th><th>Conflito</th><th>Why now</th><th>O que aconteceu</th><th>Por que importa para a EIFF</th></tr></thead>
             <tbody>{relatorio.map((l, i) => (
               <tr key={l.nome}>
                 <td>{i + 1}</td>
@@ -80,6 +80,8 @@ export function SignalPilot() {
                 <td className="num">{num(l.priorityScore)}</td><td className="num">{num(l.fitScore)}</td><td className="num">{num(l.timingScore)}</td><td className="num">{num(l.intentScore)}</td><td className="num">{l.decisionFit ?? '—'}</td>
                 <td>{l.strongestSignal ?? '—'}</td><td>{l.relevancia ?? (l.strongestType ? 'requer análise' : '—')}</td><td><Confianca l={l} /></td><td>{l.signalDate ? d(l.signalDate) : '—'}</td>
                 <td><Acao l={l} />{l.matriz ? <div className="muted" style={{ fontSize: 11 }}>{l.matriz.conta} · {l.matriz.motivo}</div> : null}</td>
+                <td>{l.matriz?.acao ?? '—'}</td><td>{l.leitura?.acaoRecomendada ?? '—'}</td><td>{l.estadoCrm ?? '—'}</td>
+                <td>{l.conflito ? <Badge tone={l.conflito === 'ACTION_CONFLICT' ? 'warn' : 'ok'}>{l.conflito}</Badge> : '—'}</td>
                 <td>{l.whyNow}</td>
                 <td>{l.leitura?.oQueAconteceu ?? (l.strongestType ? 'requer análise' : '—')}</td>
                 <td>{l.leitura?.porQueImporta ?? (l.strongestType ? 'requer análise' : '—')}</td>

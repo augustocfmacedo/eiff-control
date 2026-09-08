@@ -108,6 +108,17 @@ export function recomendacaoSignalPilot(x: EntradaMatriz): SaidaMatriz {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Conflito entre MATRIX_RECOMMENDATION, ANALYST_RECOMMENDATION e CRM_NEXT_BEST_ACTION (derivado; nenhuma sobrescreve a outra)
+// ---------------------------------------------------------------------------------------------------------------------
+/** Estado do CRM traduzido para a acao comparavel da matriz. */
+export const acaoComparavel = (estado: EstadoAcao): AcaoSinal | undefined => ({ CONTACT_NOW: 'CONTACT_NOW', SEARCH_DECISION_MAKER: 'FIND_BETTER_DECISION_MAKER', RESEARCH_SIGNALS: 'RESEARCH_SIGNALS', ENRICH_CONTACT: 'FIND_BETTER_DECISION_MAKER', WAIT: 'WATCH', FOLLOW_UP: 'WATCH' } as Partial<Record<EstadoAcao, AcaoSinal>>)[estado];
+export function conflitoAcoes(x: { matriz: AcaoSinal; analista?: AcaoSinal; crm: EstadoAcao }): { status: 'ALIGNED' | 'ACTION_CONFLICT'; detalhe: string } {
+  const crm = acaoComparavel(x.crm) ?? x.crm;
+  const distintas = new Set<string>([x.matriz, ...(x.analista ? [x.analista] : []), crm]);
+  return distintas.size === 1 ? { status: 'ALIGNED', detalhe: x.matriz } : { status: 'ACTION_CONFLICT', detalhe: `matriz ${x.matriz} · analista ${x.analista ?? '—'} · CRM ${x.crm}` };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Visao por empresa
 // ---------------------------------------------------------------------------------------------------------------------
 export interface LinhaSignalPilot {
@@ -116,7 +127,7 @@ export interface LinhaSignalPilot {
   signalCount: number; strongestSignal?: string; strongestType?: TipoSinal; strongestTypeNome?: string; grupo?: GrupoSinal; relevancia?: RelevanciaEstrutural; signalDate?: string; confidence?: number; faixaConfianca?: FaixaConfianca; verified?: boolean; fonte?: string; diasDesde?: number;
   leitura?: LeituraSinal; sinalId?: string;
   timingScore?: number; intentScore?: number;
-  recommendedAction: AcaoSinal | '—'; origemAcao?: 'analista' | 'matriz'; matriz?: SaidaMatriz; estadoCrm?: EstadoAcao; acaoCrm?: string;
+  recommendedAction: AcaoSinal | '—'; origemAcao?: 'analista' | 'matriz'; matriz?: SaidaMatriz; estadoCrm?: EstadoAcao; acaoCrm?: string; conflito?: 'ALIGNED' | 'ACTION_CONFLICT';
   whyNow: string;
 }
 
@@ -157,7 +168,7 @@ export function visaoSignalPilot(r: RadarDataset, hoje: string, nomes: string[] 
     };
     const matriz = recomendacaoSignalPilot({ priorityScore: e.priorityScore, timing: e.timingScore, intent: e.intentScore, decisionFit: sug?.fit.score, cobertura: cob.nivel, sinal: forte ? { grupo: GRUPO_POR_TIPO[forte.tipo], relevancia: relevanciaDe(forte), confianca: forte.confianca, diasDesde: diasEntre(forte.eventoEm, hoje) } : undefined });
     const analista = leitura?.acaoRecomendada;
-    return { ...base, matriz, recommendedAction: analista ?? matriz.acao, origemAcao: analista ? 'analista' : 'matriz', whyNow: whyNow(base) };
+    return { ...base, matriz, recommendedAction: analista ?? matriz.acao, origemAcao: analista ? 'analista' : 'matriz', whyNow: whyNow(base), conflito: conflitoAcoes({ matriz: matriz.acao, analista, crm: rec.estado }).status };
   });
 }
 
