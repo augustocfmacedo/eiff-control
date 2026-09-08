@@ -48,7 +48,8 @@ export const provedorDeterministico: ProvedorComunicacao = {
     const p = spec.audiencia.primeiroNome;
     const ident = `Aqui é ${spec.remetente.nome}, da ${spec.remetente.empresa}, de ${spec.remetente.cidade}.`;
     const fatoSinal = spec.fatosUsar.find((f) => f.chave === 'sinal.oQueAconteceu') ?? spec.fatosUsar.find((f) => f.chave === 'sinal.titulo');
-    const whyNow = fatoSinal ? `Acompanhei que ${lc(semPontoFinal(fatoSinal.texto))}.` : '';
+    // frase completa do analista (WHAT) entra como oracao; so o titulo do sinal entra como referencia
+    const whyNow = !fatoSinal ? '' : fatoSinal.chave === 'sinal.oQueAconteceu' ? `Acompanhei que ${lc(semPontoFinal(fatoSinal.texto))}.` : `Acompanhei a notícia sobre ${lc(semPontoFinal(fatoSinal.texto))}${fatoSinal.eventoEm ? ` (${fatoSinal.eventoEm.slice(0, 10).split('-').reverse().join('/')})` : ''}.`;
     const eiff = `Nós ${FRASE_EIFF}.`;
     const curto = spec.objetivo === 'FOLLOW_UP';
     const principal = curto
