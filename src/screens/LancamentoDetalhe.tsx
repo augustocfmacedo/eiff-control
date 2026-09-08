@@ -13,16 +13,19 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
   const [liq, setLiq] = useState<{ data: string; valor: number; conta: string; documento: string } | null>(null);
   const [cancel, setCancel] = useState<string | null>(null);
   const [conta, setConta] = useState<{ conta: string; motivo: string } | null>(null);
+  const [excluir, setExcluir] = useState<string | null>(null);
   const base = ds.lancamentos.find((x) => x.id === id);
   if (!base) return <Empty>Lançamento {id} não encontrado. <Link to="/lancamentos">Voltar</Link></Empty>;
   const l = calcLancamento(base, ds);
   const liqs = ds.liquidacoes.filter((q) => q.lancamentoId === id);
   const aprov = ds.aprovacoes.filter((a) => a.entidadeId === id);
   const verBancos = pode(usuario, 'ver_bancos');
-  const editavel = l.status !== 'Cancelado' && l.status !== 'Realizado' && pode(usuario, 'editar_lancamento', l.codigoObra || undefined);
-  const podeLiquidar = pode(usuario, 'liquidar') && (l.status === 'Aprovado' || l.status === 'Programado');
+  const excluido = !!l.excluidoEm;
+  const editavel = !excluido && l.status !== 'Cancelado' && l.status !== 'Realizado' && pode(usuario, 'editar_lancamento', l.codigoObra || undefined);
+  const podeExcluir = !excluido && l.status !== 'Realizado' && pode(usuario, 'editar_lancamento', l.codigoObra || undefined);
+  const podeLiquidar = !excluido && pode(usuario, 'liquidar') && (l.status === 'Aprovado' || l.status === 'Programado');
   const trans = ds.transacoes.filter((t) => t.lancamentoIds.includes(id));
-  const podeAlterarConta = l.status !== 'Cancelado' && pode(usuario, l.status === 'Realizado' ? 'liquidar' : 'editar_lancamento', l.codigoObra || undefined);
+  const podeAlterarConta = !excluido && l.status !== 'Cancelado' && pode(usuario, l.status === 'Realizado' ? 'liquidar' : 'editar_lancamento', l.codigoObra || undefined);
 
   return (
     <>
@@ -32,7 +35,10 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
         {podeLiquidar && <button className="btn primary" onClick={() => setLiq({ data: ds.params.dataBase, valor: l.saldoAberto, conta: l.contaFinanceira, documento: '' })}>Liquidar</button>}
         {podeAlterarConta && verBancos && <button className="btn" onClick={() => setConta({ conta: l.contaFinanceira, motivo: '' })}>Alterar conta</button>}
         {(editavel || (l.status === 'Realizado' && pode(usuario, 'liquidar'))) && <button className="btn danger" onClick={() => setCancel('')}>{l.status === 'Realizado' ? 'Estornar' : 'Cancelar'}</button>}
+        {podeExcluir && <button className="btn danger" onClick={() => setExcluir('')}>Excluir</button>}
+        {excluido && pode(usuario, 'editar_lancamento', l.codigoObra || undefined) && <button className="btn" onClick={() => tentar(() => actions.restaurarLancamento(id), toast, () => toast('Lançamento restaurado.'))}>Restaurar</button>}
       </PageHead>
+      {excluido && <div className="alert bad">Excluído em {dataHora(l.excluidoEm!)} por {l.excluidoPor}: {l.motivoExclusao}. Fora das listas, do caixa, do fluxo e da DRE; o registro e a auditoria permanecem.</div>}
       {l.status === 'Pendente' && <div className="alert warn">Aguardando aprovação: fora das visões oficiais de caixa até ser aprovado. <Link to={`/aprovacoes?id=${aprov[0]?.id ?? ''}`}>Ver aprovação</Link></div>}
       {l.status === 'Rascunho' && <div className="alert info">Rascunho: editável e fora das visões oficiais.</div>}
       {l.motivoCancelamento && <div className="alert bad">Cancelado/estornado: {l.motivoCancelamento}</div>}
@@ -121,6 +127,13 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
             <Field label="Motivo" full><Input value={conta.motivo} onChange={(e) => setConta({ ...conta, motivo: e.target.value })} placeholder="opcional, fica na auditoria" /></Field>
           </div>
           <div className="foot"><button className="btn" onClick={() => setConta(null)}>Voltar</button><button className="btn primary" disabled={trans.length > 0 || conta.conta === l.contaFinanceira} onClick={() => tentar(() => actions.alterarContaLancamento(id, conta.conta, conta.motivo), toast, () => { setConta(null); toast('Conta alterada.'); })}>Confirmar</button></div>
+        </Modal>
+      )}
+      {excluir !== null && (
+        <Modal title={`Excluir ${l.id}`} onClose={() => setExcluir(null)}>
+          <p className="small">Use para corrigir erro de lançamento. O título some das listas, do caixa, do fluxo e da DRE. Nada é apagado do banco: o registro fica marcado como excluído, com motivo e auditoria, e pode ser restaurado. {l.valorRealizadoTotal > 0 && 'As liquidações parciais serão revertidas.'}</p>
+          <Field label="Motivo" req full><textarea rows={3} value={excluir} onChange={(e) => setExcluir(e.target.value)} /></Field>
+          <div className="foot"><button className="btn" onClick={() => setExcluir(null)}>Voltar</button><button className="btn danger" onClick={() => tentar(() => actions.excluirLancamento(id, excluir), toast, () => { setExcluir(null); toast('Lançamento excluído.'); })}>Confirmar exclusão</button></div>
         </Modal>
       )}
       {cancel !== null && (

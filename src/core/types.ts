@@ -247,6 +247,9 @@ export interface Lancamento {
   atualizadoPor: string;
   versao: number;
   motivoCancelamento?: string;
+  excluidoEm?: string; // exclusao logica: some das listas e das visoes; o registro e a auditoria ficam (nada e apagado no banco)
+  excluidoPor?: string;
+  motivoExclusao?: string;
 }
 
 export interface Liquidacao {

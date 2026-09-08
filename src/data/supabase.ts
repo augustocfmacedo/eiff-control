@@ -293,6 +293,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       contaFinanceira: l.bank_account_id ? r.contasInv.get(l.bank_account_id) ?? '' : '', valorBruto: Number(l.gross_amount), retencoes: Number(l.tax_amount), desconto: Number(l.discount_amount), multaJuros: Number(l.interest_amount),
       valorRealizado: Number(l.settled_amount) > 0 ? Number(l.settled_amount) : undefined, conciliado: l.reconciled, observacoes: l.notes ?? '', anexos: [], origem: l.source_system, idExterno: l.external_id ?? undefined,
       criadoEm: l.created_at, criadoPor: nome(l.created_by), atualizadoEm: l.updated_at, atualizadoPor: nome(l.updated_by), versao: l.version, motivoCancelamento: l.cancellation_reason ?? undefined, faturamentoDireto: !!l.direct_billing,
+      excluidoEm: l.deleted_at ?? undefined, excluidoPor: l.deleted_by ? nome(l.deleted_by) : undefined, motivoExclusao: l.deletion_reason ?? undefined,
     })),
     liquidacoes: liqs.map((q) => ({ id: q.id, lancamentoId: r.lancsInv.get(q.entry_id) ?? '', data: q.settled_on, valor: Number(q.amount), conta: r.contasInv.get(q.bank_account_id) ?? '', documento: q.document_number ?? undefined, criadoPor: nome(q.created_by), criadoEm: q.created_at })),
     transacoes: trans.map((t) => {
@@ -854,6 +855,7 @@ function lancRow(l: Lancamento, r: Refs, tipoDe: ReturnType<typeof mapaPlano>, a
     bank_account_id: r.contas.get(l.contaFinanceira) ?? null, gross_amount: l.valorBruto, tax_amount: l.retencoes, discount_amount: l.desconto, interest_amount: l.multaJuros,
     settled_amount: l.status === 'Cancelado' ? 0 : l.valorRealizado ?? 0, reconciled: l.conciliado, notes: l.observacoes || null, source_system: l.origem || 'eiff-control', external_id: l.idExterno ?? l.id,
     direct_billing: !!l.faturamentoDireto, cancellation_reason: l.motivoCancelamento ?? null, cancelled_at: l.status === 'Cancelado' ? new Date().toISOString() : null, cancelled_by: l.status === 'Cancelado' ? atorId : null, updated_by: atorId,
+    deleted_at: l.excluidoEm ?? null, deleted_by: l.excluidoEm ? atorId : null, deletion_reason: l.excluidoEm ? l.motivoExclusao ?? null : null,
   };
 }
 

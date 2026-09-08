@@ -40,7 +40,7 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
     }
   };
   const [f, setF] = useState({
-    busca: query.get('busca') ?? '', obra: query.get('obra') ?? '', categoria: '', status: query.get('status') ?? '', situacao: query.get('situacao') ?? '', de: '', ate: '', contraparte: '',
+    busca: query.get('busca') ?? '', obra: query.get('obra') ?? '', categoria: '', status: query.get('status') ?? '', situacao: query.get('situacao') ?? '', de: '', ate: '', contraparte: '', excluidos: false,
   });
   const visiveis = obrasVisiveis(usuario, ds.obras).map((o) => o.codigo);
   const verBancos = pode(usuario, 'ver_bancos');
@@ -49,6 +49,7 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
     .filter((l) => usuario.obras === '*' || !l.codigoObra || visiveis.includes(l.codigoObra))
     .filter((l) => (usuario.obras === '*' || l.codigoObra) ? true : ['Financeiro', 'Diretoria', 'Administrador', 'Contabilidade', 'Auditoria', 'Compras'].includes(usuario.papel))
     .filter((l) => modo === 'todos' || (modo === 'pagar' ? l.tipo === 'Saída' : l.tipo === 'Entrada'))
+    .filter((l) => f.excluidos || !l.excluidoEm)
     .filter((l) => !f.obra || l.codigoObra === f.obra)
     .filter((l) => !f.categoria || l.categoria === f.categoria)
     .filter((l) => !f.status || l.status === f.status)
@@ -104,7 +105,8 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
         <label className="field"><span>Situação</span><select value={f.situacao} onChange={(e) => setF({ ...f, situacao: e.target.value })}><option value="">Todas</option>{['Atrasado', 'Próximos 7 dias', 'A vencer', 'Parcialmente liquidado', 'Realizado', 'Pendente de aprovação', 'Rascunho', 'Cancelado', 'Sem vencimento'].map((s) => <option key={s}>{s}</option>)}</select></label>
         <label className="field"><span>Data caixa de</span><input type="date" value={f.de} onChange={(e) => setF({ ...f, de: e.target.value })} /></label>
         <label className="field"><span>até</span><input type="date" value={f.ate} onChange={(e) => setF({ ...f, ate: e.target.value })} /></label>
-        <button className="btn sm" onClick={() => setF({ busca: '', obra: '', categoria: '', status: '', situacao: '', de: '', ate: '', contraparte: '' })}>Limpar</button>
+        <label className="field"><span>Excluídos</span><input type="checkbox" checked={f.excluidos} onChange={(e) => setF({ ...f, excluidos: e.target.checked })} title="mostrar lançamentos excluídos" /></label>
+        <button className="btn sm" onClick={() => setF({ busca: '', obra: '', categoria: '', status: '', situacao: '', de: '', ate: '', contraparte: '', excluidos: false })}>Limpar</button>
       </div>
       <div className="card table-wrap">
         <table>

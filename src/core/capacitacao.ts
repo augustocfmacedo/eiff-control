@@ -98,7 +98,7 @@ export const LICOES: Licao[] = [
       'Período fechado não aceita inclusão nem alteração.',
       'Faturamento direto só em saídas com obra; fica fora do caixa, do fluxo, do DRE e do aging.',
     ],
-    erros: ['Lançar valor negativo para representar saída.', 'Esquecer o serviço em custo de obra: a Obra 360 não vê o custo no serviço.', 'Colocar competência igual ao vencimento em despesas de meses anteriores.'],
+    erros: ['Lançar valor negativo para representar saída.', 'Esquecer o serviço em custo de obra: a Obra 360 não vê o custo no serviço.', 'Colocar competência igual ao vencimento em despesas de meses anteriores.', 'Lançou errado? Cancelar mantém o título visível como Cancelado; Excluir (no detalhe, com motivo) tira o título das listas, do caixa, do fluxo e da DRE sem apagar o registro nem a auditoria, e pode ser restaurado. Título realizado precisa ser estornado antes; conciliado com o extrato, ligado a pedido de compra ou a medição não pode ser excluído.'],
     verificacao: [
       { pergunta: 'Qual data a DRE usa?', opcoes: ['Vencimento', 'Competência', 'Realização'], correta: 1 },
       { pergunta: 'O que acontece com uma saída acima do limite do gestor?', opcoes: ['É recusada', 'Abre aprovação Gestor → Financeiro → Diretoria e fica em validação', 'É paga automaticamente'], correta: 1 },

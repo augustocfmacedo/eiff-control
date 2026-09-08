@@ -75,6 +75,7 @@ export const incluirRegistro = (registro: Registro, params: Params): boolean =>
 // ---------------------------------------------------------------------------
 export type Situacao =
   | 'Ignorado'
+  | 'Excluído'
   | 'Rascunho'
   | 'Pendente de aprovação'
   | 'Cancelado'
@@ -126,7 +127,7 @@ export function calcLancamento(
   const dataCaixa = l.status === 'Realizado' ? l.realizacao ?? l.vencimento : l.vencimento;
   const f = ds.params.fatores[cenario];
   const fatorCenario = tipo === 'Entrada' ? f.entradas : f.saidas;
-  const incluir = incluirRegistro(l.registro, ds.params);
+  const incluir = incluirRegistro(l.registro, ds.params) && !l.excluidoEm;
   const oficial = incluir && l.status !== 'Rascunho' && l.status !== 'Pendente';
   const sinal = tipo === 'Entrada' ? 1 : -1;
   const direto = !!l.faturamentoDireto;
@@ -147,7 +148,8 @@ export function calcLancamento(
 
   const db = ds.params.dataBase;
   let situacao: Situacao;
-  if (!incluir) situacao = 'Ignorado';
+  if (l.excluidoEm) situacao = 'Excluído';
+  else if (!incluir) situacao = 'Ignorado';
   else if (l.status === 'Rascunho') situacao = 'Rascunho';
   else if (l.status === 'Pendente') situacao = 'Pendente de aprovação';
   else if (l.status === 'Cancelado') situacao = 'Cancelado';

@@ -91,7 +91,7 @@ export const toneStatus = (s: string): Tone =>
     Realizado: 'ok', Conciliado: 'ok', Aprovado: 'ok', OK: 'ok', PASS: 'ok', Ativa: 'ok', 'Em execução': 'info', Concluída: 'ok',
     Programado: 'info', 'A vencer': 'info', 'Próximos 7 dias': 'warn', Pendente: 'warn', 'Pendente de aprovação': 'warn', ATENÇÃO: 'warn', Divergente: 'bad',
     Atrasado: 'bad', FALHA: 'bad', FAIL: 'bad', Rejeitado: 'bad', Cancelado: 'muted', Rascunho: 'muted', Devolvido: 'warn', 'Parcialmente liquidado': 'warn',
-    Ignorado: 'muted', 'Sem vencimento': 'bad', Planejamento: 'muted', Suspensa: 'warn', Cancelada: 'muted',
+    Ignorado: 'muted', 'Excluído': 'muted', 'Sem vencimento': 'bad', Planejamento: 'muted', Suspensa: 'warn', Cancelada: 'muted',
   } as Record<string, Tone>)[s] ?? 'muted';
 
 export function StatusBadge({ s }: { s: string }) {

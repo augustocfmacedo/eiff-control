@@ -555,6 +555,50 @@ export const actions = {
     return l;
   },
 
+  /**
+   * Exclusao logica para corrigir erro de lancamento: o titulo some das listas, do caixa, do fluxo e da DRE, mas a linha e a
+   * auditoria ficam no banco (o banco proibe apagar registros financeiros). Nao vale para Realizado (estorne antes), nem com
+   * extrato vinculado, pedido de compra ou medicao ligados, nem em periodo fechado. Liquidacoes parciais sao revertidas e
+   * aprovacoes pendentes devolvidas. Reversivel por restaurarLancamento.
+   */
+  excluirLancamento(id: string, motivo: string) {
+    let ds = state.ds;
+    const atual = ds.lancamentos.find((l) => l.id === id);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    if (atual.excluidoEm) throw new RegraDeNegocioError('Lançamento já excluído.');
+    exigir('editar_lancamento', atual.codigoObra || undefined);
+    if (atual.status === 'Realizado') throw new RegraDeNegocioError('Título realizado: estorne antes de excluir.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo da exclusão é obrigatório.');
+    if (periodoFechado(ds, atual.competencia)) throw new RegraDeNegocioError('Período fechado.');
+    if (ds.transacoes.some((t) => t.lancamentoIds.includes(id))) throw new RegraDeNegocioError('Lançamento conciliado com o extrato não pode ser excluído.');
+    if (ds.pedidos.some((p) => p.lancamentoId === id)) throw new RegraDeNegocioError('Lançamento gerado por pedido de compra: cancele o pedido.');
+    if (ds.medicoes.some((m) => m.lancamentoId === id)) throw new RegraDeNegocioError('Lançamento vinculado a medição: desvincule na medição antes.');
+    const l: Lancamento = { ...atual, excluidoEm: agora(), excluidoPor: state.usuario.nome, motivoExclusao: motivo.trim(), valorRealizado: undefined, realizacao: undefined, conciliado: false, atualizadoEm: agora(), atualizadoPor: state.usuario.nome, versao: atual.versao + 1 };
+    ds = {
+      ...ds,
+      lancamentos: ds.lancamentos.map((x) => (x.id === id ? l : x)),
+      liquidacoes: ds.liquidacoes.filter((q) => q.lancamentoId !== id),
+      aprovacoes: ds.aprovacoes.map((a) => (a.entidadeId === id && a.status === 'Pendente' ? { ...a, status: 'Devolvido' as const } : a)),
+    };
+    ds = registrar(ds, 'excluir_lancamento', 'lancamento', id, atual, l, motivo.trim());
+    commit(ds);
+    return l;
+  },
+
+  /** Desfaz a exclusao logica: o titulo volta as listas com o status que tinha (liquidacoes parciais revertidas nao voltam). */
+  restaurarLancamento(id: string) {
+    let ds = state.ds;
+    const atual = ds.lancamentos.find((l) => l.id === id);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    if (!atual.excluidoEm) throw new RegraDeNegocioError('Lançamento não está excluído.');
+    exigir('editar_lancamento', atual.codigoObra || undefined);
+    if (periodoFechado(ds, atual.competencia)) throw new RegraDeNegocioError('Período fechado.');
+    const l: Lancamento = { ...atual, excluidoEm: undefined, excluidoPor: undefined, motivoExclusao: undefined, atualizadoEm: agora(), atualizadoPor: state.usuario.nome, versao: atual.versao + 1 };
+    ds = registrar({ ...ds, lancamentos: ds.lancamentos.map((x) => (x.id === id ? l : x)) }, 'restaurar_lancamento', 'lancamento', id, atual, l);
+    commit(ds);
+    return l;
+  },
+
   /** FIN-005: liquidacao parcial ou total; exige conta, data, valor e evidencia. */
   liquidar(lancamentoId: string, dados: { data: string; valor: number; conta: string; documento: string }) {
     let ds = state.ds;
