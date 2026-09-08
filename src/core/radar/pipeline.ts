@@ -18,7 +18,8 @@ export const contextoEmpresa = (r: RadarDataset, empresaId: string): ContextoEmp
 /** Recalcula os campos de cache da empresa (ultimo sinal/contato, proxima acao) sem tocar no score. */
 export function atualizarCaches(e: Empresa, r: RadarDataset): Empresa {
   const sinais = r.sinais.filter((s) => s.empresaId === e.id).map((s) => s.eventoEm).sort();
-  const ats = r.atividades.filter((a) => a.empresaId === e.id).map((a) => a.ocorreuEm).sort();
+  // nota interna (NOTE) nao e contato com a empresa: nao conta como ultimo contato
+  const ats = r.atividades.filter((a) => a.empresaId === e.id && a.tipo !== 'NOTE').map((a) => a.ocorreuEm).sort();
   const proximas = [
     ...r.tarefas.filter((t) => t.empresaId === e.id && t.status === 'Aberta').map((t) => t.venceEm),
     ...r.oportunidades.filter((o) => o.empresaId === e.id && estagioAtivo(o.estagio) && o.proximaAcaoEm).map((o) => o.proximaAcaoEm!),
