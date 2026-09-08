@@ -9,3 +9,7 @@ eiff-control-site.zip
 
 # Local Netlify folder
 .netlify
+
+# Integracao Vibe Prospecting: chave so em .env.local; exportacoes com dados pessoais fora do repositorio
+.env.local
+dados/vibe/
