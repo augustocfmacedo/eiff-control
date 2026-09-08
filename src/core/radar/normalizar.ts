@@ -21,12 +21,14 @@ export const formatarCnpj = (d?: string) => (d && d.length === 14 ? `${d.slice(0
 
 /** Dominio a partir de site/e-mail/url: minusculo, sem protocolo, www e caminho. Ignora provedores genericos de e-mail. */
 const GENERICOS = new Set(['gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br', 'uol.com.br', 'bol.com.br', 'terra.com.br', 'icloud.com', 'live.com', 'globo.com', 'ig.com.br']);
+/** Perfis em redes sociais aparecem como "site" em bases B2B; nao identificam a empresa nem servem para dedup. */
+const SOCIAIS = new Set(['linkedin.com', 'instagram.com', 'facebook.com', 'twitter.com', 'x.com', 'youtube.com', 'tiktok.com', 'wa.me', 'whatsapp.com', 'linktr.ee', 'google.com', 'sites.google.com']);
 export function normalizarDominio(v?: string | null): string | undefined {
   let s = (v ?? '').trim().toLowerCase();
   if (!s) return undefined;
   if (s.includes('@')) s = s.split('@')[1];
   s = s.replace(/^[a-z]+:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0].replace(/:\d+$/, '');
-  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(s) || GENERICOS.has(s)) return undefined;
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(s) || GENERICOS.has(s) || SOCIAIS.has(s)) return undefined;
   return s;
 }
 
@@ -74,7 +76,7 @@ export function encontrarEmpresa(dados: { businessId?: string; cnpj?: string; do
   const cnpj = normalizarCnpj(dados.cnpj);
   if (cnpj) { const e = ativas.find((x) => x.cnpj === cnpj); if (e) return { empresa: e, nivel: 'certo', confianca: 1, motivo: 'CNPJ igual' }; }
   const dom = normalizarDominio(dados.dominio);
-  if (dom) { const e = ativas.find((x) => x.dominio === dom); if (e) return { empresa: e, nivel: 'certo', confianca: 0.97, motivo: `domínio ${dom}` }; }
+  if (dom) { const e = ativas.find((x) => x.dominio === dom); if (e) return e.businessId && bid && e.businessId !== bid ? { empresa: e, nivel: 'possivel', confianca: 0.6, motivo: `mesmo domínio ${dom}, business_id diferente (grupo?)` } : { empresa: e, nivel: 'certo', confianca: 0.97, motivo: `domínio ${dom}` }; }
   const nome = normalizarNome(dados.razaoSocial || dados.nomeFantasia);
   if (!nome) return undefined;
   const uf = normalizarUf(dados.uf); const cidade = semAcento(normalizarCidade(dados.cidade)?.toLowerCase() ?? '');

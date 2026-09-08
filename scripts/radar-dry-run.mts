@@ -29,4 +29,10 @@ console.log(`\nDRY RUN — ${contatosArq}`);
 console.log(`colunas reconhecidas: ${d.colunas.map((c) => `${c.coluna}${c.campo ? ` → ${c.campo}` : ' (ignorada)'}`).join(' | ')}\n`);
 for (const l of relatorioDryRun(d)) console.log(`- ${l}`);
 if (flag('detalhes')) { console.log(''); for (const x of d.detalhes) console.log(`${String(x.numero).padStart(3)} ${x.status.padEnd(17)} ${x.nome.padEnd(28)} ${x.empresa.padEnd(30)} ${x.associacao.padEnd(34)} ${x.persona ?? '—'} · ${x.senioridade ?? '—'} · fit ${x.decisionFit ?? '—'} · qual ${x.qualidade ?? '—'} · e-mail ${x.emailValido ? 'ok' : '—'}${x.mensagem ? ` · ${x.mensagem}` : ''}`); }
+if (flag('detalhes')) {
+  console.log('\nContato principal sugerido por empresa (decision fit):');
+  for (const p of d.principaisSugeridos) console.log(`  ${String(p.fit).padStart(3)}  ${p.empresa.padEnd(40)} ${p.contato.padEnd(28)} ${(p.cargo ?? '—').padEnd(36)} ${p.persona ?? '—'} · ${p.motivo} · e-mail ${p.emailValido ? 'ok' : '—'}`);
+  console.log(`\nEmpresas ainda sem decisor (${d.empresasSemDecisor.length}):`);
+  console.log('  ' + d.empresasSemDecisor.map((e) => e.nome).join(' · '));
+}
 console.log('\nNada foi gravado. Nenhuma chamada à Explorium.');

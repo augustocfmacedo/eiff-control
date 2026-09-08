@@ -25,18 +25,18 @@ const chave = (s: string) => semAcento(s.toLowerCase()).replace(/[^a-z0-9]+/g, '
 
 export const CAMPOS_EMPRESA: Record<string, string[]> = {
   cnpj: ['cnpj', 'cnpjcpf', 'documento', 'taxid'],
-  razaoSocial: ['razaosocial', 'razao', 'empresa', 'nome', 'nomeempresa', 'company', 'companyname', 'legalname', 'name'],
+  razaoSocial: ['razaosocial', 'razao', 'empresa', 'nome', 'nomeempresa', 'company', 'companyname', 'legalname', 'name', 'businessname'],
   nomeFantasia: ['nomefantasia', 'fantasia', 'tradename', 'marca'],
-  dominio: ['dominio', 'domain', 'companydomain'],
-  site: ['site', 'website', 'url', 'web', 'homepage', 'companywebsite'],
+  dominio: ['dominio', 'domain', 'companydomain', 'businessdomain'],
+  site: ['site', 'website', 'url', 'web', 'homepage', 'companywebsite', 'businesswebsite'],
   linkedin: ['linkedin', 'linkedinurl', 'linkedinempresa', 'companylinkedin'],
-  setor: ['setor', 'segmento', 'industria', 'industry', 'ramo', 'atividade'],
+  setor: ['setor', 'segmento', 'industria', 'industry', 'ramo', 'atividade', 'businessnaicsdescription', 'naicsdescription'],
   cnae: ['cnae', 'cnaeprincipal', 'cnaefiscal'],
-  cidade: ['cidade', 'municipio', 'city'],
-  uf: ['uf', 'estado', 'state'],
-  pais: ['pais', 'country'],
-  faixaFuncionarios: ['funcionarios', 'faixafuncionarios', 'employees', 'employeerange', 'porte', 'colaboradores', 'numerofuncionarios'],
-  faixaReceita: ['faturamento', 'receita', 'revenue', 'revenuerange', 'faixafaturamento'],
+  cidade: ['cidade', 'municipio', 'city', 'businesscityname', 'cityname'],
+  uf: ['uf', 'estado', 'state', 'businessregion', 'region'],
+  pais: ['pais', 'country', 'businesscountryname', 'countryname'],
+  faixaFuncionarios: ['funcionarios', 'faixafuncionarios', 'employees', 'employeerange', 'porte', 'colaboradores', 'numerofuncionarios', 'businessnumberofemployeesrange', 'numberofemployeesrange'],
+  faixaReceita: ['faturamento', 'receita', 'revenue', 'revenuerange', 'faixafaturamento', 'businessyearlyrevenuerange', 'yearlyrevenuerange'],
   capitalSocial: ['capitalsocial', 'capital'],
   numeroUnidades: ['unidades', 'filiais', 'numerodeunidades', 'locations', 'numberoflocations'],
   fonteExternaId: ['id', 'idexterno', 'externalid', 'sourceid', 'codigo'],
@@ -47,25 +47,25 @@ export const CAMPOS_EMPRESA: Record<string, string[]> = {
 };
 
 export const CAMPOS_CONTATO: Record<string, string[]> = {
-  nome: ['nome', 'contato', 'nomecontato', 'fullname', 'name', 'nomecompleto'],
-  cargo: ['cargo', 'jobtitle', 'title', 'funcao', 'position'],
-  departamento: ['departamento', 'department', 'area', 'jobdepartmentmain', 'jobdepartment'],
-  senioridade: ['senioridade', 'seniority', 'nivel', 'joblevelmain', 'joblevel'],
-  email: ['email', 'emailcontato', 'e-mail', 'professionalemail', 'workemail'],
+  nome: ['nome', 'contato', 'nomecontato', 'fullname', 'name', 'nomecompleto', 'prospectfullname'],
+  cargo: ['cargo', 'jobtitle', 'title', 'funcao', 'position', 'prospectjobtitle'],
+  departamento: ['departamento', 'department', 'area', 'jobdepartmentmain', 'jobdepartment', 'prospectjobdepartment'],
+  senioridade: ['senioridade', 'seniority', 'nivel', 'joblevelmain', 'joblevel', 'prospectjobsenioritylevel', 'jobsenioritylevel'],
+  email: ['email', 'emailcontato', 'e-mail', 'professionalemail', 'workemail', 'contactprofessionalemail'],
   telefone: ['telefone', 'phone', 'fone', 'telefonefixo'],
-  celular: ['celular', 'mobile', 'mobilephone', 'cel'],
+  celular: ['celular', 'mobile', 'mobilephone', 'cel', 'contactmobilephone'],
   whatsapp: ['whatsapp', 'zap', 'wpp'],
-  linkedin: ['linkedin', 'linkedinurl', 'perfil', 'linkedinurlarray'],
+  linkedin: ['linkedin', 'linkedinurl', 'perfil', 'linkedinurlarray', 'prospectlinkedin'],
   decisor: ['decisor', 'decisionmaker', 'isdecisionmaker', 'decide'],
   poderDecisao: ['poderdecisao', 'decisionpower', 'poder'],
   persona: ['persona'],
-  statusEmail: ['statusemail', 'emailstatus', 'statusdoemail', 'emailverificado', 'emailvalido', 'professionalemailstatus'],
+  statusEmail: ['statusemail', 'emailstatus', 'statusdoemail', 'emailverificado', 'emailvalido', 'professionalemailstatus', 'contactprofessionalemailstatus'],
   statusTelefone: ['statustelefone', 'phonestatus', 'statusdotelefone'],
   verificadoEm: ['verificadoem', 'lastverifiedat', 'ultimaverificacao', 'dataverificacao'],
   empresaExternoId: ['empresaid', 'idempresa', 'companyid', 'businessid', 'businessexternalid', 'companyexternalid', 'idexternoempresa', 'ideiff'],
   empresaCnpj: ['cnpj', 'cnpjempresa', 'companycnpj'],
-  empresaNome: ['empresa', 'razaosocial', 'company', 'companyname', 'nomeempresa'],
-  empresaDominio: ['dominio', 'domain', 'site', 'website', 'companydomain', 'companywebsite'],
+  empresaNome: ['empresa', 'razaosocial', 'company', 'companyname', 'nomeempresa', 'businessname'],
+  empresaDominio: ['dominio', 'domain', 'site', 'website', 'companydomain', 'companywebsite', 'businessdomain', 'businesswebsite'],
   fonte: ['fonte', 'source', 'origem'],
   fonteExternaId: ['id', 'idexterno', 'externalid', 'contactid', 'prospectid'],
   observacoes: ['observacoes', 'obs', 'notes'],
@@ -77,14 +77,13 @@ const dataIso = (v?: string) => { const s = (v ?? '').trim(); if (!s) return und
 
 /** Mapeia cada coluna do cabecalho para um campo conhecido (ou undefined). Cabecalho exato vence sinonimo parcial. */
 export function mapearColunas(cabecalho: string[], campos: Record<string, string[]>): (string | undefined)[] {
+  // duas passadas globais: todos os cabecalhos exatos primeiro (em qualquer posicao), depois prefixo/sufixo para o que sobrou
   const usados = new Set<string>();
-  return cabecalho.map((col) => {
-    const k = chave(col);
-    if (!k) return undefined;
-    for (const [campo, sins] of Object.entries(campos)) if (!usados.has(campo) && sins.includes(k)) { usados.add(campo); return campo; }
-    for (const [campo, sins] of Object.entries(campos)) if (!usados.has(campo) && sins.some((s) => s.length > 3 && (k.startsWith(s) || k.endsWith(s)))) { usados.add(campo); return campo; }
-    return undefined;
-  });
+  const chaves = cabecalho.map(chave);
+  const saida: (string | undefined)[] = chaves.map(() => undefined);
+  chaves.forEach((k, i) => { if (!k) return; for (const [campo, sins] of Object.entries(campos)) if (!usados.has(campo) && sins.includes(k)) { usados.add(campo); saida[i] = campo; return; } });
+  chaves.forEach((k, i) => { if (!k || saida[i]) return; for (const [campo, sins] of Object.entries(campos)) if (!usados.has(campo) && sins.some((s) => s.length > 3 && (k.startsWith(s) || k.endsWith(s)))) { usados.add(campo); saida[i] = campo; return; } });
+  return saida;
 }
 
 export interface EmpresaCsv { numero: number; dados: Record<string, string>; businessId?: string; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; linkedin?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; numeroUnidades?: number; fonteExternaId?: string; telefone?: string; email?: string; observacoes?: string; erros: { campo?: string; mensagem: string }[] }

@@ -29,7 +29,7 @@ export function inferirSenioridade(cargo?: string, senioridade?: string): Senior
   const s = norm(senioridade);
   if (s) { if (/\b(c ?level|ceo|cfo|coo|cto|presidente|socio|proprietario|dono|founder)\b/.test(s)) return 'C-level'; if (s.startsWith('diretor') || s.startsWith('director') || s === 'vp' || s.startsWith('vice')) return 'Diretor'; if (s.startsWith('gerente') || s.startsWith('manager') || s.startsWith('head')) return 'Gerente'; if (s.startsWith('coord') || s.startsWith('supervis') || s.startsWith('lider') || s.startsWith('lead')) return 'Coordenador'; if (s.startsWith('anal') || s.startsWith('assist') || s.startsWith('espec') || s.startsWith('eng')) return 'Analista'; }
   const c = norm(cargo);
-  if (/\b(ceo|cfo|coo|cto|cio|presidente|president|socio|socia|proprietario|proprietaria|dono|dona|owner|founder|fundador|fundadora)\b/.test(c)) return 'C-level';
+  if (/\b(ceo|cfo|coo|cto|cio|chief|presidente|president|socio|socia|proprietario|proprietaria|dono|dona|owner|founder|fundador|fundadora)\b/.test(c)) return 'C-level';
   if (/\b(diretor|diretora|director|vp|vice presidente)\b/.test(c)) return 'Diretor';
   if (/\b(gerente|manager|head|gestor)\b/.test(c)) return 'Gerente';
   if (/\b(coordenador|coordenadora|supervisor|supervisora|lider|leader|encarregado)\b/.test(c)) return 'Coordenador';

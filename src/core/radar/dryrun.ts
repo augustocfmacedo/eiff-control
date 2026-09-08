@@ -2,7 +2,7 @@
 // decision fit, qualidade) sem gravar nada, para validar um lote real antes de importar.
 import { normalizarContatosCsv } from './csv';
 import { associarEmpresaContato, upsertContato, type Ids } from './ingestao';
-import { NOME_PERSONA } from './contatos';
+import { NOME_PERSONA, sugerirContatoPrincipal } from './contatos';
 import type { Contato, Persona, RadarDataset } from './types';
 
 export type StatusLinhaDryRun = 'ok' | 'revisao' | 'invalido' | 'duplicata_arquivo' | 'ja_no_radar';
@@ -16,7 +16,9 @@ export interface DryRunContatos {
   associacoes: { exatas: number; businessId: number; dominio: number; provaveis: number; ambiguas: number; naoEncontradas: number };
   duplicatas: { noArquivo: number; jaNoRadar: number };
   invalidos: number;
-  emailsValidos: number; emailsStatusValido: number;
+  emailsValidos: number; emailsStatusValido: number; emailsCatchAll: number; emailsInvalidos: number;
+  principaisSugeridos: { empresaId: string; empresa: string; contato: string; cargo?: string; persona?: Persona; fit: number; motivo: string; emailValido: boolean }[];
+  empresasSemDecisor: { id: string; nome: string }[];
   porPersona: Record<string, number>; porSenioridade: Record<string, number>;
   decisionFitMedio: number | null;
   empresasCobertas: number; totalEmpresas: number; cobertura: number | null;
@@ -40,7 +42,7 @@ export function dryRunContatosCsv(texto: string, r: RadarDataset, hoje: string, 
   const vistos = new Set<string>(); const empresasArquivo = new Set<string>(); const cobertas = new Set<string>();
   const assoc = { exatas: 0, businessId: 0, dominio: 0, provaveis: 0, ambiguas: 0, naoEncontradas: 0 };
   const dup = { noArquivo: 0, jaNoRadar: 0 };
-  let invalidos = 0; let emailsValidos = 0; let emailsStatusValido = 0;
+  let invalidos = 0; let emailsValidos = 0; let emailsStatusValido = 0; let emailsCatchAll = 0; let emailsInvalidos = 0;
   const porPersona: Record<string, number> = {}; const porSenioridade: Record<string, number> = {}; const fits: number[] = [];
   const detalhes: LinhaDryRun[] = [];
   const nomeEmpresa = (c: { empresaNome?: string; empresaDominio?: string; empresaExternoId?: string; empresaCnpj?: string }) => c.empresaNome ?? c.empresaDominio ?? c.empresaExternoId ?? c.empresaCnpj ?? '';
@@ -53,7 +55,7 @@ export function dryRunContatosCsv(texto: string, r: RadarDataset, hoje: string, 
     const chave = (c.fonteExternaId ?? c.email ?? `${c.nome}|${chaveEmpresa}`).toLowerCase();
     if (vistos.has(chave)) { dup.noArquivo++; detalhes.push({ ...base, status: 'duplicata_arquivo', mensagem: 'repetido no arquivo (mesmo id/e-mail/nome+empresa)' }); continue; }
     vistos.add(chave);
-    if (emailOk) emailsValidos++; if (c.statusEmail === 'valido') emailsStatusValido++;
+    if (emailOk) emailsValidos++; if (c.statusEmail === 'valido') emailsStatusValido++; if (c.statusEmail === 'catch_all') emailsCatchAll++; if (c.email && (!EMAIL.test(c.email) || c.statusEmail === 'invalido' || c.statusEmail === 'devolvido')) emailsInvalidos++;
     const a = associarEmpresaContato({ empresaExternoId: c.empresaExternoId, empresaDominio: c.empresaDominio, empresaNome: c.empresaNome, empresaCnpj: c.empresaCnpj }, sim.empresas);
     base.associacao = a.motivo; base.nivel = a.nivel;
     if (a.nivel === 'ambiguo') { assoc.ambiguas++; detalhes.push({ ...base, status: 'revisao', mensagem: `ambígua: ${a.motivo} (${a.candidatos.length} candidata(s))` }); continue; }
@@ -71,11 +73,15 @@ export function dryRunContatosCsv(texto: string, r: RadarDataset, hoje: string, 
     if (existente) dup.jaNoRadar++;
     detalhes.push({ ...base, status: existente ? 'ja_no_radar' : 'ok', persona: ct.persona, senioridade: ct.senioridade, decisionFit: ct.decisionFitScore, qualidade: ct.qualidade, mensagem: existente ? `já existe no Radar (${existente.id}): seria atualizado nos campos vazios` : undefined });
   }
-  const ativas = r.empresas.filter((e) => e.ativo && !e.mescladaEm).length;
+  const ativasLista = r.empresas.filter((e) => e.ativo && !e.mescladaEm);
+  const ativas = ativasLista.length;
   const total = totalEmpresas ?? ativas;
+  const principaisSugeridos = [...cobertas].map((id) => { const e = sim.empresas.find((x) => x.id === id)!; const s = sugerirContatoPrincipal(e, sim.contatos, sim); return s ? { empresaId: id, empresa: e.nomeFantasia ?? e.razaoSocial, contato: s.contato.nome, cargo: s.contato.cargo, persona: s.contato.persona, fit: s.fit.score, motivo: s.motivo, emailValido: !!s.contato.email && s.contato.statusEmail !== 'invalido' && s.contato.statusEmail !== 'devolvido' } : undefined; }).filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => b.fit - a.fit || a.empresa.localeCompare(b.empresa));
+  const comDecisor = new Set([...cobertas, ...r.contatos.filter((c) => c.ativo && c.situacao === 'ATIVO' && c.decisor).map((c) => c.empresaId)]);
+  const empresasSemDecisor = ativasLista.filter((e) => !comDecisor.has(e.id)).map((e) => ({ id: e.id, nome: e.nomeFantasia ?? e.razaoSocial })).sort((a, b) => a.nome.localeCompare(b.nome));
   const contatosUnicos = vistos.size;
   return {
-    linhas: contatos.length, contatosUnicos, empresasUnicas: empresasArquivo.size, associacoes: assoc, duplicatas: dup, invalidos, emailsValidos, emailsStatusValido, porPersona, porSenioridade,
+    linhas: contatos.length, contatosUnicos, empresasUnicas: empresasArquivo.size, associacoes: assoc, duplicatas: dup, invalidos, emailsValidos, emailsStatusValido, emailsCatchAll, emailsInvalidos, principaisSugeridos, empresasSemDecisor, porPersona, porSenioridade,
     decisionFitMedio: fits.length ? Math.round((fits.reduce((s, x) => s + x, 0) / fits.length) * 10) / 10 : null,
     empresasCobertas: cobertas.size, totalEmpresas: total, cobertura: total ? cobertas.size / total : null,
     colunas: cabecalho.map((coluna, i) => ({ coluna, campo: colunas[i] })), detalhes,
@@ -99,10 +105,13 @@ export function relatorioDryRun(d: DryRunContatos): string[] {
     `duplicatas: ${d.duplicatas.noArquivo} no arquivo · ${d.duplicatas.jaNoRadar} já no Radar`,
     `registros inválidos: ${d.invalidos}`,
     `e-mails válidos: ${d.emailsValidos} (${d.emailsStatusValido} com status "valid")`,
+    `e-mails catch-all: ${d.emailsCatchAll}`,
+    `e-mails inválidos/devolvidos: ${d.emailsInvalidos}`,
     `distribuição por persona: ${dist(d.porPersona)}`,
     `distribuição por senioridade: ${dist(d.porSenioridade)}`,
     `decision fit médio: ${d.decisionFitMedio ?? '—'}`,
     `empresas cobertas: ${d.empresasCobertas} de ${d.totalEmpresas}`,
     `cobertura: ${pct(d.cobertura)}`,
+    `empresas ainda sem decisor: ${d.empresasSemDecisor.length}`,
   ];
 }
