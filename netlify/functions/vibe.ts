@@ -158,7 +158,7 @@ export default async (req: Request): Promise<Response> => {
         const r = await explorium(chave, 'POST', '/v2/prospects/contact_information/enrich', payloadEnriquecimentoVibe(pids, tipo === 'enrich_phone' ? ['email', 'phone'] : ['email']));
         const resultados = normalizarEnriquecimentoVibe(r).map((x) => ({ ...x, professional_email: x.professional_email }));
         const depois = await creditos();
-        await registrar('SUCCEEDED', { credits_after: depois, records_delta: resultados.length, correlation_ids: [correlacao(r)].filter(Boolean), result_summary: { pedidos: pids.length, retornados: resultados.length, com_email: resultados.filter((x) => x.professional_email).length } });
+        await registrar('SUCCEEDED', { credits_after: depois, records_delta: resultados.length, correlation_ids: [correlacao(r)].filter(Boolean), result_summary: { pedidos: pids.length, retornados: resultados.length, com_email: resultados.filter((x) => x.professional_email).length, com_email_valid: resultados.filter((x) => x.professional_email && String(x.professional_email_status ?? '').toLowerCase() === 'valid').length } });
         return json({ resultados, creditosAntes: antes, creditosDepois: depois, correlationId: correlacao(r), operationId: opId });
       }
       // discovery: uma pagina por chamada, dentro do teto global da operacao (cap, politica, creditos reservados)

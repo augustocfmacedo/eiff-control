@@ -7,7 +7,8 @@ export interface EconomiaInteligencia {
   creditsUncertain: number; // reservas de operacoes UNCERTAIN (a reconciliar; nao entram no consumido)
   companiesResearched: number; // empresas-alvo das operacoes concluidas (tentadas no match, alvo da descoberta)
   prospectsDiscovered: number; // registros pagos devolvidos pelas descobertas concluidas
-  validEmails: number; // e-mails devolvidos pelos enriquecimentos concluidos
+  validEmails: number; // contatos vindos do Vibe (prospect_id) com professional_email_status = valid
+  emailsAvailable: number; emailsCatchAll: number; emailsInvalid: number; // demais estados dos e-mails dos contatos do Vibe
   accountsCovered: number; // empresas ativas do Radar com pelo menos um contato vindo do Vibe (prospect_id)
   creditsPerProspect: number | null; creditsPerValidEmail: number | null; creditsPerCoveredAccount: number | null;
   operacoes: { total: number; concluidas: number; falhas: number; incertas: number; abertas: number };
@@ -24,11 +25,15 @@ export function economiaInteligencia(r: Pick<RadarDataset, 'operacoesVibe' | 'co
   const creditsUncertain = ops.filter((o) => o.status === 'UNCERTAIN').reduce((s, o) => s + o.creditosReservados, 0);
   const companiesResearched = ok.reduce((s, o) => s + (o.tipo === 'match' ? num(o.resumo?.tentadas) : o.tipo === 'discovery' || o.tipo === 'discovery_pool' ? num(o.resumo?.empresas_alvo) : 0), 0);
   const prospectsDiscovered = ok.filter((o) => o.tipo === 'discovery' || o.tipo === 'discovery_pool').reduce((s, o) => s + o.registrosDevolvidos, 0);
-  const validEmails = ok.filter((o) => o.tipo === 'enrich_email' || o.tipo === 'enrich_phone' || o.tipo === 'test_email').reduce((s, o) => s + num(o.resumo?.com_email), 0);
   const ativas = new Set(r.empresas.filter((e) => e.ativo && !e.mescladaEm).map((e) => e.id));
-  const accountsCovered = new Set(r.contatos.filter((c) => c.ativo && ativas.has(c.empresaId) && c.fonteExternaId && /^[a-f0-9]{40}$/i.test(c.fonteExternaId)).map((c) => c.empresaId)).size;
+  const vibe = r.contatos.filter((c) => c.ativo && ativas.has(c.empresaId) && c.fonteExternaId && /^[a-f0-9]{40}$/i.test(c.fonteExternaId));
+  const accountsCovered = new Set(vibe.map((c) => c.empresaId)).size;
+  const emailsAvailable = vibe.filter((c) => !!c.email).length;
+  const validEmails = vibe.filter((c) => !!c.email && c.statusEmail === 'valido').length;
+  const emailsCatchAll = vibe.filter((c) => !!c.email && c.statusEmail === 'catch_all').length;
+  const emailsInvalid = vibe.filter((c) => !!c.email && (c.statusEmail === 'invalido' || c.statusEmail === 'devolvido')).length;
   return {
-    creditsConsumed, creditsUncertain, companiesResearched, prospectsDiscovered, validEmails, accountsCovered,
+    creditsConsumed, creditsUncertain, companiesResearched, prospectsDiscovered, validEmails, emailsAvailable, emailsCatchAll, emailsInvalid, accountsCovered,
     creditsPerProspect: razao(creditsConsumed, prospectsDiscovered), creditsPerValidEmail: razao(creditsConsumed, validEmails), creditsPerCoveredAccount: razao(creditsConsumed, accountsCovered),
     operacoes: { total: ops.length, concluidas: ok.length, falhas: ops.filter((o) => o.status === 'FAILED' || o.status === 'CANCELLED').length, incertas: ops.filter((o) => o.status === 'UNCERTAIN').length, abertas: ops.filter((o) => o.status === 'RESERVED' || o.status === 'RUNNING' || o.status === 'PLANNED').length },
   };

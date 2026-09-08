@@ -144,6 +144,8 @@ const P = (chave: string, valor: number): PesoDecisionFit => ({ chave, valor });
 const trio = (persona: string, pequena: number, media: number, grande: number) => [P(`persona.${persona}.pequena`, pequena), P(`persona.${persona}.media`, media), P(`persona.${persona}.grande`, grande)];
 export const PESOS_DECISION_FIT_PADRAO: PesoDecisionFit[] = [
   P('porte.pequena.max', 50), P('porte.media.max', 500),
+  // cobertura de decisores: HIPOTESE OPERACIONAL do piloto (revisar com dados reais): ideal >= 70, utilizavel 50-69
+  P('fit.ideal', 70), P('fit.usavel', 50),
   ...trio('OWNER', 70, 55, 35), ...trio('CEO', 68, 55, 35), ...trio('PRESIDENT', 66, 52, 35), ...trio('COO', 55, 55, 45),
   ...trio('INDUSTRIAL_DIRECTOR', 50, 62, 66), ...trio('ENGINEERING_DIRECTOR', 50, 62, 66), ...trio('OPERATIONS_DIRECTOR', 48, 60, 62), ...trio('EXPANSION_DIRECTOR', 50, 64, 68), ...trio('FACILITIES', 40, 55, 60),
   ...trio('ENGINEERING', 35, 45, 48), ...trio('OPERATIONS', 32, 42, 45), ...trio('MANUFACTURING', 32, 42, 45), ...trio('LOGISTICS', 30, 38, 40), ...trio('SUPPLY_CHAIN', 25, 33, 36), ...trio('PROCUREMENT', 25, 30, 32), ...trio('REAL_ESTATE', 35, 45, 50), ...trio('OTHER', 10, 10, 10),

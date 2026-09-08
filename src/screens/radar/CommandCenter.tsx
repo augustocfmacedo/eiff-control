@@ -5,6 +5,7 @@ import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast } from '../../ui/components';
 import { ImportarForm, ScorePill, d, dh, nomeUsuario } from './comum';
 import { VibePainel } from './Vibe';
+import { CoberturaDecisores } from './Cobertura';
 
 type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe';
 
@@ -69,7 +70,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
           { label: 'Créditos consumidos', value: eco.creditsConsumed, hint: `credits_consumed · ${eco.operacoes.concluidas} operação(ões) concluída(s)${eco.creditsUncertain ? ` · ${eco.creditsUncertain} a reconciliar` : ''}`, tone: eco.creditsUncertain ? 'warn' : undefined },
           { label: 'Empresas pesquisadas', value: eco.companiesResearched, hint: 'companies_researched' },
           { label: 'Prospects descobertos', value: eco.prospectsDiscovered, hint: 'prospects_discovered' },
-          { label: 'E-mails válidos', value: eco.validEmails, hint: 'valid_emails' },
+          { label: 'E-mails válidos', value: eco.validEmails, hint: `valid_emails (status valid) · disponíveis ${eco.emailsAvailable} · catch-all ${eco.emailsCatchAll} · inválidos ${eco.emailsInvalid}` },
           { label: 'Contas cobertas', value: eco.accountsCovered, hint: 'accounts_covered' },
           { label: 'Créditos por prospect', value: razao(eco.creditsPerProspect), hint: 'credits_per_prospect' },
           { label: 'Créditos por e-mail válido', value: razao(eco.creditsPerValidEmail), hint: 'credits_per_valid_email' },
@@ -164,7 +165,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         </div>
       )}
 
-      {aba === 'decisores' && <ConfigDecisores podeConfig={podeConfig} onErro={toast} onOk={toast} />}
+      {aba === 'decisores' && <><CoberturaDecisores /><ConfigDecisores podeConfig={podeConfig} onErro={toast} onOk={toast} /></>}
       {aba === 'vibe' && podeConfig && <VibePainel onErro={toast} onOk={toast} />}
 
       {aba === 'revisao' && (

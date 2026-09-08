@@ -293,7 +293,8 @@ export function ImportarForm({ onClose, onErro, onOk }: { onClose: () => void; o
           <div className="form">
             <Field label="O que a planilha contém"><Select value={tipo} onChange={(v) => setTipo(v as 'empresas')} options={[{ value: 'empresas', label: 'Empresas' }, { value: 'contatos', label: 'Contatos (com a empresa em cada linha)' }]} /></Field>
             <Field label="Fonte" hint="fica registrada em cada empresa e contato"><Select value={fonteId} onChange={setFonteId} options={ds.radar.fontes.filter((f) => f.ativo).map((f) => ({ value: f.id, label: f.nome }))} /></Field>
-            <Field label="Arquivo CSV" full><input type="file" accept=".csv,.txt,.tsv" onChange={(ev) => { const f = ev.target.files?.[0]; if (f) ler(f); }} /></Field>
+            <Field label="Arquivo CSV"><input type="file" accept=".csv,.txt,.tsv" onChange={(ev) => { const f = ev.target.files?.[0]; if (f) ler(f); }} /></Field>
+            <Field label="Nome do arquivo / dataset" hint="fica no job de importação (lineage)"><Input value={arquivo} onChange={(ev) => setArquivo(ev.target.value)} /></Field>
             <Field label="Ou cole o conteúdo (com cabeçalho)" full><textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} rows={7} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} placeholder={tipo === 'empresas' ? 'Razão Social;CNPJ;Cidade;UF;Setor;Funcionários;Site' : 'Empresa ID;Empresa;Domínio;Nome;Cargo;Departamento;Senioridade;E-mail;Status do e-mail;Celular;LinkedIn;Fonte'} /></Field>
           </div>
           {!!colunas.length && (

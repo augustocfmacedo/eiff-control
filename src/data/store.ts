@@ -244,9 +244,9 @@ export function garantirPadroesRadar(ds: Dataset): Dataset {
     estrategias: r.estrategias?.length ? r.estrategias : ESTRATEGIAS_PADRAO,
     tiposResposta: r.tiposResposta?.length ? r.tiposResposta : RESPOSTAS_PADRAO,
     regrasScore: r.regrasScore?.length ? r.regrasScore : REGRAS_PADRAO,
-    configScore: r.configScore?.length ? r.configScore : CONFIG_SCORE_PADRAO,
+    configScore: r.configScore?.length ? [...r.configScore, ...CONFIG_SCORE_PADRAO.filter((p) => !r.configScore.some((x) => x.chave === p.chave))] : CONFIG_SCORE_PADRAO,
     regrasPersona: r.regrasPersona?.length ? r.regrasPersona : REGRAS_PERSONA_PADRAO,
-    pesosDecisionFit: r.pesosDecisionFit?.length ? r.pesosDecisionFit : PESOS_DECISION_FIT_PADRAO,
+    pesosDecisionFit: r.pesosDecisionFit?.length ? [...r.pesosDecisionFit, ...PESOS_DECISION_FIT_PADRAO.filter((p) => !r.pesosDecisionFit.some((x) => x.chave === p.chave))] : PESOS_DECISION_FIT_PADRAO,
   };
   return { ...ds, radar };
 }
@@ -1863,7 +1863,7 @@ export const actions = {
       for (const e of empresas) {
         if (e.erros.some((x) => x.campo === 'razaoSocial')) { for (const er of e.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: e.numero, campo: er.campo, mensagem: er.mensagem }); linhas.push({ id: ids.novo('ILN'), jobId: job.id, numero: e.numero, dados: e.dados, status: 'erro', mensagem: e.erros.map((x) => x.mensagem).join('; ') }); job.erros++; continue; }
         for (const er of e.erros) erros.push({ id: ids.novo('IER'), jobId: job.id, numero: e.numero, campo: er.campo, mensagem: er.mensagem });
-        const registro: RegistroFonte = { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'empresa', externoId: e.fonteExternaId, payload: e.dados, recebidoEm: agora() };
+        const registro: RegistroFonte = { id: ids.novo('REG'), fonteId: fonte.id, tipo: 'empresa', externoId: e.businessId ?? e.fonteExternaId, payload: e.dados, recebidoEm: agora() };
         try {
           const up = upsertEmpresa(r, { businessId: e.businessId, cnpj: e.cnpj, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, dominio: e.dominio, site: e.site, linkedin: e.linkedin, setor: e.setor, cnae: e.cnae, cidade: e.cidade, uf: e.uf, pais: e.pais, faixaFuncionarios: e.faixaFuncionarios, faixaReceita: e.faixaReceita, capitalSocial: e.capitalSocial, numeroUnidades: e.numeroUnidades, externoId: e.fonteExternaId, observacoes: e.observacoes }, fonte.id, ids);
           r = { ...up.radar, registrosFonte: [...up.radar.registrosFonte, { ...registro, entidadeId: up.empresa.id }] };

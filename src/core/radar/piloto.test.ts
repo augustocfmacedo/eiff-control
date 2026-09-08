@@ -77,7 +77,41 @@ describe('piloto: dry run da importacao de decisores', () => {
     ];
     const contatos = [P(1), P(2), P(3)].map((pid, i) => ({ id: `C${i}`, empresaId: r.empresas[i < 2 ? 0 : 1].id, nome: `N${i}`, fonteExternaId: pid, decisor: true, qualidade: 50, observacoes: '', ativo: true, situacao: 'ATIVO', criadoEm: ids.agora, atualizadoEm: ids.agora }) as Contato);
     const e = economiaInteligencia({ ...r, operacoesVibe: ops, contatos });
-    expect(e).toMatchObject({ creditsConsumed: 21, creditsUncertain: 4, companiesResearched: 7, prospectsDiscovered: 10, validEmails: 3, accountsCovered: 2, creditsPerProspect: 2.1, creditsPerValidEmail: 7, creditsPerCoveredAccount: 10.5 });
+    expect(e).toMatchObject({ creditsConsumed: 21, creditsUncertain: 4, companiesResearched: 7, prospectsDiscovered: 10, validEmails: 0, accountsCovered: 2, creditsPerProspect: 2.1, creditsPerValidEmail: null, creditsPerCoveredAccount: 10.5 }); // contatos sem e-mail: valid_emails conta so status valid
     expect(e.operacoes).toEqual({ total: 6, concluidas: 3, falhas: 1, incertas: 1, abertas: 1 });
+  });
+});
+
+describe('piloto: cobertura de decisores e semantica de e-mail', () => {
+  it('niveis por empresa pelo melhor contato, cortes configuraveis (fit.ideal 70 / fit.usavel 50) e metricas de e-mail', async () => {
+    const { coberturaEmpresa, relatorioCobertura, metricasEmail, cortesCobertura } = await import('./cobertura');
+    const { upsertContato } = await import('./ingestao');
+    let r = radarComEmpresas();
+    expect(cortesCobertura(r)).toEqual({ ideal: 70, usavel: 50 });
+    const add = (empresaIdx: number, c: Record<string, unknown>) => { r = upsertContato(r, r.empresas[empresaIdx].id, c as never, 'F1', ids).radar; };
+    add(0, { nome: 'Ana Souza', cargo: 'Diretora Industrial', departamento: 'manufacturing', email: 'ana@alfametal.com.br', statusEmail: 'valido' }); // grande: diretor industrial = ideal
+    add(1, { nome: 'Carla Dias', cargo: 'Compradora', departamento: 'procurement', email: 'carla@betalog.com.br', statusEmail: 'catch_all' }); // pequena: compras = fit baixo
+    add(2, { nome: 'Eva Nunes', cargo: 'Gerente de Operações', departamento: 'operations', email: 'eva@gama.com.br', statusEmail: 'invalido' }); // media: gerente de operacoes = utilizavel (50-69)
+    const niveis = r.empresas.map((e) => coberturaEmpresa(e, r).nivel);
+    expect(niveis).toEqual(['IDEAL_DECISION_MAKER', 'NEEDS_BETTER_DECISION_MAKER', 'USABLE_CONTACT', 'NO_CONTACT']);
+    const rel = relatorioCobertura(r, HOJE);
+    expect(rel).toMatchObject({ empresas: 4, comContato: 3, ideal: 1, usavel: 1, baixo: 1, semContato: 1 });
+    expect(rel.semContatoLista.map((x) => x.nome)).toEqual(['Delta Sem Id']);
+    expect(rel.precisamDecisorMelhor.map((x) => x.empresa)).toEqual(['Beta Logística SA', 'Gama Alimentos']);
+    expect(rel.email).toEqual({ disponiveis: 3, validos: 1, catchAll: 1, invalidos: 1, desconhecidos: 0 });
+    expect(rel.linhas.map((l) => l.nivel)).toEqual(['IDEAL_DECISION_MAKER', 'USABLE_CONTACT', 'NEEDS_BETTER_DECISION_MAKER', 'NO_CONTACT']);
+    expect(rel.linhas[0]).toMatchObject({ empresa: 'Alfa Metal Ltda', contato: 'Ana Souza', principal: false, statusEmail: 'valido' });
+    expect(rel.fitMedio).toBeGreaterThan(0); expect(rel.fitMediana).toBeGreaterThan(0);
+    expect(rel.proximasAcoes.reduce((s, a) => s + a.quantidade, 0)).toBe(4);
+    // corte configuravel: baixando fit.ideal para 50, Gama passa a ideal
+    const r2 = { ...r, pesosDecisionFit: r.pesosDecisionFit.map((p) => (p.chave === 'fit.ideal' ? { ...p, valor: 50 } : p)) };
+    expect(coberturaEmpresa(r2.empresas[2], r2).nivel).toBe('IDEAL_DECISION_MAKER');
+    expect(metricasEmail([])).toEqual({ disponiveis: 0, validos: 0, catchAll: 0, invalidos: 0, desconhecidos: 0 });
+  });
+  it('economia: valid_emails conta so status valid dos contatos do Vibe', () => {
+    const r = radarComEmpresas();
+    const c = (i: number, statusEmail: string) => ({ id: `C${i}`, empresaId: r.empresas[0].id, nome: `N${i}`, fonteExternaId: P(10 + i), email: `n${i}@alfametal.com.br`, statusEmail, decisor: true, qualidade: 50, observacoes: '', ativo: true, situacao: 'ATIVO', criadoEm: ids.agora, atualizadoEm: ids.agora }) as Contato;
+    const e = economiaInteligencia({ ...r, contatos: [c(1, 'valido'), c(2, 'valido'), c(3, 'catch_all'), c(4, 'invalido')] });
+    expect(e).toMatchObject({ emailsAvailable: 4, validEmails: 2, emailsCatchAll: 1, emailsInvalid: 1, accountsCovered: 1 });
   });
 });
