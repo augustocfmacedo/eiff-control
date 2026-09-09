@@ -91,7 +91,7 @@ describe('Communication Hardening 01', () => {
     expect(new Set([a.spec.contextHash, b.spec.contextHash, c.spec.contextHash]).size).toBe(3);
     expect(gerar({ sinal: s }).spec.contextHash).toBe(a.spec.contextHash); // mesmo contexto, mesmo hash
     expect(gerar({ sinal: s }, 'EMAIL').spec.contextHash).not.toBe(a.spec.contextHash); // canal muda o hash
-    expect(contextHashDe({ empresaId: 'E1', contatoId: 'C1', objetivo: 'GET_REFERRAL', playbook: 'ACCESS_VIA_EXECUTIVE', canal: 'WHATSAPP', claims: [], versoes: { playbook: '1', contentSpec: '1' } })).toMatch(/^[0-9a-f]{16}$/);
+    expect(contextHashDe({ empresaId: 'E1', contatoId: 'C1', objetivo: 'GET_REFERRAL', playbook: 'ACCESS_VIA_EXECUTIVE', canal: 'WHATSAPP', claims: [], versoes: { playbook: '1', contentSpec: '1' } })).toMatch(/^[0-9a-f]{64}$/);
     expect(a.spec.versoes).toEqual({ playbook: PLAYBOOK_VERSION, contentSpec: CONTENT_SPEC_VERSION }); expect(a.g.metadados.promptVersao).toBe(PROMPT_VERSION); expect(a.g.metadados.contextHash).toBe(a.spec.contextHash);
     expect(JSON.stringify(a.spec)).not.toContain('bruto'); // nunca raw_payload
   });

@@ -35,7 +35,7 @@ const tomAbertura: Record<string, string> = { executivo_direto: 'Vou ser breve.'
 
 function frasesPorObjetivo(spec: ContentSpec, usados: Set<string>): { abertura: string; pedido: string; assuntoBase: string } {
   const p = spec.audiencia.primeiroNome; const cta = spec.cta;
-  const s = spec.sinalTipo ? lc(spec.sinalTipo) : 'essa frente';
+  const s = spec.referenciaPublica ? lc(spec.referenciaPublica) : 'essa frente'; // referencia publica; o tipo interno do sinal nunca chega ao texto
   const aval = tecnico(spec, 'AVALIACAO_PRELIMINAR'); const insumos = tecnico(spec, 'INSUMOS_ESTUDO');
   switch (spec.objetivo) {
     case 'GET_REFERRAL': return { abertura: 'Não quero tomar o seu tempo com isso', pedido: `quem lidera aí a engenharia e a implantação dessa frente e das próximas ampliações? ${cta}`, assuntoBase: `quem responde por engenharia e implantação na ${spec.audiencia.empresa}?` };
@@ -79,7 +79,7 @@ export const provedorDeterministico: ProvedorComunicacao = {
       ? `${abertura}: ${fecho(lc(pedido))} Obrigado.`
       : [`${saudacao(p, spec.horaLocal)} ${ident}`, whyNow, eiff, `${abertura}: ${fecho(lc(pedido))}`, 'Obrigado.'].filter(Boolean).join('\n\n');
     const alternativa = curto ? `${p}, ${fecho(lc(pedido))} Um retorno curto já resolve. Obrigado.` : [`${saudacao(p, spec.horaLocal)} ${ident}`, whyNow, fecho(lc(pedido))].filter(Boolean).join(' ');
-    const assunto = spec.canal === 'EMAIL' ? `${spec.sinalTipo ?? spec.audiencia.empresa}: ${assuntoBase}` : undefined;
+    const assunto = spec.canal === 'EMAIL' ? `${spec.referenciaPublica ? spec.referenciaPublica[0].toUpperCase() + spec.referenciaPublica.slice(1) : spec.audiencia.empresa}: ${assuntoBase}` : undefined;
     const roteiro = spec.canal === 'PHONE' ? [`"${saudacao(p, spec.horaLocal).replace(/\.$/, ',')} ${spec.remetente.nome}, da ${spec.remetente.empresa}, de ${spec.remetente.cidade}. ${tomAbertura[spec.tom] ?? ''}`, whyNow, eiff ? `A ${spec.remetente.empresa} ${desc!.texto}.` : '', `${abertura}: ${fecho(lc(pedido))}"`, 'Fechamento: anotar nome, cargo e melhor contato; perguntar se pode citar quem indicou; agradecer.'].filter(Boolean).join(' ') : undefined;
     const objecoes = PLAYBOOKS[spec.playbook].objecoes.map((o) => ({ gatilho: o.gatilho, resposta: o.intencao }));
     return { versaoPrincipal: principal, versoesAlternativas: [alternativa], assunto, roteiroLigacao: roteiro, objecoes, claimsUsados: [...usados], metadados: { provedor: 'deterministico', promptVersao: PROMPT_VERSION, geradoEm: new Date().toISOString(), palavras: palavras(principal), canal: spec.canal, objetivo: spec.objetivo, playbook: spec.playbook, contextHash: spec.contextHash, versoes: spec.versoes } };
@@ -137,7 +137,7 @@ export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): Validaca
   const problemas: string[] = [];
   const texto = [r.versaoPrincipal, r.assunto ?? ''].join('\n');
   const t = norm(texto);
-  const basePermitida = norm([...spec.allowedClaims.map((c) => c.texto), spec.cta, spec.remetente.nome, spec.remetente.empresa, spec.remetente.cidade, spec.audiencia.nome, spec.audiencia.empresa, spec.audiencia.local ?? '', spec.referenciaSinal ?? '', spec.sinalTipo ?? '', ...spec.allowedClaims.map((c) => (c.eventoEm ? c.eventoEm.slice(0, 10).split('-').reverse().join('/') : ''))].join(' | '));
+  const basePermitida = norm([...spec.allowedClaims.map((c) => c.texto), spec.cta, spec.remetente.nome, spec.remetente.empresa, spec.remetente.cidade, spec.audiencia.nome, spec.audiencia.empresa, spec.audiencia.local ?? '', spec.referenciaSinal ?? '', spec.referenciaPublica ?? '', ...spec.allowedClaims.map((c) => (c.eventoEm ? c.eventoEm.slice(0, 10).split('-').reverse().join('/') : ''))].join(' | '));
   for (const id of r.claimsUsados) if (!spec.allowedClaims.some((c) => c.id === id)) problemas.push(`claim fora de allowedClaims: ${id}`);
   for (const f of spec.deniedClaims) if (f.texto.length > 12 && t.includes(norm(f.texto))) problemas.push(`usa claim não permitido: ${f.chave}`);
   for (const n of faltantes(basePermitida, extrair(NUM, texto).filter((x) => x.length > 1))) problemas.push(`número sem fato permitido: ${n}`);

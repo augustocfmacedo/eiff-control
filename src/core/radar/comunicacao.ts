@@ -3,11 +3,12 @@
 // RESULTADO. Tudo puro e generico: nenhuma conta, pessoa ou cidade fica no codigo. A geracao de texto esta em
 // comunicacaoGeracao.ts; o envio nao existe nesta fase (estado maximo alcancado automaticamente: READY_FOR_REVIEW).
 import { NOME_PERSONA, sugerirContatoPrincipal, tipoProjetoPrincipal } from './contatos';
+import { hashCanonico } from './hash';
 import { NOME_SINAL } from './padroes';
 import { fitIdealDe, recomendarAcao, sinalPrincipal } from './pipeline';
 import { leituraDe, relevanciaDe, sinalAcionavel, type RelevanciaEstrutural } from './sinalLeitura';
 import type { EstadoAcao } from './pipeline';
-import type { Atividade, Canal, CodigoResposta, Contato, Empresa, Estagio, Estrategia, Fonte, Persona, RadarDataset, Sinal } from './types';
+import type { Atividade, Canal, CodigoResposta, Contato, Empresa, Estagio, Estrategia, Fonte, Persona, RadarDataset, Sinal, TipoSinal } from './types';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Objetivos de comunicacao
@@ -56,7 +57,7 @@ const OBJECOES_TECNICAS = [
 ];
 export const PLAYBOOKS: Record<PlaybookCodigo, DefinicaoPlaybook> = {
   ACCESS_VIA_EXECUTIVE: { codigo: 'ACCESS_VIA_EXECUTIVE', nome: 'Acesso via executivo', objetivo: 'GET_REFERRAL', personasPreferidas: EXECUTIVOS, tom: 'executivo_direto', fazer: ['contextualizar o WHY NOW com um fato verificado', 'explicar a EIFF em uma frase', 'pedir quem responde pela frente de engenharia/implantação/infraestrutura'], naoFazer: ['vender', 'oferecer orçamento', 'pedir reunião como primeiro CTA', 'mandar portfólio sem pedido', 'afirmar que o executivo é responsável pela obra'], elementosObrigatorios: ['identificação breve', 'fato verificado do sinal', 'uma frase sobre a EIFF', 'pergunta de roteamento', 'pedido de encaminhamento'], elementosProibidos: ['catálogo', 'proposta', 'preço', 'reunião como primeiro pedido', 'urgência artificial'], objecoes: OBJECOES_ACESSO, maxPalavras: { WHATSAPP: 90, EMAIL: 120, PHONE: 110, LINKEDIN: 70 } },
-  REFERRAL_INTRODUCTION: { codigo: 'REFERRAL_INTRODUCTION', nome: 'Apresentação por indicação', objetivo: 'START_DISCOVERY', personasPreferidas: [...TECNICOS, ...OPERACIONAIS], tom: 'tecnico_consultivo', fazer: ['abrir citando quem indicou', 'ligar ao fato do sinal', 'pedir uma conversa curta para entender a frente'], naoFazer: ['vender', 'omitir a origem da indicação', 'mandar proposta'], elementosObrigatorios: ['origem da indicação', 'fato verificado', 'uma frase sobre a EIFF', 'pedido de conversa curta'], elementosProibidos: ['preço', 'portfólio sem pedido'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 90, EMAIL: 130, PHONE: 110, LINKEDIN: 70 } },
+  REFERRAL_INTRODUCTION: { codigo: 'REFERRAL_INTRODUCTION', nome: 'Apresentação por indicação', objetivo: 'START_DISCOVERY', personasPreferidas: [...TECNICOS, ...OPERACIONAIS], tom: 'tecnico_consultivo', fazer: ['abrir citando quem indicou SOMENTE quando a divulgação da fonte estiver autorizada (sourceDisclosure ALLOWED); senão abrir de forma neutra ("cheguei ao seu contato como responsável por essa frente")', 'ligar ao fato do sinal', 'pedir uma conversa curta para entender a frente'], naoFazer: ['vender', 'revelar o nome de quem indicou sem autorização', 'mandar proposta'], elementosObrigatorios: ['origem da indicação (só se autorizada)', 'fato verificado', 'uma frase sobre a EIFF', 'pedido de conversa curta'], elementosProibidos: ['preço', 'portfólio sem pedido'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 90, EMAIL: 130, PHONE: 110, LINKEDIN: 70 } },
   TECHNICAL_DISCOVERY: { codigo: 'TECHNICAL_DISCOVERY', nome: 'Descoberta técnica', objetivo: 'UNDERSTAND_PROJECT_STAGE', personasPreferidas: TECNICOS, tom: 'tecnico_consultivo', fazer: ['reconhecer o fato do sinal', 'perguntar o estágio de definição (estudo, projeto básico, executivo, cotação, obra)', 'oferecer leitura técnica sem compromisso'], naoFazer: ['pedir indicação para outra pessoa', 'falar de preço', 'prometer prazo sem projeto'], elementosObrigatorios: ['identificação breve', 'fato verificado', 'uma frase sobre a EIFF', 'pergunta sobre o estágio'], elementosProibidos: ['pedido de indicação', 'preço', 'portfólio completo'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 100, EMAIL: 140, PHONE: 120, LINKEDIN: 80 } },
   OPERATIONS_DISCOVERY: { codigo: 'OPERATIONS_DISCOVERY', nome: 'Descoberta operacional', objetivo: 'QUALIFY_NEED', personasPreferidas: OPERACIONAIS, tom: 'operacional_pratico', fazer: ['ligar o fato do sinal à operação (área coberta, armazenagem, fluxo)', 'perguntar se há necessidade concreta e prazo', 'perguntar quem define o projeto'], naoFazer: ['falar de preço', 'tratar o operacional como decisor final sem confirmar'], elementosObrigatorios: ['fato verificado', 'pergunta sobre necessidade e prazo', 'pergunta sobre quem define'], elementosProibidos: ['preço', 'proposta'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 100, EMAIL: 140, PHONE: 120, LINKEDIN: 80 } },
   PROCUREMENT_ROUTING: { codigo: 'PROCUREMENT_ROUTING', nome: 'Rota via compras', objetivo: 'PROCUREMENT_ROUTING', personasPreferidas: ['PROCUREMENT', 'SUPPLY_CHAIN'], tom: 'formal_processual', fazer: ['pedir o caminho de cadastro/homologação', 'pedir o interlocutor técnico do projeto', 'oferecer documentação da EIFF'], naoFazer: ['tentar substituir a engenharia por compras', 'negociar preço', 'pressionar'], elementosObrigatorios: ['identificação', 'pedido de cadastro', 'pedido do interlocutor técnico'], elementosProibidos: ['preço', 'desconto', 'urgência'], objecoes: [{ gatilho: 'Só recebemos por portal.', intencao: 'Pedir o link e os documentos exigidos.' }, { gatilho: 'Não há demanda.', intencao: 'Agradecer, pedir para ficar cadastrado e manter o interlocutor técnico.' }], maxPalavras: { WHATSAPP: 80, EMAIL: 130, PHONE: 90, LINKEDIN: 60 } },
@@ -90,6 +91,14 @@ export function referenciaAoSinal(fonteCodigo: string | undefined, tipoSinal: st
     default: return `o movimento relacionado a ${a}`; // PARTNER, MANUAL, CSV, VIBE, CNPJ_RFB e desconhecidas: formulacao neutra
   }
 }
+/** Referencia publica de cada tipo de sinal (o codigo interno e metadata e nunca aparece ao prospect). */
+export const REFERENCIA_PUBLICA_SINAL: Record<TipoSinal, string> = {
+  NEW_FACTORY: 'nova unidade industrial', NEW_DC: 'novo centro de distribuição', WAREHOUSE: 'estrutura de armazenagem', CNO_NEW: 'nova obra registrada', CNO_EXPANSION: 'ampliação registrada', EXPANSION: 'expansão',
+  PUBLIC_TENDER: 'contratação pública', PUBLIC_PLAN: 'plano de contratação', NEW_OFFICE: 'nova unidade', LAND_PURCHASE: 'novo terreno', INVESTMENT: 'investimento anunciado', FUNDING: 'captação de recursos',
+  HIRING_ENGINEERING: 'reforço da equipe de engenharia', HIRING_OPERATIONS: 'reforço da equipe de operações', PROJECT_IDENTIFIED: 'projeto em estudo', PARTNER_REFERRAL: 'movimento recente', WEBSITE_CHANGE: 'atualização institucional', NEWS: 'movimento recente', MANUAL: 'movimento recente',
+};
+/** Referencia factual especifica quando existe (titulo do sinal); senao a referencia publica generica do tipo. */
+export const referenciaPublicaDoSinal = (tipo: TipoSinal, titulo?: string): string => (titulo && titulo.trim().length > 3 ? titulo.trim().replace(/[.]+$/, '') : REFERENCIA_PUBLICA_SINAL[tipo] ?? 'movimento recente');
 /** Claims tecnicos: so os aprovados podem ser prometidos ao prospect. */
 export const CLAIMS_TECNICOS: Record<string, { texto: string; aprovado: boolean }> = {
   AVALIACAO_PRELIMINAR: { texto: 'avaliar preliminarmente a solução estrutural e definir o próximo passo técnico', aprovado: true },
@@ -266,7 +275,7 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
     fato: whyNowFato ? `${whyNowFato.texto} (${x.sinal!.eventoEm.slice(0, 10)})` : undefined,
     interpretacao: l.porQueImporta,
     raciocinioInterno: x.sinal ? `sinal ${NOME_SINAL[x.sinal.tipo]} de ${x.sinal.eventoEm.slice(0, 10)}, fonte ${fonteSinal ?? '?'}, confiança ${Math.round(x.sinal.confianca * 100)}%, ${x.sinal.verificado ? 'verificado' : 'NÃO verificado: não usar como fato'}${sinalAcionavel(x.sinal) ? ', acionável' : ''}; próxima ação ${x.proximaAcaoAtual}` : 'sem sinal: abordagem sem fato de gatilho',
-    referencia: x.sinal && whyNowFato ? referenciaAoSinal(fonteSinal, x.sinal.tipo, x.sinal.titulo) : undefined,
+    referencia: x.sinal && whyNowFato ? referenciaAoSinal(fonteSinal, x.sinal.tipo, referenciaPublicaDoSinal(x.sinal.tipo, x.sinal.titulo)) : undefined,
   };
   const whyNow = whyNowDetalhe.fato;
   const alegacoesPermitidas = [...fatosPermitidos.map((f) => f.texto), 'o que a EIFF faz: projeto, fabricação e montagem de estruturas metálicas para unidades industriais e de armazenagem'];
@@ -311,18 +320,16 @@ export interface ContentSpec {
   cta: string; contextoHistorico: string;
   contextoIndicacao?: string; sourceDisclosure: DivulgacaoFonte; // INTERNAL_ONLY: nao citar quem indicou nem a fonte
   elementosObrigatorios: string[]; elementosProibidos: string[]; alegacoesProibidas: string[];
-  whyNow?: string; referenciaSinal?: string; sinalTipo?: string; sinalId?: string;
+  whyNow?: string; referenciaSinal?: string; referenciaPublica?: string; sinalId?: string; // sinalId e metadata; o tipo interno NAO entra no spec
   horaLocal?: number; // 0-23 quando conhecida; sem ela a saudacao e neutra
   versoes: { playbook: string; contentSpec: string };
   contextHash: string;
 }
 export interface Remetente { nome: string; empresa: string; cidade: string }
-/** Hash estavel (FNV-1a) do que define a mensagem: conta, contato, sinal, objetivo, playbook, canal, claims e versoes. */
-export function contextHashDe(x: { empresaId: string; contatoId: string; sinalId?: string; objetivo: string; playbook: string; canal: string; claims: Pick<Claim, 'id' | 'texto'>[]; versoes: { playbook: string; contentSpec: string } }): string {
-  const s = JSON.stringify({ e: x.empresaId, c: x.contatoId, s: x.sinalId ?? null, o: x.objetivo, p: x.playbook, ch: x.canal, cl: x.claims.map((c) => [c.id, c.texto]), v: x.versoes });
-  let h1 = 0xcbf29ce4; let h2 = 0x84222325;
-  for (let i = 0; i < s.length; i++) { const ch = s.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 0x01000193) >>> 0; h2 = Math.imul(h2 ^ ch, 0x01000193) >>> 0; }
-  return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
+/** Hash estavel SHA-256 da representacao canonica do que define a mensagem: conta, contato, sinal, objetivo, playbook, canal, claims (ordenados por id), divulgacao da fonte e versoes. */
+export function contextHashDe(x: { empresaId: string; contatoId: string; sinalId?: string; objetivo: string; playbook: string; canal: string; claims: Pick<Claim, 'id' | 'texto'>[]; sourceDisclosure?: DivulgacaoFonte; versoes: { playbook: string; contentSpec: string } }): string {
+  const claims = [...x.claims].sort((a, b) => a.id.localeCompare(b.id)).map((c) => ({ id: c.id, texto: c.texto }));
+  return hashCanonico({ empresaId: x.empresaId, contatoId: x.contatoId, sinalId: x.sinalId ?? null, objetivo: x.objetivo, playbook: x.playbook, canal: x.canal, claims, sourceDisclosure: x.sourceDisclosure ?? 'ALLOWED', versoes: x.versoes });
 }
 export function montarContentSpec(ctx: ContextoComunicacao, canal: Canal, remetente: Remetente, opts: { horaLocal?: number } = {}): ContentSpec {
   if (!ctx.comunicar || !ctx.objetivo || !ctx.playbook || !ctx.contato) throw new Error(`Sem comunicação a gerar: ${ctx.motivoSelecao}`);
@@ -341,9 +348,25 @@ export function montarContentSpec(ctx: ContextoComunicacao, canal: Canal, remete
     cta: ob.cta, contextoHistorico: ctx.historico.resumo,
     contextoIndicacao: ctx.indicacao && sourceDisclosure === 'ALLOWED' ? `indicado por ${ctx.indicacao.porNome} em ${ctx.indicacao.em.slice(0, 10)}` : ctx.indicacao ? 'indicação recebida (fonte não divulgável)' : undefined, sourceDisclosure,
     elementosObrigatorios: pb.elementosObrigatorios, elementosProibidos: pb.elementosProibidos, alegacoesProibidas: ctx.alegacoesProibidas,
-    whyNow: ctx.whyNow, referenciaSinal: ctx.whyNowDetalhe.referencia, sinalTipo: ctx.sinal?.nome, sinalId: ctx.sinal?.id,
+    whyNow: ctx.whyNow, referenciaSinal: ctx.whyNowDetalhe.referencia, referenciaPublica: ctx.sinal ? referenciaPublicaDoSinal(ctx.sinal.tipo as TipoSinal, ctx.sinal.titulo) : undefined, sinalId: ctx.sinal?.id,
     horaLocal: opts.horaLocal, versoes,
-    contextHash: contextHashDe({ empresaId: ctx.empresa.id, contatoId: ctx.contato.id, sinalId: ctx.sinal?.id, objetivo: ctx.objetivo, playbook: ctx.playbook, canal, claims: usar, versoes }),
+    contextHash: contextHashDe({ empresaId: ctx.empresa.id, contatoId: ctx.contato.id, sinalId: ctx.sinal?.id, objetivo: ctx.objetivo, playbook: ctx.playbook, canal, claims: usar, sourceDisclosure, versoes }),
+  };
+}
+/** Snapshot minimo do spec para persistir: prova quais fatos eram permitidos, objetivo, playbook, canal, CTA, contexto e versoes. Sem raw_payload, telefone, e-mail, LinkedIn ou perfil. */
+export function contentSpecPersistivel(spec: ContentSpec): Record<string, unknown> {
+  const claim = (c: Claim) => ({ id: c.id, chave: c.chave, texto: c.texto, origem: c.origem, fonte: c.fonte, verificado: c.verificado, confianca: c.confianca, eventoEm: c.eventoEm, url: c.url, tipo: c.tipo, divulgacao: c.divulgacao, aprovado: c.aprovado });
+  return {
+    objetivo: spec.objetivo, playbook: spec.playbook, canal: spec.canal,
+    audiencia: { primeiroNome: spec.audiencia.primeiroNome, cargo: spec.audiencia.cargo, persona: spec.audiencia.persona, empresa: spec.audiencia.empresa, local: spec.audiencia.local },
+    remetente: { nome: spec.remetente.nome, empresa: spec.remetente.empresa, cidade: spec.remetente.cidade },
+    tom: spec.tom, maxPalavras: spec.maxPalavras,
+    allowedClaims: spec.allowedClaims.map(claim),
+    deniedClaims: spec.deniedClaims.map((c) => ({ id: c.id, chave: c.chave, tipo: c.tipo, divulgacao: c.divulgacao, motivo: c.tipo === 'INTERPRETATION' || c.tipo === 'INTERNAL_REASONING' ? c.tipo : c.divulgacao === 'INTERNAL_ONLY' ? 'fonte_confidencial' : c.tipo === 'TECHNICAL_CLAIM' ? 'tecnico_nao_aprovado' : 'nao_verificado' })),
+    technicalClaims: spec.technicalClaims.map((c) => c.id),
+    cta: spec.cta, contextoHistorico: spec.contextoHistorico, contextoIndicacao: spec.contextoIndicacao, sourceDisclosure: spec.sourceDisclosure,
+    elementosObrigatorios: spec.elementosObrigatorios, elementosProibidos: spec.elementosProibidos, alegacoesProibidas: spec.alegacoesProibidas,
+    whyNow: spec.whyNow, referenciaSinal: spec.referenciaSinal, referenciaPublica: spec.referenciaPublica, sinalId: spec.sinalId, horaLocal: spec.horaLocal, versoes: spec.versoes, contextHash: spec.contextHash,
   };
 }
 
@@ -354,4 +377,11 @@ export const TRANSICOES_COMUNICACAO: Record<EstadoComunicacao, EstadoComunicacao
   DRAFT: ['READY_FOR_REVIEW', 'CANCELLED'], READY_FOR_REVIEW: ['APPROVED', 'REJECTED', 'CANCELLED'], APPROVED: ['SENT', 'REJECTED', 'CANCELLED'], REJECTED: ['READY_FOR_REVIEW', 'CANCELLED'], SENT: ['REPLIED', 'CANCELLED'], REPLIED: [], CANCELLED: [],
 };
 export const transicaoComunicacaoValida = (de: EstadoComunicacao, para: EstadoComunicacao) => TRANSICOES_COMUNICACAO[de].includes(para);
+/** Invariantes: SENT exige atividade de envio; REPLIED exige atividade de envio e de resposta; READY_FOR_REVIEW nunca vai direto a SENT. */
+export function validarTransicaoComunicacao(de: EstadoComunicacao, para: EstadoComunicacao, x: { atividadeEnvioId?: string; atividadeRespostaId?: string }): { ok: boolean; motivo?: string } {
+  if (!transicaoComunicacaoValida(de, para)) return { ok: false, motivo: `transição ${de} → ${para} não permitida` };
+  if (para === 'SENT' && !x.atividadeEnvioId) return { ok: false, motivo: 'SENT exige a atividade do contato (envio manual registrado)' };
+  if (para === 'REPLIED' && (!x.atividadeEnvioId || !x.atividadeRespostaId)) return { ok: false, motivo: 'REPLIED exige a atividade de envio e a atividade com o resultado' };
+  return { ok: true };
+}
 export const ESTADO_MAXIMO_AUTOMATICO: EstadoComunicacao = 'READY_FOR_REVIEW';
