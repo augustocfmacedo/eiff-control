@@ -61,6 +61,7 @@ describe('LLM Communication Provider 01', () => {
     expect((p.evitar as string[]).some((e) => e.includes('sinal.porQueImporta'))).toBe(true);
     expect(montarMensagemUsuario(spec, ['x'])).toContain('reprovada');
     expect(SCHEMA_SAIDA_LLM.required).toEqual(['primary', 'alternatives', 'claims_used']);
+    expect('maxItems' in SCHEMA_SAIDA_LLM.properties.alternatives).toBe(false); // Structured Output Compatibility Patch 01: limite de 2 só no parser
   });
   it('parse: claim desconhecido rejeita; e-mail exige subject; telefone exige call_script; máximo 2 alternativas', () => {
     const spec = specDe({});

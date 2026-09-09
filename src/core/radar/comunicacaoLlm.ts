@@ -47,7 +47,7 @@ export const SCHEMA_SAIDA_LLM = {
   type: 'object', additionalProperties: false,
   properties: {
     primary: { type: 'string' },
-    alternatives: { type: 'array', items: { type: 'string' }, maxItems: 2 },
+    alternatives: { type: 'array', items: { type: 'string' } }, // sem maxItems: a API de saída estruturada não aceita a palavra-chave; o limite de 2 fica no parser (parseSaidaLlm)
     subject: { type: 'string' },
     call_script: { type: 'string' },
     objections: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { trigger: { type: 'string' }, response: { type: 'string' } }, required: ['trigger', 'response'] } },
