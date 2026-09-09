@@ -24,8 +24,8 @@ export const OBJETIVOS: Record<ObjetivoComunicacao, DefinicaoObjetivo> = {
   START_DISCOVERY: { codigo: 'START_DISCOVERY', nome: 'Iniciar descoberta', condicaoSucesso: 'Conversa aberta com o responsável certo, com contexto do sinal reconhecido', cta: 'Faz sentido uma conversa de 15 minutos para eu entender como vocês estão pensando essa frente?', estagioMinimo: 'DECISION_MAKER_FOUND', estagioMaximo: 'ENGAGED', personas: DECISORES },
   UNDERSTAND_PROJECT_STAGE: { codigo: 'UNDERSTAND_PROJECT_STAGE', nome: 'Entender o estágio do projeto', condicaoSucesso: 'Estágio de definição conhecido: ideia, estudo, projeto básico, executivo, cotação ou obra', cta: 'Em que estágio de definição essa frente está hoje: ainda em estudo ou já com projeto?', estagioMinimo: 'DECISION_MAKER_FOUND', estagioMaximo: 'NEED_CONFIRMED', personas: [...TECNICOS, ...OPERACIONAIS, ...EXECUTIVOS] },
   QUALIFY_NEED: { codigo: 'QUALIFY_NEED', nome: 'Qualificar a necessidade', condicaoSucesso: 'Necessidade confirmada: área, uso, prazo e quem decide', cta: 'Existe uma necessidade concreta de área coberta ou ampliação nos próximos meses?', estagioMinimo: 'CONTACT_STARTED', estagioMaximo: 'NEED_CONFIRMED', personas: [...OPERACIONAIS, ...TECNICOS] },
-  REQUEST_PROJECT: { codigo: 'REQUEST_PROJECT', nome: 'Pedir o projeto', condicaoSucesso: 'Projeto, memorial ou escopo recebido', cta: 'Você consegue me enviar o projeto ou o escopo para eu avaliar a estrutura?', estagioMinimo: 'NEED_CONFIRMED', estagioMaximo: 'PROJECT_RECEIVED', personas: [...TECNICOS, ...OPERACIONAIS, 'PROCUREMENT'] },
-  OFFER_PRELIMINARY_STUDY: { codigo: 'OFFER_PRELIMINARY_STUDY', nome: 'Oferecer estudo preliminar', condicaoSucesso: 'Aceite de um anteprojeto ou estimativa sem compromisso', cta: 'Posso preparar um anteprojeto com estimativa de peso e prazo para apoiar a decisão?', estagioMinimo: 'ENGAGED', estagioMaximo: 'ENGINEERING', personas: [...TECNICOS, ...EXECUTIVOS] },
+  REQUEST_PROJECT: { codigo: 'REQUEST_PROJECT', nome: 'Pedir o projeto', condicaoSucesso: 'Projeto, memorial ou escopo recebido', cta: 'Você consegue me enviar o projeto ou o escopo, para eu avaliar preliminarmente a solução estrutural e definir o próximo passo técnico?', estagioMinimo: 'NEED_CONFIRMED', estagioMaximo: 'PROJECT_RECEIVED', personas: [...TECNICOS, ...OPERACIONAIS, 'PROCUREMENT'] },
+  OFFER_PRELIMINARY_STUDY: { codigo: 'OFFER_PRELIMINARY_STUDY', nome: 'Oferecer estudo preliminar', condicaoSucesso: 'Aceite de um anteprojeto ou estimativa sem compromisso', cta: 'Posso preparar um anteprojeto para apoiar a decisão? Para isso preciso entender área, uso, geometria, cargas relevantes e principais premissas.', estagioMinimo: 'ENGAGED', estagioMaximo: 'ENGINEERING', personas: [...TECNICOS, ...EXECUTIVOS] },
   SEND_REQUESTED_CONTENT: { codigo: 'SEND_REQUESTED_CONTENT', nome: 'Enviar o que foi pedido', condicaoSucesso: 'Material pedido entregue e recebido', cta: 'Segue o que você pediu; me diga se falta algo para a próxima etapa.', estagioMinimo: 'CONTACT_STARTED', estagioMaximo: 'PROPOSAL_SENT', personas: [...DECISORES, 'PROCUREMENT'] },
   SCHEDULE_MEETING: { codigo: 'SCHEDULE_MEETING', nome: 'Marcar reunião', condicaoSucesso: 'Reunião com data, hora e participantes', cta: 'Qual dia e horário ficam melhores para você?', estagioMinimo: 'CONTACT_STARTED', estagioMaximo: 'NEGOTIATION', personas: [...DECISORES, 'PROCUREMENT'] },
   FOLLOW_UP: { codigo: 'FOLLOW_UP', nome: 'Retomar', condicaoSucesso: 'Resposta obtida (qualquer resultado)', cta: 'Só para não deixar passar: você consegue me responder sobre isso?', estagioMinimo: 'DETECTED', estagioMaximo: 'NEGOTIATION', personas: [...DECISORES, 'PROCUREMENT', 'OTHER'] },
@@ -62,53 +62,86 @@ export const PLAYBOOKS: Record<PlaybookCodigo, DefinicaoPlaybook> = {
   PROCUREMENT_ROUTING: { codigo: 'PROCUREMENT_ROUTING', nome: 'Rota via compras', objetivo: 'PROCUREMENT_ROUTING', personasPreferidas: ['PROCUREMENT', 'SUPPLY_CHAIN'], tom: 'formal_processual', fazer: ['pedir o caminho de cadastro/homologação', 'pedir o interlocutor técnico do projeto', 'oferecer documentação da EIFF'], naoFazer: ['tentar substituir a engenharia por compras', 'negociar preço', 'pressionar'], elementosObrigatorios: ['identificação', 'pedido de cadastro', 'pedido do interlocutor técnico'], elementosProibidos: ['preço', 'desconto', 'urgência'], objecoes: [{ gatilho: 'Só recebemos por portal.', intencao: 'Pedir o link e os documentos exigidos.' }, { gatilho: 'Não há demanda.', intencao: 'Agradecer, pedir para ficar cadastrado e manter o interlocutor técnico.' }], maxPalavras: { WHATSAPP: 80, EMAIL: 130, PHONE: 90, LINKEDIN: 60 } },
   NO_RESPONSE_FOLLOWUP: { codigo: 'NO_RESPONSE_FOLLOWUP', nome: 'Retomada sem resposta', objetivo: 'FOLLOW_UP', personasPreferidas: [...DECISORES, 'PROCUREMENT'], tom: 'leve_lembrete', fazer: ['repetir a pergunta original em uma frase', 'trocar de canal em relação à tentativa anterior', 'na quarta tentativa, trazer um ângulo técnico objetivo'], naoFazer: ['cobrar', 'repetir o texto inteiro', 'mais de quatro tentativas sem novo sinal'], elementosObrigatorios: ['referência à tentativa anterior', 'pergunta única'], elementosProibidos: ['tom de cobrança', 'anexos'], objecoes: [], maxPalavras: { WHATSAPP: 45, EMAIL: 80, PHONE: 60, LINKEDIN: 45 } },
   FUTURE_PROJECT_NURTURE: { codigo: 'FUTURE_PROJECT_NURTURE', nome: 'Nutrição de projeto futuro', objetivo: 'REACTIVATE', personasPreferidas: [...TECNICOS, ...EXECUTIVOS, ...OPERACIONAIS], tom: 'tecnico_consultivo', fazer: ['lembrar o horizonte mencionado', 'oferecer apoio na definição (anteprojeto, estimativa)', 'pedir para ser avisado quando o estudo começar'], naoFazer: ['pressionar', 'contatar antes do horizonte combinado sem novo sinal'], elementosObrigatorios: ['referência ao que foi dito', 'oferta de apoio na definição'], elementosProibidos: ['preço', 'urgência'], objecoes: [], maxPalavras: { WHATSAPP: 80, EMAIL: 120, PHONE: 90, LINKEDIN: 70 } },
-  PROJECT_CAPTURE: { codigo: 'PROJECT_CAPTURE', nome: 'Captura do projeto', objetivo: 'REQUEST_PROJECT', personasPreferidas: [...TECNICOS, ...OPERACIONAIS, 'PROCUREMENT'], tom: 'tecnico_consultivo', fazer: ['pedir projeto, memorial ou escopo', 'dizer o que a EIFF devolve com isso (avaliação da estrutura, peso, prazo)', 'combinar próximo passo'], naoFazer: ['dar preço sem projeto', 'prometer prazo sem escopo'], elementosObrigatorios: ['pedido do projeto/escopo', 'o que será devolvido'], elementosProibidos: ['preço sem projeto'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 90, EMAIL: 130, PHONE: 100, LINKEDIN: 70 } },
-  PRELIMINARY_ENGINEERING: { codigo: 'PRELIMINARY_ENGINEERING', nome: 'Engenharia preliminar', objetivo: 'OFFER_PRELIMINARY_STUDY', personasPreferidas: [...TECNICOS, ...EXECUTIVOS], tom: 'tecnico_consultivo', fazer: ['oferecer anteprojeto e estimativa sem compromisso', 'explicar o que é preciso para isso (área, uso, cargas básicas)', 'combinar entrega'], naoFazer: ['cobrar pelo estudo nesta fase', 'prometer preço fechado'], elementosObrigatorios: ['oferta do estudo', 'insumos necessários'], elementosProibidos: ['preço fechado'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 90, EMAIL: 140, PHONE: 110, LINKEDIN: 80 } },
+  PROJECT_CAPTURE: { codigo: 'PROJECT_CAPTURE', nome: 'Captura do projeto', objetivo: 'REQUEST_PROJECT', personasPreferidas: [...TECNICOS, ...OPERACIONAIS, 'PROCUREMENT'], tom: 'tecnico_consultivo', fazer: ['pedir projeto, memorial ou escopo', 'dizer o que a EIFF devolve com isso (avaliação preliminar da solução estrutural e próximo passo técnico)', 'combinar próximo passo'], naoFazer: ['dar preço sem projeto', 'prometer prazo sem escopo'], elementosObrigatorios: ['pedido do projeto/escopo', 'o que será devolvido'], elementosProibidos: ['preço sem projeto'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 90, EMAIL: 130, PHONE: 100, LINKEDIN: 70 } },
+  PRELIMINARY_ENGINEERING: { codigo: 'PRELIMINARY_ENGINEERING', nome: 'Engenharia preliminar', objetivo: 'OFFER_PRELIMINARY_STUDY', personasPreferidas: [...TECNICOS, ...EXECUTIVOS], tom: 'tecnico_consultivo', fazer: ['oferecer anteprojeto sem compromisso', 'explicar o que é preciso entender (área, uso, geometria, cargas relevantes, premissas)', 'combinar entrega'], naoFazer: ['cobrar pelo estudo nesta fase', 'prometer preço fechado'], elementosObrigatorios: ['oferta do estudo', 'insumos necessários'], elementosProibidos: ['preço fechado'], objecoes: OBJECOES_TECNICAS, maxPalavras: { WHATSAPP: 90, EMAIL: 140, PHONE: 110, LINKEDIN: 80 } },
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Fatos: origem, fonte, verificacao, confianca, data e URL
 // ---------------------------------------------------------------------------------------------------------------------
-export interface Fato { chave: string; texto: string; origem: 'empresa' | 'contato' | 'sinal' | 'indicacao'; fonte?: string; verificado: boolean; confianca: number; eventoEm?: string; url?: string }
+export type TipoClaim = 'FACT' | 'INTERPRETATION' | 'INTERNAL_REASONING' | 'TECHNICAL_CLAIM';
+export type DivulgacaoFonte = 'ALLOWED' | 'INTERNAL_ONLY';
+/** Claim: cada afirmacao candidata carrega id, origem, fonte, verificacao, confianca, data, URL, tipo e regime de divulgacao. */
+export interface Fato { id: string; chave: string; texto: string; origem: 'empresa' | 'contato' | 'sinal' | 'indicacao' | 'tecnico'; fonte?: string; verificado: boolean; confianca: number; eventoEm?: string; url?: string; tipo: TipoClaim; divulgacao: DivulgacaoFonte; aprovado?: boolean }
+export type Claim = Fato;
+/** Fontes cuja origem nao pode ser revelada ao prospect sem autorizacao explicita. */
+export const FONTES_CONFIDENCIAIS = ['PARTNER'];
+const divulgacaoDaFonte = (codigo?: string): DivulgacaoFonte => (codigo && FONTES_CONFIDENCIAIS.includes(codigo) ? 'INTERNAL_ONLY' : 'ALLOWED');
+/** Como referir o sinal ao prospect, pela fonte real (sem expor codigos internos, sem fingir noticia, sem revelar parceiro/manual). */
+export function referenciaAoSinal(fonteCodigo: string | undefined, tipoSinal: string | undefined, assunto: string): string {
+  const a = assunto.trim().replace(/[.]+$/, '');
+  switch (fonteCodigo) {
+    case 'NEWS': return `a notícia sobre ${a}`;
+    case 'OFFICIAL_COMPANY_SOURCE': return `o comunicado da empresa sobre ${a}`;
+    case 'WEBSITE': return `a publicação da empresa sobre ${a}`;
+    case 'CNO': return `o registro de obra de ${a}`;
+    case 'PNCP': return tipoSinal === 'PUBLIC_TENDER' ? `a contratação pública de ${a}` : tipoSinal === 'PUBLIC_PLAN' ? `o plano de contratação publicado sobre ${a}` : `a publicação oficial sobre ${a}`;
+    case 'LINKEDIN': return `a publicação sobre ${a}`;
+    default: return `o movimento relacionado a ${a}`; // PARTNER, MANUAL, CSV, VIBE, CNPJ_RFB e desconhecidas: formulacao neutra
+  }
+}
+/** Claims tecnicos: so os aprovados podem ser prometidos ao prospect. */
+export const CLAIMS_TECNICOS: Record<string, { texto: string; aprovado: boolean }> = {
+  AVALIACAO_PRELIMINAR: { texto: 'avaliar preliminarmente a solução estrutural e definir o próximo passo técnico', aprovado: true },
+  INSUMOS_ESTUDO: { texto: 'entender área, uso, geometria, cargas relevantes e principais premissas', aprovado: true },
+  ANTEPROJETO: { texto: 'preparar um anteprojeto para apoiar a decisão', aprovado: true },
+  DESCRICAO_EIFF: { texto: 'projetamos, fabricamos e montamos estruturas metálicas para unidades industriais e de armazenagem', aprovado: true },
+  PESO_E_PRAZO: { texto: 'peso estimado e prazo', aprovado: false },
+  ECONOMIA: { texto: 'economia de aço e fundação', aprovado: false },
+  PRAZO_FABRICA: { texto: 'prazo de fabricação e montagem garantido', aprovado: false },
+  PRECO: { texto: 'preço ou estimativa de custo', aprovado: false },
+};
+export const claimsTecnicos = (): Fato[] => Object.entries(CLAIMS_TECNICOS).map(([id, c]) => ({ id: `tec:${id}`, chave: `tecnico.${id}`, texto: c.texto, origem: 'tecnico', verificado: c.aprovado, confianca: 1, tipo: 'TECHNICAL_CLAIM', divulgacao: 'ALLOWED', aprovado: c.aprovado }));
 /** Fonte com confiabilidade >= 0,8 sustenta um fato cadastral como verificado (Vibe/CSV importados sao 0,8; sinais exigem o flag proprio). */
 export const CONFIABILIDADE_FATO_CADASTRAL = 0.8;
 const fonteDe = (fontes: Fonte[], id?: string) => fontes.find((f) => f.id === id);
 export function fatosDaEmpresa(e: Empresa, fontes: Fonte[]): Fato[] {
   const f = fonteDe(fontes, e.fonteId); const conf = f?.confiabilidade ?? 0; const ver = conf >= CONFIABILIDADE_FATO_CADASTRAL;
-  const base = { origem: 'empresa' as const, fonte: f?.codigo, verificado: ver, confianca: conf };
-  const out: Fato[] = [{ chave: 'empresa.nome', texto: e.nomeFantasia ?? e.razaoSocial, ...base, verificado: true, confianca: 1 }];
-  if (e.cidade || e.uf) out.push({ chave: 'empresa.local', texto: [e.cidade, e.uf].filter(Boolean).join('/'), ...base });
-  if (e.setor) out.push({ chave: 'empresa.setor', texto: e.setor, ...base });
-  if (e.faixaFuncionarios) out.push({ chave: 'empresa.funcionarios', texto: `${e.faixaFuncionarios.replace(/[[\]]/g, '')} funcionários`, ...base });
+  const base = { origem: 'empresa' as const, fonte: f?.codigo, verificado: ver, confianca: conf, tipo: 'FACT' as const, divulgacao: divulgacaoDaFonte(f?.codigo) };
+  const out: Fato[] = [{ id: `emp:${e.id}:nome`, chave: 'empresa.nome', texto: e.nomeFantasia ?? e.razaoSocial, ...base, verificado: true, confianca: 1 }];
+  if (e.cidade || e.uf) out.push({ id: `emp:${e.id}:local`, chave: 'empresa.local', texto: [e.cidade, e.uf].filter(Boolean).join('/'), ...base });
+  if (e.setor) out.push({ id: `emp:${e.id}:setor`, chave: 'empresa.setor', texto: e.setor, ...base });
+  if (e.faixaFuncionarios) out.push({ id: `emp:${e.id}:funcionarios`, chave: 'empresa.funcionarios', texto: `${e.faixaFuncionarios.replace(/[[\]]/g, '')} funcionários`, ...base });
   return out;
 }
 export function fatosDoContato(c: Contato, fontes: Fonte[]): Fato[] {
   const f = fonteDe(fontes, c.fonteId); const conf = f?.confiabilidade ?? 0; const ver = !!c.verificadoEm || conf >= CONFIABILIDADE_FATO_CADASTRAL;
-  const base = { origem: 'contato' as const, fonte: f?.codigo, verificado: ver, confianca: c.verificadoEm ? 1 : conf, eventoEm: c.verificadoEm };
-  const out: Fato[] = [{ chave: 'contato.nome', texto: c.nome, ...base }];
-  if (c.cargo) out.push({ chave: 'contato.cargo', texto: c.cargo, ...base });
+  const base = { origem: 'contato' as const, fonte: f?.codigo, verificado: ver, confianca: c.verificadoEm ? 1 : conf, eventoEm: c.verificadoEm, tipo: 'FACT' as const, divulgacao: divulgacaoDaFonte(f?.codigo) };
+  const out: Fato[] = [{ id: `con:${c.id}:nome`, chave: 'contato.nome', texto: c.nome, ...base }];
+  if (c.cargo) out.push({ id: `con:${c.id}:cargo`, chave: 'contato.cargo', texto: c.cargo, ...base });
   return out;
 }
 export function fatosDoSinal(s: Sinal, fontes: Fonte[]): Fato[] {
   const f = fonteDe(fontes, s.fonteId); const l = leituraDe(s);
-  const base = { origem: 'sinal' as const, fonte: f?.codigo, verificado: s.verificado, confianca: s.confianca, eventoEm: s.eventoEm, url: s.url };
-  const out: Fato[] = [{ chave: 'sinal.titulo', texto: s.titulo, ...base }];
-  if (l.oQueAconteceu) out.push({ chave: 'sinal.oQueAconteceu', texto: l.oQueAconteceu, ...base });
-  if (l.porQueImporta) out.push({ chave: 'sinal.porQueImporta', texto: l.porQueImporta, ...base, verificado: false, confianca: Math.min(s.confianca, 0.5) }); // leitura do analista: interpretacao, nao fato
+  const base = { origem: 'sinal' as const, fonte: f?.codigo, verificado: s.verificado, confianca: s.confianca, eventoEm: s.eventoEm, url: s.url, tipo: 'FACT' as const, divulgacao: divulgacaoDaFonte(f?.codigo) };
+  const out: Fato[] = [{ id: `sin:${s.id}:titulo`, chave: 'sinal.titulo', texto: s.titulo, ...base }];
+  if (l.oQueAconteceu) out.push({ id: `sin:${s.id}:oQueAconteceu`, chave: 'sinal.oQueAconteceu', texto: l.oQueAconteceu, ...base });
+  // leitura comercial do analista: INTERPRETATION, nunca fato apresentavel ao prospect
+  if (l.porQueImporta) out.push({ id: `sin:${s.id}:porQueImporta`, chave: 'sinal.porQueImporta', texto: l.porQueImporta, ...base, verificado: false, confianca: Math.min(s.confianca, 0.5), tipo: 'INTERPRETATION', divulgacao: 'INTERNAL_ONLY' });
   return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Historico e indicacao
 // ---------------------------------------------------------------------------------------------------------------------
-export interface Indicacao { porContatoId: string; porNome: string; em: string; atividadeId: string }
+export interface Indicacao { porContatoId: string; porNome: string; em: string; atividadeId: string; divulgacao: DivulgacaoFonte }
 /** Indicacao recebida: atividade REFERRED_TO_OTHER_PERSON de outro contato da empresa registrada antes de o contato existir. */
 export function indicacaoDe(contato: Contato | undefined, atividades: Atividade[], contatos: Contato[]): Indicacao | undefined {
   if (!contato) return undefined;
   const a = atividades.filter((x) => x.empresaId === contato.empresaId && x.resultado === 'REFERRED_TO_OTHER_PERSON' && x.contatoId && x.contatoId !== contato.id && x.ocorreuEm <= contato.criadoEm).sort((p, q) => (p.ocorreuEm < q.ocorreuEm ? 1 : -1))[0];
   if (!a) return undefined;
   const por = contatos.find((c) => c.id === a.contatoId);
-  return por ? { porContatoId: por.id, porNome: por.nome, em: a.ocorreuEm, atividadeId: a.id } : undefined;
+  return por ? { porContatoId: por.id, porNome: por.nome, em: a.ocorreuEm, atividadeId: a.id, divulgacao: 'INTERNAL_ONLY' } : undefined; // citar quem indicou exige autorizacao explicita (citarIndicacao)
 }
 export interface HistoricoComunicacao { resumo: string; tentativas: number; ultimoResultado?: CodigoResposta; ultimoCanal?: Canal; ultimaEm?: string; semRespostaSeguidas: number; canaisTentados: Canal[] }
 /** Tentativas de contato (NOTE nao conta) do contato ou, sem contato, da empresa. */
@@ -192,14 +225,16 @@ export function recomendarCanal(x: { contato?: Contato; persona: Persona; histor
 // ---------------------------------------------------------------------------------------------------------------------
 // Contexto de comunicacao
 // ---------------------------------------------------------------------------------------------------------------------
-export interface EntradaContexto { empresa: Empresa; contato?: Contato; persona?: Persona; decisionFit?: number; sinal?: Sinal; estagioOportunidade?: Estagio; estrategia?: Estrategia; atividades: Atividade[]; contatos: Contato[]; fontes: Fonte[]; fitIdeal: number; proximaAcaoAtual: EstadoAcao; hoje: string; canalPreferido?: Canal }
+export interface EntradaContexto { empresa: Empresa; contato?: Contato; persona?: Persona; decisionFit?: number; sinal?: Sinal; estagioOportunidade?: Estagio; estrategia?: Estrategia; atividades: Atividade[]; contatos: Contato[]; fontes: Fonte[]; fitIdeal: number; proximaAcaoAtual: EstadoAcao; hoje: string; canalPreferido?: Canal; citarIndicacao?: boolean }
+export interface WhyNow { fato?: string; interpretacao?: string; raciocinioInterno: string; referencia?: string }
 export interface ContextoComunicacao {
   empresa: { id: string; nome: string; local?: string; setor?: string; priority?: number; classe?: string };
   contato?: { id: string; nome: string; primeiroNome: string; cargo?: string; persona: Persona; senioridade?: string; decisionFit: number; fitIdeal: number };
   fatosEmpresa: Fato[]; fatosContato: Fato[]; fatosSinal: Fato[];
   fatosPermitidos: Fato[]; fatosNaoVerificados: Fato[];
   sinal?: { id: string; tipo: string; nome: string; titulo: string; eventoEm: string; relevancia?: RelevanciaEstrutural; acionavel: boolean; url?: string; fonte?: string; verificado: boolean; confianca: number };
-  whyNow?: string;
+  whyNow?: string; // so FACT (apresentavel); vazio quando nao ha fato verificado
+  whyNowDetalhe: WhyNow; // FACT / INTERPRETATION / INTERNAL_REASONING separados
   estagio: Estagio; estrategia?: string;
   comunicar: boolean; objetivo?: ObjetivoComunicacao; playbook?: PlaybookCodigo; motivoSelecao: string;
   objetivoComercial?: string; cta?: string; tom?: Tom;
@@ -215,17 +250,25 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
   const decisionFit = x.decisionFit ?? c?.decisionFitScore ?? 0;
   const fatosEmpresa = fatosDaEmpresa(x.empresa, x.fontes); const fatosContato = c ? fatosDoContato(c, x.fontes) : []; const fatosSinal = x.sinal ? fatosDoSinal(x.sinal, x.fontes) : [];
   const todos = [...fatosEmpresa, ...fatosContato, ...fatosSinal];
-  const fatosPermitidos = todos.filter((f) => f.verificado); const fatosNaoVerificados = todos.filter((f) => !f.verificado);
+  // FACT GATE: so FACT verificado e divulgavel entra nos claims permitidos; interpretacao e fonte confidencial ficam fora
+  const fatosPermitidos = todos.filter((f) => f.verificado && f.tipo === 'FACT' && f.divulgacao === 'ALLOWED'); const fatosNaoVerificados = todos.filter((f) => !fatosPermitidos.includes(f));
   const historico = historicoDe(x.atividades, x.empresa.id, c?.id);
-  const indicacao = indicacaoDe(c, x.atividades, x.contatos);
+  const ind0 = indicacaoDe(c, x.atividades, x.contatos); const indicacao = ind0 ? { ...ind0, divulgacao: (x.citarIndicacao ? 'ALLOWED' : 'INTERNAL_ONLY') as DivulgacaoFonte } : undefined;
   const estagio = estagioEfetivo({ estagioOportunidade: x.estagioOportunidade, decisionFit, fitIdeal: x.fitIdeal, historico, temSinal: !!x.sinal });
   const sel = selecionarPlaybook({ persona, decisionFit, fitIdeal: x.fitIdeal, historico, indicacao, estrategia: x.estrategia?.codigo, estagio, temContato: !!c });
   const pb = sel.playbook ? PLAYBOOKS[sel.playbook] : undefined; const ob = sel.objetivo ? OBJETIVOS[sel.objetivo] : undefined;
   const canal = recomendarCanal({ contato: c, persona, historico, indicacao, estagio, playbook: sel.playbook });
   if (x.canalPreferido && canal.disponiveis.includes(x.canalPreferido)) { canal.secundario = canal.primario === x.canalPreferido ? canal.secundario : canal.primario; canal.primario = x.canalPreferido; canal.motivo = `canal escolhido pelo usuário (${x.canalPreferido})`; }
   const l = x.sinal ? leituraDe(x.sinal) : {};
-  const whyNowFato = fatosSinal.find((f) => f.chave === 'sinal.oQueAconteceu' && f.verificado) ?? fatosSinal.find((f) => f.chave === 'sinal.titulo' && f.verificado);
-  const whyNow = whyNowFato ? `${whyNowFato.texto} (${x.sinal!.eventoEm.slice(0, 10)}${whyNowFato.fonte ? `, fonte ${whyNowFato.fonte}` : ''})` : x.sinal ? `sinal ${NOME_SINAL[x.sinal.tipo]} de ${x.sinal.eventoEm.slice(0, 10)} ainda não verificado: não usar como fato` : undefined;
+  const whyNowFato = fatosPermitidos.find((f) => f.chave === 'sinal.oQueAconteceu') ?? fatosPermitidos.find((f) => f.chave === 'sinal.titulo');
+  const fonteSinal = x.sinal ? fonteDe(x.fontes, x.sinal.fonteId)?.codigo : undefined;
+  const whyNowDetalhe: WhyNow = {
+    fato: whyNowFato ? `${whyNowFato.texto} (${x.sinal!.eventoEm.slice(0, 10)})` : undefined,
+    interpretacao: l.porQueImporta,
+    raciocinioInterno: x.sinal ? `sinal ${NOME_SINAL[x.sinal.tipo]} de ${x.sinal.eventoEm.slice(0, 10)}, fonte ${fonteSinal ?? '?'}, confiança ${Math.round(x.sinal.confianca * 100)}%, ${x.sinal.verificado ? 'verificado' : 'NÃO verificado: não usar como fato'}${sinalAcionavel(x.sinal) ? ', acionável' : ''}; próxima ação ${x.proximaAcaoAtual}` : 'sem sinal: abordagem sem fato de gatilho',
+    referencia: x.sinal && whyNowFato ? referenciaAoSinal(fonteSinal, x.sinal.tipo, x.sinal.titulo) : undefined,
+  };
+  const whyNow = whyNowDetalhe.fato;
   const alegacoesPermitidas = [...fatosPermitidos.map((f) => f.texto), 'o que a EIFF faz: projeto, fabricação e montagem de estruturas metálicas para unidades industriais e de armazenagem'];
   const alegacoesProibidas = [...ALEGACOES_PROIBIDAS_BASE, ...(c && !TECNICOS.includes(persona) ? [`que ${c.nome} é responsável pela obra ou pelo projeto`] : []), ...(l.porQueImporta ? ['a leitura interna "por que importa" como se fosse fato da empresa'] : []), ...fatosNaoVerificados.map((f) => `fato não verificado: ${f.texto}`)];
   return {
@@ -233,50 +276,74 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
     contato: c ? { id: c.id, nome: c.nome, primeiroNome: primeiroNome(c.nome), cargo: c.cargo, persona, senioridade: c.senioridade, decisionFit, fitIdeal: x.fitIdeal } : undefined,
     fatosEmpresa, fatosContato, fatosSinal, fatosPermitidos, fatosNaoVerificados,
     sinal: x.sinal ? { id: x.sinal.id, tipo: x.sinal.tipo, nome: NOME_SINAL[x.sinal.tipo] ?? x.sinal.tipo, titulo: x.sinal.titulo, eventoEm: x.sinal.eventoEm, relevancia: relevanciaDe(x.sinal), acionavel: sinalAcionavel(x.sinal), url: x.sinal.url, fonte: fonteDe(x.fontes, x.sinal.fonteId)?.codigo, verificado: x.sinal.verificado, confianca: x.sinal.confianca } : undefined,
-    whyNow, estagio, estrategia: x.estrategia?.codigo,
+    whyNow, whyNowDetalhe, estagio, estrategia: x.estrategia?.codigo,
     comunicar: sel.comunicar, objetivo: sel.objetivo, playbook: sel.playbook, motivoSelecao: sel.motivo,
     objetivoComercial: ob?.condicaoSucesso, cta: ob?.cta, tom: pb?.tom,
     alegacoesPermitidas, alegacoesProibidas, canal, historico, indicacao, proximaAcaoAtual: x.proximaAcaoAtual,
   };
 }
 /** Monta a entrada a partir do dataset do Radar (contato recomendado, sinal principal, estrategia da oportunidade ativa). */
-export function contextoComunicacaoDe(r: RadarDataset, empresaId: string, hoje: string, opts: { contatoId?: string; canal?: Canal } = {}): ContextoComunicacao | undefined {
+export function contextoComunicacaoDe(r: RadarDataset, empresaId: string, hoje: string, opts: { contatoId?: string; canal?: Canal; citarIndicacao?: boolean } = {}): ContextoComunicacao | undefined {
   const e = r.empresas.find((x) => x.id === empresaId); if (!e) return undefined;
   const fitIdeal = fitIdealDe(r);
   const contato = opts.contatoId ? r.contatos.find((c) => c.id === opts.contatoId && c.empresaId === e.id) : sugerirContatoPrincipal(e, r.contatos, r)?.contato;
   const sug = contato ? sugerirContatoPrincipal(e, [contato], r, tipoProjetoPrincipal(e.id, r.projetos)) : undefined;
   const opp = r.oportunidades.filter((o) => o.empresaId === e.id && o.estagio !== 'WON' && o.estagio !== 'LOST').sort((a, b) => (a.atualizadoEm < b.atualizadoEm ? 1 : -1))[0];
   const estrategia = opp?.estrategiaId ? r.estrategias.find((s) => s.id === opp.estrategiaId) : r.atividades.filter((a) => a.empresaId === e.id && a.estrategiaId).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1)).map((a) => r.estrategias.find((s) => s.id === a.estrategiaId))[0];
-  return buildCommunicationContext({ empresa: e, contato, persona: sug?.fit.persona, decisionFit: sug?.fit.score, sinal: sinalPrincipal(e.id, r, hoje), estagioOportunidade: opp?.estagio, estrategia, atividades: r.atividades, contatos: r.contatos, fontes: r.fontes, fitIdeal, proximaAcaoAtual: recomendarAcao(e, r, hoje).estado, hoje, canalPreferido: opts.canal });
+  return buildCommunicationContext({ empresa: e, contato, persona: sug?.fit.persona, decisionFit: sug?.fit.score, sinal: sinalPrincipal(e.id, r, hoje), estagioOportunidade: opp?.estagio, estrategia, atividades: r.atividades, contatos: r.contatos, fontes: r.fontes, fitIdeal, proximaAcaoAtual: recomendarAcao(e, r, hoje).estado, hoje, canalPreferido: opts.canal, citarIndicacao: opts.citarIndicacao });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Content spec (entrada futura do LLM) e estados da comunicacao
 // ---------------------------------------------------------------------------------------------------------------------
+export const PLAYBOOK_VERSION = '1.1';
+export const CONTENT_SPEC_VERSION = '2';
 export interface ContentSpec {
   objetivo: ObjetivoComunicacao; playbook: PlaybookCodigo; canal: Canal;
   audiencia: { nome: string; primeiroNome: string; cargo?: string; persona: Persona; empresa: string; local?: string };
   remetente: { nome: string; empresa: string; cidade: string };
   tom: Tom; maxPalavras: number;
-  fatosUsar: Fato[]; fatosEvitar: Fato[];
-  cta: string; contextoHistorico: string; contextoIndicacao?: string;
+  /** Unicas afirmacoes que o provedor pode usar (FACT verificado e divulgavel + claims tecnicos aprovados). Nunca raw_payload. */
+  allowedClaims: Claim[];
+  /** Claims conhecidos mas proibidos (nao verificados, interpretacao, fonte confidencial, tecnicos nao aprovados): usados na pos-validacao. */
+  deniedClaims: Claim[];
+  technicalClaims: Claim[]; // subconjunto aprovado de allowedClaims
+  cta: string; contextoHistorico: string;
+  contextoIndicacao?: string; sourceDisclosure: DivulgacaoFonte; // INTERNAL_ONLY: nao citar quem indicou nem a fonte
   elementosObrigatorios: string[]; elementosProibidos: string[]; alegacoesProibidas: string[];
-  whyNow?: string; sinalTipo?: string;
+  whyNow?: string; referenciaSinal?: string; sinalTipo?: string; sinalId?: string;
+  horaLocal?: number; // 0-23 quando conhecida; sem ela a saudacao e neutra
+  versoes: { playbook: string; contentSpec: string };
+  contextHash: string;
 }
 export interface Remetente { nome: string; empresa: string; cidade: string }
-export function montarContentSpec(ctx: ContextoComunicacao, canal: Canal, remetente: Remetente): ContentSpec {
+/** Hash estavel (FNV-1a) do que define a mensagem: conta, contato, sinal, objetivo, playbook, canal, claims e versoes. */
+export function contextHashDe(x: { empresaId: string; contatoId: string; sinalId?: string; objetivo: string; playbook: string; canal: string; claims: Pick<Claim, 'id' | 'texto'>[]; versoes: { playbook: string; contentSpec: string } }): string {
+  const s = JSON.stringify({ e: x.empresaId, c: x.contatoId, s: x.sinalId ?? null, o: x.objetivo, p: x.playbook, ch: x.canal, cl: x.claims.map((c) => [c.id, c.texto]), v: x.versoes });
+  let h1 = 0xcbf29ce4; let h2 = 0x84222325;
+  for (let i = 0; i < s.length; i++) { const ch = s.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 0x01000193) >>> 0; h2 = Math.imul(h2 ^ ch, 0x01000193) >>> 0; }
+  return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
+}
+export function montarContentSpec(ctx: ContextoComunicacao, canal: Canal, remetente: Remetente, opts: { horaLocal?: number } = {}): ContentSpec {
   if (!ctx.comunicar || !ctx.objetivo || !ctx.playbook || !ctx.contato) throw new Error(`Sem comunicação a gerar: ${ctx.motivoSelecao}`);
   const pb = PLAYBOOKS[ctx.playbook]; const ob = OBJETIVOS[ctx.objetivo];
   const chave = (canal === 'WHATSAPP' || canal === 'EMAIL' || canal === 'PHONE' || canal === 'LINKEDIN' ? canal : 'WHATSAPP') as keyof DefinicaoPlaybook['maxPalavras'];
-  const usar = ctx.fatosPermitidos.filter((f) => f.origem === 'sinal' || f.chave === 'empresa.nome' || f.chave === 'empresa.local');
+  const tecnicos = claimsTecnicos();
+  const usar = [...ctx.fatosPermitidos.filter((f) => f.origem === 'sinal' || f.chave === 'empresa.nome' || f.chave === 'empresa.local'), ...tecnicos.filter((t) => t.aprovado)];
+  const negar = [...ctx.fatosNaoVerificados, ...tecnicos.filter((t) => !t.aprovado)];
+  const sourceDisclosure: DivulgacaoFonte = ctx.indicacao?.divulgacao ?? 'ALLOWED';
+  const versoes = { playbook: PLAYBOOK_VERSION, contentSpec: CONTENT_SPEC_VERSION };
   return {
     objetivo: ctx.objetivo, playbook: ctx.playbook, canal,
     audiencia: { nome: ctx.contato.nome, primeiroNome: ctx.contato.primeiroNome, cargo: ctx.contato.cargo, persona: ctx.contato.persona, empresa: ctx.empresa.nome, local: ctx.empresa.local },
     remetente, tom: pb.tom, maxPalavras: pb.maxPalavras[chave],
-    fatosUsar: usar, fatosEvitar: ctx.fatosNaoVerificados,
-    cta: ob.cta, contextoHistorico: ctx.historico.resumo, contextoIndicacao: ctx.indicacao ? `indicado por ${ctx.indicacao.porNome} em ${ctx.indicacao.em.slice(0, 10)}` : undefined,
+    allowedClaims: usar, deniedClaims: negar, technicalClaims: tecnicos.filter((t) => t.aprovado),
+    cta: ob.cta, contextoHistorico: ctx.historico.resumo,
+    contextoIndicacao: ctx.indicacao && sourceDisclosure === 'ALLOWED' ? `indicado por ${ctx.indicacao.porNome} em ${ctx.indicacao.em.slice(0, 10)}` : ctx.indicacao ? 'indicação recebida (fonte não divulgável)' : undefined, sourceDisclosure,
     elementosObrigatorios: pb.elementosObrigatorios, elementosProibidos: pb.elementosProibidos, alegacoesProibidas: ctx.alegacoesProibidas,
-    whyNow: ctx.whyNow, sinalTipo: ctx.sinal?.nome,
+    whyNow: ctx.whyNow, referenciaSinal: ctx.whyNowDetalhe.referencia, sinalTipo: ctx.sinal?.nome, sinalId: ctx.sinal?.id,
+    horaLocal: opts.horaLocal, versoes,
+    contextHash: contextHashDe({ empresaId: ctx.empresa.id, contatoId: ctx.contato.id, sinalId: ctx.sinal?.id, objetivo: ctx.objetivo, playbook: ctx.playbook, canal, claims: usar, versoes }),
   };
 }
 

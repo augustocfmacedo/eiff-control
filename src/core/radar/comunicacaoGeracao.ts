@@ -1,36 +1,53 @@
 // Geracao de comunicacao a partir do ContentSpec. Interface abstrata de provedor (o LLM server-side entra depois, por
-// funcao Netlify protegida, nunca com chave no navegador). Nesta fase existe so o provedor deterministico: monta o texto
-// com os fatos permitidos do spec, sem nenhum nome de conta, pessoa ou lugar no codigo.
+// funcao Netlify protegida, nunca com chave no navegador). Provedor deterministico: compoe o texto SOMENTE com
+// allowedClaims, sem nome de conta, pessoa ou lugar no codigo. Fact gate deterministico antes (spec) e depois (validarGeracao).
 import type { Canal } from './types';
-import { PLAYBOOKS, type ContentSpec, type EstadoComunicacao } from './comunicacao';
+import { CLAIMS_TECNICOS, PLAYBOOKS, type Claim, type ContentSpec, type EstadoComunicacao } from './comunicacao';
 
+export const PROMPT_VERSION = 'deterministico-2';
 export interface ResultadoGeracao {
   versaoPrincipal: string;
   versoesAlternativas: string[];
   assunto?: string; // EMAIL
   roteiroLigacao?: string; // PHONE
   objecoes: { gatilho: string; resposta: string }[];
-  metadados: { provedor: string; modelo?: string; geradoEm: string; palavras: number; canal: Canal; objetivo: string; playbook: string; fatosUsados: string[] };
+  claimsUsados: string[]; // ids dos allowedClaims efetivamente usados
+  metadados: { provedor: string; modelo?: string; promptVersao: string; geradoEm: string; palavras: number; canal: Canal; objetivo: string; playbook: string; contextHash: string; versoes: { playbook: string; contentSpec: string } };
 }
-export interface ProvedorComunicacao { nome: string; gerar(spec: ContentSpec): ResultadoGeracao | Promise<ResultadoGeracao> }
+export interface ProvedorComunicacao { nome: string; modelo?: string; gerar(spec: ContentSpec): ResultadoGeracao | Promise<ResultadoGeracao> }
+/** Validacao semantica futura (server-side, com LLM): mesma assinatura da deterministica. */
+export interface ValidadorComunicacao { nome: string; validar(spec: ContentSpec, r: ResultadoGeracao): Promise<ValidacaoGeracao> | ValidacaoGeracao }
+export interface ValidacaoGeracao { ok: boolean; problemas: string[] }
 
-/** Descricao curta da EIFF: unica frase institucional permitida sem pedido (nao e fato da conta). */
-export const FRASE_EIFF = 'projetamos, fabricamos e montamos estruturas metálicas para unidades industriais e de armazenagem';
 const lc = (s: string) => (s ? s[0].toLowerCase() + s.slice(1) : s);
 const semPontoFinal = (s: string) => s.trim().replace(/[.。]+$/, '');
 const palavras = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
+const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+const tecnico = (spec: ContentSpec, chave: keyof typeof CLAIMS_TECNICOS): Claim | undefined => spec.technicalClaims.find((c) => c.id === `tec:${chave}` && c.aprovado);
+
+/** Saudacao pelo horario local; sem horario, neutra. Nunca "bom dia" fixo. */
+export function saudacao(primeiroNome: string, horaLocal?: number): string {
+  if (horaLocal === undefined || !Number.isFinite(horaLocal)) return `Olá, ${primeiroNome}.`;
+  const h = ((Math.floor(horaLocal) % 24) + 24) % 24;
+  return `${primeiroNome}, ${h < 12 ? 'bom dia' : h < 18 ? 'boa tarde' : 'boa noite'}.`;
+}
 const tomAbertura: Record<string, string> = { executivo_direto: 'Vou ser breve.', tecnico_consultivo: 'Escrevo pelo lado técnico.', operacional_pratico: 'Falo pelo lado prático da operação.', formal_processual: 'Escrevo para entender o caminho correto.', leve_lembrete: 'Só para não deixar passar.' };
 
-function frasesPorObjetivo(spec: ContentSpec): { abertura: string; pedido: string; assuntoBase: string } {
+function frasesPorObjetivo(spec: ContentSpec, usados: Set<string>): { abertura: string; pedido: string; assuntoBase: string } {
   const p = spec.audiencia.primeiroNome; const cta = spec.cta;
   const s = spec.sinalTipo ? lc(spec.sinalTipo) : 'essa frente';
+  const aval = tecnico(spec, 'AVALIACAO_PRELIMINAR'); const insumos = tecnico(spec, 'INSUMOS_ESTUDO');
   switch (spec.objetivo) {
     case 'GET_REFERRAL': return { abertura: 'Não quero tomar o seu tempo com isso', pedido: `quem lidera aí a engenharia e a implantação dessa frente e das próximas ampliações? ${cta}`, assuntoBase: `quem responde por engenharia e implantação na ${spec.audiencia.empresa}?` };
-    case 'START_DISCOVERY': return { abertura: spec.contextoIndicacao ? `${spec.contextoIndicacao.replace(/^indicado por /, 'O ').replace(/ em \d{4}-\d{2}-\d{2}$/, '')} me indicou você como responsável por essa frente` : 'Quero entender essa frente com quem responde por ela', pedido: cta, assuntoBase: `${spec.contextoIndicacao ? 'indicação: ' : ''}conversa sobre ${s} na ${spec.audiencia.empresa}` };
+    case 'START_DISCOVERY': {
+      const citar = spec.sourceDisclosure === 'ALLOWED' && spec.contextoIndicacao?.startsWith('indicado por ');
+      const quem = citar ? spec.contextoIndicacao!.replace(/^indicado por /, '').replace(/ em \d{4}-\d{2}-\d{2}$/, '') : undefined;
+      return { abertura: quem ? `${quem} me indicou você como responsável por essa frente` : 'Cheguei ao seu nome como responsável por essa frente', pedido: cta, assuntoBase: `conversa sobre ${s} na ${spec.audiencia.empresa}` };
+    }
     case 'UNDERSTAND_PROJECT_STAGE': return { abertura: 'Quero entender em que ponto isso está', pedido: cta, assuntoBase: `${s}: estágio de definição na ${spec.audiencia.empresa}` };
     case 'QUALIFY_NEED': return { abertura: 'Falo pelo lado da operação', pedido: `${cta} E quem define o projeto quando isso acontece?`, assuntoBase: `área coberta e ampliação na ${spec.audiencia.empresa}` };
-    case 'REQUEST_PROJECT': return { abertura: 'Para avaliar a estrutura com responsabilidade', pedido: `${cta} Com isso devolvo avaliação da estrutura, peso estimado e prazo.`, assuntoBase: `projeto/escopo para avaliação da estrutura` };
-    case 'OFFER_PRELIMINARY_STUDY': return { abertura: 'Uma forma objetiva de apoiar a decisão', pedido: `${cta} Preciso só de área, uso e cargas básicas.`, assuntoBase: `anteprojeto e estimativa para ${s}` };
+    case 'REQUEST_PROJECT': { if (aval) usados.add(aval.id); return { abertura: 'Para avaliar com responsabilidade', pedido: aval ? `você consegue me enviar o projeto ou o escopo? Com isso consigo ${aval.texto}.` : cta, assuntoBase: 'projeto ou escopo para avaliação preliminar' }; }
+    case 'OFFER_PRELIMINARY_STUDY': { const ante = tecnico(spec, 'ANTEPROJETO'); if (ante) usados.add(ante.id); if (insumos) usados.add(insumos.id); return { abertura: 'Uma forma objetiva de apoiar a decisão', pedido: ante ? `posso ${ante.texto}? Para isso preciso ${insumos ? insumos.texto : 'entender as premissas do projeto'}.` : cta, assuntoBase: `anteprojeto para ${s}` }; }
     case 'SEND_REQUESTED_CONTENT': return { abertura: 'Conforme você pediu', pedido: cta, assuntoBase: `material solicitado, ${spec.audiencia.empresa}` };
     case 'SCHEDULE_MEETING': return { abertura: 'Como combinamos', pedido: cta, assuntoBase: `reunião sobre ${s}` };
     case 'FOLLOW_UP': return { abertura: `${p}, só para não deixar passar`, pedido: cta, assuntoBase: `retomando: ${s} na ${spec.audiencia.empresa}` };
@@ -40,39 +57,104 @@ function frasesPorObjetivo(spec: ContentSpec): { abertura: string; pedido: strin
   }
 }
 
-/** Provedor deterministico: compoe a mensagem com identificacao, fato verificado (WHY NOW), frase da EIFF e CTA do objetivo. */
+/** Provedor deterministico: identificacao, fato do sinal (referido pela fonte real), frase da EIFF (claim tecnico aprovado) e CTA do objetivo. */
 export const provedorDeterministico: ProvedorComunicacao = {
   nome: 'deterministico',
   gerar(spec: ContentSpec): ResultadoGeracao {
-    const { abertura, pedido, assuntoBase } = frasesPorObjetivo(spec);
+    const usados = new Set<string>();
+    const { abertura, pedido, assuntoBase } = frasesPorObjetivo(spec, usados);
     const p = spec.audiencia.primeiroNome;
     const ident = `Aqui é ${spec.remetente.nome}, da ${spec.remetente.empresa}, de ${spec.remetente.cidade}.`;
-    const fatoSinal = spec.fatosUsar.find((f) => f.chave === 'sinal.oQueAconteceu') ?? spec.fatosUsar.find((f) => f.chave === 'sinal.titulo');
-    // frase completa do analista (WHAT) entra como oracao; so o titulo do sinal entra como referencia
-    const whyNow = !fatoSinal ? '' : fatoSinal.chave === 'sinal.oQueAconteceu' ? `Acompanhei que ${lc(semPontoFinal(fatoSinal.texto))}.` : `Acompanhei a notícia sobre ${lc(semPontoFinal(fatoSinal.texto))}${fatoSinal.eventoEm ? ` (${fatoSinal.eventoEm.slice(0, 10).split('-').reverse().join('/')})` : ''}.`;
-    const eiff = `Nós ${FRASE_EIFF}.`;
+    const fatoWhat = spec.allowedClaims.find((f) => f.chave === 'sinal.oQueAconteceu'); const fatoTitulo = spec.allowedClaims.find((f) => f.chave === 'sinal.titulo');
+    // WHAT do analista (frase completa) entra como oracao; so o titulo entra como referencia na linguagem da fonte
+    let whyNow = '';
+    if (fatoWhat) { whyNow = `Acompanhei que ${lc(semPontoFinal(fatoWhat.texto))}.`; usados.add(fatoWhat.id); }
+    else if (fatoTitulo && spec.referenciaSinal) { whyNow = `Acompanhei ${spec.referenciaSinal}${fatoTitulo.eventoEm ? ` (${fatoTitulo.eventoEm.slice(0, 10).split('-').reverse().join('/')})` : ''}.`; usados.add(fatoTitulo.id); }
+    const desc = tecnico(spec, 'DESCRICAO_EIFF');
+    const eiff = desc && spec.playbook !== 'PROCUREMENT_ROUTING' && spec.objetivo !== 'SEND_REQUESTED_CONTENT' ? `Nós ${desc.texto}.` : '';
+    if (eiff && desc) usados.add(desc.id);
     const curto = spec.objetivo === 'FOLLOW_UP';
+    const fecho = (t: string) => `${t}${/[?.!]$/.test(t) ? '' : '.'}`;
     const principal = curto
-      ? `${abertura}: ${lc(pedido)}${/[?.!]$/.test(pedido) ? '' : '.'} Obrigado.`
-      : [`${p}, bom dia. ${ident}`, whyNow, spec.playbook === 'PROCUREMENT_ROUTING' || spec.objetivo === 'SEND_REQUESTED_CONTENT' ? '' : eiff, `${abertura}: ${lc(pedido)}${/[?.!]$/.test(pedido) ? '' : '.'}`, 'Obrigado.'].filter(Boolean).join('\n\n');
-    const alternativa = curto ? `${p}, ${lc(pedido)} Um retorno curto já resolve. Obrigado.` : [`${p}, bom dia. ${ident}`, whyNow, `${lc(pedido)}`].filter(Boolean).join(' ');
+      ? `${abertura}: ${fecho(lc(pedido))} Obrigado.`
+      : [`${saudacao(p, spec.horaLocal)} ${ident}`, whyNow, eiff, `${abertura}: ${fecho(lc(pedido))}`, 'Obrigado.'].filter(Boolean).join('\n\n');
+    const alternativa = curto ? `${p}, ${fecho(lc(pedido))} Um retorno curto já resolve. Obrigado.` : [`${saudacao(p, spec.horaLocal)} ${ident}`, whyNow, fecho(lc(pedido))].filter(Boolean).join(' ');
     const assunto = spec.canal === 'EMAIL' ? `${spec.sinalTipo ?? spec.audiencia.empresa}: ${assuntoBase}` : undefined;
-    const roteiro = spec.canal === 'PHONE' ? [`"${p}, bom dia, ${spec.remetente.nome}, da ${spec.remetente.empresa}, de ${spec.remetente.cidade}. ${tomAbertura[spec.tom] ?? ''}`, whyNow ? whyNow.replace(/^Acompanhei que/, 'Acompanhei que') : '', spec.playbook === 'PROCUREMENT_ROUTING' ? '' : `A ${spec.remetente.empresa} ${FRASE_EIFF}.`, `${abertura}: ${lc(pedido)}"`, 'Fechamento: anotar nome, cargo e melhor contato; perguntar se pode citar quem indicou; agradecer.'].filter(Boolean).join(' ') : undefined;
+    const roteiro = spec.canal === 'PHONE' ? [`"${saudacao(p, spec.horaLocal).replace(/\.$/, ',')} ${spec.remetente.nome}, da ${spec.remetente.empresa}, de ${spec.remetente.cidade}. ${tomAbertura[spec.tom] ?? ''}`, whyNow, eiff ? `A ${spec.remetente.empresa} ${desc!.texto}.` : '', `${abertura}: ${fecho(lc(pedido))}"`, 'Fechamento: anotar nome, cargo e melhor contato; perguntar se pode citar quem indicou; agradecer.'].filter(Boolean).join(' ') : undefined;
     const objecoes = PLAYBOOKS[spec.playbook].objecoes.map((o) => ({ gatilho: o.gatilho, resposta: o.intencao }));
-    const texto = principal;
-    return { versaoPrincipal: texto, versoesAlternativas: [alternativa], assunto, roteiroLigacao: roteiro, objecoes, metadados: { provedor: 'deterministico', geradoEm: new Date().toISOString(), palavras: palavras(texto), canal: spec.canal, objetivo: spec.objetivo, playbook: spec.playbook, fatosUsados: spec.fatosUsar.map((f) => f.chave) } };
+    return { versaoPrincipal: principal, versoesAlternativas: [alternativa], assunto, roteiroLigacao: roteiro, objecoes, claimsUsados: [...usados], metadados: { provedor: 'deterministico', promptVersao: PROMPT_VERSION, geradoEm: new Date().toISOString(), palavras: palavras(principal), canal: spec.canal, objetivo: spec.objetivo, playbook: spec.playbook, contextHash: spec.contextHash, versoes: spec.versoes } };
   },
 };
 
-/** Validacao do texto gerado contra o spec: sem alegacoes proibidas literais, dentro do limite de palavras (tolerancia 20%). */
-export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): { ok: boolean; problemas: string[] } {
+// ---------------------------------------------------------------------------------------------------------------------
+// Fact gate pos-geracao (deterministico)
+// ---------------------------------------------------------------------------------------------------------------------
+const NUM = /R\$\s?[\d.,]+\s?(?:mil|milh[õo]es|bi)?|\b\d[\d.,]*\s?(?:mil|milh[õo]es|m²|m2|ha|km|%)?\b/gi;
+const DATA = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b(?:19|20)\d{2}\b/g;
+/** Entidades nomeadas simples: sequencias de palavras capitalizadas (lugares, unidades, projetos). */
+const ENT = /\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wáéíóúâêôãõç]{3,}(?:\s+(?:d[aeo]s?\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wáéíóúâêôãõç]{2,})*/g;
+const extrair = (re: RegExp, s: string) => [...new Set((s.match(re) ?? []).map((x) => norm(x.trim())))];
+const faltantes = (base: string, itens: string[]) => itens.filter((i) => !base.includes(i));
+/** Entidades capitalizadas que NAO iniciam frase (inicio de frase e maiuscula por gramatica, nao por nome proprio). */
+function entidadesNomeadas(texto: string): string[] {
+  const out = new Set<string>();
+  for (const m of texto.matchAll(ENT)) {
+    const antes = texto.slice(0, m.index).replace(/[\s"'(]+$/, '');
+    if (!antes || /[.!?:\n]$/.test(antes)) continue;
+    const e = norm(m[0].trim());
+    if (e.length > 4 && e !== 'eiff') out.add(e);
+  }
+  return [...out];
+}
+const DETECTORES_OBRIGATORIOS: [RegExp, (spec: ContentSpec, t: string) => boolean][] = [
+  [/identifica/i, (spec, t) => t.includes(norm(spec.remetente.nome)) && t.includes(norm(spec.remetente.empresa))],
+  [/fato verificado/i, (spec, t) => !spec.sinalId || spec.objetivo === 'FOLLOW_UP' || spec.allowedClaims.filter((c) => c.origem === 'sinal').some((c) => t.includes(norm(semPontoFinal(c.texto)).slice(0, 30))) || (!!spec.referenciaSinal && t.includes(norm(spec.referenciaSinal)))],
+  [/frase sobre a eiff/i, (_spec, t) => t.includes('estruturas metalicas')],
+  [/pergunta de roteamento|pedido de encaminhamento|pergunta sobre o est[aá]gio|pergunta [uú]nica|pedido de conversa|pedido de cadastro|pedido do interlocutor|pergunta sobre necessidade|pergunta sobre quem define|pedido do projeto|oferta do estudo|oferta de apoio/i, (_spec, t) => t.includes('?')],
+  [/origem da indica/i, (spec, t) => spec.sourceDisclosure !== 'ALLOWED' || !spec.contextoIndicacao?.startsWith('indicado por ') || t.includes('me indicou')],
+  [/refer[eê]ncia [àa] tentativa anterior|refer[eê]ncia ao que foi dito/i, (_spec, t) => /nao deixar passar|retomo|conversamos|combinamos|voltando/.test(t)],
+  [/o que ser[aá] devolvido|insumos necess[aá]rios/i, (spec, t) => spec.technicalClaims.some((c) => t.includes(norm(c.texto).slice(0, 25)))],
+];
+const PROIBIDOS: [RegExp, RegExp][] = [
+  [/pre[cç]o/i, /\bpreco|\borcamento|\bcotacao de preco/],
+  [/desconto/i, /\bdesconto/],
+  [/proposta/i, /\bproposta comercial|\bnossa proposta/],
+  [/cat[aá]logo|portf[oó]lio/i, /\bcatalogo|\bportfolio/],
+  [/reuni[aã]o como primeiro/i, /\bmarcar (uma )?reuniao|\bagendar/],
+  [/urg[eê]ncia/i, /\burgente|\bainda hoje|\bultima chance/],
+  [/pedido de indica/i, /\bindicar quem responde/],
+  [/anexos/i, /\bem anexo|\bsegue anexo/],
+  [/tom de cobran[cç]a/i, /\bcobrar|\bvoce nao respondeu/],
+];
+const PRESUNCOES: [RegExp, string][] = [
+  [/\bprojeto em aberto|\bem contratacao|\blicitacao aberta|\bestao contratando|\bvoces vao contratar/, 'presume projeto aberto ou contratação'],
+  [/\bsua obra\b|\bseu projeto\b|\bvoce e o responsavel|\bcomo responsavel pela obra/, 'presume responsabilidade do contato'],
+  [/\bgarant\w+|\beconomia de|\breducao de custo|\bprazo de \d|\bpeso estimado|\bmais barato/, 'promete preço, prazo, economia ou engenharia sem autorização'],
+];
+
+/** Fact gate pos-geracao: numeros, datas e entidades so de allowedClaims; elementos obrigatorios/proibidos; CTA do objetivo; sem presuncoes. */
+export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): ValidacaoGeracao {
   const problemas: string[] = [];
-  const t = r.versaoPrincipal.toLowerCase();
-  for (const f of spec.fatosEvitar) if (f.texto.length > 12 && t.includes(f.texto.toLowerCase())) problemas.push(`usa fato não verificado: ${f.chave}`);
+  const texto = [r.versaoPrincipal, r.assunto ?? ''].join('\n');
+  const t = norm(texto);
+  const basePermitida = norm([...spec.allowedClaims.map((c) => c.texto), spec.cta, spec.remetente.nome, spec.remetente.empresa, spec.remetente.cidade, spec.audiencia.nome, spec.audiencia.empresa, spec.audiencia.local ?? '', spec.referenciaSinal ?? '', spec.sinalTipo ?? '', ...spec.allowedClaims.map((c) => (c.eventoEm ? c.eventoEm.slice(0, 10).split('-').reverse().join('/') : ''))].join(' | '));
+  for (const id of r.claimsUsados) if (!spec.allowedClaims.some((c) => c.id === id)) problemas.push(`claim fora de allowedClaims: ${id}`);
+  for (const f of spec.deniedClaims) if (f.texto.length > 12 && t.includes(norm(f.texto))) problemas.push(`usa claim não permitido: ${f.chave}`);
+  for (const n of faltantes(basePermitida, extrair(NUM, texto).filter((x) => x.length > 1))) problemas.push(`número sem fato permitido: ${n}`);
+  for (const d of faltantes(basePermitida, extrair(DATA, texto))) problemas.push(`data sem fato permitido: ${d}`);
+  for (const e of faltantes(basePermitida, entidadesNomeadas(texto))) problemas.push(`entidade sem fato permitido: ${e}`);
+  for (const el of spec.elementosObrigatorios) { const det = DETECTORES_OBRIGATORIOS.find(([re]) => re.test(el)); if (det && !det[1](spec, t)) problemas.push(`elemento obrigatório ausente: ${el}`); }
+  for (const el of spec.elementosProibidos) { const det = PROIBIDOS.find(([re]) => re.test(el)); if (det && det[1].test(t)) problemas.push(`elemento proibido presente: ${el}`); }
+  const nucleo = norm(spec.cta).split(/[?.]/)[0].split(' ').slice(-4).join(' ');
+  if (!t.includes(nucleo) && spec.objetivo !== 'REQUEST_PROJECT' && spec.objetivo !== 'OFFER_PRELIMINARY_STUDY') problemas.push('CTA não corresponde ao objetivo');
+  for (const [re, msg] of PRESUNCOES) if (re.test(t) && !spec.technicalClaims.some((c) => re.test(norm(c.texto)))) problemas.push(msg);
+  for (const [chave, c] of Object.entries(CLAIMS_TECNICOS)) if (!c.aprovado && t.includes(norm(c.texto))) problemas.push(`claim técnico não aprovado: ${chave}`);
+  if (spec.sourceDisclosure === 'INTERNAL_ONLY' && /me indicou|me contou|recebi (a )?informa|me passou|me falou/.test(t)) problemas.push('revela fonte confidencial sem autorização');
   if (palavras(r.versaoPrincipal) > spec.maxPalavras * 1.2) problemas.push(`acima do limite de ${spec.maxPalavras} palavras (${palavras(r.versaoPrincipal)})`);
   if (spec.canal === 'EMAIL' && !r.assunto) problemas.push('e-mail sem assunto');
   return { ok: !problemas.length, problemas };
 }
+export const validadorDeterministico: ValidadorComunicacao = { nome: 'deterministico', validar: validarGeracao };
 
 export async function generateCommunication(spec: ContentSpec, provedor: ProvedorComunicacao = provedorDeterministico): Promise<ResultadoGeracao> { return provedor.gerar(spec); }
 /** Versao sincrona para o store (provedor deterministico). */

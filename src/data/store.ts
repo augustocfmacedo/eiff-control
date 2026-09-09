@@ -1760,21 +1760,24 @@ export const actions = {
   },
 
   /** Gera a abordagem (contexto -> spec -> texto) e a deixa em READY_FOR_REVIEW. Nada e enviado. */
-  gerarComunicacaoRadar(empresaId: string, opts: { contatoId?: string; canal?: Canal } = {}) {
+  gerarComunicacaoRadar(empresaId: string, opts: { contatoId?: string; canal?: Canal; citarIndicacao?: boolean; horaLocal?: number } = {}) {
     let ds = state.ds;
     exigir('radar');
     const r = ds.radar;
-    const ctx = contextoComunicacaoDe(r, empresaId, ds.params.dataBase, opts);
+    const ctx = contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: opts.contatoId, canal: opts.canal, citarIndicacao: opts.citarIndicacao });
     if (!ctx) throw new RegraDeNegocioError('Empresa não encontrada.');
     if (!ctx.comunicar || !ctx.contato) throw new RegraDeNegocioError(`Sem abordagem a gerar: ${ctx.motivoSelecao}`);
     const canal = opts.canal ?? ctx.canal.primario;
     if (!canal) throw new RegraDeNegocioError(`Sem canal: ${ctx.canal.motivo}`);
-    const spec = montarContentSpec(ctx, canal, { nome: state.usuario.nome, empresa: ds.params.empresa || ds.params.organizacao, cidade: REMETENTE_CIDADE_PADRAO });
+    const spec = montarContentSpec(ctx, canal, { nome: state.usuario.nome, empresa: ds.params.empresa || ds.params.organizacao, cidade: REMETENTE_CIDADE_PADRAO }, { horaLocal: opts.horaLocal ?? new Date().getHours() });
+    // idempotencia: mesmo contexto (conta, contato, sinal, objetivo, playbook, canal, claims, versoes) nao gera rascunho duplicado
+    const existente = r.comunicacoes.find((x) => x.contextHash === spec.contextHash && (x.estado === 'READY_FOR_REVIEW' || x.estado === 'APPROVED' || x.estado === 'DRAFT'));
+    if (existente) return existente;
     const resultado = gerarComunicacaoSincrona(spec);
     const v = validarGeracao(spec, resultado);
-    if (!v.ok) throw new RegraDeNegocioError(`Geração reprovada: ${v.problemas.join('; ')}`);
-    const c: ComunicacaoRadar = { id: idsRadar(r).novo('COM'), empresaId, contatoId: ctx.contato.id, canal, objetivo: spec.objetivo, playbook: spec.playbook, estado: ESTADO_MAXIMO_AUTOMATICO, spec, resultado, criadoEm: agora(), atualizadoEm: agora(), criadoPor: state.usuario.id, historico: [{ de: 'DRAFT', para: ESTADO_MAXIMO_AUTOMATICO, em: agora(), por: state.usuario.nome }] };
-    ds = registrar({ ...ds, radar: { ...r, comunicacoes: [...r.comunicacoes, c] } }, 'radar_gerar_comunicacao', 'radar_comunicacao', c.id, undefined, { empresaId, contatoId: c.contatoId, canal, objetivo: c.objetivo, playbook: c.playbook, estado: c.estado });
+    if (!v.ok) throw new RegraDeNegocioError(`Geração reprovada pelo fact gate: ${v.problemas.join('; ')}`);
+    const c: ComunicacaoRadar = { id: idsRadar(r).novo('COM'), empresaId, contatoId: ctx.contato.id, canal, objetivo: spec.objetivo, playbook: spec.playbook, estado: ESTADO_MAXIMO_AUTOMATICO, spec, resultado, contextHash: spec.contextHash, versoes: { ...spec.versoes, prompt: resultado.metadados.promptVersao, provedor: resultado.metadados.provedor, modelo: resultado.metadados.modelo }, validacao: v, criadoEm: agora(), atualizadoEm: agora(), criadoPor: state.usuario.id, historico: [{ de: 'DRAFT', para: ESTADO_MAXIMO_AUTOMATICO, em: agora(), por: state.usuario.nome }] };
+    ds = registrar({ ...ds, radar: { ...r, comunicacoes: [...r.comunicacoes, c] } }, 'radar_gerar_comunicacao', 'radar_comunicacao', c.id, undefined, { empresaId, contatoId: c.contatoId, canal, objetivo: c.objetivo, playbook: c.playbook, estado: c.estado, contextHash: c.contextHash, versoes: c.versoes, claimsUsados: resultado.claimsUsados });
     commit(ds);
     return c;
   },

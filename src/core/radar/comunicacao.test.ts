@@ -34,7 +34,7 @@ describe('Communication Intelligence 01', () => {
     const ctx = buildCommunicationContext(base({ empresa: E1, contato: CEO, sinal: naoVer }));
     expect(ctx.fatosPermitidos.some((f) => f.origem === 'sinal')).toBe(false);
     expect(ctx.fatosNaoVerificados.map((f) => f.chave)).toEqual(expect.arrayContaining(['sinal.titulo', 'sinal.oQueAconteceu', 'sinal.porQueImporta']));
-    expect(ctx.whyNow).toContain('não verificado');
+    expect(ctx.whyNow).toBeUndefined(); expect(ctx.whyNowDetalhe.raciocinioInterno).toContain('NÃO verificado');
     const f = fatosDoSinal(S1, fontes).find((x) => x.chave === 'sinal.oQueAconteceu')!;
     expect(f).toMatchObject({ verificado: true, confianca: 0.9, eventoEm: '2026-06-01', url: 'https://exemplo.invalid/noticia', fonte: 'WEBSITE' });
     expect(fatosDoSinal(S1, fontes).find((x) => x.chave === 'sinal.porQueImporta')!.verificado).toBe(false);
@@ -49,12 +49,12 @@ describe('Communication Intelligence 01', () => {
     expect(ctx.whyNow).toContain('R$ 100 milhões');
     const spec = montarContentSpec(ctx, 'WHATSAPP', REMETENTE);
     expect(spec).toMatchObject({ objetivo: 'GET_REFERRAL', playbook: 'ACCESS_VIA_EXECUTIVE', canal: 'WHATSAPP', tom: 'executivo_direto', maxPalavras: 90 });
-    expect(spec.fatosUsar.map((f) => f.chave)).toContain('sinal.oQueAconteceu'); expect(spec.fatosEvitar.map((f) => f.chave)).toContain('sinal.porQueImporta');
+    expect(spec.allowedClaims.map((f) => f.chave)).toContain('sinal.oQueAconteceu'); expect(spec.deniedClaims.map((f) => f.chave)).toContain('sinal.porQueImporta');
     expect(spec.elementosProibidos).toContain('preço'); expect(spec.alegacoesProibidas.some((a) => a.includes('licitação'))).toBe(true);
     const g = await generateCommunication(spec);
-    expect(g.versaoPrincipal).toContain('Presidente,'); expect(g.versaoPrincipal).toContain('R$ 100 milhões'); expect(g.versaoPrincipal).toContain('indicar quem responde'); expect(g.versaoPrincipal).toContain('estruturas metálicas');
+    expect(g.versaoPrincipal).toContain('Olá, Presidente.'); expect(g.versaoPrincipal).toContain('R$ 100 milhões'); expect(g.versaoPrincipal).toContain('indicar quem responde'); expect(g.versaoPrincipal).toContain('estruturas metálicas');
     expect(g.versaoPrincipal).not.toMatch(/reunião|portfólio|orçamento|proposta/i);
-    expect(g.versoesAlternativas).toHaveLength(1); expect(g.objecoes.length).toBeGreaterThanOrEqual(5); expect(g.metadados.fatosUsados).toContain('sinal.oQueAconteceu');
+    expect(g.versoesAlternativas).toHaveLength(1); expect(g.objecoes.length).toBeGreaterThanOrEqual(5); expect(g.claimsUsados).toContain('sin:S1:oQueAconteceu');
     expect(validarGeracao(spec, g).ok).toBe(true);
     const email = gerarComunicacaoSincrona(montarContentSpec(ctx, 'EMAIL', REMETENTE)); expect(email.assunto).toContain('quem responde por engenharia');
     const tel = gerarComunicacaoSincrona(montarContentSpec(ctx, 'PHONE', REMETENTE)); expect(tel.roteiroLigacao).toContain('indicar quem responde');
@@ -81,7 +81,9 @@ describe('Communication Intelligence 01', () => {
     const ctx = buildCommunicationContext(base({ empresa: E1, contato: indicado, sinal: S1, atividades: ats, contatos: [CEO, indicado] }));
     expect(ctx.indicacao?.porNome).toBe('Presidente Fictício');
     expect(ctx).toMatchObject({ objetivo: 'START_DISCOVERY', playbook: 'REFERRAL_INTRODUCTION' }); expect(ctx.canal.secundario).toBe('REFERRAL');
-    const g = gerarComunicacaoSincrona(montarContentSpec(ctx, 'WHATSAPP', REMETENTE)); expect(g.versaoPrincipal).toContain('Presidente Fictício me indicou');
+    const g = gerarComunicacaoSincrona(montarContentSpec(ctx, 'WHATSAPP', REMETENTE)); expect(g.versaoPrincipal).not.toContain('me indicou'); // sem autorizacao, a fonte da indicacao nao e revelada
+    const ctxCit = buildCommunicationContext(base({ empresa: E1, contato: indicado, sinal: S1, atividades: ats, contatos: [CEO, indicado], citarIndicacao: true }));
+    expect(gerarComunicacaoSincrona(montarContentSpec(ctxCit, 'WHATSAPP', REMETENTE)).versaoPrincipal).toContain('Presidente Fictício me indicou');
     const semResp = [atividade('A2', 'E1', 'C1', 'MESSAGE', 'WHATSAPP', '2026-09-06T10:00:00.000Z', 'NO_RESPONSE')];
     const c2 = buildCommunicationContext(base({ empresa: E1, contato: CEO, sinal: S1, atividades: semResp }));
     expect(c2).toMatchObject({ objetivo: 'FOLLOW_UP', playbook: 'NO_RESPONSE_FOLLOWUP', estagio: 'CONTACT_STARTED' }); expect(c2.canal.primario).not.toBe('WHATSAPP'); expect(c2.canal.motivo).toContain('alternar canal');

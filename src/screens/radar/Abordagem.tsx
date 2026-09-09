@@ -16,12 +16,13 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
   const [canalSel, setCanalSel] = useState<Canal | ''>('');
   const [editando, setEditando] = useState<{ id: string; texto: string; assunto?: string } | null>(null);
   const [motivo, setMotivo] = useState('');
-  const ctx = useMemo(() => contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: contatoSel, canal: canalSel || undefined }), [r, empresaId, ds.params.dataBase, contatoSel, canalSel]);
+  const [citarIndicacao, setCitarIndicacao] = useState(false);
+  const ctx = useMemo(() => contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: contatoSel, canal: canalSel || undefined, citarIndicacao }), [r, empresaId, ds.params.dataBase, contatoSel, canalSel, citarIndicacao]);
   const contatos = r.contatos.filter((c) => c.empresaId === empresaId && c.ativo);
   const comunicacoes = r.comunicacoes.filter((c) => c.empresaId === empresaId).sort((a, b) => (a.criadoEm < b.criadoEm ? 1 : -1));
   const podeAgir = pode(usuario, 'radar');
   if (!ctx) return null;
-  const gerar = (canal: Canal) => tentar(() => actions.gerarComunicacaoRadar(empresaId, { contatoId: ctx.contato?.id, canal }), toast, () => toast(`Rascunho ${NOME_CANAL[canal]} pronto para revisão.`));
+  const gerar = (canal: Canal) => tentar(() => actions.gerarComunicacaoRadar(empresaId, { contatoId: ctx.contato?.id, canal, citarIndicacao, horaLocal: new Date().getHours() }), toast, () => toast(`Rascunho ${NOME_CANAL[canal]} pronto para revisão.`));
   const ob = ctx.objetivo ? OBJETIVOS[ctx.objetivo] : undefined; const pb = ctx.playbook ? PLAYBOOKS[ctx.playbook] : undefined;
   return (
     <div className="card" id="abordagem">
@@ -33,8 +34,9 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
         </div>
       </div>
       <table className="small" style={{ marginTop: 8 }}><tbody>
-        <tr><td className="muted">WHY NOW</td><td>{ctx.whyNow ?? 'sem sinal verificado: nada a citar como fato'}{ctx.sinal?.url && <> · <a href={ctx.sinal.url} target="_blank" rel="noreferrer">fonte</a></>}</td></tr>
-        <tr><td className="muted">WHO</td><td>{ctx.contato ? <>{ctx.contato.nome}{ctx.contato.cargo ? ` · ${ctx.contato.cargo}` : ''} · {NOME_PERSONA[ctx.contato.persona]} · decision fit {ctx.contato.decisionFit} (ideal {ctx.contato.fitIdeal})</> : 'sem contato'}{ctx.indicacao && <> · indicado por {ctx.indicacao.porNome}</>}</td></tr>
+        <tr><td className="muted">WHY NOW · fato</td><td>{ctx.whyNow ?? 'sem fato verificado: nada a afirmar ao prospect'}{ctx.whyNowDetalhe.referencia && <span className="muted"> · como referir: "{ctx.whyNowDetalhe.referencia}"</span>}{ctx.sinal?.url && <> · <a href={ctx.sinal.url} target="_blank" rel="noreferrer">fonte</a></>}</td></tr>
+        {!compacto && <tr><td className="muted">WHY NOW · interno</td><td className="muted">{ctx.whyNowDetalhe.raciocinioInterno}{ctx.whyNowDetalhe.interpretacao && <div>interpretação (não é fato): {ctx.whyNowDetalhe.interpretacao}</div>}</td></tr>}
+        <tr><td className="muted">WHO</td><td>{ctx.contato ? <>{ctx.contato.nome}{ctx.contato.cargo ? ` · ${ctx.contato.cargo}` : ''} · {NOME_PERSONA[ctx.contato.persona]} · decision fit {ctx.contato.decisionFit} (ideal {ctx.contato.fitIdeal})</> : 'sem contato'}{ctx.indicacao && <> · indicado por {ctx.indicacao.porNome} <label className="small" style={{ marginLeft: 6 }}><input type="checkbox" checked={citarIndicacao} onChange={(e) => setCitarIndicacao(e.target.checked)} /> autorizado a citar quem indicou</label></>}</td></tr>
         <tr><td className="muted">OBJECTIVE</td><td>{ob ? <><b>{ob.codigo}</b> · {ob.nome}: {ob.condicaoSucesso}</> : <span className="muted">{ctx.motivoSelecao}</span>}</td></tr>
         <tr><td className="muted">PLAYBOOK</td><td>{pb ? <><b>{pb.codigo}</b> · {pb.nome} · tom {NOME_TOM[pb.tom]}</> : '—'}{!compacto && pb && <div className="muted">fazer: {pb.fazer.join('; ')} · não fazer: {pb.naoFazer.join('; ')}</div>}</td></tr>
         <tr><td className="muted">PRIMARY CHANNEL</td><td>{ctx.canal.primario ? NOME_CANAL[ctx.canal.primario] : '—'} <span className="muted">· {ctx.canal.motivo}</span></td></tr>
@@ -53,7 +55,7 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
         const texto = c.textoEditado ?? c.resultado.versaoPrincipal; const assunto = c.assuntoEditado ?? c.resultado.assunto;
         return (
           <div key={c.id} className="card" style={{ marginTop: 10 }}>
-            <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b>{NOME_CANAL[c.canal]}</b> · {c.objetivo} · {c.playbook} <Badge tone={toneEstado(c.estado)}>{c.estado}</Badge> <span className="muted">{new Date(c.criadoEm).toLocaleString('pt-BR')} · {String(c.resultado.metadados.provedor)} · {String(c.resultado.metadados.palavras)} palavras</span></div>
+            <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b>{NOME_CANAL[c.canal]}</b> · {c.objetivo} · {c.playbook} <Badge tone={toneEstado(c.estado)}>{c.estado}</Badge> <span className="muted">{new Date(c.criadoEm).toLocaleString('pt-BR')} · {c.versoes.provedor} {c.versoes.prompt} · playbook v{c.versoes.playbook} · {String(c.resultado.metadados.palavras)} palavras · hash {c.contextHash.slice(0, 8)}</span></div>
             {editando?.id === c.id ? (
               <div className="form" style={{ marginTop: 6 }}>
                 {c.canal === 'EMAIL' && <Field label="Assunto" full><input className="input" value={editando.assunto ?? ''} onChange={(e) => setEditando({ ...editando, assunto: e.target.value })} /></Field>}
