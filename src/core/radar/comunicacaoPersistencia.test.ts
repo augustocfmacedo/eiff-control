@@ -72,6 +72,8 @@ describe('Communication Persistence 01', () => {
     expect((p.allowedClaims as { id: string; verificado: boolean }[]).every((c) => c.verificado)).toBe(true);
     expect((p.deniedClaims as { motivo: string }[]).some((c) => c.motivo === 'INTERPRETATION')).toBe(true);
     expect(p.cta).toBe(spec.cta);
+    // round-trip: o snapshot carregado do banco volta identico (senao o update reescreveria a evidencia e o trigger de imutabilidade recusaria)
+    expect(contentSpecPersistivel(JSON.parse(JSON.stringify(p)) as never)).toEqual(p);
   });
   it('invariantes: SENT exige atividade de envio, REPLIED exige envio e resposta, READY_FOR_REVIEW não vai direto a SENT', () => {
     expect(validarTransicaoComunicacao('READY_FOR_REVIEW', 'SENT', { atividadeEnvioId: 'A1' }).ok).toBe(false);

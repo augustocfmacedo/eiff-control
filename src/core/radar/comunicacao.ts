@@ -355,6 +355,8 @@ export function montarContentSpec(ctx: ContextoComunicacao, canal: Canal, remete
 }
 /** Snapshot minimo do spec para persistir: prova quais fatos eram permitidos, objetivo, playbook, canal, CTA, contexto e versoes. Sem raw_payload, telefone, e-mail, LinkedIn ou perfil. */
 export function contentSpecPersistivel(spec: ContentSpec): Record<string, unknown> {
+  // idempotente: um snapshot ja minimizado (carregado do banco) volta identico, senao o update reescreveria a evidencia
+  if (Array.isArray(spec.technicalClaims) && spec.technicalClaims.every((c) => typeof c === 'string')) return spec as unknown as Record<string, unknown>;
   const claim = (c: Claim) => ({ id: c.id, chave: c.chave, texto: c.texto, origem: c.origem, fonte: c.fonte, verificado: c.verificado, confianca: c.confianca, eventoEm: c.eventoEm, url: c.url, tipo: c.tipo, divulgacao: c.divulgacao, aprovado: c.aprovado });
   return {
     objetivo: spec.objetivo, playbook: spec.playbook, canal: spec.canal,
