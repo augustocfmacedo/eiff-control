@@ -4,7 +4,7 @@
 import { CANAIS, type Canal } from './types';
 import { NOME_PERSONA } from './contatos';
 import { OBJETIVOS, OBJETIVOS_COMUNICACAO, PLAYBOOKS, PLAYBOOKS_CODIGOS, contextHashDe, type Claim, type ContentSpec } from './comunicacao';
-import { validarGeracao, type ResultadoGeracao, type ValidacaoGeracao } from './comunicacaoGeracao';
+import { aberturaNeutra, validarGeracao, type ResultadoGeracao, type ValidacaoGeracao } from './comunicacaoGeracao';
 
 export const PROMPT_LLM_VERSION = 'COMMUNICATION_LLM_PROMPT_V1';
 export const PROVEDOR_ANTHROPIC = 'ANTHROPIC';
@@ -33,10 +33,11 @@ Regras invioláveis:
 
 Saída: somente o JSON pedido. "primary" é a versão recomendada; "alternatives" traz até 2 variações com a mesma estrutura factual; "subject" só para e-mail; "call_script" só para telefone; "objections" reescreve as objeções do spec como falas curtas; "claims_used" lista os ids dos claims efetivamente usados (somente ids existentes no spec).`;
 
-export const PROMPT_JUIZ_V1 = `Você é um revisor de conformidade. Recebe um CONTENT SPEC e uma MENSAGEM gerada a partir dele. Verifique, com rigor, se a mensagem:
+export const PROMPT_JUIZ_V2 = `Você é um revisor de conformidade. Recebe um CONTENT SPEC e uma MENSAGEM gerada a partir dele. Verifique, com rigor, se a mensagem:
 - afirma algo que não está nos claims permitidos (número, data, local, unidade, projeto, pessoa, fato);
 - presume projeto aberto, contratação em curso ou licitação;
-- presume que o destinatário é responsável pela obra ou pelo projeto;
+- presume que o destinatário é responsável pela obra, pelo projeto ou pela frente, sem claim ou indicação autorizada que sustente isso;
+- quando o objetivo é "Obter indicação" (GET_REFERRAL): apresenta o destinatário como responsável, líder, dono ou condutor da mesma frente para a qual a mensagem pede indicação (ex.: "cheguei ao seu contato como responsável por essa frente", "você conduz essa frente"). Isso é FAIL mesmo que a pergunta final peça a indicação corretamente; a pergunta "quem responde por essa frente?" é o CTA correto e não é problema;
 - promete preço, prazo, economia, garantia ou engenharia além dos technicalClaims;
 - revela a origem de uma indicação ou informação quando sourceDisclosure é INTERNAL_ONLY;
 - muda o CTA (pergunta final diferente do pedido do spec) ou o objetivo;
@@ -124,6 +125,12 @@ export function validarRequisicaoGeracao(corpo: unknown): { ok: true; req: Requi
 // O que o modelo recebe (nunca deniedClaims como fato; nunca PII; nunca codigos como texto para o prospect)
 // ---------------------------------------------------------------------------------------------------------------------
 const saudacaoSugerida = (nome: string, hora?: number) => (hora === undefined || !Number.isFinite(hora) ? `Olá, ${nome}.` : `${nome}, ${hora < 12 ? 'bom dia' : hora < 18 ? 'boa tarde' : 'boa noite'}.`);
+/** Como citar o sinal: com o claim completo, a referencia nomeia a fonte e o fato vira frase natural (nunca titulo colado apos "sobre"). */
+function citacaoSinal(spec: ContentSpec): string | undefined {
+  const fato = spec.allowedClaims.find((c) => c.chave === 'sinal.oQueAconteceu');
+  if (!fato || !spec.referenciaSinal) return undefined;
+  return `Cite o sinal como "${sanitizarTexto(spec.referenciaSinal, 200)}" seguido de "sobre" e uma reformulação natural, em forma nominal, do claim ${sanitizarTexto(fato.id, 120)} (ex.: "Acompanhei o comunicado da empresa sobre a nova unidade e a avaliação de replicar o modelo"). Não acrescente fatos, não cole o título literal depois de "sobre" e não forme frase gramaticalmente truncada.`;
+}
 export function specParaLlm(spec: ContentSpec): Record<string, unknown> {
   const ob = OBJETIVOS[spec.objetivo]; const pb = PLAYBOOKS[spec.playbook];
   const claim = (c: Claim) => ({ id: sanitizarTexto(c.id, 120), texto: sanitizarTexto(c.texto), quando: c.eventoEm ? c.eventoEm.slice(0, 10).split('-').reverse().join('/') : undefined });
@@ -142,7 +149,9 @@ export function specParaLlm(spec: ContentSpec): Record<string, unknown> {
     contextoHistorico: sanitizarTexto(spec.contextoHistorico, 300),
     contextoIndicacao: spec.sourceDisclosure === 'ALLOWED' ? sanitizarTexto(spec.contextoIndicacao, 160) || undefined : undefined,
     sourceDisclosure: spec.sourceDisclosure,
-    aberturaNeutraSeInternalOnly: 'Cheguei ao seu contato como responsável por essa frente',
+    aberturaNeutraSeInternalOnly: aberturaNeutra(spec.objetivo),
+    restricoesObjetivo: spec.objetivo === 'GET_REFERRAL' ? ['Nunca apresente o destinatário como responsável, líder, dono ou condutor da frente para a qual você pede indicação; a pergunta final existe justamente para descobrir quem responde por ela.'] : [],
+    comoCitarSinal: citacaoSinal(spec),
     // proibicoes SEM o texto dos claims negados (o modelo nao recebe o conteudo do que nao pode usar)
     evitar: [...spec.alegacoesProibidas.filter((x) => !x.startsWith('fato não verificado:')), ...spec.deniedClaims.map((c) => `não usar o item interno "${c.chave}"`)],
     objecoes: pb.objecoes,

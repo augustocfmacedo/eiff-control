@@ -17,7 +17,7 @@ describe('comunicação no store (human-in-the-loop)', () => {
   it('geração termina em READY_FOR_REVIEW; mesmo contexto devolve o mesmo rascunho; SENT direto é bloqueado', () => {
     const c = actions.gerarComunicacaoRadar(empresaId, { canal: 'WHATSAPP' });
     expect(c.estado).toBe('READY_FOR_REVIEW'); expect(c.objetivo).toBe('GET_REFERRAL'); expect(c.contextHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(c.versoes).toMatchObject({ playbook: '1.1', contentSpec: '2', prompt: 'deterministico-2', provedor: 'deterministico' }); expect(c.validacao.ok).toBe(true);
+    expect(c.versoes).toMatchObject({ playbook: '1.1', contentSpec: '3', prompt: 'deterministico-2', provedor: 'deterministico' }); expect(c.validacao.ok).toBe(true);
     expect(actions.gerarComunicacaoRadar(empresaId, { canal: 'WHATSAPP' }).id).toBe(c.id); // idempotente
     expect(radar().comunicacoes).toHaveLength(1); expect(radar().oportunidades).toHaveLength(0);
     expect(() => actions.transicionarComunicacaoRadar(c.id, 'SENT', { atividadeId: 'x' })).toThrow(RegraDeNegocioError);

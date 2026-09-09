@@ -43,7 +43,7 @@ describe('Communication Persistence 01', () => {
     const s = sinal('S1', 'E1', 'NEW_FACTORY', 'nova unidade', 'WEBSITE', 'A Beneficiadora Fictícia inaugurou nova unidade');
     const neutro = gerar({ contato: ENG, sinal: s, atividades: ats });
     expect(neutro.ctx.playbook).toBe('REFERRAL_INTRODUCTION'); expect(neutro.spec.sourceDisclosure).toBe('INTERNAL_ONLY'); expect(neutro.spec.contextoIndicacao).not.toContain('Presidente');
-    expect(neutro.g.versaoPrincipal).toContain('Cheguei ao seu nome'); expect(neutro.g.versaoPrincipal).not.toContain('Presidente Fictício'); expect(validarGeracao(neutro.spec, neutro.g).ok).toBe(true);
+    expect(neutro.g.versaoPrincipal).toContain('Cheguei ao seu contato ao buscar quem acompanha essa frente'); expect(neutro.g.versaoPrincipal).not.toMatch(/como respons[áa]vel/); expect(neutro.g.versaoPrincipal).not.toContain('Presidente Fictício'); expect(validarGeracao(neutro.spec, neutro.g).ok).toBe(true);
     expect(validarGeracao(neutro.spec, { ...neutro.g, versaoPrincipal: neutro.g.versaoPrincipal + ' O Presidente Fictício me indicou você.' }).problemas).toEqual(expect.arrayContaining(['revela fonte confidencial sem autorização']));
     const cita = gerar({ contato: ENG, sinal: s, atividades: ats, citarIndicacao: true });
     expect(cita.spec.sourceDisclosure).toBe('ALLOWED'); expect(cita.g.versaoPrincipal).toContain('Presidente Fictício me indicou'); expect(validarGeracao(cita.spec, cita.g).ok).toBe(true);

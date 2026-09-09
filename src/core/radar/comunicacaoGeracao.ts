@@ -33,6 +33,11 @@ export function saudacao(primeiroNome: string, horaLocal?: number): string {
 }
 const tomAbertura: Record<string, string> = { executivo_direto: 'Vou ser breve.', tecnico_consultivo: 'Escrevo pelo lado técnico.', operacional_pratico: 'Falo pelo lado prático da operação.', formal_processual: 'Escrevo para entender o caminho correto.', leve_lembrete: 'Só para não deixar passar.' };
 
+/** Abertura neutra quando nao se pode citar quem indicou (INTERNAL_ONLY) nem ha claim que sustente responsabilidade do destinatario.
+ *  Nunca afirma que o destinatario e responsavel, lidera, conduz ou e dono da frente; em GET_REFERRAL, isso contradiria o proprio pedido. */
+export function aberturaNeutra(objetivo: ContentSpec['objetivo']): string {
+  return objetivo === 'GET_REFERRAL' ? 'Estou tentando chegar à pessoa que conduz essa frente internamente' : 'Cheguei ao seu contato ao buscar quem acompanha essa frente';
+}
 function frasesPorObjetivo(spec: ContentSpec, usados: Set<string>): { abertura: string; pedido: string; assuntoBase: string } {
   const p = spec.audiencia.primeiroNome; const cta = spec.cta;
   const s = spec.referenciaPublica ? lc(spec.referenciaPublica) : 'essa frente'; // referencia publica; o tipo interno do sinal nunca chega ao texto
@@ -42,7 +47,7 @@ function frasesPorObjetivo(spec: ContentSpec, usados: Set<string>): { abertura: 
     case 'START_DISCOVERY': {
       const citar = spec.sourceDisclosure === 'ALLOWED' && spec.contextoIndicacao?.startsWith('indicado por ');
       const quem = citar ? spec.contextoIndicacao!.replace(/^indicado por /, '').replace(/ em \d{4}-\d{2}-\d{2}$/, '') : undefined;
-      return { abertura: quem ? `${quem} me indicou você como responsável por essa frente` : 'Cheguei ao seu nome como responsável por essa frente', pedido: cta, assuntoBase: `conversa sobre ${s} na ${spec.audiencia.empresa}` };
+      return { abertura: quem ? `${quem} me indicou você como responsável por essa frente` : aberturaNeutra(spec.objetivo), pedido: cta, assuntoBase: `conversa sobre ${s} na ${spec.audiencia.empresa}` };
     }
     case 'UNDERSTAND_PROJECT_STAGE': return { abertura: 'Quero entender em que ponto isso está', pedido: cta, assuntoBase: `${s}: estágio de definição na ${spec.audiencia.empresa}` };
     case 'QUALIFY_NEED': return { abertura: 'Falo pelo lado da operação', pedido: `${cta} E quem define o projeto quando isso acontece?`, assuntoBase: `área coberta e ampliação na ${spec.audiencia.empresa}` };
@@ -132,6 +137,22 @@ const PRESUNCOES: [RegExp, string][] = [
   [/\bgarant\w+|\beconomia de|\breducao de custo|\bprazo de \d|\bpeso estimado|\bmais barato/, 'promete preço, prazo, economia ou engenharia sem autorização'],
 ];
 
+// Detector contextual (Live Calibration 01): o texto apresenta o DESTINATARIO como responsavel/lider/dono/condutor da frente.
+// Bloqueia "cheguei ao seu contato como responsável por essa frente", "você conduz/lidera essa frente", "seu nome como responsável";
+// nao bloqueia a pergunta "quem responde por essa frente?" (um "quem" entre o pronome e o papel encerra a busca).
+const ATRIBUI_RESPONSABILIDADE: RegExp[] = [
+  /\b(seu contato|seu nome|voce|voces|a voce|ate voce|com voce)\b(?:(?!\bquem\b)[^.?!;])*?\b(como|e|sendo|enquanto)\s+(o |a )?(responsavel|lider|dono|dona|encarregad\w*|gestor\w*|pessoa que (conduz|lidera|responde|cuida))\b/,
+  /\bvoce\s+(conduz|lidera|comanda|coordena|responde por|esta a frente|toca|cuida d)\b/,
+  /\b(seu contato|seu nome)\b(?:(?!\bquem\b)[^.?!;])*?\b(a frente d|conduz|lidera|coordena)\b/,
+];
+/** Regra contextual: em GET_REFERRAL e proibido sempre (pedimos indicacao justamente porque nao sabemos quem responde);
+ *  nos demais objetivos so passa quando existe indicacao real e autorizada (REFERRAL_INTRODUCTION: "Fulano me indicou você como responsável"). */
+export function presumeResponsabilidade(spec: Pick<ContentSpec, 'objetivo' | 'sourceDisclosure' | 'contextoIndicacao'>, textoNormalizado: string): boolean {
+  const indicacaoAutorizada = spec.sourceDisclosure === 'ALLOWED' && !!spec.contextoIndicacao;
+  if (spec.objetivo !== 'GET_REFERRAL' && indicacaoAutorizada) return false;
+  return ATRIBUI_RESPONSABILIDADE.some((re) => re.test(textoNormalizado));
+}
+
 /** Fact gate pos-geracao: numeros, datas e entidades so de allowedClaims; elementos obrigatorios/proibidos; CTA do objetivo; sem presuncoes. */
 export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): ValidacaoGeracao {
   const problemas: string[] = [];
@@ -148,6 +169,7 @@ export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): Validaca
   const nucleo = norm(spec.cta).split(/[?.]/)[0].split(' ').slice(-4).join(' ');
   if (!t.includes(nucleo) && spec.objetivo !== 'REQUEST_PROJECT' && spec.objetivo !== 'OFFER_PRELIMINARY_STUDY') problemas.push('CTA não corresponde ao objetivo');
   for (const [re, msg] of PRESUNCOES) if (re.test(t) && !spec.technicalClaims.some((c) => re.test(norm(c.texto)))) problemas.push(msg);
+  if (presumeResponsabilidade(spec, t) && !problemas.includes('presume responsabilidade do contato')) problemas.push('presume responsabilidade do contato');
   for (const [chave, c] of Object.entries(CLAIMS_TECNICOS)) if (!c.aprovado && t.includes(norm(c.texto))) problemas.push(`claim técnico não aprovado: ${chave}`);
   if (spec.sourceDisclosure === 'INTERNAL_ONLY' && /me indicou|me contou|recebi (a )?informa|me passou|me falou/.test(t)) problemas.push('revela fonte confidencial sem autorização');
   if (palavras(r.versaoPrincipal) > spec.maxPalavras * 1.2) problemas.push(`acima do limite de ${spec.maxPalavras} palavras (${palavras(r.versaoPrincipal)})`);

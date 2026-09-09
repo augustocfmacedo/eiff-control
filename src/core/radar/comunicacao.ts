@@ -79,16 +79,19 @@ export type Claim = Fato;
 export const FONTES_CONFIDENCIAIS = ['PARTNER'];
 const divulgacaoDaFonte = (codigo?: string): DivulgacaoFonte => (codigo && FONTES_CONFIDENCIAIS.includes(codigo) ? 'INTERNAL_ONLY' : 'ALLOWED');
 /** Como referir o sinal ao prospect, pela fonte real (sem expor codigos internos, sem fingir noticia, sem revelar parceiro/manual). */
+/** Referencia ao sinal na linguagem da fonte real. Com `assunto` vazio devolve so a referencia a fonte ("o comunicado da empresa"):
+ *  quando existe o claim completo sinal.oQueAconteceu, o conteudo vem dele em frase natural, e nao do titulo colado apos "sobre". */
 export function referenciaAoSinal(fonteCodigo: string | undefined, tipoSinal: string | undefined, assunto: string): string {
   const a = assunto.trim().replace(/[.]+$/, '');
+  const sobre = a ? ` sobre ${a}` : ''; const de = a ? ` de ${a}` : ''; const rel = a ? ` relacionado a ${a}` : '';
   switch (fonteCodigo) {
-    case 'NEWS': return `a notícia sobre ${a}`;
-    case 'OFFICIAL_COMPANY_SOURCE': return `o comunicado da empresa sobre ${a}`;
-    case 'WEBSITE': return `a publicação da empresa sobre ${a}`;
-    case 'CNO': return `o registro de obra de ${a}`;
-    case 'PNCP': return tipoSinal === 'PUBLIC_TENDER' ? `a contratação pública de ${a}` : tipoSinal === 'PUBLIC_PLAN' ? `o plano de contratação publicado sobre ${a}` : `a publicação oficial sobre ${a}`;
-    case 'LINKEDIN': return `a publicação sobre ${a}`;
-    default: return `o movimento relacionado a ${a}`; // PARTNER, MANUAL, CSV, VIBE, CNPJ_RFB e desconhecidas: formulacao neutra
+    case 'NEWS': return `a notícia${sobre}`;
+    case 'OFFICIAL_COMPANY_SOURCE': return `o comunicado da empresa${sobre}`;
+    case 'WEBSITE': return `a publicação da empresa${sobre}`;
+    case 'CNO': return `o registro de obra${de}`;
+    case 'PNCP': return tipoSinal === 'PUBLIC_TENDER' ? `a contratação pública${de}` : tipoSinal === 'PUBLIC_PLAN' ? `o plano de contratação publicado${sobre}` : `a publicação oficial${sobre}`;
+    case 'LINKEDIN': return `a publicação${sobre}`;
+    default: return `o movimento${rel}`; // PARTNER, MANUAL, CSV, VIBE, CNPJ_RFB e desconhecidas: formulacao neutra
   }
 }
 /** Referencia publica de cada tipo de sinal (o codigo interno e metadata e nunca aparece ao prospect). */
@@ -275,7 +278,8 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
     fato: whyNowFato ? `${whyNowFato.texto} (${x.sinal!.eventoEm.slice(0, 10)})` : undefined,
     interpretacao: l.porQueImporta,
     raciocinioInterno: x.sinal ? `sinal ${NOME_SINAL[x.sinal.tipo]} de ${x.sinal.eventoEm.slice(0, 10)}, fonte ${fonteSinal ?? '?'}, confiança ${Math.round(x.sinal.confianca * 100)}%, ${x.sinal.verificado ? 'verificado' : 'NÃO verificado: não usar como fato'}${sinalAcionavel(x.sinal) ? ', acionável' : ''}; próxima ação ${x.proximaAcaoAtual}` : 'sem sinal: abordagem sem fato de gatilho',
-    referencia: x.sinal && whyNowFato ? referenciaAoSinal(fonteSinal, x.sinal.tipo, referenciaPublicaDoSinal(x.sinal.tipo, x.sinal.titulo)) : undefined,
+    // com o claim completo (oQueAconteceu) a referencia nomeia so a fonte e o fato entra como frase natural; sem ele, a referencia leva o titulo
+    referencia: x.sinal && whyNowFato ? referenciaAoSinal(fonteSinal, x.sinal.tipo, whyNowFato.chave === 'sinal.oQueAconteceu' ? '' : referenciaPublicaDoSinal(x.sinal.tipo, x.sinal.titulo)) : undefined,
   };
   const whyNow = whyNowDetalhe.fato;
   const alegacoesPermitidas = [...fatosPermitidos.map((f) => f.texto), 'o que a EIFF faz: projeto, fabricação e montagem de estruturas metálicas para unidades industriais e de armazenagem'];
@@ -309,7 +313,7 @@ export function contextoComunicacaoDe(r: RadarDataset, empresaId: string, hoje: 
 // Content spec (entrada futura do LLM) e estados da comunicacao
 // ---------------------------------------------------------------------------------------------------------------------
 export const PLAYBOOK_VERSION = '1.1';
-export const CONTENT_SPEC_VERSION = '2';
+export const CONTENT_SPEC_VERSION = '3'; // 3: abertura neutra por objetivo, referencia ao sinal sem titulo colado, regra de GET_REFERRAL
 export interface ContentSpec {
   objetivo: ObjetivoComunicacao; playbook: PlaybookCodigo; canal: Canal;
   audiencia: { nome: string; primeiroNome: string; cargo?: string; persona: Persona; empresa: string; local?: string };
