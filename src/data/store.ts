@@ -1771,8 +1771,8 @@ export const actions = {
     if (!ctx.comunicar || !ctx.contato) throw new RegraDeNegocioError(`Sem abordagem a gerar: ${ctx.motivoSelecao}`);
     const canal = opts.canal ?? ctx.canal.primario;
     if (!canal) throw new RegraDeNegocioError(`Sem canal: ${ctx.canal.motivo}`);
-    const spec = montarContentSpec(ctx, canal, { nome: state.usuario.nome, empresa: ds.params.empresa || ds.params.organizacao, cidade: REMETENTE_CIDADE_PADRAO }, { horaLocal: opts.horaLocal ?? new Date().getHours() });
-    return { empresaId, contatoId: ctx.contato.id, sinalId: ctx.sinal?.id, estrategiaId: r.estrategias.find((s) => s.codigo === ctx.estrategia)?.id, spec };
+    // contrato publico: so ids, canal e preferencias; o servidor reconstroi o ContentSpec a partir do banco
+    return { empresaId, contatoId: ctx.contato.id, sinalId: ctx.sinal?.id, estrategiaId: r.estrategias.find((s) => s.codigo === ctx.estrategia)?.id, canal, citarIndicacao: !!opts.citarIndicacao, horaLocal: opts.horaLocal ?? new Date().getHours() };
   },
 
   /** Gera a abordagem (contexto -> spec -> texto) e a deixa em READY_FOR_REVIEW. Nada e enviado. */

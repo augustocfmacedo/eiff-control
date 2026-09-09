@@ -292,14 +292,17 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
   };
 }
 /** Monta a entrada a partir do dataset do Radar (contato recomendado, sinal principal, estrategia da oportunidade ativa). */
-export function contextoComunicacaoDe(r: RadarDataset, empresaId: string, hoje: string, opts: { contatoId?: string; canal?: Canal; citarIndicacao?: boolean } = {}): ContextoComunicacao | undefined {
+export function contextoComunicacaoDe(r: RadarDataset, empresaId: string, hoje: string, opts: { contatoId?: string; canal?: Canal; citarIndicacao?: boolean; sinalId?: string; estrategiaId?: string } = {}): ContextoComunicacao | undefined {
   const e = r.empresas.find((x) => x.id === empresaId); if (!e) return undefined;
   const fitIdeal = fitIdealDe(r);
   const contato = opts.contatoId ? r.contatos.find((c) => c.id === opts.contatoId && c.empresaId === e.id) : sugerirContatoPrincipal(e, r.contatos, r)?.contato;
   const sug = contato ? sugerirContatoPrincipal(e, [contato], r, tipoProjetoPrincipal(e.id, r.projetos)) : undefined;
   const opp = r.oportunidades.filter((o) => o.empresaId === e.id && o.estagio !== 'WON' && o.estagio !== 'LOST').sort((a, b) => (a.atualizadoEm < b.atualizadoEm ? 1 : -1))[0];
-  const estrategia = opp?.estrategiaId ? r.estrategias.find((s) => s.id === opp.estrategiaId) : r.atividades.filter((a) => a.empresaId === e.id && a.estrategiaId).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1)).map((a) => r.estrategias.find((s) => s.id === a.estrategiaId))[0];
-  return buildCommunicationContext({ empresa: e, contato, persona: sug?.fit.persona, decisionFit: sug?.fit.score, sinal: sinalPrincipal(e.id, r, hoje), estagioOportunidade: opp?.estagio, estrategia, atividades: r.atividades, contatos: r.contatos, fontes: r.fontes, fitIdeal, proximaAcaoAtual: recomendarAcao(e, r, hoje).estado, hoje, canalPreferido: opts.canal, citarIndicacao: opts.citarIndicacao });
+  const estrategiaPedida = opts.estrategiaId ? r.estrategias.find((s) => s.id === opts.estrategiaId && s.ativo) : undefined;
+  const estrategia = estrategiaPedida ?? (opp?.estrategiaId ? r.estrategias.find((s) => s.id === opp.estrategiaId) : r.atividades.filter((a) => a.empresaId === e.id && a.estrategiaId).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1)).map((a) => r.estrategias.find((s) => s.id === a.estrategiaId))[0]);
+  // sinal pedido explicitamente so vale se for da propria empresa; senao, o sinal principal
+  const sinalPedido = opts.sinalId ? r.sinais.find((s) => s.id === opts.sinalId && s.empresaId === e.id) : undefined;
+  return buildCommunicationContext({ empresa: e, contato, persona: sug?.fit.persona, decisionFit: sug?.fit.score, sinal: sinalPedido ?? sinalPrincipal(e.id, r, hoje), estagioOportunidade: opp?.estagio, estrategia, atividades: r.atividades, contatos: r.contatos, fontes: r.fontes, fitIdeal, proximaAcaoAtual: recomendarAcao(e, r, hoje).estado, hoje, canalPreferido: opts.canal, citarIndicacao: opts.citarIndicacao });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -338,7 +341,8 @@ export function montarContentSpec(ctx: ContextoComunicacao, canal: Canal, remete
   const tecnicos = claimsTecnicos();
   const usar = [...ctx.fatosPermitidos.filter((f) => f.origem === 'sinal' || f.chave === 'empresa.nome' || f.chave === 'empresa.local'), ...tecnicos.filter((t) => t.aprovado)];
   const negar = [...ctx.fatosNaoVerificados, ...tecnicos.filter((t) => !t.aprovado)];
-  const sourceDisclosure: DivulgacaoFonte = ctx.indicacao?.divulgacao ?? 'ALLOWED';
+  // so libera a fonte quando ha indicacao real associada ao contato E o usuario autorizou; sem indicacao, nada a divulgar
+  const sourceDisclosure: DivulgacaoFonte = ctx.indicacao?.divulgacao ?? 'INTERNAL_ONLY';
   const versoes = { playbook: PLAYBOOK_VERSION, contentSpec: CONTENT_SPEC_VERSION };
   return {
     objetivo: ctx.objetivo, playbook: ctx.playbook, canal,

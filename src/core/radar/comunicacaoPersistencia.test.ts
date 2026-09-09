@@ -68,7 +68,7 @@ describe('Communication Persistence 01', () => {
     const { spec } = gerar({ sinal: sinal('S1', 'E1', 'NEW_FACTORY', 'nova unidade', 'WEBSITE', 'A Beneficiadora Fictícia inaugurou nova unidade') });
     const p = contentSpecPersistivel(spec); const j = JSON.stringify(p);
     for (const proibido of ['bruto', 'raw_payload', '62 90000', 'C1@exemplo.invalid', 'linkedin.invalid', 'celular', 'telefone', '"email"', '"nome":"Presidente Fictício"']) expect(j.includes(proibido), proibido).toBe(false);
-    expect(p).toMatchObject({ objetivo: 'GET_REFERRAL', playbook: 'ACCESS_VIA_EXECUTIVE', canal: 'WHATSAPP', sourceDisclosure: 'ALLOWED', versoes: spec.versoes, contextHash: spec.contextHash });
+    expect(p).toMatchObject({ objetivo: 'GET_REFERRAL', playbook: 'ACCESS_VIA_EXECUTIVE', canal: 'WHATSAPP', sourceDisclosure: 'INTERNAL_ONLY', versoes: spec.versoes, contextHash: spec.contextHash }); // sem indicação real não há fonte a divulgar (Server Truth 01)
     expect((p.allowedClaims as { id: string; verificado: boolean }[]).every((c) => c.verificado)).toBe(true);
     expect((p.deniedClaims as { motivo: string }[]).some((c) => c.motivo === 'INTERPRETATION')).toBe(true);
     expect(p.cta).toBe(spec.cta);

@@ -41,7 +41,7 @@ export default async (req: Request): Promise<Response> => {
   if (!anon) return json({ erro: 'nao_configurado', mensagem: 'Supabase não configurado na função.' }, 501);
   let body: unknown; try { body = await req.json(); } catch { return json({ erro: 'corpo_invalido' }, 400); }
   try {
-    const r = await tratarGeracaoComunicacao({ method: req.method, authorization: req.headers.get('authorization'), body }, { fetch, supabaseUrl, anon, llmDisponivel: !!chave, portas: (m) => portasAnthropic(chave, m), modelo });
+    const r = await tratarGeracaoComunicacao({ method: req.method, authorization: req.headers.get('authorization'), body }, { fetch, supabaseUrl, anon, llmDisponivel: !!chave, portas: (m) => portasAnthropic(chave, m), modelo, cidadeRemetente: (process.env.EIFF_REMETENTE_CIDADE ?? 'Goiânia').trim() });
     return json(r.corpo, r.status);
   } catch (e) {
     // nunca a chave, nunca o corpo: so a classe do erro
