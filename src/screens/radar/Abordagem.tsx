@@ -34,6 +34,7 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
       if (!token) throw new Error('Sessão não encontrada: a geração com IA só funciona em produção, com login.');
       const resp = await fetch('/api/comunicacao', { method: 'POST', headers: { 'content-type': 'application/json', 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', authorization: `Bearer ${token}` }, body: JSON.stringify(spec) });
       const d = (await resp.json().catch(() => ({}))) as { comunicacao?: Record<string, unknown>; existente?: boolean; erro?: string; mensagem?: string; motivos?: string[] };
+      if (resp.status === 503 && d.erro === 'llm_timeout') throw new Error('IA demorou além do limite desta tentativa. Nada foi gravado. Tente novamente.');
       if (!resp.ok || !d.comunicacao) { const m = `${d.mensagem ?? d.erro ?? `HTTP ${resp.status}`}${d.motivos?.length ? ': ' + d.motivos.join('; ') : ''}`; if (resp.status === 501 || resp.status === 502) setIaIndisponivel(m); throw new Error(m); }
       actions.incorporarComunicacaoRadar(d.comunicacao);
       setIaIndisponivel(null);

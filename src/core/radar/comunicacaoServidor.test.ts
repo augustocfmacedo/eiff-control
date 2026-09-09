@@ -3,7 +3,7 @@
 // fact gate server-side, idempotencia por hash calculado no servidor, INSERT completo, chave nunca exposta, testes de ataque.
 import { describe, expect, it } from 'vitest';
 import { gerarComunicacaoSincrona } from './comunicacaoGeracao';
-import { montarMensagemUsuario, type ChamadaLlm, type PortasLlm } from './comunicacaoLlm';
+import { ErroTimeoutLlm, montarMensagemUsuario, type ChamadaLlm, type PortasLlm } from './comunicacaoLlm';
 import { tratarGeracaoComunicacao, type DepsServidor } from './comunicacaoServidor';
 import type { ContentSpec } from './comunicacao';
 
@@ -173,5 +173,66 @@ describe('/api/comunicacao: servidor como fonte de verdade', () => {
     const r = await tratarGeracaoComunicacao(req(pedido), d); expect(r.status).toBe(422); expect(r.corpo.erro).toBe('validacao_deterministica');
     const d2 = deps({}, [], { gerar: async () => ({ json: { primary: 'x', alternatives: [], claims_used: ['inexistente'] }, modelo: 'm', inputTokens: 1, outputTokens: 1, latenciaMs: 1 }) });
     expect((await tratarGeracaoComunicacao(req(pedido), d2)).corpo.erro).toBe('claim_desconhecido');
+  });
+});
+
+describe('LLM Latency Budget Patch 01: /api/comunicacao termina de forma controlada antes dos 60 s', () => {
+  // relogio falso: cada porta avanca o tempo simulado; deadline e timeout por chamada vem das deps
+  const cenario = (opts: { gerarMs: number[]; julgarMs?: number; gerarFalha?: (n: number) => 'timeout' | 'inventado' | undefined; julgarFalha?: 'timeout'; deadlineMs?: number }) => {
+    let agora = 0; let nGerar = 0; let nJulgar = 0; const log: Log[] = []; const telemetria: Record<string, unknown>[] = [];
+    ultimoPedido = { ...pedido, canal: 'WHATSAPP' };
+    const d = deps({}, log, {
+      gerar: async () => { const i = nGerar++; agora += opts.gerarMs[Math.min(i, opts.gerarMs.length - 1)]; const f = opts.gerarFalha?.(i); if (f === 'timeout') throw new ErroTimeoutLlm('timeout simulado'); const s = saidaDoMock(); return { json: f === 'inventado' ? { ...s, primary: `${s.primary} Investimento de R$ 500 milhões.` } : s, modelo: 'mock-gen', inputTokens: 100, outputTokens: 50, latenciaMs: 1 }; },
+      julgar: async () => { nJulgar++; agora += opts.julgarMs ?? 3_000; if (opts.julgarFalha === 'timeout') throw new ErroTimeoutLlm('timeout simulado'); return { json: { verdict: 'PASS', reasons: [] }, modelo: 'mock-judge', inputTokens: 10, outputTokens: 2, latenciaMs: 1 }; },
+    });
+    d.relogio = () => agora; d.deadlineMs = opts.deadlineMs ?? 50_000; d.timeoutChamadaMs = 22_000; d.log = (t) => telemetria.push(t);
+    return { d, log, telemetria, chamadas: () => ({ gerar: nGerar, julgar: nJulgar }) };
+  };
+  const inserts = (log: Log[]) => log.filter((l) => l.init?.method === 'POST' && l.url.endsWith('/rest/v1/radar_communication')).length;
+  it('A) geração rápida + juiz rápido → 201 com tempos por etapa e telemetria segura', async () => {
+    const c = cenario({ gerarMs: [6_000], julgarMs: 2_000 });
+    const r = await tratarGeracaoComunicacao(req(pedido), c.d);
+    expect(r.status, JSON.stringify(r.corpo)).toBe(201); expect(inserts(c.log)).toBe(1);
+    const t = (r.corpo.metricas as { tempos: Record<string, unknown> }).tempos;
+    expect(t).toMatchObject({ generation_ms: 6_000, judge_ms: 2_000, model_generation: 'mock-gen', model_judge: 'mock-judge' }); expect(t.regeneration_ms).toBeUndefined();
+    expect(c.telemetria).toHaveLength(1); expect(c.telemetria[0]).toMatchObject({ evento: 'communication_timing', outcome: 'ok', status: 201, generation_ms: 6_000, judge_ms: 2_000 });
+    expect(Object.keys(c.telemetria[0]).sort()).toEqual(['auth_ms', 'context_load_ms', 'deterministic_validation_ms', 'etapa', 'evento', 'generation_ms', 'judge_ms', 'model_generation', 'model_judge', 'outcome', 'persistence_ms', 'status', 'total_ms']);
+    expect(JSON.stringify(c.telemetria)).not.toMatch(/Beneficiadora|20 mil|jwt-ficticio|@|allowedClaims/);
+  });
+  it('B) geração excede o timeout → 503 llm_timeout (etapa geracao), 0 insert, sem juiz', async () => {
+    const c = cenario({ gerarMs: [22_000], gerarFalha: () => 'timeout' });
+    const r = await tratarGeracaoComunicacao(req(pedido), c.d);
+    expect(r.status).toBe(503); expect(r.corpo).toMatchObject({ erro: 'llm_timeout', etapa: 'geracao', mensagem: 'A geração excedeu o orçamento de tempo. Tente novamente.' });
+    expect(inserts(c.log)).toBe(0); expect(c.chamadas()).toEqual({ gerar: 1, julgar: 0 }); expect(c.telemetria[0]).toMatchObject({ outcome: 'llm_timeout', etapa: 'geracao', status: 503 });
+  });
+  it('C) geração passa, juiz excede → 503 llm_timeout (etapa juiz), 0 insert', async () => {
+    const c = cenario({ gerarMs: [8_000], julgarFalha: 'timeout' });
+    const r = await tratarGeracaoComunicacao(req(pedido), c.d);
+    expect(r.status).toBe(503); expect(r.corpo).toMatchObject({ erro: 'llm_timeout', etapa: 'juiz' }); expect(inserts(c.log)).toBe(0); expect(c.chamadas()).toEqual({ gerar: 1, julgar: 1 });
+  });
+  it('D) primeira geração reprovada sem orçamento para regenerar + julgar → 422 com os motivos, nenhuma nova chamada, 0 insert', async () => {
+    // gen levou 21 s: restam 29 s < 21 s (geração observada) + 6 s (juiz estimado) + 4 s (mínimo) → não inicia chamada que provavelmente estouraria
+    const c = cenario({ gerarMs: [21_000], gerarFalha: (i) => (i === 0 ? 'inventado' : undefined) });
+    const r = await tratarGeracaoComunicacao(req(pedido), c.d);
+    expect(r.status).toBe(422); expect(r.corpo.erro).toBe('validacao_deterministica'); expect(String(r.corpo.mensagem)).toMatch(/sem orçamento de tempo para regenerar/); expect(JSON.stringify(r.corpo.motivos)).toMatch(/500/);
+    expect(c.chamadas()).toEqual({ gerar: 1, julgar: 0 }); expect(inserts(c.log)).toBe(0); expect(c.telemetria[0]).toMatchObject({ outcome: 'validacao_deterministica', status: 422 });
+  });
+  it('E) com orçamento, a regeneração única funciona → 201 regenerado com regeneration_ms', async () => {
+    const c = cenario({ gerarMs: [8_000, 7_000], julgarMs: 2_000, gerarFalha: (i) => (i === 0 ? 'inventado' : undefined) });
+    const r = await tratarGeracaoComunicacao(req(pedido), c.d);
+    expect(r.status, JSON.stringify(r.corpo)).toBe(201); expect(c.chamadas()).toEqual({ gerar: 2, julgar: 1 }); expect(inserts(c.log)).toBe(1);
+    const m = r.corpo.metricas as { regenerado: boolean; tempos: Record<string, unknown> };
+    expect(m.regenerado).toBe(true); expect(m.tempos).toMatchObject({ generation_ms: 8_000, regeneration_ms: 7_000, judge_ms: 2_000 });
+  });
+  it('sem orçamento antes da primeira chamada (contexto lento) → 503 antes de chamar o modelo; timeout por chamada nunca excede o restante', async () => {
+    const c = cenario({ gerarMs: [1_000], deadlineMs: 15_000 });
+    let agora = 0; c.d.relogio = () => (agora += 4_000); // cada leitura de relogio avanca 4 s: auth + contexto consomem o deadline
+    const r = await tratarGeracaoComunicacao(req(pedido), c.d);
+    expect(r.status).toBe(503); expect(r.corpo.erro).toBe('llm_timeout'); expect(c.chamadas().gerar).toBe(0); expect(inserts(c.log)).toBe(0);
+    let timeoutRecebido = 0; let t = 0; ultimoPedido = { ...pedido, canal: 'WHATSAPP' };
+    const d2 = deps({}, [], { gerar: async (_m, o) => { timeoutRecebido = o?.timeoutMs ?? -1; return { json: saidaDoMock(), modelo: 'm', inputTokens: 1, outputTokens: 1, latenciaMs: 1 }; } });
+    d2.relogio = () => (t += 100); d2.deadlineMs = 50_000; d2.timeoutChamadaMs = 22_000;
+    expect((await tratarGeracaoComunicacao(req(pedido), d2)).status).toBe(201);
+    expect(timeoutRecebido).toBeGreaterThan(0); expect(timeoutRecebido).toBeLessThanOrEqual(22_000); expect(timeoutRecebido).toBeLessThan(50_000);
   });
 });

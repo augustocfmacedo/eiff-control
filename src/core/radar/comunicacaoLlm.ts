@@ -155,7 +155,10 @@ export const montarMensagemJuiz = (spec: ContentSpec, r: ResultadoGeracao) => `C
 // Saida do modelo -> ResultadoGeracao
 // ---------------------------------------------------------------------------------------------------------------------
 export interface SaidaLlm { primary: string; alternatives: string[]; subject?: string; call_script?: string; objections?: { trigger: string; response: string }[]; claims_used: string[] }
-export class ErroGeracaoLlm extends Error { constructor(msg: string, public codigo: 'saida_invalida' | 'claim_desconhecido' | 'validacao_deterministica' | 'validacao_semantica' | 'recusa' | 'provedor', public motivos: string[] = []) { super(msg); } }
+export type EtapaLlm = 'geracao' | 'regeneracao' | 'juiz';
+export class ErroGeracaoLlm extends Error { constructor(msg: string, public codigo: 'saida_invalida' | 'claim_desconhecido' | 'validacao_deterministica' | 'validacao_semantica' | 'recusa' | 'provedor' | 'llm_timeout', public motivos: string[] = [], public etapa?: EtapaLlm) { super(msg); } }
+/** Lancado pela porta quando o provedor estoura o timeout da chamada (o SDK aborta); o orquestrador converte em llm_timeout com a etapa. */
+export class ErroTimeoutLlm extends Error { constructor(msg = 'tempo esgotado na chamada ao modelo') { super(msg); this.name = 'ErroTimeoutLlm'; } }
 export interface MetricasLlm { provedor: string; modelo: string; promptVersao: string; inputTokens: number; outputTokens: number; latenciaMs: number; regenerado: boolean; juiz?: { modelo: string; inputTokens: number; outputTokens: number; latenciaMs: number } }
 export function parseSaidaLlm(saida: unknown, spec: ContentSpec, metricas: MetricasLlm, geradoEm = new Date().toISOString()): ResultadoGeracao {
   const s = saida as Partial<SaidaLlm> | null;
@@ -178,33 +181,96 @@ export function parseSaidaLlm(saida: unknown, spec: ContentSpec, metricas: Metri
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Orquestracao: gerar -> parse -> validacao deterministica -> validacao semantica -> (uma regeneracao corretiva)
+// Orcamento de tempo (Latency Budget Patch 01): a funcao Netlify sincrona tem limite rigido de 60 s. Toda chamada ao modelo
+// recebe um timeout proprio (<= ANTHROPIC_CALL_TIMEOUT_MS e <= tempo restante do deadline), nenhuma chamada comeca sem
+// orcamento e a regeneracao unica so acontece se couber geracao + juiz no tempo restante. Nada disso muda spec, prompt,
+// fact gate ou persistencia: so decide SE uma chamada pode comecar e quanto pode durar.
 // ---------------------------------------------------------------------------------------------------------------------
-export interface ChamadaLlm { json: unknown; modelo: string; inputTokens: number; outputTokens: number; latenciaMs: number; recusa?: string }
-export interface PortasLlm {
-  gerar: (mensagemUsuario: string) => Promise<ChamadaLlm>;
-  julgar: (mensagemJuiz: string) => Promise<ChamadaLlm>;
+export const MODELO_COMUNICACAO_PADRAO = 'claude-sonnet-5'; // nunca herda ANTHROPIC_MODEL (modelo do Assistente)
+export const MODELO_JUIZ_PADRAO = 'claude-sonnet-5';
+export const EFFORT_COMUNICACAO = 'low' as const; // estrategia, fatos, CTA e playbook ja vieram do Radar
+export const MAX_TOKENS_GERACAO = 1200; // primary + 2 alternativas + assunto + objecoes + claims_used
+export const MAX_TOKENS_JUIZ = 350;
+export const ANTHROPIC_CALL_TIMEOUT_MS = 22_000;
+export const COMMUNICATION_DEADLINE_MS = 50_000; // reserva ~10 s para Supabase, validacoes, INSERT e resposta
+export const OPCOES_CLIENTE_ANTHROPIC = { maxRetries: 0, timeout: ANTHROPIC_CALL_TIMEOUT_MS } as const; // retry implicito do SDK consumiria o deadline
+export const MINIMO_CHAMADA_MS = 4_000; // abaixo disso nao vale iniciar chamada
+export const ESTIMATIVA_GERACAO_MS = 12_000; // estimativas iniciais; a latencia observada as substitui na decisao de regenerar
+export const ESTIMATIVA_JUIZ_MS = 6_000;
+export interface ConfiguracaoLlm { modelo: string; modeloJuiz: string; timeoutChamadaMs: number; deadlineMs: number }
+export function configuracaoLlm(env: Record<string, string | undefined>): ConfiguracaoLlm {
+  const num = (v: string | undefined, padrao: number, min: number, max: number) => { const n = Number(v); return v && Number.isFinite(n) && n >= min && n <= max ? Math.floor(n) : padrao; };
+  return {
+    modelo: (env.ANTHROPIC_COMMUNICATION_MODEL ?? '').trim() || MODELO_COMUNICACAO_PADRAO,
+    modeloJuiz: (env.ANTHROPIC_COMMUNICATION_JUDGE_MODEL ?? '').trim() || MODELO_JUIZ_PADRAO,
+    timeoutChamadaMs: num(env.ANTHROPIC_CALL_TIMEOUT_MS, ANTHROPIC_CALL_TIMEOUT_MS, 5_000, 30_000),
+    deadlineMs: num(env.COMMUNICATION_DEADLINE_MS, COMMUNICATION_DEADLINE_MS, 15_000, 55_000),
+  };
 }
-export interface GeracaoLlmOk { resultado: ResultadoGeracao; validacao: ValidacaoGeracao & { juiz: 'PASS'; regenerado: boolean } }
-export async function orquestrarGeracaoLlm(spec: ContentSpec, portas: PortasLlm): Promise<GeracaoLlmOk> {
+export interface OpcoesChamada { timeoutMs: number }
+export interface ChamadaLlm { json: unknown; modelo: string; inputTokens: number; outputTokens: number; latenciaMs: number; recusa?: string; truncada?: boolean }
+export interface PortasLlm {
+  gerar: (mensagemUsuario: string, opcoes?: OpcoesChamada) => Promise<ChamadaLlm>;
+  julgar: (mensagemJuiz: string, opcoes?: OpcoesChamada) => Promise<ChamadaLlm>;
+}
+/** Tempos observados (telemetria segura: so numeros, modelos e etapa; nunca texto, claims ou spec). */
+export interface TemposLlm { generation_ms?: number; regeneration_ms?: number; deterministic_validation_ms?: number; judge_ms?: number; model_generation?: string; model_judge?: string }
+export interface OrcamentoLlm { restanteMs: () => number; timeoutChamadaMs: number }
+export interface OpcoesOrquestracao { orcamento?: OrcamentoLlm; tempos?: TemposLlm; relogio?: () => number }
+export interface GeracaoLlmOk { resultado: ResultadoGeracao; validacao: ValidacaoGeracao & { juiz: 'PASS'; regenerado: boolean }; tempos: TemposLlm }
+function comTimeout<T>(p: Promise<T>, ms: number, etapa: EtapaLlm): Promise<T> {
+  if (!Number.isFinite(ms)) return p;
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new ErroGeracaoLlm(`tempo esgotado na etapa ${etapa} (${ms} ms)`, 'llm_timeout', [`timeout ${ms} ms`], etapa)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+export async function orquestrarGeracaoLlm(spec: ContentSpec, portas: PortasLlm, opcoes: OpcoesOrquestracao = {}): Promise<GeracaoLlmOk> {
+  const tempos = opcoes.tempos ?? {}; const relogio = opcoes.relogio ?? Date.now; const orc = opcoes.orcamento;
+  const restante = () => (orc ? orc.restanteMs() : Number.POSITIVE_INFINITY);
+  let estGeracao = ESTIMATIVA_GERACAO_MS; let estJuiz = ESTIMATIVA_JUIZ_MS;
+  // toda chamada: verifica orcamento antes, recebe timeout proprio (nunca maior que o restante) e converte estouro em llm_timeout
+  const chamar = async (etapa: EtapaLlm, estimativa: number, fn: (o: OpcoesChamada) => Promise<ChamadaLlm>): Promise<ChamadaLlm & { duracaoMs: number }> => {
+    const r = restante();
+    if (r < Math.max(MINIMO_CHAMADA_MS, estimativa)) throw new ErroGeracaoLlm(`sem orçamento de tempo para a etapa ${etapa}`, 'llm_timeout', [`restante ${Math.max(0, Math.round(r))} ms, estimativa ${estimativa} ms`], etapa);
+    const timeoutMs = Math.min(orc?.timeoutChamadaMs ?? Number.POSITIVE_INFINITY, r);
+    const inicio = relogio();
+    try { const c = await comTimeout(fn({ timeoutMs: Number.isFinite(timeoutMs) ? Math.floor(timeoutMs) : ANTHROPIC_CALL_TIMEOUT_MS }), timeoutMs, etapa); return { ...c, duracaoMs: relogio() - inicio }; }
+    catch (e) { if (e instanceof ErroTimeoutLlm) throw new ErroGeracaoLlm(`tempo esgotado na etapa ${etapa}`, 'llm_timeout', [e.message], etapa); throw e; }
+  };
+  const semTempoParaRegenerar = () => restante() < estGeracao + estJuiz + MINIMO_CHAMADA_MS;
   let correcoes: string[] | undefined; let ultimo: string[] = [];
   for (let tentativa = 0; tentativa < 2; tentativa++) {
-    const g = await portas.gerar(montarMensagemUsuario(spec, correcoes));
+    const etapa: EtapaLlm = tentativa === 0 ? 'geracao' : 'regeneracao';
+    const g = await chamar(etapa, estGeracao, (o) => portas.gerar(montarMensagemUsuario(spec, correcoes), o));
+    if (tentativa === 0) { tempos.generation_ms = g.duracaoMs; tempos.model_generation = g.modelo; } else tempos.regeneration_ms = g.duracaoMs;
+    estGeracao = Math.max(g.duracaoMs, 1_000);
     if (g.recusa) throw new ErroGeracaoLlm(`modelo recusou a geração (${g.recusa})`, 'recusa');
+    if (g.truncada) throw new ErroGeracaoLlm('saída truncada pelo limite de tokens da geração', 'saida_invalida', ['resposta cortada em max_tokens: aumentar MAX_TOKENS_GERACAO'], etapa); // regenerar com o mesmo limite nao ajuda
     const metricas: MetricasLlm = { provedor: PROVEDOR_ANTHROPIC, modelo: g.modelo, promptVersao: PROMPT_LLM_VERSION, inputTokens: g.inputTokens, outputTokens: g.outputTokens, latenciaMs: g.latenciaMs, regenerado: tentativa > 0 };
     let resultado: ResultadoGeracao;
     try { resultado = parseSaidaLlm(g.json, spec, metricas); }
-    catch (e) { if (e instanceof ErroGeracaoLlm && e.codigo === 'claim_desconhecido') throw e; if (tentativa === 0) { correcoes = [(e as Error).message]; ultimo = correcoes; continue; } throw e; }
-    const det = validarGeracao(spec, resultado);
-    if (!det.ok) { ultimo = det.problemas; if (tentativa === 0) { correcoes = det.problemas; continue; } throw new ErroGeracaoLlm('reprovado pelo fact gate determinístico após regeneração', 'validacao_deterministica', det.problemas); }
-    const j = await portas.julgar(montarMensagemJuiz(spec, resultado));
+    catch (e) {
+      if (e instanceof ErroGeracaoLlm && e.codigo === 'claim_desconhecido') throw e;
+      if (tentativa === 0 && !semTempoParaRegenerar()) { correcoes = [(e as Error).message]; ultimo = correcoes; continue; }
+      if (e instanceof ErroGeracaoLlm) throw new ErroGeracaoLlm(tentativa === 0 ? `${e.message} (sem orçamento de tempo para regenerar)` : e.message, e.codigo, e.motivos, e.etapa);
+      throw e;
+    }
+    const t0 = relogio(); const det = validarGeracao(spec, resultado); tempos.deterministic_validation_ms = (tempos.deterministic_validation_ms ?? 0) + (relogio() - t0);
+    if (!det.ok) {
+      ultimo = det.problemas;
+      if (tentativa === 0 && !semTempoParaRegenerar()) { correcoes = det.problemas; continue; }
+      throw new ErroGeracaoLlm(tentativa === 0 ? 'reprovado pelo fact gate determinístico (sem orçamento de tempo para regenerar)' : 'reprovado pelo fact gate determinístico após regeneração', 'validacao_deterministica', det.problemas);
+    }
+    const j = await chamar('juiz', estJuiz, (o) => portas.julgar(montarMensagemJuiz(spec, resultado), o));
+    tempos.judge_ms = (tempos.judge_ms ?? 0) + j.duracaoMs; tempos.model_judge = j.modelo; estJuiz = Math.max(j.duracaoMs, 1_000);
     const veredito = (j.json ?? {}) as { verdict?: string; reasons?: string[] };
     metricas.juiz = { modelo: j.modelo, inputTokens: j.inputTokens, outputTokens: j.outputTokens, latenciaMs: j.latenciaMs };
     resultado = { ...resultado, metadados: { ...resultado.metadados, juiz: metricas.juiz } as ResultadoGeracao['metadados'] };
-    if (veredito.verdict === 'PASS') return { resultado, validacao: { ok: true, problemas: [], juiz: 'PASS', regenerado: tentativa > 0 } };
+    if (veredito.verdict === 'PASS') return { resultado, validacao: { ok: true, problemas: [], juiz: 'PASS', regenerado: tentativa > 0 }, tempos };
     ultimo = (veredito.reasons ?? ['reprovado pelo validador semântico']).map(String);
-    if (tentativa === 0) { correcoes = ultimo; continue; }
-    throw new ErroGeracaoLlm('reprovado pelo validador semântico após regeneração', 'validacao_semantica', ultimo);
+    if (tentativa === 0 && !semTempoParaRegenerar()) { correcoes = ultimo; continue; }
+    throw new ErroGeracaoLlm(tentativa === 0 ? 'reprovado pelo validador semântico (sem orçamento de tempo para regenerar)' : 'reprovado pelo validador semântico após regeneração', 'validacao_semantica', ultimo);
   }
   throw new ErroGeracaoLlm('geração não concluída', 'provedor', ultimo);
 }

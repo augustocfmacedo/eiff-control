@@ -4,7 +4,7 @@
 // reconstroi o contexto e o spec, calcula o context_hash, reaproveita rascunho ativo, chama o LLM (+juiz, uma regeneracao)
 // e insere a comunicacao completa em READY_FOR_REVIEW. Nada e enviado; nenhuma chave aparece em resposta ou log.
 import { contentSpecPersistivel, contextoComunicacaoDe, montarContentSpec, type ContentSpec } from './comunicacao';
-import { ErroGeracaoLlm, PAPEIS_RADAR, PROMPT_LLM_VERSION, PROVEDOR_ANTHROPIC, orquestrarGeracaoLlm, validarPedidoGeracao, validarRequisicaoGeracao, type PortasLlm } from './comunicacaoLlm';
+import { ANTHROPIC_CALL_TIMEOUT_MS, COMMUNICATION_DEADLINE_MS, ErroGeracaoLlm, PAPEIS_RADAR, PROMPT_LLM_VERSION, PROVEDOR_ANTHROPIC, orquestrarGeracaoLlm, validarPedidoGeracao, validarRequisicaoGeracao, type PortasLlm, type TemposLlm } from './comunicacaoLlm';
 import { radarVazio, type RadarDataset } from './types';
 import { linhaApp, type ChaveRadar } from '../../data/radar.supabase';
 
@@ -12,10 +12,14 @@ export interface DepsServidor {
   fetch: typeof fetch;
   supabaseUrl: string; anon: string;
   llmDisponivel: boolean; // ANTHROPIC_API_KEY presente
-  portas: (modelo: string) => PortasLlm;
-  modelo: string;
+  portas: (modelo: string, modeloJuiz: string) => PortasLlm;
+  modelo: string; // modelo do motor comercial (ANTHROPIC_COMMUNICATION_MODEL), nunca o do Assistente
+  modeloJuiz?: string;
   cidadeRemetente: string; // configuracao da organizacao no servidor (env), nunca do navegador
   agora?: () => string;
+  // orcamento de tempo (Latency Budget Patch 01): a funcao sincrona tem 60 s; nunca deixar o Netlify responder 504
+  deadlineMs?: number; timeoutChamadaMs?: number; relogio?: () => number;
+  log?: (telemetria: Record<string, unknown>) => void; // communication_timing: so numeros, modelos, etapa e outcome
 }
 type Resp = { status: number; corpo: Record<string, unknown> };
 type Row = Record<string, unknown>;
@@ -24,6 +28,10 @@ const mascarar = (s: string) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***'
 
 export async function tratarGeracaoComunicacao(req: { method: string; authorization?: string | null; body: unknown }, d: DepsServidor): Promise<Resp> {
   if (req.method !== 'POST') return resp(405, { erro: 'metodo' });
+  const relogio = d.relogio ?? Date.now; const t0 = relogio(); const deadline = d.deadlineMs ?? COMMUNICATION_DEADLINE_MS;
+  const restanteMs = () => deadline - (relogio() - t0);
+  const tempos: TemposLlm & Record<string, unknown> = {};
+  const fim = (r: Resp, outcome: string): Resp => { d.log?.({ evento: 'communication_timing', ...tempos, total_ms: relogio() - t0, outcome, status: r.status, etapa: r.corpo.etapa ?? null }); return r; };
   const token = (req.authorization ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return resp(401, { erro: 'nao_autenticado' });
   const cab = { apikey: d.anon, authorization: `Bearer ${token}`, 'content-type': 'application/json' };
@@ -38,6 +46,7 @@ export async function tratarGeracaoComunicacao(req: { method: string; authorizat
   if (!perfil?.role || !perfil.organization_id) return resp(403, { erro: 'sem_perfil' });
   if (!(PAPEIS_RADAR as readonly string[]).includes(perfil.role)) return resp(403, { erro: 'sem_permissao' });
   // 3) contrato publico estrito: ids, canal, preferencias. Qualquer campo de contexto/spec/hash vindo do cliente e recusado
+  tempos.auth_ms = relogio() - t0;
   const vp = validarPedidoGeracao(req.body);
   if (!vp.ok) return resp(400, { erro: 'requisicao_invalida', motivos: vp.erros });
   const p = vp.pedido;
@@ -77,16 +86,18 @@ export async function tratarGeracaoComunicacao(req: { method: string; authorizat
   // fact gate estrutural sobre o spec que o proprio servidor montou (defesa em profundidade)
   const vr = validarRequisicaoGeracao({ empresaId: p.empresaId, contatoId: p.contatoId, sinalId: ctx.sinal?.id, estrategiaId: p.estrategiaId, spec });
   if (!vr.ok) return resp(500, { erro: 'spec_invalido', motivos: vr.erros });
+  tempos.context_load_ms = relogio() - t0 - Number(tempos.auth_ms ?? 0);
   // 6) idempotencia por hash calculado no servidor
   const ativas = await get(`radar_communication?context_hash=eq.${spec.contextHash}&state=in.(DRAFT,READY_FOR_REVIEW,APPROVED)&select=*&limit=1`);
   if (ativas?.[0]) return resp(200, { comunicacao: ativas[0], existente: true });
   if (!d.llmDisponivel) return resp(501, { erro: 'nao_configurado', mensagem: 'ANTHROPIC_API_KEY não definida no Netlify; use a versão padrão.' });
   // 7) LLM + validacoes (uma regeneracao corretiva)
   let gerado;
-  try { gerado = await orquestrarGeracaoLlm(spec, d.portas(d.modelo)); }
+  try { gerado = await orquestrarGeracaoLlm(spec, d.portas(d.modelo, d.modeloJuiz ?? d.modelo), { orcamento: { restanteMs, timeoutChamadaMs: d.timeoutChamadaMs ?? ANTHROPIC_CALL_TIMEOUT_MS }, tempos, relogio }); }
   catch (e) {
-    if (e instanceof ErroGeracaoLlm) return resp(e.codigo === 'provedor' || e.codigo === 'recusa' ? 502 : 422, { erro: e.codigo, mensagem: mascarar(e.message), motivos: e.motivos.map(mascarar) });
-    return resp(502, { erro: 'ia_indisponivel', mensagem: mascarar((e as Error).message) });
+    if (e instanceof ErroGeracaoLlm && e.codigo === 'llm_timeout') return fim(resp(503, { erro: 'llm_timeout', etapa: e.etapa ?? null, mensagem: 'A geração excedeu o orçamento de tempo. Tente novamente.', motivos: e.motivos.map(mascarar) }), 'llm_timeout');
+    if (e instanceof ErroGeracaoLlm) return fim(resp(e.codigo === 'provedor' || e.codigo === 'recusa' ? 502 : 422, { erro: e.codigo, mensagem: mascarar(e.message), motivos: e.motivos.map(mascarar) }), e.codigo);
+    return fim(resp(502, { erro: 'ia_indisponivel', mensagem: mascarar((e as Error).message) }), 'ia_indisponivel');
   }
   // 8) INSERT completo (snapshot imutavel), READY_FOR_REVIEW, com o JWT do usuario (RLS + trigger de coerencia no banco)
   const agora = (d.agora ?? (() => new Date().toISOString()))();
@@ -97,12 +108,14 @@ export async function tratarGeracaoComunicacao(req: { method: string; authorizat
     provider: PROVEDOR_ANTHROPIC, model: gerado.resultado.metadados.modelo ?? d.modelo, prompt_version: PROMPT_LLM_VERSION, playbook_version: spec.versoes.playbook, content_spec_version: spec.versoes.contentSpec,
     created_by: u.id, last_transition_reason: `gerado por ${PROVEDOR_ANTHROPIC} em ${agora}`,
   };
+  const tIns = relogio();
   const ins = await d.fetch(`${d.supabaseUrl}/rest/v1/radar_communication`, { method: 'POST', headers: { ...cab, prefer: 'return=representation' }, body: JSON.stringify(row) });
+  tempos.persistence_ms = relogio() - tIns;
   if (!ins.ok) {
     const texto = await ins.text().catch(() => '');
-    if (ins.status === 409 || /duplicate|unique/i.test(texto)) { const de = await get(`radar_communication?context_hash=eq.${spec.contextHash}&state=in.(DRAFT,READY_FOR_REVIEW,APPROVED)&select=*&limit=1`); if (de?.[0]) return resp(200, { comunicacao: de[0], existente: true }); }
-    return resp(500, { erro: 'persistencia', mensagem: mascarar(texto) });
+    if (ins.status === 409 || /duplicate|unique/i.test(texto)) { const de = await get(`radar_communication?context_hash=eq.${spec.contextHash}&state=in.(DRAFT,READY_FOR_REVIEW,APPROVED)&select=*&limit=1`); if (de?.[0]) return fim(resp(200, { comunicacao: de[0], existente: true }), 'existente_corrida'); }
+    return fim(resp(500, { erro: 'persistencia', mensagem: mascarar(texto) }), 'persistencia');
   }
   const rows = (await ins.json().catch(() => [])) as Row[];
-  return resp(201, { comunicacao: rows[0], existente: false, metricas: { inputTokens: gerado.resultado.metadados.inputTokens, outputTokens: gerado.resultado.metadados.outputTokens, latenciaMs: gerado.resultado.metadados.latenciaMs, regenerado: gerado.validacao.regenerado, modelo: gerado.resultado.metadados.modelo } });
+  return fim(resp(201, { comunicacao: rows[0], existente: false, metricas: { inputTokens: gerado.resultado.metadados.inputTokens, outputTokens: gerado.resultado.metadados.outputTokens, latenciaMs: gerado.resultado.metadados.latenciaMs, regenerado: gerado.validacao.regenerado, modelo: gerado.resultado.metadados.modelo, tempos: { ...gerado.tempos, persistence_ms: tempos.persistence_ms, total_ms: relogio() - t0 } } }), 'ok');
 }
