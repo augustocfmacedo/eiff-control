@@ -12,7 +12,7 @@ export interface ResultadoGeracao {
   roteiroLigacao?: string; // PHONE
   objecoes: { gatilho: string; resposta: string }[];
   claimsUsados: string[]; // ids dos allowedClaims efetivamente usados
-  metadados: { provedor: string; modelo?: string; promptVersao: string; geradoEm: string; palavras: number; canal: Canal; objetivo: string; playbook: string; contextHash: string; versoes: { playbook: string; contentSpec: string } };
+  metadados: { provedor: string; modelo?: string; promptVersao: string; geradoEm: string; palavras: number; canal: Canal; objetivo: string; playbook: string; contextHash: string; versoes: { playbook: string; contentSpec: string }; inputTokens?: number; outputTokens?: number; latenciaMs?: number; regenerado?: boolean; juiz?: { modelo: string; inputTokens: number; outputTokens: number; latenciaMs: number } };
 }
 export interface ProvedorComunicacao { nome: string; modelo?: string; gerar(spec: ContentSpec): ResultadoGeracao | Promise<ResultadoGeracao> }
 /** Validacao semantica futura (server-side, com LLM): mesma assinatura da deterministica. */

@@ -83,6 +83,8 @@ export function linhaDb(chave: Chave, obj: { id: string }, ref: (chave: Chave, i
 export function tabelaDe(chave: Chave): string { const sp = SPECS.find((x) => x.chave === chave); if (!sp) throw new Error(`sem spec para ${chave}`); return sp.tabela; }
 export function linhaApp(chave: Chave, row: Row): { id: string } { const sp = SPECS.find((x) => x.chave === chave); if (!sp) throw new Error(`sem spec para ${chave}`); return sp.app(row); }
 export type { Chave as ChaveRadar };
+/** Registra um id ja gravado no banco (ex.: linha inserida pela funcao /api/comunicacao) para a persistencia nao reinserir. */
+export function registrarRefRadar(chave: Chave, id: string): void { refs?.get(chave)?.set(id, id); }
 
 const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 

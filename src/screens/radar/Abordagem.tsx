@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { NOME_CANAL, NOME_PERSONA, NOME_TOM, OBJETIVOS, PLAYBOOKS, contextoComunicacaoDe, type Canal } from '../../core/radar';
 import type { ComunicacaoRadar } from '../../core/radar/types';
 import { actions, pode, useStore } from '../../data/store';
+import { tokenSessao } from '../../data/supabase';
 import { Badge, Field, Select, tentar, useToast } from '../../ui/components';
 
 const CANAIS_GERACAO: Canal[] = ['WHATSAPP', 'EMAIL', 'PHONE'];
@@ -17,11 +18,28 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
   const [editando, setEditando] = useState<{ id: string; texto: string; assunto?: string } | null>(null);
   const [motivo, setMotivo] = useState('');
   const [citarIndicacao, setCitarIndicacao] = useState(false);
+  const [gerandoIa, setGerandoIa] = useState(false);
+  const [iaIndisponivel, setIaIndisponivel] = useState<string | null>(null);
   const ctx = useMemo(() => contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: contatoSel, canal: canalSel || undefined, citarIndicacao }), [r, empresaId, ds.params.dataBase, contatoSel, canalSel, citarIndicacao]);
   const contatos = r.contatos.filter((c) => c.empresaId === empresaId && c.ativo);
   const comunicacoes = r.comunicacoes.filter((c) => c.empresaId === empresaId).sort((a, b) => (a.criadoEm < b.criadoEm ? 1 : -1));
   const podeAgir = pode(usuario, 'radar');
   if (!ctx) return null;
+  const gerarComIa = async (canal: Canal) => {
+    if (!ctx.contato) return;
+    setGerandoIa(true);
+    try {
+      const spec = actions.prepararSpecComunicacaoRadar(empresaId, { contatoId: ctx.contato.id, canal, citarIndicacao, horaLocal: new Date().getHours() });
+      const token = await tokenSessao();
+      if (!token) throw new Error('Sessão não encontrada: a geração com IA só funciona em produção, com login.');
+      const resp = await fetch('/api/comunicacao', { method: 'POST', headers: { 'content-type': 'application/json', 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', authorization: `Bearer ${token}` }, body: JSON.stringify(spec) });
+      const d = (await resp.json().catch(() => ({}))) as { comunicacao?: Record<string, unknown>; existente?: boolean; erro?: string; mensagem?: string; motivos?: string[] };
+      if (!resp.ok || !d.comunicacao) { const m = `${d.mensagem ?? d.erro ?? `HTTP ${resp.status}`}${d.motivos?.length ? ': ' + d.motivos.join('; ') : ''}`; if (resp.status === 501 || resp.status === 502) setIaIndisponivel(m); throw new Error(m); }
+      actions.incorporarComunicacaoRadar(d.comunicacao);
+      setIaIndisponivel(null);
+      toast(d.existente ? 'Já existia um rascunho para este contexto: reaproveitado, sem nova geração.' : 'Rascunho gerado com IA e validado. Revise antes de aprovar.');
+    } catch (e) { toast((e as Error).message); } finally { setGerandoIa(false); }
+  };
   const gerar = (canal: Canal) => tentar(() => actions.gerarComunicacaoRadar(empresaId, { contatoId: ctx.contato?.id, canal, citarIndicacao, horaLocal: new Date().getHours() }), toast, () => toast(`Rascunho ${NOME_CANAL[canal]} pronto para revisão.`));
   const ob = ctx.objetivo ? OBJETIVOS[ctx.objetivo] : undefined; const pb = ctx.playbook ? PLAYBOOKS[ctx.playbook] : undefined;
   return (
@@ -47,15 +65,16 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
       </tbody></table>
       {podeAgir && ctx.comunicar && ctx.contato && (
         <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-          {CANAIS_GERACAO.filter((c) => ctx.canal.disponiveis.includes(c) || c === 'EMAIL').map((c) => <button key={c} className={`btn sm ${c === ctx.canal.primario ? 'primary' : ''}`} disabled={!ctx.canal.disponiveis.includes(c)} onClick={() => gerar(c)}>Gerar abordagem · {NOME_CANAL[c]}</button>)}
-          <span className="small muted">gera um rascunho em revisão; nada é enviado</span>
+          {CANAIS_GERACAO.filter((c) => ctx.canal.disponiveis.includes(c) || c === 'EMAIL').map((c) => <button key={c} className={`btn sm ${c === ctx.canal.primario ? 'primary' : ''}`} disabled={gerandoIa || !ctx.canal.disponiveis.includes(c)} onClick={() => gerarComIa(c)}>{gerandoIa ? 'Gerando…' : `Gerar com IA · ${NOME_CANAL[c]}`}</button>)}
+          {CANAIS_GERACAO.filter((c) => ctx.canal.disponiveis.includes(c)).map((c) => <button key={`pad-${c}`} className="btn sm" disabled={gerandoIa} onClick={() => gerar(c)}>Gerar versão padrão · {NOME_CANAL[c]}</button>)}
+          <span className="small muted">rascunho em revisão; nada é enviado{iaIndisponivel ? ` · IA indisponível (${iaIndisponivel}): use a versão padrão` : ''}</span>
         </div>
       )}
       {comunicacoes.slice(0, compacto ? 1 : 5).map((c) => {
         const texto = c.textoEditado ?? c.resultado.versaoPrincipal; const assunto = c.assuntoEditado ?? c.resultado.assunto;
         return (
           <div key={c.id} className="card" style={{ marginTop: 10 }}>
-            <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b>{NOME_CANAL[c.canal]}</b> · {c.objetivo} · {c.playbook} <Badge tone={toneEstado(c.estado)}>{c.estado}</Badge> <span className="muted">{new Date(c.criadoEm).toLocaleString('pt-BR')} · {c.versoes.provedor} {c.versoes.prompt} · playbook v{c.versoes.playbook} · {String(c.resultado.metadados.palavras)} palavras · hash {c.contextHash.slice(0, 8)}</span></div>
+            <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b>{NOME_CANAL[c.canal]}</b> · {c.objetivo} · {c.playbook} <Badge tone={toneEstado(c.estado)}>{c.estado}</Badge> <span className="muted">{new Date(c.criadoEm).toLocaleString('pt-BR')} · {c.versoes.provedor}{c.versoes.modelo ? ` ${c.versoes.modelo}` : ''} · prompt {c.versoes.prompt} · playbook v{c.versoes.playbook} · validação {c.validacao.ok ? 'PASS' : 'FAIL'} · {String(c.resultado.metadados.palavras)} palavras · hash {c.contextHash.slice(0, 8)}</span></div>
             {editando?.id === c.id ? (
               <div className="form" style={{ marginTop: 6 }}>
                 {c.canal === 'EMAIL' && <Field label="Assunto" full><input className="input" value={editando.assunto ?? ''} onChange={(e) => setEditando({ ...editando, assunto: e.target.value })} /></Field>}
@@ -67,7 +86,7 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
                 {assunto && <div className="small" style={{ marginTop: 6 }}><b>Assunto:</b> {assunto}</div>}
                 <pre className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{texto}</pre>
                 {c.canal === 'PHONE' && c.resultado.roteiroLigacao && <div className="small muted" style={{ marginTop: 4 }}><b>Roteiro:</b> {c.resultado.roteiroLigacao}</div>}
-                {!compacto && c.resultado.versoesAlternativas.length > 0 && <details className="small"><summary className="muted">versão alternativa</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{c.resultado.versoesAlternativas[0]}</pre></details>}
+                {!compacto && c.resultado.versoesAlternativas.map((alt, i) => <details key={i} className="small"><summary className="muted">versão alternativa {i + 1}</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{alt}</pre>{podeAgir && (c.estado === 'READY_FOR_REVIEW' || c.estado === 'REJECTED') && <button className="btn sm" onClick={() => tentar(() => actions.editarComunicacaoRadar(c.id, alt, c.resultado.assunto), toast, () => toast(`Versão alternativa ${i + 1} adotada como texto efetivo.`))}>Usar esta</button>}</details>)}
                 {!compacto && c.resultado.objecoes.length > 0 && <details className="small"><summary className="muted">objeções ({c.resultado.objecoes.length})</summary><ul>{c.resultado.objecoes.map((o) => <li key={o.gatilho}><b>{o.gatilho}</b> {o.resposta}</li>)}</ul></details>}
               </>
             )}

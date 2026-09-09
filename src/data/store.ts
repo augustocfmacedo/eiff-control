@@ -50,6 +50,8 @@ import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, gerarComunicacaoSincrona, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type Canal, type ContentSpec, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
+import { PAPEIS_RADAR } from '../core/radar/comunicacaoLlm';
+import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
 
@@ -316,7 +318,7 @@ const MATRIZ: Record<Acao, Papel[]> = {
   exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
   orcar: ['Administrador', 'Diretoria', 'Financeiro', 'Engenharia', 'Compras', 'Gestor de obra'],
   comprar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
-  radar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
+  radar: [...PAPEIS_RADAR], // mesma lista que a funcao /api/comunicacao confere no perfil do banco
   radar_config: ['Administrador', 'Diretoria'],
 };
 
@@ -1759,6 +1761,20 @@ export const actions = {
     return radar.atividades.find((x) => x.id === a.id)!;
   },
 
+  /** Monta o pedido de geracao para a funcao /api/comunicacao: ids canonicos + ContentSpec (sem PII, sem raw). A funcao revalida tudo. */
+  prepararSpecComunicacaoRadar(empresaId: string, opts: { contatoId?: string; canal?: Canal; citarIndicacao?: boolean; horaLocal?: number } = {}) {
+    const ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const ctx = contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: opts.contatoId, canal: opts.canal, citarIndicacao: opts.citarIndicacao });
+    if (!ctx) throw new RegraDeNegocioError('Empresa não encontrada.');
+    if (!ctx.comunicar || !ctx.contato) throw new RegraDeNegocioError(`Sem abordagem a gerar: ${ctx.motivoSelecao}`);
+    const canal = opts.canal ?? ctx.canal.primario;
+    if (!canal) throw new RegraDeNegocioError(`Sem canal: ${ctx.canal.motivo}`);
+    const spec = montarContentSpec(ctx, canal, { nome: state.usuario.nome, empresa: ds.params.empresa || ds.params.organizacao, cidade: REMETENTE_CIDADE_PADRAO }, { horaLocal: opts.horaLocal ?? new Date().getHours() });
+    return { empresaId, contatoId: ctx.contato.id, sinalId: ctx.sinal?.id, estrategiaId: r.estrategias.find((s) => s.codigo === ctx.estrategia)?.id, spec };
+  },
+
   /** Gera a abordagem (contexto -> spec -> texto) e a deixa em READY_FOR_REVIEW. Nada e enviado. */
   gerarComunicacaoRadar(empresaId: string, opts: { contatoId?: string; canal?: Canal; citarIndicacao?: boolean; horaLocal?: number } = {}) {
     let ds = state.ds;
@@ -1778,6 +1794,20 @@ export const actions = {
     if (!v.ok) throw new RegraDeNegocioError(`Geração reprovada pelo fact gate: ${v.problemas.join('; ')}`);
     const c: ComunicacaoRadar = { id: idsRadar(r).novo('COM'), empresaId, contatoId: ctx.contato.id, canal, objetivo: spec.objetivo, playbook: spec.playbook, estado: ESTADO_MAXIMO_AUTOMATICO, spec, resultado, sinalId: ctx.sinal?.id, estrategiaId: ctx.estrategia ? r.estrategias.find((s) => s.codigo === ctx.estrategia)?.id : undefined, ultimoMotivo: 'gerado', contextHash: spec.contextHash, versoes: { ...spec.versoes, prompt: resultado.metadados.promptVersao, provedor: resultado.metadados.provedor, modelo: resultado.metadados.modelo }, validacao: v, criadoEm: agora(), atualizadoEm: agora(), criadoPor: state.usuario.id, historico: [{ de: 'DRAFT', para: ESTADO_MAXIMO_AUTOMATICO, em: agora(), por: state.usuario.nome }] };
     ds = registrar({ ...ds, radar: { ...r, comunicacoes: [...r.comunicacoes, c] } }, 'radar_gerar_comunicacao', 'radar_comunicacao', c.id, undefined, { empresaId, contatoId: c.contatoId, canal, objetivo: c.objetivo, playbook: c.playbook, estado: c.estado, contextHash: c.contextHash, versoes: c.versoes, claimsUsados: resultado.claimsUsados });
+    commit(ds);
+    return c;
+  },
+
+  /** Incorpora a comunicacao inserida pela funcao /api/comunicacao (linha ja persistida): entra no dataset sem nova gravacao. */
+  incorporarComunicacaoRadar(row: Record<string, unknown>) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const c = linhaAppRadar('comunicacoes', row) as ComunicacaoRadar;
+    if (!c.id || !c.contextHash) throw new RegraDeNegocioError('Comunicação inválida.');
+    registrarRefRadar('comunicacoes', c.id);
+    if (r.comunicacoes.some((x) => x.id === c.id)) return c;
+    ds = registrar({ ...ds, radar: { ...r, comunicacoes: [...r.comunicacoes, c] } }, 'radar_incorporar_comunicacao', 'radar_comunicacao', c.id, undefined, { provedor: c.versoes.provedor, modelo: c.versoes.modelo, estado: c.estado, contextHash: c.contextHash });
     commit(ds);
     return c;
   },
