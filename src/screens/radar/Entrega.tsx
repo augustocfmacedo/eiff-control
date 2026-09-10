@@ -2,7 +2,7 @@
 // Nao envia nada: o botao de envio aparece desativado ate o piloto. O diagnostico do Octadesk vem de /api/channel/octadesk
 // (server-side, read-only); o provider Manual e avaliado localmente, sem rede.
 import React, { useState } from 'react';
-import { NOME_PROVIDER, PROVIDERS, avaliarEntregabilidade, type CodigoProvider, type Entregabilidade, type EstadoConexao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from '../../core/radar/canais';
+import { NOME_PROVIDER, PROVIDERS_ENTREGA, avaliarEntregabilidade, type CodigoProvider, type Entregabilidade, type EstadoConexao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from '../../core/radar/canais';
 import type { ComunicacaoRadar } from '../../core/radar/types';
 import { useStore } from '../../data/store';
 import { tokenSessao } from '../../data/supabase';
@@ -77,7 +77,7 @@ export function Entrega({ c }: { c: ComunicacaoRadar }) {
       <div className="row small" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <b>ENTREGA</b>
         <select className="input" style={{ width: 'auto' }} value={provider} onChange={(e) => { setProvider(e.target.value as CodigoProvider); setErro(null); }}>
-          {PROVIDERS.map((p) => <option key={p} value={p}>{NOME_PROVIDER[p]}</option>)}
+          {PROVIDERS_ENTREGA.map((p) => <option key={p} value={p}>{NOME_PROVIDER[p]}</option>)}
         </select>
         <span className="muted">Canal: {c.canal}</span>
         <Badge tone={TOM_CONEXAO[saude.estado]}>{provider === 'MANUAL' ? 'Manual' : `Octadesk: ${ROTULO_CONEXAO[saude.estado]}`}</Badge>

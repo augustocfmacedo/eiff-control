@@ -8,9 +8,17 @@ import type { Canal, Contato } from './types';
 // ---------------------------------------------------------------------------
 // 1) Abstracao de provider
 // ---------------------------------------------------------------------------
-export const PROVIDERS = ['MANUAL', 'OCTADESK'] as const;
+export const PROVIDERS = ['MANUAL', 'OCTADESK', 'META_CLOUD'] as const;
 export type CodigoProvider = (typeof PROVIDERS)[number];
-export const NOME_PROVIDER: Record<CodigoProvider, string> = { MANUAL: 'Manual (copiar e enviar)', OCTADESK: 'Octadesk · WhatsApp Oficial' };
+export const NOME_PROVIDER: Record<CodigoProvider, string> = { MANUAL: 'Manual (copiar e enviar)', OCTADESK: 'Octadesk · WhatsApp Oficial', META_CLOUD: 'Meta WhatsApp Cloud API' };
+/** Providers que o painel de entrega da comunicacao oferece hoje. META_CLOUD ainda nao envia (EIFF Central 01). */
+export const PROVIDERS_ENTREGA: CodigoProvider[] = ['MANUAL', 'OCTADESK'];
+/**
+ * Contexto da conversa. NUNCA inferido pelo texto: quem define e o numero/inbox de entrada
+ * (EIFF_CENTRAL_PHONE_NUMBER_ID = INTERNAL, EIFF_COMMERCIAL_PHONE_NUMBER_ID = EXTERNAL).
+ */
+export const CONTEXTOS_COMUNICACAO = ['INTERNAL', 'EXTERNAL'] as const;
+export type CommunicationContext = (typeof CONTEXTOS_COMUNICACAO)[number];
 
 /** O que um provider sabe fazer. NEW_CONVERSATION_TEMPLATE: abrir conversa nova exige template aprovado (regra da Meta). */
 export const CAPACIDADES = ['NEW_CONVERSATION_TEMPLATE', 'OPEN_CONVERSATION_FREEFORM', 'READ_CONVERSATION', 'READ_TEMPLATES', 'INBOUND_WEBHOOK'] as const;
@@ -219,7 +227,7 @@ export const MAPEAMENTOS_TEMPLATE: CommunicationTemplateMapping[] = [];
 // ---------------------------------------------------------------------------
 // 6) Inbound (interface apenas; nenhum endpoint publico nesta fase)
 // ---------------------------------------------------------------------------
-export const EVENTOS_INBOUND = ['MESSAGE_RECEIVED', 'MESSAGE_STATUS', 'CONVERSATION_STATUS'] as const;
+export const EVENTOS_INBOUND = ['MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELIVERED', 'MESSAGE_READ', 'MESSAGE_FAILED', 'MESSAGE_STATUS', 'CONVERSATION_STATUS'] as const;
 export type TipoEventoInbound = (typeof EVENTOS_INBOUND)[number];
 /**
  * Evento de entrada de um canal. A Octadesk NAO documenta webhook de saida para o nosso servidor nem assinatura,
@@ -228,12 +236,19 @@ export type TipoEventoInbound = (typeof EVENTOS_INBOUND)[number];
  */
 export interface ChannelInboundEvent {
   provider: CodigoProvider;
+  /** Numero/inbox que recebeu o evento: e ele que define o contexto, nunca o conteudo da mensagem. */
+  phoneNumberId?: string;
+  contexto?: CommunicationContext;
   externalConversationId: string;
   externalMessageId?: string;
   direction: 'inbound' | 'outbound';
   eventType: TipoEventoInbound;
   occurredAt: string;
   externalStatus?: string;
+  /** Telefone do contato, normalizado (E.164 sem "+"). Nunca logar inteiro: use mascararTelefone. */
+  contactPhone?: string;
+  messageType?: string;
+  erroCodigo?: string;
 }
 export const WEBHOOK_INBOUND_DISPONIVEL = false;
 export const ESTRATEGIA_INBOUND = 'reconciliation'; // ver docs/octadesk.md
