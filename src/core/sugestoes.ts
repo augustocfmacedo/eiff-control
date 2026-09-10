@@ -13,6 +13,8 @@ const n = (v: number, um: string, varios: string) => `${v.toLocaleString('pt-BR'
 export function sugestoesPara(rota: string, ds: Dataset, usuario: Usuario, hoje = ds.params.dataBase): Sugestao[] {
   const partes = rota.split('/').filter(Boolean); const raiz = partes[0] ?? ''; const out: Sugestao[] = [];
   const lancs = () => calcLancamentos(ds).filter((l) => l.oficial && l.status !== 'Cancelado');
+  const prevDF = ds.lancamentos.filter((l) => l.origem === 'diretor-financeiro' && l.status === 'Rascunho' && !l.excluidoEm).length;
+  if ((raiz === '' || raiz === 'pagar') && prevDF > 0 && ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'].includes(usuario.papel)) out.push({ id: 'df-alinhamento', tom: 'info', texto: `${n(prevDF, 'previsão', 'previsões')} do Diretor Financeiro aguardam o alinhamento do dia.`, acao: { rotulo: 'Alinhar', to: '/diretor/alinhamento' } });
   if (raiz === '') {
     const d = dashboard(ds);
     if (d.realizadosSemConciliacao > 0) out.push({ id: 'sem-conciliacao', tom: 'warn', texto: `${n(d.realizadosSemConciliacao, 'lançamento realizado', 'lançamentos realizados')} sem conciliação com o extrato.`, acao: { rotulo: 'Conciliar', to: '/conciliacao' } });

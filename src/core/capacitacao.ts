@@ -426,6 +426,20 @@ export const LICOES: Licao[] = [
     verificacao: [{ pergunta: 'O custo/hora deve incluir…', opcoes: ['Só o salário', 'Salário mais encargos, dividido pelas horas', 'O valor da diária'], correta: 1 }],
   },
   {
+    id: 'fin-diretor-virtual', titulo: 'Diretor Financeiro virtual e alinhamento diário', area: 'Financeiro', rota: '/diretor', minutos: 6,
+    objetivo: 'Pedir orientação sobre um pagamento, registrar a previsão e validar as previsões do dia sem deixar o caixa negativo.',
+    passos: [
+      'Em Diretor Financeiro, escreva o que precisa pagar, quanto e para quando (ex.: "frete de R$ 500 amanhã para a Transportadora X, obra Smart Fit"). Ele confere o caixa projetado dia a dia, a reserva mínima, os vencidos e a alçada, e responde se cabe, se é melhor reagendar ou se não recomenda.',
+      'Toque em "Registrar previsão" (ou "Ajustar detalhes" para corrigir valor, data, categoria, obra e fornecedor). A previsão nasce como rascunho: não mexe no caixa oficial nem abre alçada até a Diretoria decidir.',
+      'Diretoria/Financeiro: na aba "Alinhamento do dia" veja o caixa dos 7 dias com e sem as previsões e decida cada uma: Programar (vira lançamento e passa pelas alçadas), Reagendar (nova data, segue previsão) ou Recusar (cancela com motivo).',
+      'Perguntas úteis: "como está o caixa?", "o que vence essa semana?", "quais previsões estão pendentes?". Os números vêm do motor do sistema; a IA só interpreta o texto.',
+    ],
+    obrigatorios: ['Valor', 'Data do pagamento', 'Categoria', 'Fornecedor'],
+    regras: ['Previsão é rascunho de origem diretor-financeiro: fora do caixa oficial até ser programada.', 'Programar passa pelas alçadas normais (limite do gestor, orçamento da obra, reserva).', 'Parecer usa a projeção diária: saldo na data, menor saldo em 30 dias e reserva mínima.'],
+    erros: ['Registrar a previsão sem fornecedor: fica "A definir" e precisa ser ajustada antes de pagar.', 'Esperar que a previsão saia do caixa sozinha: só o alinhamento programa.'],
+    verificacao: [{ pergunta: 'O que acontece quando alguém registra uma previsão pelo Diretor Financeiro?', opcoes: ['O pagamento é feito na data', 'Nasce um lançamento em rascunho que a Diretoria decide no alinhamento do dia', 'Abre uma aprovação imediata'], correta: 1 }],
+  },
+  {
     id: 'eq-apontamento-diario', titulo: 'Apontamento diário e modo campo', area: 'Equipe', rota: '/campo', minutos: 10,
     objetivo: 'Registrar presença, horas, produção e ocorrências do dia, do celular ou do escritório.',
     passos: [
@@ -707,4 +721,4 @@ export function progressoDe(usuario: Usuario, treinamentos: Treinamento[], papel
 export const progressoEquipe = (usuarios: Usuario[], treinamentos: Treinamento[]) => usuarios.filter((u) => u.ativo).map((u) => progressoDe(u, treinamentos)).sort((a, b) => b.pct - a.pct || a.usuario.nome.localeCompare(b.usuario.nome));
 
 /** Rotas conhecidas do app, para validar o conteudo nos testes. */
-export const ROTAS_APP = ['/', '/inbox', '/central', '/obras', '/orcamentos', '/compras', '/producao', '/estoque', '/equipe', '/campo', '/pagar', '/receber', '/lancamentos', '/aprovacoes', '/posicao', '/fluxo13', '/fluxo24', '/conciliacao', '/dividas', '/dre', '/checks', '/cadastros', '/auditoria', '/capacitacao'];
+export const ROTAS_APP = ['/', '/inbox', '/diretor', '/central', '/obras', '/orcamentos', '/compras', '/producao', '/estoque', '/equipe', '/campo', '/pagar', '/receber', '/lancamentos', '/aprovacoes', '/posicao', '/fluxo13', '/fluxo24', '/conciliacao', '/dividas', '/dre', '/checks', '/cadastros', '/auditoria', '/capacitacao'];

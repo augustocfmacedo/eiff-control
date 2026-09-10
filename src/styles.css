@@ -317,6 +317,33 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .pontos li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 13px; padding: 7px 10px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
 .pontos li .tema { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; }
 
+/* diretor financeiro virtual */
+.df { display: flex; flex-direction: column; min-height: 520px; max-height: calc(100vh - 220px); }
+.df-card-chat { padding: 0; overflow: hidden; }
+.df-msgs { flex: 1; overflow: auto; padding: 16px; display: grid; gap: 10px; align-content: start; }
+.df-vazio { display: grid; gap: 8px; max-width: 560px; }
+.df-avatar { width: 40px; height: 40px; border-radius: 12px; background: var(--brand); color: #fff; display: grid; place-items: center; }
+.df .chat-bolha { max-width: 92%; font-size: 13.5px; }
+.df .chat-bolha p { margin: 0 0 6px; }
+.df .chat-bolha .df-item { margin: 2px 0 2px 4px; color: var(--muted); }
+.df-card { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
+.df-card-cab { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 700; }
+.df-input { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.df-input input { flex: 1; min-width: 0; }
+.df .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.df .chip { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 6px 11px; font-size: 13px; cursor: pointer; }
+.df-dias { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 8px 0; }
+.df-dia { text-align: center; font-size: 12px; display: grid; gap: 2px; padding: 6px 4px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
+.df-dia.furo { border-color: var(--bad); }
+.df-dia .barras { height: 70px; display: flex; align-items: flex-end; justify-content: center; gap: 3px; }
+.df-dia .barras i { display: block; width: 14px; border-radius: 3px 3px 0 0; }
+.df-dia .barras .sem { background: var(--surface-3, #232830); border: 1px solid var(--border); }
+.df-dia .barras .com { background: var(--brand); }
+.df-dia b { font-variant-numeric: tabular-nums; }
+.df-prev { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.df-prev:first-of-type { border-top: 0; }
+.campo .df { min-height: 60vh; }
+
 /* modo campo (celular) */
 .campo { min-height: 100vh; background: var(--bg); }
 .campo .content { max-width: 640px; margin: 0 auto; padding-bottom: 40px; }

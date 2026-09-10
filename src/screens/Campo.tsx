@@ -129,6 +129,7 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
         <button className="btn grande" onClick={() => navegar('/campo/producao')}><span>Ordens de fabricação e montagem<span className="sub">etapa atual, avanço, fotos</span></span><span className="small">{ordens.length} em aberto</span></button>
         <button className="btn grande" onClick={() => navegar('/campo/tarefas')}><span>Minhas tarefas</span><span className="small">{tarefas.length}{tarefas.some((t) => t.atrasada) && <> <Badge tone="bad">atrasadas</Badge></>}</span></button>
         <button className="btn grande" onClick={() => navegar('/campo/checklist')}><span>Check-list do dia</span><span className="small">{demandas.length} pendente(s)</span></button>
+        <button className="btn grande" onClick={() => navegar('/diretor')}><span>Diretor Financeiro<span className="sub">posso pagar? quanto? quando? registra a previsão</span></span></button>
         <button className="btn grande" onClick={() => navegar('/')}><span>Painel completo</span></button>
       </div>
     </div>

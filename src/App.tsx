@@ -18,6 +18,7 @@ import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
 const Auditoria = lazy(() => import('./screens/Auditoria'));
 const Cadastros = lazy(() => import('./screens/Cadastros'));
+const DiretorFinanceiro = lazy(() => import('./screens/DiretorFinanceiro'));
 const CaixaEntrada = lazy(() => import('./screens/CaixaEntrada'));
 const CentralObras = lazy(() => import('./screens/CentralObras'));
 const Checks = lazy(() => import('./screens/Checks'));
@@ -153,6 +154,7 @@ export default function App() {
     case 'dre': tela = <Dre />; break;
     case 'checks': tela = <Checks />; break;
     case 'cadastros': tela = <Cadastros aba0={p1} key={p1} />; break;
+    case 'diretor': tela = <DiretorFinanceiro aba0={p1} key={p1} />; break;
     case 'auditoria': tela = <Auditoria />; break;
     case 'equipe': tela = <Equipe aba0={p1} key={p1} />; break;
     case 'apontamentos': tela = <ApontamentoTela id={p1 ?? 'novo'} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;

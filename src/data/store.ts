@@ -45,6 +45,7 @@ import type {
   Usuario,
 } from '../core/types';
 import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
+import { ORIGEM_DF, resumoParecer, type PrevisaoDF } from '../core/cfo';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
@@ -576,6 +577,36 @@ export const actions = {
     ds = registrar({ ...ds, lancamentos }, atual ? 'alterar_lancamento' : 'criar_lancamento', 'lancamento', l.id, atual, l);
     commit(ds);
     return { lancamento: l, aprovacaoAberta };
+  },
+
+  /**
+   * Diretor Financeiro virtual: registra o pedido como PREVISAO (rascunho, origem diretor-financeiro). Nao entra no caixa
+   * oficial nem abre alcada; espera a decisao da Diretoria no alinhamento diario (decidirPrevisaoDF).
+   */
+  registrarPrevisaoDF(p: PrevisaoDF): Lancamento {
+    exigir('editar_lancamento', p.codigoObra || undefined);
+    if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor da previsão deve ser positivo.');
+    if (!p.vencimento) throw new RegraDeNegocioError('Data da previsão é obrigatória.');
+    const l = this.novoLancamento({
+      categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
+      status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
+      observacoes: `Previsão registrada pelo Diretor Financeiro virtual a pedido de ${state.usuario.nome} (${state.usuario.papel}). Parecer: ${resumoParecer(p.parecer)}. Aguarda alinhamento diário.`,
+    });
+    return this.salvarLancamento(l).lancamento;
+  },
+  /** Alinhamento diario (Diretoria/Financeiro): programar (vira lancamento oficial, alcadas normais), reagendar (segue rascunho) ou recusar (cancela com motivo). */
+  decidirPrevisaoDF(id: string, decisao: 'programar' | 'reagendar' | 'recusar', dados: { vencimento?: string; motivo?: string } = {}) {
+    exigir('aprovar');
+    const l = state.ds.lancamentos.find((x) => x.id === id);
+    if (!l || l.origem !== ORIGEM_DF) throw new RegraDeNegocioError('Previsão do Diretor Financeiro não encontrada.');
+    if (l.status !== 'Rascunho') throw new RegraDeNegocioError(`Previsão já decidida (${l.status}).`);
+    if (decisao === 'recusar') { this.cancelarLancamento(id, `Recusada no alinhamento diário: ${dados.motivo?.trim() || 'sem motivo informado'}`); return; }
+    if (decisao === 'reagendar') {
+      if (!dados.vencimento) throw new RegraDeNegocioError('Informe a nova data.');
+      this.salvarLancamento({ ...l, vencimento: dados.vencimento, competencia: dados.vencimento, observacoes: `${l.observacoes}\nReagendada no alinhamento para ${dados.vencimento.split('-').reverse().join('/')} por ${state.usuario.nome}.` });
+      return;
+    }
+    this.salvarLancamento({ ...l, status: 'Programado', confiabilidade: 'Provável', observacoes: `${l.observacoes}\nValidada no alinhamento diário por ${state.usuario.nome}.` });
   },
 
   cancelarLancamento(id: string, motivo: string) {
