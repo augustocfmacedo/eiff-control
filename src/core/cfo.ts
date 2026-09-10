@@ -133,6 +133,16 @@ export function interpretarPedido(texto: string, catalogo: CatalogoDF): PedidoIn
 export interface DiaCaixa { data: string; entradas: number; saidas: number; saldo: number }
 /** Caixa de fato: saldo bancario de hoje pelo extrato da Tesouraria (abertura + creditos - debitos), somando as contas ativas. */
 export const saldoBancarioHoje = (ds: Dataset, lancs?: LancamentoCalc[]) => posicaoBancaria(ds, lancs).reduce((a, p) => a + p.saldoBancario, 0);
+/** Ate quando o extrato foi importado (ultima transacao das contas ativas) e quantos dias o saldo esta defasado em relacao a hoje. */
+export const LIMITE_DEFASAGEM_DIAS = 1;
+export function defasagemExtrato(ds: Dataset): { ate?: string; dias: number; texto: string; alerta?: string } {
+  const hoje = ds.params.dataBase;
+  const datas = posicaoBancaria(ds).map((p) => p.ultimaTransacao).filter((d): d is string => !!d).sort();
+  const ate = datas.pop();
+  if (!ate) return { dias: Infinity, texto: 'sem extrato importado', alerta: 'Nenhum extrato importado: o caixa de hoje é só o saldo de abertura das contas. Importe o OFX na Tesouraria antes de decidir.' };
+  const dias = Math.max(0, Math.round((Date.parse(`${hoje}T00:00:00Z`) - Date.parse(`${ate}T00:00:00Z`)) / 86_400_000));
+  return { ate, dias, texto: `extrato até ${br(ate)}${dias > LIMITE_DEFASAGEM_DIAS ? ` (defasado ${dias} dias)` : ''}`, alerta: dias > LIMITE_DEFASAGEM_DIAS ? `Extrato defasado ${dias} dias (último movimento em ${br(ate)}): o saldo de hoje pode estar desatualizado. Importe o OFX na Tesouraria.` : undefined };
+}
 /** Recebiveis vencidos e ainda nao recebidos: NAO entram na projecao (so contam quando o dinheiro entrar). */
 export const recebiveisVencidos = (lancs: LancamentoCalc[]) => lancs.filter((l) => l.oficial && l.tipo === 'Entrada' && !l.direto && l.situacao === 'Atrasado').reduce((s, l) => s + l.saldoAberto, 0);
 /**
@@ -165,6 +175,7 @@ export interface Parecer {
   vencidos: number; saidas7d: number; entradas7d: number;
   precisaAprovacao: boolean; alcada: Papel[]; excecao: boolean; foraOrcamento: boolean;
   motivos: string[];
+  extrato: ReturnType<typeof defasagemExtrato>;
 }
 const arred = (v: number) => Math.round(v * 100) / 100;
 
@@ -197,7 +208,9 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   const precisaAprovacao = pedido.valor > p.alcadas.limiteGestorObra || excecao;
   const alcada = precisaAprovacao ? etapasExigidas(p, pedido.valor, !!obra, excecao) : [];
   const motivos: string[] = [];
-  motivos.push(`Caixa hoje ${fmt(saldoHoje)} (saldo bancário do extrato); reserva mínima ${fmt(reserva)}.`);
+  const extrato = defasagemExtrato(ds);
+  motivos.push(`Caixa hoje ${fmt(saldoHoje)} (saldo bancário, ${extrato.texto}); reserva mínima ${fmt(reserva)}.`);
+  if (extrato.alerta) motivos.push(extrato.alerta);
   const recVenc = recebiveisVencidos(lancs); if (recVenc > 0) motivos.push(`Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.`);
   motivos.push(`Na data pedida (${br(venc)}) o saldo projetado antes do pagamento é ${fmt(saldoNaData)}; depois, ${fmt(saldoDepois)}.`);
   if (menor.data !== venc) motivos.push(`O ponto mais apertado dos 30 dias seguintes é ${br(menor.data)}, com ${fmt(menorSaldoDepois)} já contando este pagamento.`);
@@ -207,7 +220,7 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   if (decisao === 'atencao') motivos.push('Cabe no caixa, mas consome a reserva mínima nos 30 dias: só com aval da Diretoria.');
   if (decisao === 'nao_recomendado') motivos.push('Nos próximos 30 dias o caixa não comporta este pagamento sem ficar negativo.');
   if (precisaAprovacao) motivos.push(`Alçada: ${alcada.join(' → ')}${pedido.valor > p.alcadas.limiteGestorObra ? ` (acima de ${fmt(p.alcadas.limiteGestorObra)})` : ''}.`);
-  return { decisao, valor: pedido.valor, vencimento: venc, dataSugerida, saldoHoje, saldoNaData, saldoDepois, menorSaldoDepois, menorSaldoDia: menor.data, reserva, folga: arred(saldoDepois - reserva), vencidos, saidas7d: em7('Saída'), entradas7d: em7('Entrada'), precisaAprovacao, alcada, excecao, foraOrcamento: false, motivos };
+  return { decisao, valor: pedido.valor, vencimento: venc, dataSugerida, saldoHoje, saldoNaData, saldoDepois, menorSaldoDepois, menorSaldoDia: menor.data, reserva, folga: arred(saldoDepois - reserva), vencidos, saidas7d: em7('Saída'), entradas7d: em7('Entrada'), precisaAprovacao, alcada, excecao, foraOrcamento: false, motivos, extrato };
 }
 
 export const fmt = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -230,7 +243,7 @@ export const resumoParecer = (p: Parecer) => `${p.decisao === 'liberar' ? 'cabe 
 
 export interface ItemAlinhamento { lancamento: LancamentoCalc; parecerAtual: Parecer; solicitante: string; diasEsperando: number }
 export interface DiaAlinhamento { data: string; saidas: number; entradas: number; saldo: number; saldoComPrevisoes: number; previsoes: number; abaixoReserva: boolean }
-export interface Alinhamento { previsoes: ItemAlinhamento[]; dias: DiaAlinhamento[]; reserva: number; saldoHoje: number; totalPrevisoes: number; alertas: string[]; venceHoje: LancamentoCalc[] }
+export interface Alinhamento { previsoes: ItemAlinhamento[]; dias: DiaAlinhamento[]; reserva: number; saldoHoje: number; totalPrevisoes: number; alertas: string[]; venceHoje: LancamentoCalc[]; extrato: ReturnType<typeof defasagemExtrato> }
 export const previsoesDF = (ds: Dataset) => calcLancamentos(ds).filter((l) => l.origem === ORIGEM_DF && l.status === 'Rascunho' && !l.excluidoEm && l.incluir);
 /** Alinhamento do dia: previsoes do DF aguardando decisao e o caixa da semana com e sem elas. */
 export function alinhamentoDoDia(ds: Dataset, dias = 7): Alinhamento {
@@ -244,11 +257,12 @@ export function alinhamentoDoDia(ds: Dataset, dias = 7): Alinhamento {
   const reserva = ds.params.reservaMinima;
   const diasOut: DiaAlinhamento[] = sem.map((d, i) => ({ data: d.data, saidas: d.saidas, entradas: d.entradas, saldo: d.saldo, saldoComPrevisoes: com[i].saldo, previsoes: prevs.filter((l) => l.vencimento === d.data || (d.data === hoje && l.vencimento < hoje)).reduce((s, l) => s + l.valorLiquidoPrevisto, 0), abaixoReserva: com[i].saldo < reserva }));
   const alertas: string[] = [];
+  const ext = defasagemExtrato(ds); if (ext.alerta) alertas.push(ext.alerta);
   const furo = diasOut.find((d) => d.abaixoReserva); if (furo) alertas.push(`Com as previsões, o caixa fica abaixo da reserva em ${br(furo.data)} (${fmt(furo.saldoComPrevisoes)}).`);
   const negativo = diasOut.find((d) => d.saldoComPrevisoes < 0); if (negativo) alertas.push(`Caixa negativo em ${br(negativo.data)}: ${fmt(negativo.saldoComPrevisoes)}.`);
   const atrasadas = previsoes.filter((p) => p.lancamento.vencimento < hoje); if (atrasadas.length) alertas.push(`${atrasadas.length} previsão(ões) com data já passada aguardando decisão.`);
   const venceHoje = lancs.filter((l) => l.oficial && l.tipo === 'Saída' && !l.direto && l.status !== 'Realizado' && l.status !== 'Cancelado' && l.vencimento === hoje);
-  return { previsoes, dias: diasOut, reserva, saldoHoje: sem[0]?.saldo ?? 0, totalPrevisoes: prevs.reduce((s, l) => s + l.valorLiquidoPrevisto, 0), alertas, venceHoje };
+  return { previsoes, dias: diasOut, reserva, saldoHoje: sem[0]?.saldo ?? 0, totalPrevisoes: prevs.reduce((s, l) => s + l.valorLiquidoPrevisto, 0), alertas, venceHoje, extrato: ext };
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +281,8 @@ export function redigirCaixa(ds: Dataset): string {
   const menor = proj.reduce((a, x) => (x.saldo < a.saldo ? x : a), proj[0]);
   const linhas = proj.slice(0, 7).map((d) => `- ${br(d.data)}: ${d.entradas ? `+${fmt(d.entradas)} ` : ''}${d.saidas ? `−${fmt(d.saidas)} ` : ''}→ saldo ${fmt(d.saldo)}${d.saldo < reserva ? ' ⚠ abaixo da reserva' : ''}`);
   const recVenc = recebiveisVencidos(calcLancamentos(ds));
-  return [`Caixa hoje (saldo bancário do extrato, já com os pagamentos vencidos): **${fmt(hoje.saldo)}** (reserva mínima ${fmt(reserva)}, folga ${fmt(hoje.saldo - reserva)}).`, `Ponto mais baixo em 14 dias: ${br(menor.data)} com ${fmt(menor.saldo)}.`, recVenc > 0 ? `Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.` : '', 'Próximos 7 dias:', ...linhas].filter(Boolean).join('\n');
+  const ext = defasagemExtrato(ds);
+  return [`Caixa hoje (saldo bancário, ${ext.texto}, já com os pagamentos vencidos): **${fmt(hoje.saldo)}** (reserva mínima ${fmt(reserva)}, folga ${fmt(hoje.saldo - reserva)}).`, ext.alerta ? `⚠ ${ext.alerta}` : '', `Ponto mais baixo em 14 dias: ${br(menor.data)} com ${fmt(menor.saldo)}.`, recVenc > 0 ? `Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.` : '', 'Próximos 7 dias:', ...linhas].filter(Boolean).join('\n');
 }
 export function redigirVencimentos(ds: Dataset): string {
   const hoje = ds.params.dataBase; const ate = addDays(hoje, 7);
@@ -348,7 +363,7 @@ export function centralDF(ds: Dataset, dias = 14): CentralDF {
   const n = al.previsoes.length;
   const linhas = [
     `${n ? `${n} pedido(s) da equipe aguardam sua decisão, ${fmt(al.totalPrevisoes)} no total.` : 'Nenhum pedido da equipe aguardando decisão.'}`,
-    `Caixa hoje ${fmt(al.saldoHoje)} (saldo bancário do extrato); menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; reserva ${fmt(al.reserva)}.`,
+    `Caixa hoje ${fmt(al.saldoHoje)} (saldo bancário, ${al.extrato.texto}); menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; reserva ${fmt(al.reserva)}.`,
     n ? `Minha orientação: ${[contagem.programar ? `programar ${contagem.programar}` : null, contagem.reagendar ? `reagendar ${contagem.reagendar}` : null, contagem.avaliar ? `${contagem.avaliar} depende(m) do seu aval (reserva)` : null, contagem.recusar ? `${contagem.recusar} não recomendado(s)` : null].filter(Boolean).join(', ')}.` : '',
     al.venceHoje.length ? `Vence hoje: ${al.venceHoje.length} pagamento(s), ${fmt(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}.` : 'Nada vence hoje.',
     ...al.alertas.map((a) => `Atenção: ${a}`),

@@ -176,7 +176,7 @@ export function CentralDF() {
       </div>
       <div className="grid cols-4" style={{ margin: '14px 0' }}>
         <div className="kpi"><div className="label">Pedidos para decidir</div><div className="value">{al.previsoes.length}</div><div className="hint">{money(al.totalPrevisoes)}</div></div>
-        <div className="kpi"><div className="label">Caixa hoje</div><div className="value">{money(al.saldoHoje)}</div><div className="hint">reserva {money(al.reserva)}</div></div>
+        <div className="kpi"><div className="label">Caixa hoje</div><div className="value">{money(al.saldoHoje)}</div><div className="hint">{al.extrato.texto} · reserva {money(al.reserva)}</div></div>
         <div className="kpi"><div className="label">Menor saldo da semana</div><div className="value">{money(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}</div><div className="hint">com os pedidos</div></div>
         <div className="kpi"><div className="label">Vence hoje</div><div className="value">{al.venceHoje.length}</div><div className="hint">{money(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}</div></div>
       </div>

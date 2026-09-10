@@ -1,7 +1,7 @@
 // Diretor Financeiro virtual: interpretacao do pedido, projecao diaria, parecer, previsao e alinhamento.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { addDays, calcLancamentos, posicaoBancaria } from './engine';
-import { alinhamentoDoDia, analisarPagamento, catalogoDe, centralDF, recebiveisVencidos, saldoBancarioHoje, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, orientacaoDF, previsoesDF, projecaoDiaria, responderDF, statusPedidoDF } from './cfo';
+import { alinhamentoDoDia, analisarPagamento, catalogoDe, centralDF, defasagemExtrato, recebiveisVencidos, saldoBancarioHoje, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, orientacaoDF, previsoesDF, projecaoDiaria, responderDF, statusPedidoDF } from './cfo';
 import { RegraDeNegocioError, actions, getState } from '../data/store';
 
 const HOJE = '2026-09-01';
@@ -62,6 +62,22 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     // o recebivel vencido do demo nao entra: o saldo do dia 0 fica abaixo de banco + recebiveis vencidos
     if (recebiveisVencidos(lancs) > 0) expect(proj[0].saldo).toBeLessThan(banco + dia0 + recebiveisVencidos(lancs));
     for (let i = 1; i < proj.length; i++) expect(proj[i].saldo).toBeCloseTo(proj[i - 1].saldo + proj[i].entradas - proj[i].saidas, 2);
+  });
+  it('defasagem do extrato: sem extrato avisa; extrato antigo avisa com os dias; extrato de hoje não avisa', () => {
+    const ds0 = getState().ds; const hoje = ds0.params.dataBase;
+    // conta aberta ha 10 dias, para que transacoes antigas contem no extrato
+    const ds = { ...ds0, contas: ds0.contas.map((c) => (c.ativa ? { ...c, saldoInicialData: addDays(hoje, -10) } : c)) };
+    const semExtrato = defasagemExtrato({ ...ds, transacoes: [] });
+    expect(semExtrato.ate).toBeUndefined(); expect(semExtrato.alerta).toMatch(/Nenhum extrato/);
+    const conta = ds.contas.find((c) => c.ativa)!;
+    const t = (data: string) => ({ id: `T-${data}`, registro: 'Real' as const, data, conta: conta.instituicao, historico: 'teste', documento: '', credito: 0, debito: 0, lancamentoIds: [] as string[], origem: 'teste' });
+    const antigo = defasagemExtrato({ ...ds, transacoes: [t(addDays(hoje, -5))] });
+    expect(antigo.dias).toBe(5); expect(antigo.alerta).toMatch(/defasado 5 dias/); expect(antigo.texto).toMatch(/defasado/);
+    const emDia = defasagemExtrato({ ...ds, transacoes: [t(hoje)] });
+    expect(emDia.dias).toBe(0); expect(emDia.alerta).toBeUndefined(); expect(emDia.texto).toBe(`extrato até ${hoje.slice(8, 10)}/${hoje.slice(5, 7)}`);
+    const p = analisarPagamento({ ...ds, transacoes: [t(addDays(hoje, -3))] }, { valor: 10, vencimento: addDays(hoje, 1) });
+    expect(p.extrato.dias).toBe(3); expect(p.motivos.some((m) => /defasado 3 dias/.test(m))).toBe(true);
+    expect(alinhamentoDoDia({ ...ds, transacoes: [] }).alertas.some((a) => /Nenhum extrato/.test(a))).toBe(true);
   });
   it('parecer libera quando cabe, reagenda quando aperta e sinaliza alçada acima do limite do gestor', () => {
     const ds0 = getState().ds; const hoje = ds0.params.dataBase;
