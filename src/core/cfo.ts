@@ -117,7 +117,7 @@ export function interpretarPedido(texto: string, catalogo: CatalogoDF): PedidoIn
   const descricao = (chave ? `${chave.charAt(0).toUpperCase()}${chave.slice(1).toLowerCase()}${contraparte ? ` · ${contraparte}` : ''}` : texto.trim().replace(/\s+/g, ' ')).slice(0, 120);
   const base: Omit<PedidoInterpretado, 'intencao' | 'faltando'> = { valor, vencimento, categoria, codigoObra, contraparte, descricao, origem: 'local' };
   if (/\b(ajuda|o que voce faz|como funciona|quem e voce)\b/.test(t)) return { ...base, intencao: 'ajuda', faltando: [] };
-  if (/previs(ao|oes)|pendente|alinhamento|aguardando/.test(t) && !valor) return { ...base, intencao: 'previsoes', faltando: [] };
+  if (/previs(ao|oes)|pendente|alinhamento|aguardando|meus? pedidos?|andamento|status do/.test(t) && !valor) return { ...base, intencao: 'previsoes', faltando: [] };
   if (/\b(vence|vencimento|vencendo|a pagar|contas d[ae]|compromissos?)\b/.test(t) && !/\b(pagar|preciso|quero|posso)\b.*\b(frete|conta|boleto|nota)\b/.test(t) && !valor) return { ...base, intencao: 'vencimentos', faltando: [] };
   if (/\b(saldo|caixa|disponivel|disponibilidade|quanto (tem|temos|ha))\b/.test(t) && !valor) return { ...base, intencao: 'consulta_caixa', faltando: [] };
   if (valor || /\b(pagar|pagamento|preciso|quero|posso|autoriza|liberar|frete|boleto|nota|conta|comprar|compra)\b/.test(t)) {
@@ -270,24 +270,80 @@ export function redigirPrevisoes(ds: Dataset, usuario: Usuario): string {
 export const AJUDA_DF = ['Sou o Diretor Financeiro virtual. Posso:', '- Dizer se um pagamento cabe no caixa e quando: "preciso pagar um frete de R$ 500 amanhã".', '- Mostrar o caixa projetado: "como está o caixa?"', '- Listar o que vence: "o que vence essa semana?"', '- Registrar a previsão do pagamento para o alinhamento diário com a Diretoria.', 'Os números vêm do motor do sistema (lançamentos, extrato, reserva e alçadas); nada é pago por aqui.'].join('\n');
 
 export interface RespostaDF { texto: string; pedido?: PedidoInterpretado; parecer?: Parecer; sugestoes?: string[] }
-/** Resposta completa a partir de uma interpretacao (local ou da IA). */
-export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpretado): RespostaDF {
-  if (pedido.intencao === 'ajuda' || pedido.intencao === 'outro') return { texto: (pedido.intencao === 'outro' ? 'Não entendi como um pedido de pagamento. ' : '') + AJUDA_DF, sugestoes: ['Como está o caixa?', 'O que vence essa semana?', 'Preciso pagar um frete de R$ 500 amanhã'] };
+export const AJUDA_EQUIPE = ['Sou o Diretor Financeiro virtual. Me diga o que precisa pagar, quanto, para quando e para quem: eu anoto, confiro a possibilidade com a Diretoria e te aviso o que foi decidido.', '- Exemplo: "preciso pagar um frete de R$ 500 amanhã para a Transportadora X, obra Smart Fit".', '- "Meus pedidos" mostra o andamento do que você já pediu.', 'Nada é pago por aqui: o pagamento só acontece depois da validação da Diretoria.'].join('\n');
+/** Resposta para a EQUIPE: sem saldo, reserva ou parecer; so o pedido anotado e o andamento. O parecer vai junto (escondido) para a Diretoria. */
+export function redigirParecerEquipe(pedido: PedidoInterpretado, usuario: Usuario): string {
+  const nome = usuario.nome.split(' ')[0];
+  const partes = [`**${fmt(pedido.valor!)}** para ${br(pedido.vencimento)}`, pedido.categoria ? pedido.categoria.toLowerCase() : null, pedido.codigoObra ? `obra ${pedido.codigoObra}` : null, pedido.contraparte ? `para ${pedido.contraparte}` : null].filter(Boolean).join(' · ');
+  return [`Anotei, ${nome}: ${partes}.`, 'Confirmando, eu levo ao alinhamento diário com a Diretoria, que decide a data e libera o pagamento. Você acompanha em "Meus pedidos" e eu te aviso o que foi decidido.', pedido.contraparte ? null : 'Se souber para quem é o pagamento, toque em "Ajustar" e informe: agiliza a decisão.'].filter(Boolean).join('\n');
+}
+export type StatusPedidoDF = 'aguardando' | 'programado' | 'em_aprovacao' | 'reagendado' | 'recusado' | 'pago';
+/** Andamento de um pedido feito ao DF, lido do proprio lancamento (status + rastros nas observacoes). */
+export function statusPedidoDF(l: Lancamento): StatusPedidoDF {
+  if (l.status === 'Realizado') return 'pago';
+  if (l.status === 'Cancelado') return 'recusado';
+  if (l.status === 'Pendente') return 'em_aprovacao';
+  if (l.status === 'Rascunho') return /Reagendada no alinhamento/.test(l.observacoes) ? 'reagendado' : 'aguardando';
+  return 'programado';
+}
+export const ROTULO_STATUS_DF: Record<StatusPedidoDF, string> = { aguardando: 'aguardando a Diretoria', programado: 'validado e programado', em_aprovacao: 'validado, na alçada de aprovação', reagendado: 'reagendado pela Diretoria', recusado: 'não aprovado', pago: 'pago' };
+export const meusPedidosDF = (ds: Dataset, usuario: Usuario) => ds.lancamentos.filter((l) => l.origem === ORIGEM_DF && l.criadoPor === usuario.nome && !l.excluidoEm).sort((a, b) => b.atualizadoEm.localeCompare(a.atualizadoEm));
+export function redigirMeusPedidos(ds: Dataset, usuario: Usuario): string {
+  const meus = meusPedidosDF(ds, usuario).slice(0, 10);
+  if (!meus.length) return 'Você ainda não tem pedidos. Me diga o que precisa pagar, quanto e para quando.';
+  return ['Seus pedidos:', ...meus.map((l) => { const s = statusPedidoDF(l); const motivo = s === 'recusado' ? l.motivoCancelamento?.replace(/^Recusada no alinhamento diário: /, '') : undefined; return `- ${l.descricao} · ${fmt(l.valorBruto)} · ${br(l.vencimento)} · **${ROTULO_STATUS_DF[s]}**${motivo ? ` (${motivo})` : ''}`; })].join('\n');
+}
+/** Resposta completa a partir de uma interpretacao (local ou da IA). veCaixa = quem pode ver saldo e parecer (Diretoria/Financeiro). */
+export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpretado, veCaixa = true): RespostaDF {
+  const sugestoesEquipe = ['Preciso pagar um frete de R$ 500 amanhã', 'Meus pedidos'];
+  if (pedido.intencao === 'ajuda' || pedido.intencao === 'outro') return { texto: (pedido.intencao === 'outro' ? 'Não entendi como um pedido de pagamento. ' : '') + (veCaixa ? AJUDA_DF : AJUDA_EQUIPE), sugestoes: veCaixa ? ['Como está o caixa?', 'O que vence essa semana?', 'Preciso pagar um frete de R$ 500 amanhã'] : sugestoesEquipe };
+  if (!veCaixa && (pedido.intencao === 'consulta_caixa' || pedido.intencao === 'vencimentos')) return { texto: 'Saldo e vencimentos ficam com a Diretoria; não repasso esses dados. Posso anotar um pedido de pagamento ou mostrar o andamento dos seus.', pedido, sugestoes: sugestoesEquipe };
   if (pedido.intencao === 'consulta_caixa') return { texto: redigirCaixa(ds), pedido };
   if (pedido.intencao === 'vencimentos') return { texto: redigirVencimentos(ds), pedido };
-  if (pedido.intencao === 'previsoes') return { texto: redigirPrevisoes(ds, usuario), pedido };
+  if (pedido.intencao === 'previsoes') return { texto: veCaixa ? redigirPrevisoes(ds, usuario) : redigirMeusPedidos(ds, usuario), pedido };
   if (pedido.faltando.length) {
     const perguntas = pedido.faltando.map((f) => (f === 'valor' ? 'qual o valor' : 'para que dia')).join(' e ');
     return { texto: `Entendi o pedido${pedido.categoria ? ` de **${pedido.categoria}**` : ''}${pedido.codigoObra ? ` na obra **${pedido.codigoObra}**` : ''}. Só me diga ${perguntas}.`, pedido };
   }
   const parecer = analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria });
-  return { texto: redigirParecer(parecer, pedido, usuario), pedido, parecer };
+  return { texto: veCaixa ? redigirParecer(parecer, pedido, usuario) : redigirParecerEquipe(pedido, usuario), pedido, parecer };
+}
+
+// ---------------------------------------------------------------------------
+// Central da Diretoria: orientacao por pedido, briefing do dia, decididas
+// ---------------------------------------------------------------------------
+/** Orientacao do DF para a Diretoria, em uma frase, a partir do parecer. */
+export function orientacaoDF(p: Parecer): { titulo: string; detalhe: string; acaoSugerida: 'programar' | 'reagendar' | 'avaliar' | 'recusar'; dataSugerida?: string } {
+  if (p.decisao === 'liberar') return { titulo: `Recomendo programar para ${br(p.vencimento)}`, detalhe: `Saldo na data ${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}; menor saldo em 30 dias ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), acima da reserva de ${fmt(p.reserva)}.${p.precisaAprovacao ? ` Passa pela alçada ${p.alcada.join(' → ')}.` : ''}`, acaoSugerida: 'programar' };
+  if (p.decisao === 'reagendar') return { titulo: `Recomendo reagendar para ${br(p.dataSugerida)}`, detalhe: `Em ${br(p.vencimento)} o saldo cairia para ${fmt(p.saldoDepois)} e o menor saldo em 30 dias para ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}. Em ${br(p.dataSugerida)} cabe sem tocar na reserva.`, acaoSugerida: 'reagendar', dataSugerida: p.dataSugerida };
+  if (p.decisao === 'atencao') return { titulo: 'Só com seu aval: consome a reserva', detalhe: `Cabe no caixa (${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}), mas o menor saldo em 30 dias fica em ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}, e não há data em 30 dias em que caiba.`, acaoSugerida: 'avaliar' };
+  return { titulo: 'Não recomendo: caixa ficaria negativo', detalhe: `Saldo na data ${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}; menor saldo em 30 dias ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}). Vencidos: ${fmt(p.vencidos)}. Se for inadiável, precisa de entrada nova ou adiamento de outro pagamento.`, acaoSugerida: 'recusar' };
+}
+export interface PedidoDecidido { lancamento: Lancamento; status: StatusPedidoDF; decididoEm: string; motivo?: string }
+export interface CentralDF { alinhamento: Alinhamento; orientacoes: Map<string, ReturnType<typeof orientacaoDF>>; decididas: PedidoDecidido[]; briefing: string; contagem: { programar: number; reagendar: number; avaliar: number; recusar: number } }
+/** Tudo que a Diretoria precisa para decidir: alinhamento, orientacao por pedido, briefing falado e o historico recente. */
+export function centralDF(ds: Dataset, dias = 14): CentralDF {
+  const al = alinhamentoDoDia(ds);
+  const orientacoes = new Map(al.previsoes.map((p) => [p.lancamento.id, orientacaoDF(p.parecerAtual)]));
+  const contagem = { programar: 0, reagendar: 0, avaliar: 0, recusar: 0 };
+  for (const o of orientacoes.values()) contagem[o.acaoSugerida] += 1;
+  const limite = addDays(ds.params.dataBase, -dias);
+  const decididas: PedidoDecidido[] = ds.lancamentos.filter((l) => l.origem === ORIGEM_DF && l.status !== 'Rascunho' && !l.excluidoEm && l.atualizadoEm.slice(0, 10) >= limite).sort((a, b) => b.atualizadoEm.localeCompare(a.atualizadoEm)).map((l) => ({ lancamento: l, status: statusPedidoDF(l), decididoEm: l.atualizadoEm, motivo: l.motivoCancelamento?.replace(/^Recusada no alinhamento diário: /, '') }));
+  const n = al.previsoes.length;
+  const linhas = [
+    `${n ? `${n} pedido(s) da equipe aguardam sua decisão, ${fmt(al.totalPrevisoes)} no total.` : 'Nenhum pedido da equipe aguardando decisão.'}`,
+    `Caixa hoje ${fmt(al.saldoHoje)}; menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; reserva ${fmt(al.reserva)}.`,
+    n ? `Minha orientação: ${[contagem.programar ? `programar ${contagem.programar}` : null, contagem.reagendar ? `reagendar ${contagem.reagendar}` : null, contagem.avaliar ? `${contagem.avaliar} depende(m) do seu aval (reserva)` : null, contagem.recusar ? `${contagem.recusar} não recomendado(s)` : null].filter(Boolean).join(', ')}.` : '',
+    al.venceHoje.length ? `Vence hoje: ${al.venceHoje.length} pagamento(s), ${fmt(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}.` : 'Nada vence hoje.',
+    ...al.alertas.map((a) => `Atenção: ${a}`),
+  ].filter(Boolean);
+  return { alinhamento: al, orientacoes, decididas, briefing: linhas.join(' '), contagem };
 }
 /** Junta o complemento ("500 reais", "amanhã") ao pedido anterior que ficou incompleto. */
 export function completarPedido(anterior: PedidoInterpretado, complemento: PedidoInterpretado): PedidoInterpretado {
   const valor = complemento.valor ?? anterior.valor; const vencimento = complemento.vencimento ?? anterior.vencimento;
   const faltando: PedidoInterpretado['faltando'] = []; if (!valor) faltando.push('valor'); if (!vencimento) faltando.push('vencimento');
-  return { ...anterior, valor, vencimento, categoria: anterior.categoria ?? complemento.categoria, codigoObra: anterior.codigoObra ?? complemento.codigoObra, contraparte: anterior.contraparte ?? complemento.contraparte, intencao: 'pagamento', faltando, origem: complemento.origem };
+  return { ...anterior, valor, vencimento, categoria: complemento.categoria ?? anterior.categoria, codigoObra: complemento.codigoObra ?? anterior.codigoObra, contraparte: complemento.contraparte ?? anterior.contraparte, intencao: 'pagamento', faltando, origem: complemento.origem };
 }
 
 // ---------------------------------------------------------------------------

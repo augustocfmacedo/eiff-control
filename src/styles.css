@@ -343,6 +343,14 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .df-prev { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .df-prev:first-of-type { border-top: 0; }
 .campo .df { min-height: 60vh; }
+.df-equipe { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; align-items: start; }
+@media (max-width: 900px) { .df-equipe { grid-template-columns: 1fr; } }
+.df-briefing { display: flex; gap: 12px; align-items: flex-start; border-left: 4px solid var(--brand); }
+.df-briefing p { margin: 4px 0 0; line-height: 1.5; }
+.df-pedido { padding: 12px 0; border-top: 1px solid var(--border); }
+.df-pedido:first-of-type { border-top: 0; }
+.df-pedido-cab { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.df-orientacao { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); border-left: 3px solid var(--brand); font-size: 13px; line-height: 1.45; }
 
 /* modo campo (celular) */
 .campo { min-height: 100vh; background: var(--bg); }

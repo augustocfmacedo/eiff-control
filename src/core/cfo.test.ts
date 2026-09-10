@@ -1,7 +1,7 @@
 // Diretor Financeiro virtual: interpretacao do pedido, projecao diaria, parecer, previsao e alinhamento.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { addDays } from './engine';
-import { alinhamentoDoDia, analisarPagamento, catalogoDe, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, previsoesDF, projecaoDiaria, responderDF } from './cfo';
+import { alinhamentoDoDia, analisarPagamento, catalogoDe, centralDF, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, orientacaoDF, previsoesDF, projecaoDiaria, responderDF, statusPedidoDF } from './cfo';
 import { RegraDeNegocioError, actions, getState } from '../data/store';
 
 const HOJE = '2026-09-01';
@@ -106,5 +106,32 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     const l3 = actions.registrarPrevisaoDF({ ...prev, descricao: 'frete do financeiro' });
     expect(l3.criadoPor).toBe('Financeiro EIFF');
     actions.trocarUsuario('u-admin');
+  });
+  it('equipe não vê saldo nem parecer: só o pedido anotado, o andamento e os motivos; a Diretoria recebe a orientação e o briefing', () => {
+    const ds = getState().ds; const cat = catalogoDe(ds); const u = getState().usuario;
+    const pedido = interpretarPedido('preciso pagar um frete de R$ 450 amanhã para Fretes Silva', cat);
+    const equipe = responderDF(ds, u, pedido, false);
+    expect(equipe.parecer).toBeDefined();
+    expect(equipe.texto).toMatch(/R\$ 450,00/); expect(equipe.texto).not.toMatch(/saldo|reserva|caixa hoje|R\$ (?!450,00)/i);
+    expect(responderDF(ds, u, interpretarPedido('como está o caixa?', cat), false).texto).toMatch(/ficam com a Diretoria/);
+    expect(responderDF(ds, u, interpretarPedido('o que vence essa semana?', cat), false).texto).not.toMatch(/R\$/);
+    const l = actions.registrarPrevisaoDF(montarPrevisao(ds, pedido, equipe.parecer!, equipe.parecer!.vencimento));
+    expect(statusPedidoDF(l)).toBe('aguardando');
+    const meus = responderDF(getState().ds, u, interpretarPedido('meus pedidos', cat), false).texto;
+    expect(meus).toMatch(/aguardando a Diretoria/); expect(meus).not.toMatch(/saldo|reserva/i);
+    const c = centralDF(getState().ds);
+    const o = c.orientacoes.get(l.id)!;
+    expect(['programar', 'reagendar', 'avaliar', 'recusar']).toContain(o.acaoSugerida);
+    expect(o.titulo.length).toBeGreaterThan(5); expect(o.detalhe).toMatch(/R\$/);
+    expect(c.briefing).toMatch(/aguardam sua decisão/); expect(c.briefing).toMatch(/Minha orientação/);
+    expect(orientacaoDF({ ...equipe.parecer!, decisao: 'reagendar', dataSugerida: '2026-09-10' }).acaoSugerida).toBe('reagendar');
+    expect(orientacaoDF({ ...equipe.parecer!, decisao: 'nao_recomendado' }).acaoSugerida).toBe('recusar');
+    actions.decidirPrevisaoDF(l.id, 'reagendar', { vencimento: '2026-09-10' });
+    expect(statusPedidoDF(getState().ds.lancamentos.find((x) => x.id === l.id)!)).toBe('reagendado');
+    actions.decidirPrevisaoDF(l.id, 'recusar', { motivo: 'fornecedor sem nota' });
+    const rec = getState().ds.lancamentos.find((x) => x.id === l.id)!;
+    expect(statusPedidoDF(rec)).toBe('recusado');
+    expect(responderDF(getState().ds, u, interpretarPedido('meus pedidos', cat), false).texto).toMatch(/não aprovado.*fornecedor sem nota/);
+    expect(centralDF(getState().ds).decididas.some((d) => d.lancamento.id === l.id && d.status === 'recusado')).toBe(true);
   });
 });

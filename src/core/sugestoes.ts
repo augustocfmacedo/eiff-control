@@ -14,7 +14,9 @@ export function sugestoesPara(rota: string, ds: Dataset, usuario: Usuario, hoje 
   const partes = rota.split('/').filter(Boolean); const raiz = partes[0] ?? ''; const out: Sugestao[] = [];
   const lancs = () => calcLancamentos(ds).filter((l) => l.oficial && l.status !== 'Cancelado');
   const prevDF = ds.lancamentos.filter((l) => l.origem === 'diretor-financeiro' && l.status === 'Rascunho' && !l.excluidoEm).length;
-  if ((raiz === '' || raiz === 'pagar') && prevDF > 0 && ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'].includes(usuario.papel)) out.push({ id: 'df-alinhamento', tom: 'info', texto: `${n(prevDF, 'previsão', 'previsões')} do Diretor Financeiro aguardam o alinhamento do dia.`, acao: { rotulo: 'Alinhar', to: '/diretor/alinhamento' } });
+  if ((raiz === '' || raiz === 'pagar') && prevDF > 0 && ['Administrador', 'Diretoria', 'Financeiro'].includes(usuario.papel)) out.push({ id: 'df-alinhamento', tom: 'info', texto: `${n(prevDF, 'pedido', 'pedidos')} da equipe ao Diretor Financeiro aguardam sua decisão na Central.`, acao: { rotulo: 'Abrir a Central', to: '/diretor' } });
+  const decididos = ds.lancamentos.filter((l) => l.origem === 'diretor-financeiro' && l.criadoPor === usuario.nome && l.status !== 'Rascunho' && !l.excluidoEm && diasEntre(l.atualizadoEm, hoje) <= 3).length;
+  if ((raiz === '' || raiz === 'campo') && decididos > 0) out.push({ id: 'df-decidido', tom: 'info', texto: `${n(decididos, 'pedido seu', 'pedidos seus')} ao Diretor Financeiro ${decididos === 1 ? 'foi decidido' : 'foram decididos'} pela Diretoria.`, acao: { rotulo: 'Ver andamento', to: '/diretor' } });
   if (raiz === '') {
     const d = dashboard(ds);
     if (d.realizadosSemConciliacao > 0) out.push({ id: 'sem-conciliacao', tom: 'warn', texto: `${n(d.realizadosSemConciliacao, 'lançamento realizado', 'lançamentos realizados')} sem conciliação com o extrato.`, acao: { rotulo: 'Conciliar', to: '/conciliacao' } });
