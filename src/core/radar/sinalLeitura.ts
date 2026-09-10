@@ -21,6 +21,7 @@ export interface LeituraSinal {
   oQueAconteceu?: string; // WHAT_HAPPENED (fato objetivo)
   porQueImporta?: string; // WHY_IT_MATTERS_TO_EIFF (nunca gerado automaticamente)
   acaoRecomendada?: AcaoSinal; // RECOMMENDED_SIGNAL_ACTION do analista
+  localEvento?: string; // WHERE: cidade/UF do evento quando a fonte a informa (vira claim SIGNAL_LOCATION); a sede da empresa nunca substitui
 }
 export interface PayloadSinalComLeitura { bruto?: unknown; leitura: LeituraSinal }
 

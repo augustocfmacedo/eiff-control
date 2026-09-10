@@ -3,7 +3,7 @@
 // Nenhuma chave, nenhuma chamada de rede aqui: a funcao Netlify injeta o provedor real (SDK da Anthropic) e o juiz.
 import { CANAIS, type Canal } from './types';
 import { NOME_PERSONA } from './contatos';
-import { OBJETIVOS, OBJETIVOS_COMUNICACAO, PLAYBOOKS, PLAYBOOKS_CODIGOS, contextHashDe, type Claim, type ContentSpec } from './comunicacao';
+import { OBJETIVOS, OBJETIVOS_COMUNICACAO, PLAYBOOKS, PLAYBOOKS_CODIGOS, contextHashDe, type Claim, type ContentSpec, escopoDoClaim } from './comunicacao';
 import { aberturaNeutra, validarGeracao, type ResultadoGeracao, type ValidacaoGeracao } from './comunicacaoGeracao';
 
 export const PROMPT_LLM_VERSION = 'COMMUNICATION_LLM_PROMPT_V1';
@@ -33,8 +33,9 @@ Regras invioláveis:
 
 Saída: somente o JSON pedido. "primary" é a versão recomendada; "alternatives" traz até 2 variações com a mesma estrutura factual; "subject" só para e-mail; "call_script" só para telefone; "objections" reescreve as objeções do spec como falas curtas; "claims_used" lista os ids dos claims efetivamente usados (somente ids existentes no spec).`;
 
-export const PROMPT_JUIZ_V2 = `Você é um revisor de conformidade. Recebe um CONTENT SPEC e uma MENSAGEM gerada a partir dele. Verifique, com rigor, se a mensagem:
+export const PROMPT_JUIZ_V3 = `Você é um revisor de conformidade. Recebe um CONTENT SPEC e uma MENSAGEM gerada a partir dele. Verifique, com rigor, se a mensagem:
 - afirma algo que não está nos claims permitidos (número, data, local, unidade, projeto, pessoa, fato);
+- combina fatos verdadeiros isoladamente para criar uma relação nova não suportada por claim: localização da empresa (sede/conta) não é localização do projeto, da obra, da unidade ou da infraestrutura; data de um sinal não é data de outro evento; valor de investimento não é valor de determinada obra sem claim que os associe. Ex.: a empresa ser de "Cidade/UF" NÃO autoriza dizer que a nova infraestrutura fica em "Cidade/UF" — isso é FAIL;
 - presume projeto aberto, contratação em curso ou licitação;
 - presume que o destinatário é responsável pela obra, pelo projeto ou pela frente, sem claim ou indicação autorizada que sustente isso;
 - quando o objetivo é "Obter indicação" (GET_REFERRAL): apresenta o destinatário como responsável, líder, dono ou condutor da mesma frente para a qual a mensagem pede indicação (ex.: "cheguei ao seu contato como responsável por essa frente", "você conduz essa frente"). Isso é FAIL mesmo que a pergunta final peça a indicação corretamente; a pergunta "quem responde por essa frente?" é o CTA correto e não é problema;
@@ -131,18 +132,30 @@ function citacaoSinal(spec: ContentSpec): string | undefined {
   if (!fato || !spec.referenciaSinal) return undefined;
   return `Cite o sinal como "${sanitizarTexto(spec.referenciaSinal, 200)}" seguido de "sobre" e uma reformulação natural, em forma nominal, do claim ${sanitizarTexto(fato.id, 120)} (ex.: "Acompanhei o comunicado da empresa sobre a nova unidade e a avaliação de replicar o modelo"). Não acrescente fatos, não cole o título literal depois de "sobre" e não forme frase gramaticalmente truncada.`;
 }
+const PRIMEIRO_CONTATO: ContentSpec['objetivo'][] = ['GET_REFERRAL', 'START_DISCOVERY'];
+/** Fatos verdadeiros isoladamente nao podem ser combinados para criar relacao nova (Relational Fact Binding). */
+export const REGRAS_RELACIONAIS = [
+  'Fatos verdadeiros isoladamente não podem ser combinados para criar uma relação nova.',
+  'Localização da empresa (sede/conta) não é a localização do sinal, da obra, da unidade ou da infraestrutura: só cite o local de um evento se um claim do sinal o informar.',
+  'Data de um sinal não é data de outro evento; valor de investimento não é valor de determinada obra sem claim que os associe.',
+];
 export function specParaLlm(spec: ContentSpec): Record<string, unknown> {
   const ob = OBJETIVOS[spec.objetivo]; const pb = PLAYBOOKS[spec.playbook];
-  const claim = (c: Claim) => ({ id: sanitizarTexto(c.id, 120), texto: sanitizarTexto(c.texto), quando: c.eventoEm ? c.eventoEm.slice(0, 10).split('-').reverse().join('/') : undefined });
+  // escopo em cada claim (Relational Fact Binding): ACCOUNT_FACT nunca completa SIGNAL_FACT; o local da conta e omitido no primeiro contato
+  const claim = (c: Claim) => ({ id: sanitizarTexto(c.id, 120), escopo: escopoDoClaim(c), texto: sanitizarTexto(c.texto), quando: c.eventoEm ? c.eventoEm.slice(0, 10).split('-').reverse().join('/') : undefined, ...(c.chave === 'empresa.local' ? { uso: 'localização corporativa (sede/conta); não atribuir ao sinal, à obra, à unidade ou ao evento' } : {}) });
+  const semLocalDaConta = (c: Claim) => !(c.chave === 'empresa.local' && PRIMEIRO_CONTATO.includes(spec.objetivo));
   return {
     canal: spec.canal,
     objetivo: { nome: ob.nome, sucesso: ob.condicaoSucesso },
     playbook: { nome: pb.nome, tom: pb.tom, fazer: pb.fazer, naoFazer: pb.naoFazer, elementosObrigatorios: spec.elementosObrigatorios, elementosProibidos: spec.elementosProibidos },
-    audiencia: { primeiroNome: sanitizarTexto(spec.audiencia.primeiroNome, 60), cargo: sanitizarTexto(spec.audiencia.cargo, 120) || undefined, funcao: NOME_PERSONA[spec.audiencia.persona], empresa: sanitizarTexto(spec.audiencia.empresa, 120), local: sanitizarTexto(spec.audiencia.local, 80) || undefined },
+    audiencia: { primeiroNome: sanitizarTexto(spec.audiencia.primeiroNome, 60), cargo: sanitizarTexto(spec.audiencia.cargo, 120) || undefined, funcao: NOME_PERSONA[spec.audiencia.persona], empresa: sanitizarTexto(spec.audiencia.empresa, 120) },
+    // local da CONTA nunca vai cru: no primeiro contato (GET_REFERRAL / START_DISCOVERY) nem vai; nos demais, rotulado como localizacao corporativa
+    localEmpresa: spec.audiencia.local && !PRIMEIRO_CONTATO.includes(spec.objetivo) ? { valor: sanitizarTexto(spec.audiencia.local, 80), usoPermitido: 'somente localização corporativa (sede/conta); não atribuir ao sinal, à obra, à unidade, à expansão, à fábrica, ao CD, à infraestrutura ou ao projeto' } : undefined,
+    regrasRelacionais: REGRAS_RELACIONAIS,
     remetente: { nome: sanitizarTexto(spec.remetente.nome, 80), empresa: sanitizarTexto(spec.remetente.empresa, 80), cidade: sanitizarTexto(spec.remetente.cidade, 60) },
     saudacao: saudacaoSugerida(spec.audiencia.primeiroNome, spec.horaLocal),
     maxPalavras: spec.maxPalavras,
-    allowedClaims: spec.allowedClaims.filter((c) => c.tipo === 'FACT').slice(0, LIMITE_CLAIMS).map(claim),
+    allowedClaims: spec.allowedClaims.filter((c) => c.tipo === 'FACT' && semLocalDaConta(c)).slice(0, LIMITE_CLAIMS).map(claim),
     technicalClaims: spec.technicalClaims.slice(0, LIMITE_CLAIMS).map(claim),
     whyNow: sanitizarTexto(spec.whyNow) || undefined, referenciaSinal: sanitizarTexto(spec.referenciaSinal, 200) || undefined, referenciaPublica: sanitizarTexto(spec.referenciaPublica, 120) || undefined,
     cta: spec.cta,

@@ -8,7 +8,7 @@
 // chamada (ANTHROPIC_CALL_TIMEOUT_MS, 22 s) nunca maior que o restante do deadline total (COMMUNICATION_DEADLINE_MS, 50 s);
 // estouro vira 503 llm_timeout controlado, nunca 504 do Netlify. Telemetria communication_timing so com numeros/modelos.
 import Anthropic from '@anthropic-ai/sdk';
-import { COMMUNICATION_LLM_PROMPT_V1, EFFORT_COMUNICACAO, ErroTimeoutLlm, MAX_TOKENS_GERACAO, MAX_TOKENS_JUIZ, OPCOES_CLIENTE_ANTHROPIC, PROMPT_JUIZ_V2, SCHEMA_JUIZ, SCHEMA_SAIDA_LLM, configuracaoLlm, type ChamadaLlm, type ConfiguracaoLlm, type OpcoesChamada, type PortasLlm } from '../../src/core/radar/comunicacaoLlm';
+import { COMMUNICATION_LLM_PROMPT_V1, EFFORT_COMUNICACAO, ErroTimeoutLlm, MAX_TOKENS_GERACAO, MAX_TOKENS_JUIZ, OPCOES_CLIENTE_ANTHROPIC, PROMPT_JUIZ_V3, SCHEMA_JUIZ, SCHEMA_SAIDA_LLM, configuracaoLlm, type ChamadaLlm, type ConfiguracaoLlm, type OpcoesChamada, type PortasLlm } from '../../src/core/radar/comunicacaoLlm';
 import { tratarGeracaoComunicacao } from '../../src/core/radar/comunicacaoServidor';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -40,7 +40,7 @@ function portasAnthropic(chave: string, cfg: ConfiguracaoLlm, modelo: string, mo
   };
   return {
     gerar: (u, o) => chamar(modelo, COMMUNICATION_LLM_PROMPT_V1, u, SCHEMA_SAIDA_LLM as unknown as Record<string, unknown>, MAX_TOKENS_GERACAO, o),
-    julgar: (u, o) => chamar(modeloJuiz, PROMPT_JUIZ_V2, u, SCHEMA_JUIZ as unknown as Record<string, unknown>, MAX_TOKENS_JUIZ, o),
+    julgar: (u, o) => chamar(modeloJuiz, PROMPT_JUIZ_V3, u, SCHEMA_JUIZ as unknown as Record<string, unknown>, MAX_TOKENS_JUIZ, o),
   };
 }
 

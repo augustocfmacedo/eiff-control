@@ -75,6 +75,14 @@ export type DivulgacaoFonte = 'ALLOWED' | 'INTERNAL_ONLY';
 /** Claim: cada afirmacao candidata carrega id, origem, fonte, verificacao, confianca, data, URL, tipo e regime de divulgacao. */
 export interface Fato { id: string; chave: string; texto: string; origem: 'empresa' | 'contato' | 'sinal' | 'indicacao' | 'tecnico'; fonte?: string; verificado: boolean; confianca: number; eventoEm?: string; url?: string; tipo: TipoClaim; divulgacao: DivulgacaoFonte; aprovado?: boolean }
 export type Claim = Fato;
+/** Escopo minimo do fato (Relational Fact Binding): um valor de ACCOUNT_FACT nunca completa um SIGNAL_FACT (sede da empresa != local do evento). */
+export type EscopoClaim = 'ACCOUNT_FACT' | 'CONTACT_FACT' | 'SIGNAL_FACT' | 'SIGNAL_LOCATION' | 'TECHNICAL_CLAIM';
+export function escopoDoClaim(c: Pick<Claim, 'origem' | 'chave'>): EscopoClaim {
+  if (c.origem === 'empresa') return 'ACCOUNT_FACT';
+  if (c.origem === 'contato' || c.origem === 'indicacao') return 'CONTACT_FACT';
+  if (c.origem === 'sinal') return c.chave === 'sinal.local' ? 'SIGNAL_LOCATION' : 'SIGNAL_FACT';
+  return 'TECHNICAL_CLAIM';
+}
 /** Fontes cuja origem nao pode ser revelada ao prospect sem autorizacao explicita. */
 export const FONTES_CONFIDENCIAIS = ['PARTNER'];
 const divulgacaoDaFonte = (codigo?: string): DivulgacaoFonte => (codigo && FONTES_CONFIDENCIAIS.includes(codigo) ? 'INTERNAL_ONLY' : 'ALLOWED');
@@ -138,6 +146,7 @@ export function fatosDoSinal(s: Sinal, fontes: Fonte[]): Fato[] {
   const base = { origem: 'sinal' as const, fonte: f?.codigo, verificado: s.verificado, confianca: s.confianca, eventoEm: s.eventoEm, url: s.url, tipo: 'FACT' as const, divulgacao: divulgacaoDaFonte(f?.codigo) };
   const out: Fato[] = [{ id: `sin:${s.id}:titulo`, chave: 'sinal.titulo', texto: s.titulo, ...base }];
   if (l.oQueAconteceu) out.push({ id: `sin:${s.id}:oQueAconteceu`, chave: 'sinal.oQueAconteceu', texto: l.oQueAconteceu, ...base });
+  if (l.localEvento) out.push({ id: `sin:${s.id}:local`, chave: 'sinal.local', texto: l.localEvento, ...base }); // SIGNAL_LOCATION explicito
   // leitura comercial do analista: INTERPRETATION, nunca fato apresentavel ao prospect
   if (l.porQueImporta) out.push({ id: `sin:${s.id}:porQueImporta`, chave: 'sinal.porQueImporta', texto: l.porQueImporta, ...base, verificado: false, confianca: Math.min(s.confianca, 0.5), tipo: 'INTERPRETATION', divulgacao: 'INTERNAL_ONLY' });
   return out;

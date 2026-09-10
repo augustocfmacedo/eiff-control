@@ -2,7 +2,7 @@
 // funcao Netlify protegida, nunca com chave no navegador). Provedor deterministico: compoe o texto SOMENTE com
 // allowedClaims, sem nome de conta, pessoa ou lugar no codigo. Fact gate deterministico antes (spec) e depois (validarGeracao).
 import type { Canal } from './types';
-import { CLAIMS_TECNICOS, PLAYBOOKS, type Claim, type ContentSpec, type EstadoComunicacao } from './comunicacao';
+import { escopoDoClaim, CLAIMS_TECNICOS, PLAYBOOKS, type Claim, type ContentSpec, type EstadoComunicacao } from './comunicacao';
 
 export const PROMPT_VERSION = 'deterministico-2';
 export interface ResultadoGeracao {
@@ -153,6 +153,39 @@ export function presumeResponsabilidade(spec: Pick<ContentSpec, 'objetivo' | 'so
   return ATRIBUI_RESPONSABILIDADE.some((re) => re.test(textoNormalizado));
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Relational Fact Binding (Live Calibration 02): fatos verdadeiros isoladamente nao autorizam uma relacao nova. A base
+// permitida valida entidades soltas; aqui validamos a LIGACAO. Primeiro caso: LOCALIZACAO (sede da conta != local do evento).
+// Extensoes previstas, nao implementadas: numero, data e projeto.
+// ---------------------------------------------------------------------------------------------------------------------
+const PALAVRAS_EVENTO = /\b(infraestrutura|unidade|fabrica|planta|galpao|armazem|armazenagem|centro de distribuicao|cd|obra|expansao|ampliacao|projeto|inaugur\w*|comunicado|noticia|publicacao|registro de obra|movimento|instalacao|investimento|camara fria|empreendimento|construcao)\b/;
+const CIDADE_UF = /\b([A-ZÀ-Ú][\wà-úÀ-Ú.'-]*(?: (?:d[aeo]s?|[A-ZÀ-Ú][\wà-úÀ-Ú.'-]*))*)\s*\/\s*([A-Z]{2})\b/g; // "Cidade/UF", "Porto Nacional/TO"
+const SEDE = /\b(sediad\w+|sede|com base|baseada|matriz|escritorio)\b/;
+/** Locais mencionados numa frase: pares Cidade/UF e o local da conta (inteiro ou so a cidade). Normalizados. */
+export function locaisNaFrase(frase: string, localConta?: string): string[] {
+  const t = norm(frase); const out = new Set<string>();
+  for (const m of frase.matchAll(CIDADE_UF)) { out.add(norm(`${m[1]}/${m[2]}`)); out.add(norm(m[1])); }
+  if (localConta) { const lc = norm(localConta); const cidade = lc.split('/')[0].trim(); if (lc && t.includes(lc)) out.add(lc); if (cidade.length > 3 && new RegExp(`\\b${cidade.replace(/[.*+?^${}()|[\]\\]/g, '\\/** Fact gate pos-geracao: numeros, datas e entidades so de allowedClaims; elementos obrigatorios/proibidos; CTA do objetivo; sem presuncoes. */')}\\b`).test(t)) out.add(cidade); }
+  return [...out];
+}
+/** Frases que falam do sinal/evento so podem citar um local presente em claim do sinal (SIGNAL_FACT ou SIGNAL_LOCATION).
+ *  audiencia.local e contexto da CONTA e, sozinho, nao basta; "sediada em X" na mesma frase e permitido (fala da sede, nao do evento). */
+export function localEventoNaoSuportado(spec: Pick<ContentSpec, 'allowedClaims' | 'audiencia'>, texto: string): string[] {
+  const doSinal = norm(spec.allowedClaims.filter((c) => { const e = escopoDoClaim(c); return e === 'SIGNAL_FACT' || e === 'SIGNAL_LOCATION'; }).map((c) => c.texto).join(' | '));
+  const problemas: string[] = [];
+  for (const frase of texto.split(/(?<=[.!?])\s+|\n+/)) {
+    const nf = norm(frase); if (!PALAVRAS_EVENTO.test(nf)) continue;
+    const locais = locaisNaFrase(frase, spec.audiencia.local);
+    for (const local of locais.filter((l) => !locais.some((o) => o !== l && o.startsWith(`${l}/`)))) { // "cidade" e "cidade/uf" contam uma vez
+      if (doSinal.includes(local)) continue;
+      const antes = nf.slice(Math.max(0, nf.indexOf(local) - 30), nf.indexOf(local));
+      if (SEDE.test(antes)) continue; // "empresa sediada em X" fala da conta, nao do evento
+      const msg = `local do evento não suportado pelo sinal: ${local}`; if (!problemas.includes(msg)) problemas.push(msg);
+    }
+  }
+  return problemas;
+}
+
 /** Fact gate pos-geracao: numeros, datas e entidades so de allowedClaims; elementos obrigatorios/proibidos; CTA do objetivo; sem presuncoes. */
 export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): ValidacaoGeracao {
   const problemas: string[] = [];
@@ -170,6 +203,7 @@ export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): Validaca
   if (!t.includes(nucleo) && spec.objetivo !== 'REQUEST_PROJECT' && spec.objetivo !== 'OFFER_PRELIMINARY_STUDY') problemas.push('CTA não corresponde ao objetivo');
   for (const [re, msg] of PRESUNCOES) if (re.test(t) && !spec.technicalClaims.some((c) => re.test(norm(c.texto)))) problemas.push(msg);
   if (presumeResponsabilidade(spec, t) && !problemas.includes('presume responsabilidade do contato')) problemas.push('presume responsabilidade do contato');
+  problemas.push(...localEventoNaoSuportado(spec, texto)); // ligacao local x evento (Relational Fact Binding)
   for (const [chave, c] of Object.entries(CLAIMS_TECNICOS)) if (!c.aprovado && t.includes(norm(c.texto))) problemas.push(`claim técnico não aprovado: ${chave}`);
   if (spec.sourceDisclosure === 'INTERNAL_ONLY' && /me indicou|me contou|recebi (a )?informa|me passou|me falou/.test(t)) problemas.push('revela fonte confidencial sem autorização');
   if (palavras(r.versaoPrincipal) > spec.maxPalavras * 1.2) problemas.push(`acima do limite de ${spec.maxPalavras} palavras (${palavras(r.versaoPrincipal)})`);

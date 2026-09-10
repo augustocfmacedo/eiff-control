@@ -3,9 +3,9 @@
 // como responsável por essa frente" e fechou pedindo indicacao de quem responde pela frente: contradicao e falso PASS.
 // Dados FICTICIOS equivalentes; nenhum nome real; nenhuma chamada externa.
 import { describe, expect, it } from 'vitest';
-import { CONTENT_SPEC_VERSION, buildCommunicationContext, montarContentSpec, referenciaAoSinal, type ContentSpec, type EntradaContexto } from './comunicacao';
-import { aberturaNeutra, gerarComunicacaoSincrona, presumeResponsabilidade, validarGeracao, type ResultadoGeracao } from './comunicacaoGeracao';
-import { PROMPT_JUIZ_V2, orquestrarGeracaoLlm, specParaLlm, type PortasLlm } from './comunicacaoLlm';
+import { CONTENT_SPEC_VERSION, buildCommunicationContext, escopoDoClaim, montarContentSpec, referenciaAoSinal, type ContentSpec, type EntradaContexto } from './comunicacao';
+import { aberturaNeutra, gerarComunicacaoSincrona, localEventoNaoSuportado, locaisNaFrase, presumeResponsabilidade, validarGeracao, type ResultadoGeracao } from './comunicacaoGeracao';
+import { PROMPT_JUIZ_V3, REGRAS_RELACIONAIS, orquestrarGeracaoLlm, specParaLlm, type PortasLlm } from './comunicacaoLlm';
 import { FONTES_PADRAO } from './padroes';
 import type { Atividade, Contato, Empresa, Fonte, Persona, Sinal } from './types';
 
@@ -86,7 +86,7 @@ describe('Communication Live Calibration 01: responsabilidade do destinatário e
     expect(outro.restricoesObjetivo).toEqual([]);
   });
   it('juiz V2: GET_REFERRAL com destinatário apresentado como responsável pela frente pedida é FAIL; a pergunta pela indicação não é problema', () => {
-    expect(PROMPT_JUIZ_V2).toContain('GET_REFERRAL'); expect(PROMPT_JUIZ_V2).toMatch(/responsável, líder, dono ou condutor da mesma frente/); expect(PROMPT_JUIZ_V2).toMatch(/"quem responde por essa frente\?" é o CTA correto/);
+    expect(PROMPT_JUIZ_V3).toContain('GET_REFERRAL'); expect(PROMPT_JUIZ_V3).toMatch(/responsável, líder, dono ou condutor da mesma frente/); expect(PROMPT_JUIZ_V3).toMatch(/"quem responde por essa frente\?" é o CTA correto/);
   });
   it('regressão orquestrada (mock, sem rede): o caso real de produção é barrado pelo fact gate, a regeneração corrige e o juiz aprova', async () => {
     const spec = specDe(); const saidas = [REPROVADO, APROVADO]; const mensagens: string[] = [];
@@ -97,5 +97,64 @@ describe('Communication Live Calibration 01: responsabilidade do destinatário e
     const r = await orquestrarGeracaoLlm(spec, portas);
     expect(mensagens).toHaveLength(2); expect(mensagens[1]).toContain('presume responsabilidade do contato');
     expect(r.validacao.regenerado).toBe(true); expect(r.resultado.versaoPrincipal).toBe(APROVADO);
+  });
+});
+
+// Live Calibration 02 — Relational Fact Binding: a segunda geracao real escreveu "nova infraestrutura ... em <sede da empresa>".
+// O sinal nao associa a infraestrutura a cidade nenhuma; a cidade veio da localizacao da conta. Dois fatos validos, relacao nao suportada.
+describe('Communication Live Calibration 02: ligação local × evento (Relational Fact Binding)', () => {
+  const SEDE = 'Cidade Fictícia/MT'; // E1.cidade/uf: local da CONTA, nunca do evento
+  const S_B: Sinal = { ...S, id: U(22), titulo: 'Agroindústria Fictícia inaugura nova infraestrutura em Cidade B/TO', payload: { bruto: {}, leitura: { relevanciaEstrutural: 'DIRECT', oQueAconteceu: 'A Agroindústria Fictícia inaugurou nova infraestrutura de armazenagem em Cidade B/TO e avalia replicar o modelo.', localEvento: 'Cidade B/TO' } } };
+  it('escopo derivado dos claims: empresa → ACCOUNT_FACT, contato → CONTACT_FACT, sinal → SIGNAL_FACT, sinal.local → SIGNAL_LOCATION, técnico → TECHNICAL_CLAIM', () => {
+    const spec = specDe(); const escopos = new Map(spec.allowedClaims.map((c) => [c.chave, escopoDoClaim(c)]));
+    expect(escopos.get('empresa.local')).toBe('ACCOUNT_FACT'); expect(escopos.get('sinal.oQueAconteceu')).toBe('SIGNAL_FACT'); expect(escopos.get('tecnico.DESCRICAO_EIFF')).toBe('TECHNICAL_CLAIM');
+    expect(spec.allowedClaims.some((c) => c.chave === 'sinal.local')).toBe(false); // sem local do evento no sinal real
+    const specB = specDe({ sinal: S_B }); const loc = specB.allowedClaims.find((c) => c.chave === 'sinal.local')!;
+    expect(loc.texto).toBe('Cidade B/TO'); expect(escopoDoClaim(loc)).toBe('SIGNAL_LOCATION'); expect(escopoDoClaim({ origem: 'contato', chave: 'contato.cargo' })).toBe('CONTACT_FACT');
+  });
+  it('caso real equivalente: "nova infraestrutura em <sede>" DEVE FALHAR no fact gate com "local do evento não suportado pelo sinal"', () => {
+    const spec = specDe();
+    const v = validarGeracao(spec, resultado(injetar(`Vi a nova infraestrutura de armazenagem da Agroindústria Fictícia em ${SEDE}.`), spec));
+    expect(v.ok).toBe(false); expect(v.problemas).toContain('local do evento não suportado pelo sinal: cidade ficticia/mt');
+    for (const frase of [`A nova unidade em ${SEDE} mostra a direção da empresa.`, 'A expansão em Cidade Fictícia chama atenção.', `Acompanhei o comunicado sobre a infraestrutura de ${SEDE}.`]) {
+      expect(validarGeracao(spec, resultado(injetar(frase), spec)).problemas.some((p) => p.startsWith('local do evento não suportado pelo sinal')), frase).toBe(true);
+    }
+  });
+  it('"empresa sediada em <sede>" pode passar; "nova infraestrutura" sem local PASSA; frase natural do comunicado PASSA', () => {
+    const spec = specDe();
+    expect(localEventoNaoSuportado(spec, `A Agroindústria Fictícia, sediada em ${SEDE}, inaugurou nova infraestrutura.`)).toEqual([]);
+    expect(localEventoNaoSuportado(spec, `Empresa sediada em ${SEDE}.`)).toEqual([]);
+    expect(validarGeracao(spec, resultado(injetar('Vi que a nova infraestrutura é um passo relevante.'), spec)).problemas).toEqual([]);
+    expect(validarGeracao(spec, resultado(injetar('Acompanhei o comunicado sobre a nova infraestrutura e a avaliação de replicar a solução.'), spec)).problemas).toEqual([]);
+    expect(validarGeracao(spec, resultado(APROVADO, spec)).problemas).toEqual([]);
+  });
+  it('local explícito no claim do sinal (SIGNAL_FACT ou SIGNAL_LOCATION) autoriza "nova infraestrutura em Cidade B/TO"; a sede continua não autorizada', () => {
+    const specB = specDe({ sinal: S_B }); const detB = gerarComunicacaoSincrona(specB).versaoPrincipal;
+    const inj = (f: string) => detB.replace('\n\nNão quero tomar', `\n\n${f}\n\nNão quero tomar`);
+    expect(validarGeracao(specB, resultado(inj('Vi a nova infraestrutura em Cidade B/TO.'), specB)).problemas).toEqual([]);
+    expect(validarGeracao(specB, resultado(inj(`Vi a nova infraestrutura em ${SEDE}.`), specB)).problemas).toContain('local do evento não suportado pelo sinal: cidade ficticia/mt');
+    // so o claim SIGNAL_LOCATION, sem a cidade no texto do fato
+    const soLocal: Sinal = { ...S, id: U(23), payload: { bruto: {}, leitura: { relevanciaEstrutural: 'DIRECT', oQueAconteceu: 'A Agroindústria Fictícia inaugurou nova infraestrutura especializada de armazenagem de sementes e declarou que avalia replicar a solução em outras unidades.', localEvento: 'Cidade C/GO' } } };
+    const specC = specDe({ sinal: soLocal });
+    expect(localEventoNaoSuportado(specC, 'A nova infraestrutura em Cidade C/GO é recente.')).toEqual([]);
+    expect(localEventoNaoSuportado(specC, `A nova infraestrutura em ${SEDE} é recente.`)).toHaveLength(1);
+    expect(locaisNaFrase(`obra em Porto Fictício/TO e sede em ${SEDE}`, SEDE).sort()).toEqual(['cidade ficticia', 'cidade ficticia/mt', 'porto ficticio', 'porto ficticio/to']);
+  });
+  it('o modelo não recebe audiencia.local cru: no primeiro contato o local da conta nem vai; nos demais vai rotulado; regras relacionais sempre', () => {
+    const spec = specDe(); const s = specParaLlm(spec) as { audiencia: Record<string, unknown>; localEmpresa?: unknown; regrasRelacionais: string[] };
+    expect(s.audiencia.local).toBeUndefined(); expect(s.localEmpresa).toBeUndefined(); expect(JSON.stringify(s)).not.toContain(SEDE);
+    expect(s.regrasRelacionais).toEqual(REGRAS_RELACIONAIS); expect(REGRAS_RELACIONAIS.join(' ')).toMatch(/sede\/conta.*não é a localização/);
+    const depois = specParaLlm({ ...spec, objetivo: 'FOLLOW_UP' }) as { localEmpresa?: { valor: string; usoPermitido: string } };
+    expect(depois.localEmpresa).toEqual({ valor: SEDE, usoPermitido: expect.stringMatching(/somente localização corporativa.*não atribuir ao sinal/) });
+    expect(PROMPT_JUIZ_V3).toMatch(/combina fatos verdadeiros isoladamente/); expect(PROMPT_JUIZ_V3).toMatch(/localização da empresa \(sede\/conta\) não é localização do projeto/);
+  });
+  it('regressão orquestrada (mock): "infraestrutura em <sede>" é barrada pelo fact gate, a regeneração sem o local passa e o juiz aprova', async () => {
+    const spec = specDe(); const saidas = [injetar(`Vi a nova infraestrutura de armazenagem em ${SEDE}.`), APROVADO]; const mensagens: string[] = [];
+    const portas: PortasLlm = {
+      gerar: async (m) => { mensagens.push(m); return { json: { primary: saidas.shift()!, alternatives: [], subject: 'quem responde por engenharia e implantação na Agroindústria Fictícia Ltda.?', claims_used: spec.allowedClaims.filter((c) => c.tipo === 'TECHNICAL_CLAIM').map((c) => c.id) }, modelo: 'mock', inputTokens: 1, outputTokens: 1, latenciaMs: 1 }; },
+      julgar: async (m) => ({ json: /infraestrutura[^.]*em cidade fict/i.test(m.normalize('NFD').replace(/\p{M}/gu, '')) ? { verdict: 'FAIL', reasons: ['local da conta atribuído ao evento'] } : { verdict: 'PASS', reasons: [] }, modelo: 'mock', inputTokens: 1, outputTokens: 1, latenciaMs: 1 }),
+    };
+    const r = await orquestrarGeracaoLlm(spec, portas);
+    expect(mensagens).toHaveLength(2); expect(mensagens[1]).toContain('local do evento não suportado pelo sinal'); expect(r.validacao.regenerado).toBe(true);
   });
 });
