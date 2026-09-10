@@ -99,6 +99,7 @@ interface Refs {
   itensEstoque: Map<string, string>;
   movEstoque: Map<string, string>;
   treinamentos: Map<string, string>;
+  fotos: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -178,6 +179,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const [pedidosRows, pedidosItens, conjuntosRows, avancosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark'), selTodos('service_progress', 'measured_on')]);
   const [estacaoRows, romaneioRows, stockItems, stockMovs] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number'), selTodos('stock_item', 'code'), selTodos('stock_movement', 'moved_on')]);
   const trainingRows = await selTodos('training_progress', 'completed_at');
+  const fotoRows = await selTodos('field_photo', 'taken_at'); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -232,6 +234,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     itensEstoque: new Map(stockItems.map((x) => [x.id, x.id])),
     movEstoque: new Map(stockMovs.map((x) => [x.id, x.id])),
     treinamentos: new Map(trainingRows.map((x) => [x.id, x.id])),
+    fotos: new Map(fotoRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -340,7 +343,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], radar: radarVazio(),
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], fotos: [], radar: radarVazio(),
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -373,6 +376,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
   ds.movimentosEstoque = stockMovs.map((x) => ({ id: x.id, data: x.moved_on, tipo: x.kind, itemId: x.item_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], quantidade: Number(x.quantity_kg), pecas: x.pieces != null ? Number(x.pieces) : undefined, corrida: x.heat_number ?? undefined, certificado: x.certificate ?? undefined, fornecedor: x.supplier ?? undefined, pedidoId: x.purchase_order_id ?? undefined, notaFiscal: x.invoice ?? undefined, custoUnitario: Number(x.unit_cost ?? 0), origemId: x.origin_id ?? undefined, origemTipo: x.origin_kind ?? undefined, observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.treinamentos = trainingRows.map((x) => ({ id: x.id, usuarioId: x.user_id, licaoId: x.lesson_id, concluidoEm: x.completed_at, acertos: x.score != null ? Number(x.score) : undefined }));
+  ds.fotos = fotoRows.map((x) => ({ id: x.id, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? '' : '', referenciaTipo: x.ref_type, referenciaId: x.ref_id, tomadaEm: x.taken_at, tomadaPor: x.taken_by ?? '', nota: x.note ?? undefined, dataUrl: x.data_url }));
   ds.radar = await carregarRadar({ sel: selTodos, orgId: org.id });
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
@@ -404,6 +408,9 @@ async function gravar(tabela: string, filtro: Record<string, string | null | und
   falha(`inserir ${tabela}`, error);
   return data?.[0];
 }
+
+/** O provedor remoto ja carregou (refs prontas) e pode gravar. */
+export const remotoPronto = () => !!supabase && !!refs;
 
 export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: string): Promise<void> {
   if (!supabase || !refs) throw new RemotoError('Provider remoto não inicializado.');
@@ -810,6 +817,19 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     const { error } = await sb.from('training_progress').delete().eq('id', r.treinamentos.get(t.id)!);
     falha('desfazer lição', error);
     r.treinamentos.delete(t.id);
+  }
+
+  // fotos de campo (imutaveis: insere as novas, apaga as removidas)
+  for (const f of (depois.fotos ?? []).filter((x) => !r.fotos.get(x.id))) {
+    const { data, error } = await sb.from('field_photo').insert({ organization_id: r.orgId, project_id: f.codigoObra ? r.obras.get(f.codigoObra) ?? null : null, ref_type: f.referenciaTipo, ref_id: f.referenciaId, taken_at: f.tomadaEm, taken_by: atorId, note: f.nota ?? null, data_url: f.dataUrl }).select('id');
+    falha('registrar foto de campo', error);
+    if (data?.[0]) r.fotos.set(f.id, data[0].id);
+  }
+  const fotoDepois = new Set((depois.fotos ?? []).map((f) => f.id));
+  for (const f of (antes.fotos ?? []).filter((x) => !fotoDepois.has(x.id) && r.fotos.get(x.id))) {
+    const { error } = await sb.from('field_photo').delete().eq('id', r.fotos.get(f.id)!);
+    falha('excluir foto de campo', error);
+    r.fotos.delete(f.id);
   }
 
   // EIFF Radar

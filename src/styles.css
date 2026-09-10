@@ -617,3 +617,10 @@ input.moeda { text-align: right; font-variant-numeric: tabular-nums; }
 .cenario-controles label.field > span b { color: var(--brand); }
 input[type="range"] { width: 100%; padding: 0; height: 22px; background: transparent; border: none; accent-color: var(--brand); box-shadow: none; }
 input[type="range"]:focus { box-shadow: none; }
+
+/* bloco 4: modo campo offline e fotos */
+.fotos-campo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.fotos-campo .miniaturas { display: flex; gap: 6px; flex-wrap: wrap; }
+.fotos-campo .miniatura { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-strong); background: var(--surface-2); }
+.fotos-campo .miniatura img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
+.fotos-campo .miniatura .apagar { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: none; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; line-height: 18px; padding: 0; cursor: pointer; }

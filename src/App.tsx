@@ -44,7 +44,7 @@ const PosicaoDiaria = lazy(() => import('./screens/Tesouraria').then((m) => ({ d
 
 export default function App() {
   const rota = useRota();
-  const { ds, usuario, modo, carregando, sessao, sync, erroInicial } = useStore();
+  const { ds, usuario, modo, carregando, sessao, sync, erroInicial, pendencias } = useStore();
   useEffect(() => { void inicializar(); }, []);
   // todos os hooks antes de qualquer saida antecipada (regra dos hooks)
   const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
@@ -154,6 +154,7 @@ export default function App() {
           <div className="spacer" />
           <span className="small">{usuario.nome.split(' ')[0]}</span>
           {modo === 'remoto' && sync.status === 'erro' && <Badge tone="bad">não sincronizado</Badge>}
+          {modo === 'remoto' && sync.status === 'pendente' && <Badge tone="warn" title={sync.msg}>offline · guardado no aparelho</Badge>}
           {modo === 'remoto' && <button className="btn sm" onClick={() => void actions.sair()}>Sair</button>}
         </header>
         <main className="content" style={{ padding: 14 }}><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}>{tela}</Revelar></Suspense></main>
@@ -196,12 +197,19 @@ export default function App() {
             <>
               {sync.status === 'enviando' && <Badge tone="info">sincronizando…</Badge>}
               {sync.status === 'ok' && <Badge tone="ok">Supabase · sincronizado{sync.em ? ` ${dataHora(sync.em)}` : ''}</Badge>}
+              {sync.status === 'pendente' && (
+                <span className="actions">
+                  <Badge tone="warn" title={sync.msg}>offline · alterações guardadas neste aparelho{sync.desde ? ` desde ${dataHora(sync.desde)}` : ''}</Badge>
+                  <button className="btn sm" onClick={() => actions.tentarNovamente()}>Enviar agora</button>
+                </span>
+              )}
               {sync.status === 'erro' && (
                 <span className="actions">
                   <Badge tone="bad">não sincronizado</Badge>
                   <span className="small neg" title={sync.msg}>{(sync.msg ?? '').slice(0, 80)}</span>
                   <button className="btn sm" onClick={() => actions.tentarNovamente()}>Tentar de novo</button>
                   <button className="btn sm" onClick={() => void actions.recarregar()}>Recarregar</button>
+                  {pendencias && <button className="btn sm danger" onClick={() => { if (window.confirm('Descartar as alterações feitas offline que não puderam ser aplicadas?')) void actions.descartarPendencias(); }}>Descartar pendências</button>}
                 </span>
               )}
               <span className="small"><b>{usuario.nome}</b> · {usuario.papel}</span>

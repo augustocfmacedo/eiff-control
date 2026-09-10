@@ -729,6 +729,18 @@ export interface FechamentoPeriodo {
   reaberto?: { em: string; por: string; motivo: string };
 }
 
+/** Foto de campo (modo campo offline): evidencia ligada a ordem, tarefa, demanda, apontamento ou obra; imagem comprimida em data URL. */
+export interface Foto {
+  id: string;
+  codigoObra: string;
+  referenciaTipo: 'ordem' | 'tarefa' | 'demanda' | 'apontamento' | 'obra';
+  referenciaId: string;
+  tomadaEm: string;
+  tomadaPor: string;
+  nota?: string;
+  dataUrl: string;
+}
+
 export interface Dataset {
   params: Params;
   planoContas: PlanoConta[];
@@ -761,5 +773,6 @@ export interface Dataset {
   itensEstoque: ItemEstoque[];
   movimentosEstoque: MovimentoEstoque[];
   treinamentos: Treinamento[];
+  fotos: Foto[]; // fotos de campo (field_photo)
   radar: RadarDataset; // EIFF Radar (src/core/radar)
 }

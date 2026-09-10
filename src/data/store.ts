@@ -6,6 +6,7 @@
 import { useSyncExternalStore } from 'react';
 import seed from './seed.json';
 import type {
+  Foto,
   Treinamento,
   ItemEstoque,
   MovimentoEstoque,
@@ -53,7 +54,9 @@ import type { ComunicacaoRadar } from '../core/radar/types';
 import { PAPEIS_RADAR } from '../core/radar/comunicacaoLlm';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, sessaoAtual } from './supabase';
+import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
+import { ehErroDeRede } from './rede';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
 const USER_KEY = 'eiff-control:usuario';
@@ -68,7 +71,8 @@ export class RegraDeNegocioError extends Error {
 // Estado
 // ---------------------------------------------------------------------------
 export interface SyncStatus {
-  status: 'ok' | 'enviando' | 'erro' | 'local';
+  status: 'ok' | 'enviando' | 'erro' | 'local' | 'pendente'; // pendente: sem rede, alteracoes guardadas neste aparelho e reenviadas sozinhas
+  desde?: string;
   msg?: string;
   em?: string;
 }
@@ -81,6 +85,7 @@ interface State {
   sessao: boolean;
   sync: SyncStatus;
   erroInicial?: string;
+  pendencias?: boolean; // ha alteracoes offline guardadas neste aparelho ainda nao aplicadas no Supabase
 }
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -141,11 +146,51 @@ function sincronizar(depois: Dataset) {
     try {
       await persistirRemoto(antes, depois, state.usuario.id);
       baseSincronizada = depois;
+      await apagarPendente();
+      state = { ...state, pendencias: false };
       setSync({ status: 'ok', em: new Date().toISOString() });
     } catch (e) {
-      setSync({ status: 'erro', msg: (e as Error).message });
+      if (ehErroDeRede(e)) {
+        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu) e volta a ser enviado sozinho
+        await guardarPendente({ usuarioId: state.usuario.id, base: antes, ds: depois, em: new Date().toISOString() });
+        state = { ...state, pendencias: true };
+        setSync({ status: 'pendente', msg: 'sem conexão: alterações guardadas neste aparelho', desde: state.sync.desde ?? new Date().toISOString() });
+        agendarRetentativa();
+      } else setSync({ status: 'erro', msg: (e as Error).message });
     }
   });
+}
+let retentativa: number | undefined;
+function agendarRetentativa(ms = 30_000) {
+  if (retentativa !== undefined || typeof window === 'undefined') return;
+  retentativa = window.setTimeout(() => { retentativa = undefined; if (state.modo === 'remoto' && state.sync.status === 'pendente') actions.tentarNovamente(); }, ms);
+}
+if (typeof window !== 'undefined') window.addEventListener('online', () => { if (state.modo === 'remoto' && (state.sync.status === 'pendente' || !remotoPronto())) actions.tentarNovamente(); });
+
+/** Carrega o remoto e aplica o que ficou pendente offline (diff contra a base que o usuario viu). Sem rede, abre com o cache. */
+async function carregarComPendentes(): Promise<{ ds: Dataset; usuario: Usuario; offline: boolean; aviso?: string }> {
+  try {
+    let { ds: dsRemoto, usuario } = await carregarRemoto();
+    const p = await lerPendente();
+    if (p && p.usuarioId === usuario.id) {
+      try { await persistirRemoto(p.base, p.ds, usuario.id); await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
+      catch (e) {
+        if (ehErroDeRede(e)) throw e;
+        // conflito ou regra: mantem as alteracoes locais na tela e a pendencia guardada; o usuario decide entre tentar de novo e descartar
+        baseSincronizada = p.base; state = { ...state, pendencias: true };
+        return { ds: p.ds, usuario, offline: false, aviso: `alterações feitas offline não foram aplicadas: ${(e as Error).message}` };
+      }
+    }
+    await guardarCache({ ds: dsRemoto, usuario });
+    return { ds: dsRemoto, usuario, offline: false };
+  } catch (e) {
+    if (!ehErroDeRede(e)) throw e;
+    const c = await lerCache(); if (!c) throw e;
+    const p = await lerPendente();
+    if (p && p.usuarioId === c.usuario.id) { baseSincronizada = p.base; state = { ...state, pendencias: true }; return { ds: p.ds, usuario: c.usuario, offline: true }; }
+    baseSincronizada = c.ds;
+    return { ds: c.ds, usuario: c.usuario, offline: true };
+  }
 }
 
 function commit(ds: Dataset) {
@@ -179,11 +224,11 @@ export async function inicializar(): Promise<void> {
     state = { ...state, carregando: true, erroInicial: undefined };
     emit();
     try {
-      const { ds: dsRemoto, usuario } = await carregarRemoto();
+      const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
       const ds = garantirPadroesRadar(dsRemoto);
-      baseSincronizada = dsRemoto;
-      if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds);
-      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: { status: 'ok', em: new Date().toISOString() } };
+      if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
+      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
+      if (offline) agendarRetentativa();
       emit();
       ajustarDataBase();
     } catch (e) {
@@ -427,9 +472,17 @@ export const actions = {
     emit();
   },
 
-  /** Reenvia ao Supabase tudo que ficou pendente desde a ultima sincronizacao bem-sucedida. */
+  /** Reenvia ao Supabase tudo que ficou pendente desde a ultima sincronizacao bem-sucedida. Se o app abriu sem rede (provedor nao carregado), recarrega primeiro. */
   tentarNovamente() {
-    if (state.modo === 'remoto') sincronizar(state.ds);
+    if (state.modo !== 'remoto') return;
+    if (!remotoPronto()) { void actions.recarregar(); return; }
+    sincronizar(state.ds);
+  },
+
+  /** Descarta as alteracoes guardadas offline (quando nao puderam ser aplicadas) e recarrega do Supabase. */
+  async descartarPendencias() {
+    await apagarPendente(); state = { ...state, pendencias: false }; baseSincronizada = null;
+    await actions.recarregar();
   },
 
   async recarregar() {
@@ -437,11 +490,11 @@ export const actions = {
     state = { ...state, carregando: true, erroInicial: undefined };
     emit();
     try {
-      const { ds: dsRemoto, usuario } = await carregarRemoto();
+      const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
       const ds = garantirPadroesRadar(dsRemoto);
-      baseSincronizada = dsRemoto;
-      if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds);
-      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: { status: 'ok', em: new Date().toISOString() } };
+      if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
+      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
+      if (offline) agendarRetentativa();
     } catch (e) {
       state = { ...state, carregando: false, erroInicial: (e as Error).message };
       emit();
@@ -1871,6 +1924,26 @@ export const actions = {
     ds = registrar({ ...ds, radar: { ...r, comunicacoes: r.comunicacoes.map((x) => (x.id === id ? novo : x)) } }, 'radar_editar_comunicacao', 'radar_comunicacao', id, undefined, { chars: texto.length });
     commit(ds);
     return novo;
+  },
+
+  /** Foto de campo: evidencia ligada a ordem, tarefa, demanda, apontamento ou obra (imagem ja comprimida em data URL). */
+  registrarFoto(f: Omit<Foto, 'id' | 'tomadaEm' | 'tomadaPor'>): Foto {
+    let ds = state.ds;
+    if (f.codigoObra) exigir('comentar', f.codigoObra);
+    if (!f.dataUrl.startsWith('data:image/')) throw new RegraDeNegocioError('Foto inválida.');
+    if (f.dataUrl.length > 800_000) throw new RegraDeNegocioError('Foto grande demais (limite 800 KB depois de comprimida).');
+    const foto: Foto = { ...f, id: `FOTO-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, tomadaEm: agora(), tomadaPor: state.usuario.id };
+    ds = registrar({ ...ds, fotos: [...(ds.fotos ?? []), foto] }, 'registrar_foto', f.referenciaTipo, f.referenciaId, undefined, { obra: f.codigoObra, bytes: f.dataUrl.length });
+    commit(ds);
+    return foto;
+  },
+  excluirFoto(id: string) {
+    let ds = state.ds;
+    const f = (ds.fotos ?? []).find((x) => x.id === id);
+    if (!f) throw new RegraDeNegocioError('Foto não encontrada.');
+    if (f.tomadaPor !== state.usuario.id && !pode(state.usuario, 'editar_obra', f.codigoObra || undefined)) throw new RegraDeNegocioError('Só quem tirou a foto (ou quem edita a obra) pode excluí-la.');
+    ds = registrar({ ...ds, fotos: (ds.fotos ?? []).filter((x) => x.id !== id) }, 'excluir_foto', f.referenciaTipo, f.referenciaId, { id }, undefined);
+    commit(ds);
   },
 
   novaTarefaRadar(empresaId: string, parcial: Partial<TarefaRadar> = {}): TarefaRadar {

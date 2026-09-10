@@ -101,8 +101,8 @@ export function PrintHead({ titulo, subtitulo }: { titulo: string; subtitulo?: s
 }
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'info' | 'muted';
-export function Badge({ tone = 'muted', children }: { tone?: Tone; children: React.ReactNode }) {
-  return <span className={`badge ${tone}`}>{children}</span>;
+export function Badge({ tone = 'muted', children, title }: { tone?: Tone; children: React.ReactNode; title?: string }) {
+  return <span className={`badge ${tone}`} title={title}>{children}</span>;
 }
 
 export const toneStatus = (s: string): Tone =>

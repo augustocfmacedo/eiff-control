@@ -1,16 +1,42 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { carteiraObras } from '../core/engine';
 import { calcTarefas, locaisDoDia } from '../core/equipe';
 import { resumoProducao } from '../core/obras';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Empty, tentar, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
+import { comprimirFoto } from '../ui/foto';
+import type { Foto } from '../core/types';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 
+/** Botao de foto do modo campo: abre a camera, comprime e registra a evidencia ligada ao item; miniaturas com exclusao. */
+function BotaoFoto({ codigoObra, tipo, refId, onErro, onOk }: { codigoObra: string; tipo: Foto['referenciaTipo']; refId: string; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { ds, usuario } = useStore();
+  const input = useRef<HTMLInputElement>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const fotos = (ds.fotos ?? []).filter((f) => f.referenciaTipo === tipo && f.referenciaId === refId);
+  const escolher = async (arquivo?: File) => {
+    if (!arquivo) return;
+    setOcupado(true);
+    try { const dataUrl = await comprimirFoto(arquivo); actions.registrarFoto({ codigoObra, referenciaTipo: tipo, referenciaId: refId, dataUrl }); onOk('Foto registrada.'); }
+    catch (e) { onErro((e as Error).message); }
+    finally { setOcupado(false); if (input.current) input.current.value = ''; }
+  };
+  return (
+    <div className="fotos-campo">
+      <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void escolher(e.target.files?.[0])} />
+      <button className="btn" disabled={ocupado} onClick={() => input.current?.click()}>{ocupado ? 'Comprimindo…' : `📷 Foto${fotos.length ? ` (${fotos.length})` : ''}`}</button>
+      {fotos.length > 0 && <div className="miniaturas">{fotos.slice(-6).map((f) => (
+        <span key={f.id} className="miniatura"><img src={f.dataUrl} alt="foto de campo" loading="lazy" onClick={() => window.open(f.dataUrl, '_blank')} />{(f.tomadaPor === usuario.id || pode(usuario, 'editar_obra', codigoObra || undefined)) && <button className="apagar" title="Excluir foto" aria-label="Excluir foto" onClick={() => { if (window.confirm('Excluir esta foto?')) tentar(() => actions.excluirFoto(f.id), onErro); }}>×</button>}</span>
+      ))}</div>}
+    </div>
+  );
+}
+
 /** Modo campo: tela simplificada para celular, usada no canteiro e na fabrica. */
 export default function Campo({ secao }: { secao?: string }) {
-  const { ds, usuario } = useStore();
+  const { ds, usuario, sync } = useStore();
   const { toast, el } = useToast();
   const [bloq, setBloq] = useState<{ id: string; motivo: string } | null>(null);
   const hoje = ds.params.dataBase;
@@ -26,7 +52,7 @@ export default function Campo({ secao }: { secao?: string }) {
 
   const Home = () => (
     <div>
-      <p className="muted small">Olá, {usuario.nome.split(' ')[0]}. {d(hoje)}.</p>
+      <p className="muted small">Olá, {usuario.nome.split(' ')[0]}. {d(hoje)}.{sync.status === 'pendente' && <> <Badge tone="warn">offline · guardado no aparelho</Badge></>}{sync.status === 'erro' && <> <Badge tone="bad">não sincronizado</Badge></>}</p>
       <button className="btn primary" style={big} onClick={() => navegar('/campo/dia')}>📋 Apontar o dia <span className="muted small" style={{ float: 'right', color: 'inherit' }}>{locais.filter((l) => l.apontamento?.status === 'Fechado').length}/{locais.length} fechados</span></button>
       <button className="btn" style={big} onClick={() => navegar('/campo/tarefas')}>✅ Minhas tarefas <span style={{ float: 'right' }}>{tarefas.length}{tarefas.some((t) => t.atrasada) && <Badge tone="bad">atrasadas</Badge>}</span></button>
       <button className="btn" style={big} onClick={() => navegar('/campo/checklist')}>☑️ Check-list de hoje <span style={{ float: 'right' }}>{demandas.length} pendente(s)</span></button>
@@ -59,6 +85,7 @@ export default function Campo({ secao }: { secao?: string }) {
             <button className="btn primary" onClick={() => tentar(() => actions.moverTarefa(t.id, 'Concluída'), toast, () => toast('Tarefa concluída.'))}>Concluir</button>
             {t.status !== 'Bloqueada' && <button className="btn" onClick={() => setBloq({ id: t.id, motivo: '' })}>Bloquear</button>}
           </div>
+          <BotaoFoto codigoObra={t.codigoObra ?? ''} tipo="tarefa" refId={t.id} onErro={toast} onOk={toast} />
         </div>
       ))}
     </div>
@@ -70,7 +97,7 @@ export default function Campo({ secao }: { secao?: string }) {
       {demandas.length === 0 ? <Empty>Tudo concluído por hoje.</Empty> : demandas.map((dm) => (
         <label key={dm.id} className="card" style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, cursor: 'pointer' }}>
           <input type="checkbox" style={{ width: 24, height: 24 }} checked={dm.concluidaNoPeriodo} onChange={(e) => tentar(() => actions.concluirDemanda(dm.id, e.target.checked), toast)} />
-          <span><b>{dm.titulo}</b><div className="muted small">{dm.obra} · {dm.periodicidade} · até {d(dm.prazoPeriodo)}</div></span>
+          <span><b>{dm.titulo}</b><div className="muted small">{dm.obra} · {dm.periodicidade} · até {d(dm.prazoPeriodo)}</div><span onClick={(e) => e.preventDefault()}><BotaoFoto codigoObra={dm.obra} tipo="demanda" refId={dm.id} onErro={toast} onOk={toast} /></span></span>
         </label>
       ))}
     </div>
@@ -85,6 +112,7 @@ export default function Campo({ secao }: { secao?: string }) {
           <div className="small">{o.descricao} · {o.quantidade} {o.unidade}</div>
           <div className="muted small">etapa atual: <b>{o.etapaAtual}</b> · {o.dataNecessidade ? `necessidade ${d(o.dataNecessidade)}` : 'sem data'}</div>
           <div className="progress" style={{ margin: '6px 0' }}><i style={{ width: `${o.pctConcluido * 100}%` }} /></div>
+          <BotaoFoto codigoObra={o.codigoObra} tipo="ordem" refId={o.id} onErro={toast} onOk={toast} />
           {pode(usuario, 'editar_lancamento', o.codigoObra) && o.etapaAtualIdx >= 0 && (
             <div className="actions">
               {o.etapas[o.etapaAtualIdx].status !== 'Em andamento' && <button className="btn" onClick={() => tentar(() => actions.avancarEtapa(o.id, o.etapaAtualIdx, 'Em andamento'), toast)}>Iniciar {o.etapaAtual}</button>}
