@@ -40,15 +40,24 @@ Os dois POST estão documentados aqui apenas para registro. **Nenhum é chamado 
 - **Filtros** (`/chat`, `/chat/templates-message`): estilo *deepObject*, array de
   `{ property, operator, value }`. Em `/chat` os operadores são `eq, ne, lt, gt, le, ge, in, nin`;
   em `/chat/templates-message` só `eq`, sobre `name`, `status` e `category`.
+- **Telefone do contato no filtro de `/chat`**: a propriedade é `contact.phoneContacts.number`.
+  O `ContactsPayload` tem `phoneContacts[]` com `number` e `countryCode`; a spec não enumera a lista
+  de propriedades filtráveis, então esse nome foi confirmado contra a documentação atual (Send Safety
+  Patch 01) e vive numa constante única, `PROPRIEDADE_TELEFONE`.
 - **Status de template**: `pending`, `approved`, `rejected` (mais o booleano `enable`).
   Só `approved` + `enable` serve para abrir conversa nova.
 - **Status de chat**: `waiting`, `talking`, `closed`, `missed`, `started`, `offline`, `hidden`.
   `ChatList` traz `id`, `number`, `channel`, `status`, `statusDetail`, `contact`, `agent`,
   `lastMessageDate`, `createdAt`, `updatedAt`, `closedAt`, `unreadMessages`, `withBot`, `tags`.
 - **Mensagem** (`GET /chat/{id}/messages`): `id`, `chatId`, `time`, `type` (`public`/`internal`),
-  `body`, `status` (`sending, sended, received, read, error, deleted, scheduled, spam`), `sentBy`,
-  `readAt`, `attachments[]`, `errorSource`, `errorCode`, `errorMessage`. Exige `property` e
-  `direction` para ordenação.
+  `body`, `status`, `sentBy`, `readAt`, `attachments[]`, `errorSource`, `errorCode`, `errorMessage`.
+  Exige `property` e `direction` para ordenação.
+- **Direção da mensagem: só `sentBy.type`.** A doc define `sentBy.type` como *"Person type, if is an
+  agent or a contact"*. O `status` **não** indica direção: `received` é *"Delivered to recipient"*,
+  ou seja, **mensagem nossa entregue**, não mensagem recebida do contato. Os demais valores são
+  `sending` (em transmissão), `sended` (enviada), `read` (lida), `error`, `deleted`, `scheduled`,
+  `spam`. Não existe campo direcional explícito, então sem `sentBy.type` a direção é **desconhecida** —
+  e desconhecida nunca prova nada.
 - **`POST /chat/send-template`** (para quando houver piloto): corpo com `origin.contact`
   (nosso número, `channel: 'whatsapp'`, `code`), `target.contact` (número do prospect, `name`,
   `email`), `content.templateMessage` (`id` **ou** `code`, `variables[{key,value}]`) e
@@ -61,6 +70,19 @@ Os dois POST estão documentados aqui apenas para registro. **Nenhum é chamado 
 Vários GET declaram **`201`** como status de sucesso (não `200`). O cliente aceita qualquer `2xx`,
 por isso não depende desse detalhe.
 
+## Janela de atendimento (customer service window)
+
+A janela livre de 24 h da Meta só pode ser considerada aberta com **prova de mensagem recebida do
+contato**. O campo `lastMessageDate` do chat **não serve sozinho**: ele também avança quando a última
+mensagem foi nossa, o que abriria mensagem livre sem direito.
+
+Regra implementada (`avaliarJanelaLivre`): ao encontrar a conversa candidata, o servidor lê
+`GET /chat/{id}/messages` e procura a mensagem pública mais recente com `sentBy.type` de contato.
+A janela só é dada como ativa quando essa mensagem existe e está dentro das 24 h. Sem histórico, só
+com mensagens nossas, com direção indeterminada ou com data inválida, a janela **não é comprovada** e
+o caminho volta para template aprovado (ou `NEEDS_REVIEW`, conforme o caso). A conversa carrega
+`ultimaMensagemInboundEm`, `janelaLivreAte` e `janelaComprovada` para a decisão ficar auditável.
+
 ## Idempotência: NÃO GARANTIDA
 
 A documentação **não descreve** header de idempotência, chave de deduplicação nem qualquer mecanismo
@@ -72,11 +94,31 @@ Isso evita duplo clique, mas **não resolve** o cenário crítico:
 
 > a Octadesk aceita a mensagem, a nossa função perde a resposta (timeout/queda), o usuário tenta de novo.
 
-Antes de qualquer piloto de envio é preciso fechar a reconciliação desse caso. Caminho previsto:
-gravar a entrega como `REQUESTED` **antes** da chamada; em caso de resposta perdida, marcar `UNKNOWN`
-e reconciliar por `GET /chat` (busca do chat pelo telefone do contato) + `GET /chat/{id}/messages`
-comparando `time` e `body` com a janela do pedido, antes de permitir nova tentativa.
-**Enquanto isso não estiver implementado e testado, o envio fica desligado.**
+Caminho implementado no Send Safety Patch 01 (ainda sem envio): a entrega nasce `READY`, vai para
+`REQUESTED` **antes** da chamada e, se a resposta se perder, termina em `UNKNOWN`. A reconciliação
+(`reconcileDelivery`) lê `GET /chat` (pelo telefone) e `GET /chat/{id}/messages` e compara a
+**impressão** da mensagem — hash canônico do corpo, calculado em trânsito no servidor, nunca gravado
+em texto claro — com a impressão esperada do que queríamos enviar:
+
+| Situação | Resultado |
+| --- | --- |
+| nenhuma mensagem de saída na janela do pedido | `NOT_FOUND` |
+| exatamente uma com a nossa impressão | `FOUND` |
+| sem impressão para comparar, nenhuma igual, mais de uma igual, ou mais de uma conversa para o número | `AMBIGUOUS` |
+
+`AMBIGUOUS` **nunca** autoriza reenvio automático, e `UNKNOWN` também não: só decisão humana
+(`permiteReenvioAutomatico`). `UNKNOWN` é estado terminal na máquina — sair dele vai exigir regra
+aprovada numa fase futura; a reconciliação informa, mas não transiciona sozinha.
+**Enquanto o piloto não for liberado, o envio fica desligado.**
+
+## Máquina de estados da entrega
+
+`READY → REQUESTED`; `REQUESTED → ACCEPTED | FAILED | UNKNOWN`; `ACCEPTED → DELIVERED | FAILED | UNKNOWN`.
+`DELIVERED`, `FAILED` e `UNKNOWN` são terminais; regressão não existe. A regra vive em dois lugares
+que se espelham: `TRANSICOES_ENTREGA` no core e o trigger `radar_delivery_estado` no banco
+(migration 0046), que é a **única** porta de mudança de status e produz o evento correspondente em
+`radar_communication_delivery_event` — tabela append-only, com `SELECT` como único privilégio de
+usuário autenticado.
 
 ## Webhook de entrada: NÃO DOCUMENTADO
 

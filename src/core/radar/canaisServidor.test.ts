@@ -1,7 +1,7 @@
 // Channel Provider 01 no servidor: autenticacao, read-only e a garantia de que nenhum caminho chama POST de mensagem.
 // Nenhuma chamada real ao Octadesk: tudo por fetch mockado.
 import { describe, expect, it } from 'vitest';
-import { normalizarConversas, normalizarMensagens, normalizarNumeros, normalizarTemplates, tratarCanal, validarPedidoCanal, type DepsCanal } from './canaisServidor';
+import { PROPRIEDADE_TELEFONE, normalizarConversas, normalizarMensagens, normalizarNumeros, normalizarTemplates, tratarCanal, validarPedidoCanal, type DepsCanal } from './canaisServidor';
 
 const URL_SB = 'https://sb.test';
 const OCTA = 'https://api.octadesk.test';
@@ -10,7 +10,7 @@ const CONTATO = '22222222-2222-2222-2222-222222222222';
 const EMPRESA = '33333333-3333-3333-3333-333333333333';
 const ORG = '44444444-4444-4444-4444-444444444444';
 
-interface Cenario { perfil?: { role?: string; organization_id?: string } | null; autenticado?: boolean; comunicacao?: Record<string, unknown> | null; contato?: Record<string, unknown> | null; numeros?: unknown; templates?: unknown; chats?: unknown; authCheck?: unknown; erroOcta?: number }
+interface Cenario { perfil?: { role?: string; organization_id?: string } | null; autenticado?: boolean; comunicacao?: Record<string, unknown> | null; contato?: Record<string, unknown> | null; numeros?: unknown; templates?: unknown; chats?: unknown; mensagens?: unknown; authCheck?: unknown; erroOcta?: number }
 function ambiente(c: Cenario = {}) {
   const chamadas: { url: string; metodo: string }[] = [];
   const j = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -26,6 +26,7 @@ function ambiente(c: Cenario = {}) {
     if (u.startsWith(`${OCTA}/auth/check`)) return j(c.authCheck ?? true);
     if (u.startsWith(`${OCTA}/chat/numbers`)) return j(c.numeros ?? [{ id: 'n1', name: 'Comercial', number: '556230000000' }]);
     if (u.startsWith(`${OCTA}/chat/templates-message`)) return j(c.templates ?? [{ id: 't1', name: 'primeiro_contato', status: 'approved', category: 'MARKETING', enable: true, components: [{ type: 'body', message: 'oi {{1}}', variables: [{ key: 'nome' }] }] }]);
+    if (/\/chat\/[^/]+\/messages/.test(u)) return j(c.mensagens ?? []);
     if (u.startsWith(`${OCTA}/chat`)) return j(c.chats ?? []);
     return j({}, 404);
   }) as unknown as typeof fetch;
@@ -54,9 +55,16 @@ describe('normalizadores da API Octadesk', () => {
     const c = normalizarConversas([{ id: 'c1', status: 'talking', channel: 'whatsapp', lastMessageDate: 'x' }, { id: 'c2', status: 'closed' }, { id: 'c3', status: 'waiting' }, { id: 'c4', status: 'missed' }]);
     expect(c.map((x) => x.aberta)).toEqual([true, false, true, false]);
   });
-  it('mensagens: received é entrada, internal é marcada', () => {
-    const m = normalizarMensagens([{ id: 'm1', chatId: 'c1', time: 't', status: 'received', type: 'public' }, { id: 'm2', chatId: 'c1', time: 't', status: 'sended', type: 'internal' }]);
-    expect(m[0].direcao).toBe('entrada'); expect(m[1].direcao).toBe('saida'); expect(m[1].interna).toBe(true);
+  it('mensagens: direção vem de sentBy.type, o corpo nunca sai e a impressão é hash', () => {
+    const m = normalizarMensagens([
+      { id: 'm1', chatId: 'c1', time: 't', status: 'received', type: 'public', body: 'texto secreto', sentBy: { type: 'contact' } },
+      { id: 'm2', chatId: 'c1', time: 't', status: 'sended', type: 'internal', sentBy: { type: 'agent' } },
+      { id: 'm3', chatId: 'c1', time: 't', status: 'received', type: 'public' },
+    ]);
+    expect(m.map((x) => x.direcao)).toEqual(['entrada', 'saida', 'desconhecida']); // "received" sozinho não é entrada
+    expect(m[1].interna).toBe(true);
+    expect(m[0].impressao).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(m)).not.toContain('texto secreto');
   });
 });
 
@@ -114,11 +122,41 @@ describe('/api/channel/octadesk', () => {
     expect(String(r.corpo.telefoneMascarado)).not.toContain('99999');
     expect(JSON.stringify(r.corpo)).not.toContain('segredo-nunca-vaza');
   });
-  it('verificar: conversa aberta recente → SENDABLE_FREEFORM', async () => {
+  it('verificar: conversa aberta COM mensagem do contato nas últimas 24 h → SENDABLE_FREEFORM', async () => {
     const chats = [{ id: 'chat-1', status: 'talking', channel: 'whatsapp', lastMessageDate: '2026-09-10T09:00:00.000Z' }];
-    const r = await tratarCanal(req({ acao: 'verificar', comunicacaoId: COM }), ambiente({ chats }).deps);
+    const mensagens = [{ id: 'm1', chatId: 'chat-1', time: '2026-09-10T09:00:00.000Z', type: 'public', status: 'received', body: 'oi', sentBy: { id: 'x', type: 'contact' } }];
+    const r = await tratarCanal(req({ acao: 'verificar', comunicacaoId: COM }), ambiente({ chats, mensagens }).deps);
     expect((r.corpo.entregabilidade as { resultado: string }).resultado).toBe('SENDABLE_FREEFORM');
-    expect((r.corpo.conversa as { id: string }).id).toBe('chat-1');
+    const conversa = r.corpo.conversa as { id: string; janelaComprovada: boolean; ultimaMensagemInboundEm: string };
+    expect(conversa.id).toBe('chat-1'); expect(conversa.janelaComprovada).toBe(true); expect(conversa.ultimaMensagemInboundEm).toBe('2026-09-10T09:00:00.000Z');
+  });
+  it('verificar: conversa aberta cuja última mensagem é NOSSA não libera mensagem livre', async () => {
+    const chats = [{ id: 'chat-1', status: 'talking', channel: 'whatsapp', lastMessageDate: '2026-09-10T11:00:00.000Z' }];
+    // status "received" = entregue ao destinatario (mensagem nossa): nao pode ser lido como mensagem do contato
+    const mensagens = [{ id: 'm1', chatId: 'chat-1', time: '2026-09-10T11:00:00.000Z', type: 'public', status: 'received', body: 'oi', sentBy: { id: 'a', type: 'agent' } }];
+    const r = await tratarCanal(req({ acao: 'verificar', comunicacaoId: COM }), ambiente({ chats, mensagens }).deps);
+    expect((r.corpo.entregabilidade as { resultado: string }).resultado).toBe('SENDABLE_TEMPLATE');
+    expect((r.corpo.conversa as { janelaComprovada: boolean }).janelaComprovada).toBe(false);
+  });
+  it('verificar: conversa aberta sem histórico não libera mensagem livre', async () => {
+    const chats = [{ id: 'chat-1', status: 'talking', channel: 'whatsapp', lastMessageDate: '2026-09-10T11:00:00.000Z' }];
+    const r = await tratarCanal(req({ acao: 'verificar', comunicacaoId: COM }), ambiente({ chats, mensagens: [] }).deps);
+    expect((r.corpo.entregabilidade as { resultado: string }).resultado).toBe('SENDABLE_TEMPLATE');
+  });
+  it('verificar: mensagem do contato com mais de 24 h exige template', async () => {
+    const chats = [{ id: 'chat-1', status: 'talking', channel: 'whatsapp', lastMessageDate: '2026-09-09T09:00:00.000Z' }];
+    const mensagens = [{ id: 'm1', chatId: 'chat-1', time: '2026-09-09T09:00:00.000Z', type: 'public', body: 'oi', sentBy: { type: 'contact' } }];
+    const r = await tratarCanal(req({ acao: 'verificar', comunicacaoId: COM }), ambiente({ chats, mensagens }).deps);
+    expect((r.corpo.entregabilidade as { resultado: string }).resultado).toBe('SENDABLE_TEMPLATE');
+  });
+  it('a busca da conversa usa a propriedade oficial contact.phoneContacts.number', async () => {
+    const { deps, chamadas } = ambiente({ chats: [] });
+    await tratarCanal(req({ acao: 'verificar', comunicacaoId: COM }), deps);
+    const lookup = chamadas.find((x) => x.url.includes('/chat?'));
+    expect(PROPRIEDADE_TELEFONE).toBe('contact.phoneContacts.number');
+    expect(lookup?.url).toContain(encodeURIComponent('contact.phoneContacts.number'));
+    expect(lookup?.url).not.toContain('phoneContact&');
+    expect(lookup?.url).toContain('5562999991234');
   });
   it('verificar: contato sem WhatsApp → MISSING_PHONE; template pendente → NO_APPROVED_TEMPLATE', async () => {
     const semFone = { id: CONTATO, company_id: EMPRESA, phone: null, mobile_phone: null, whatsapp: null, phone_status: 'desconhecido', status: 'ATIVO', organization_id: ORG };

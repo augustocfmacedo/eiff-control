@@ -2,7 +2,7 @@
 // Nesta fase e READ-ONLY: GET /auth/check, /chat/numbers, /chat/templates-message e /chat (busca de conversa).
 // Nenhum POST de mensagem existe aqui: sendApproved chama recusarEnvio(). A chave OCTADESK_API_KEY nunca sai desta
 // camada (nem para o navegador, nem para log, nem para a resposta). Contrato da API em docs/octadesk.md.
-import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, mascararTelefone, recusarEnvio, whatsappDoContato, type CommunicationChannelProvider, type ConversaCanal, type Entregabilidade, type EstadoProvider, type MensagemCanal, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
+import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, comProvaDeJanela, direcaoMensagem, impressaoComparavel, mascararTelefone, reconciliarPorMensagens, recusarEnvio, whatsappDoContato, type CommunicationChannelProvider, type ConversaCanal, type EntregaParaReconciliar, type Entregabilidade, type EstadoProvider, type MensagemCanal, type Reconciliacao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
 import { autenticar, type Sessao } from './comunicacaoServidor';
 import type { Canal, Contato } from './types';
 
@@ -16,6 +16,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const seguro = (s: string) => s.replace(/[A-Za-z0-9_-]{20,}/g, '***').replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '***@***').replace(/\b\d{8,}\b/g, '***').slice(0, 200);
 
 export const VARIAVEIS_OCTADESK = ['OCTADESK_API_KEY', 'OCTADESK_BASE_URL', 'OCTADESK_AGENT_EMAIL'] as const;
+/** Propriedade de filtro do telefone do contato em GET /chat (ContactsPayload.phoneContacts[].number). */
+export const PROPRIEDADE_TELEFONE = 'contact.phoneContacts.number';
 export interface ConfigOctadesk { baseUrl: string; apiKey: string; agentEmail?: string }
 export interface DepsCanal {
   fetch: typeof fetch;
@@ -58,11 +60,23 @@ export function normalizarConversas(bruto: unknown): ConversaCanal[] {
     return { id: String(x.id), canal: txt(x.channel) ?? 'whatsapp', status, aberta: ABERTOS.includes(status), ultimaMensagemEm: txt(x.lastMessageDate) ?? txt(x.updatedAt), naoLidas: typeof x.unreadMessages === 'number' ? x.unreadMessages : undefined };
   });
 }
-export function normalizarMensagens(bruto: unknown): MensagemCanal[] {
+/**
+ * Direcao vem de sentBy.type ("if is an agent or a contact", doc oficial). NUNCA do status: "received" significa
+ * "delivered to recipient", ou seja, mensagem NOSSA entregue (ver docs/octadesk.md). Sem sentBy.type = desconhecida.
+ * `impressao` e o hash comparavel do corpo, calculado em transito: o corpo em si nunca sai daqui.
+ */
+export function normalizarMensagens(bruto: unknown, conversaId?: string): (MensagemCanal & { impressao?: string })[] {
   const lista = Array.isArray(bruto) ? bruto : Array.isArray((bruto as Row)?.data) ? ((bruto as Row).data as unknown[]) : [];
   return lista.map((x) => x as Row).filter((x) => txt(x.id)).map((x) => {
     const st = (txt(x.status) ?? '').toLowerCase();
-    return { id: String(x.id), conversaId: txt(x.chatId) ?? '', em: txt(x.time) ?? '', direcao: st === 'received' ? 'entrada' : st ? 'saida' : 'desconhecida', status: st || undefined, interna: txt(x.type) === 'internal' };
+    const chat = txt(x.chatId) ?? conversaId ?? '';
+    const corpo = txt(x.body);
+    return {
+      id: String(x.id), conversaId: chat, em: txt(x.time) ?? '',
+      direcao: direcaoMensagem(txt((x.sentBy as Row | undefined)?.type)),
+      status: st || undefined, interna: txt(x.type) === 'internal',
+      impressao: corpo ? impressaoComparavel({ conversaId: chat || undefined, texto: corpo }) : undefined,
+    };
   });
 }
 
@@ -92,6 +106,7 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
       throw new ErroCanal(abortou ? 'timeout' : 'rede', `Octadesk ${operacao}: ${abortou ? 'tempo esgotado' : 'falha de rede'}.`);
     } finally { clearTimeout(t); }
   };
+  const lerMensagens = async (id: string) => normalizarMensagens(await get(`/chat/${encodeURIComponent(id)}/messages?page=1&limit=100&property=time&direction=desc`, 'messages'), id);
   const filtros = (f: { property: string; operator: string; value: string }[]) => f.map((x, i) => `filters[${i}][property]=${encodeURIComponent(x.property)}&filters[${i}][operator]=${encodeURIComponent(x.operator)}&filters[${i}][value]=${encodeURIComponent(x.value)}`).join('&');
   return {
     codigo: 'OCTADESK', nome: NOME_PROVIDER.OCTADESK,
@@ -107,12 +122,31 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
     listSenders: async () => normalizarNumeros(await get('/chat/numbers', 'numbers')),
     listTemplates: async () => normalizarTemplates(await get(`/chat/templates-message?${filtros([{ property: 'status', operator: 'eq', value: 'approved' }])}&page=1&limit=100`, 'templates')),
     findConversation: async (telefone: string) => {
-      const lista = normalizarConversas(await get(`/chat?${filtros([{ property: 'contact.phoneContact', operator: 'eq', value: telefone }])}&page=1&limit=20`, 'chat_lookup'));
-      return lista.filter((c) => c.aberta).sort((a, b) => (b.ultimaMensagemEm ?? '').localeCompare(a.ultimaMensagemEm ?? ''))[0] ?? lista[0];
+      // propriedade correta do filtro: contact.phoneContacts.number (ContactsPayload.phoneContacts[].number)
+      const lista = normalizarConversas(await get(`/chat?${filtros([{ property: PROPRIEDADE_TELEFONE, operator: 'eq', value: telefone }])}&page=1&limit=20`, 'chat_lookup'));
+      const c = lista.filter((x) => x.aberta).sort((a, b) => (b.ultimaMensagemEm ?? '').localeCompare(a.ultimaMensagemEm ?? ''))[0] ?? lista[0];
+      if (!c) return undefined;
+      // janela livre so com prova no historico: lastMessageDate pode ser mensagem NOSSA
+      let prova: ReturnType<typeof avaliarJanelaLivre>;
+      try { prova = avaliarJanelaLivre(await lerMensagens(c.id), d.agora?.()); }
+      catch (e) { prova = { janelaComprovada: false, motivo: `histórico indisponível: ${seguro((e as Error).message)}` }; }
+      return comProvaDeJanela(c, prova);
     },
     getConversation: async (id: string) => normalizarConversas([await get(`/chat/${encodeURIComponent(id)}`, 'chat_get')])[0],
-    getMessages: async (id: string) => normalizarMensagens(await get(`/chat/${encodeURIComponent(id)}/messages?page=1&limit=100&property=time&direction=desc`, 'messages')),
+    getMessages: (id: string) => lerMensagens(id),
     sendApproved: async () => recusarEnvio(), // Channel Provider 01: nenhum POST de mensagem
+    reconcileDelivery: async (entrega: EntregaParaReconciliar): Promise<Reconciliacao> => {
+      // read-only: descobre se o envio ambiguo chegou. Nunca reenvia, nunca transiciona sozinho.
+      let conversaId = entrega.conversaProviderId;
+      if (!conversaId && entrega.telefone) {
+        const lista = normalizarConversas(await get(`/chat?${filtros([{ property: PROPRIEDADE_TELEFONE, operator: 'eq', value: entrega.telefone }])}&page=1&limit=20`, 'chat_lookup'));
+        if (lista.length > 1) return { resultado: 'AMBIGUOUS', candidatos: lista.length, motivo: `${lista.length} conversas para o mesmo número: identifique a conversa antes de decidir` };
+        conversaId = lista[0]?.id;
+      }
+      if (!conversaId) return { resultado: 'NOT_FOUND', candidatos: 0, motivo: 'nenhuma conversa no provider para este contato' };
+      const msgs = await lerMensagens(conversaId);
+      return reconciliarPorMensagens(msgs, { solicitadoEm: entrega.solicitadoEm, impressaoEsperada: entrega.impressaoEsperada, conversaId });
+    },
   };
 }
 
