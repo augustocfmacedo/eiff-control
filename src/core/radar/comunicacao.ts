@@ -3,7 +3,7 @@
 // RESULTADO. Tudo puro e generico: nenhuma conta, pessoa ou cidade fica no codigo. A geracao de texto esta em
 // comunicacaoGeracao.ts; o envio nao existe nesta fase (estado maximo alcancado automaticamente: READY_FOR_REVIEW).
 import { NOME_PERSONA, sugerirContatoPrincipal, tipoProjetoPrincipal } from './contatos';
-import { hashCanonico } from './hash';
+import { hashCanonico, sha256Hex } from './hash';
 import { NOME_SINAL } from './padroes';
 import { fitIdealDe, recomendarAcao, sinalPrincipal } from './pipeline';
 import { leituraDe, relevanciaDe, sinalAcionavel, type RelevanciaEstrutural } from './sinalLeitura';
@@ -389,6 +389,10 @@ export function contentSpecPersistivel(spec: ContentSpec): Record<string, unknow
   };
 }
 
+/** Veredito server-side da revalidacao de uma edicao humana (Approval Path Fix 01): o store so aceita APPROVED de rascunho
+ *  editado com um veredito ok, do mesmo rascunho, do mesmo contexto e do mesmo texto (hash). */
+export interface VeredictoEdicao { ok: boolean; problemas: string[]; communicationId: string; contextHash: string; textoHash: string; validadoEm: string; juiz: 'PASS' | 'FAIL' | 'SKIPPED'; versoesDiferentes?: boolean }
+export const hashTextoEfetivo = (texto: string, assunto?: string) => sha256Hex(`${texto}\n${assunto ?? ''}`);
 export const ESTADOS_COMUNICACAO = ['DRAFT', 'READY_FOR_REVIEW', 'APPROVED', 'REJECTED', 'SENT', 'REPLIED', 'CANCELLED'] as const;
 export type EstadoComunicacao = (typeof ESTADOS_COMUNICACAO)[number];
 /** Transicoes permitidas. SENT nunca e alcancado pela geracao: exige acao humana explicita depois de APPROVED. */

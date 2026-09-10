@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { gerarComunicacaoSincrona } from './comunicacaoGeracao';
 import { ErroTimeoutLlm, montarMensagemUsuario, type ChamadaLlm, type PortasLlm } from './comunicacaoLlm';
-import { tratarGeracaoComunicacao, type DepsServidor } from './comunicacaoServidor';
+import { MENSAGEM_CONTEXTO_MUDOU, tratarGeracaoComunicacao, type DepsServidor } from './comunicacaoServidor';
+import { hashTextoEfetivo } from './comunicacao';
 import type { ContentSpec } from './comunicacao';
 
 const CHAVE_FALSA = 'sk-ant-chave-ficticia-nunca-exposta';
@@ -234,5 +235,55 @@ describe('LLM Latency Budget Patch 01: /api/comunicacao termina de forma control
     d2.relogio = () => (t += 100); d2.deadlineMs = 50_000; d2.timeoutChamadaMs = 22_000;
     expect((await tratarGeracaoComunicacao(req(pedido), d2)).status).toBe(201);
     expect(timeoutRecebido).toBeGreaterThan(0); expect(timeoutRecebido).toBeLessThanOrEqual(22_000); expect(timeoutRecebido).toBeLessThan(50_000);
+  });
+});
+
+// Approval Path Fix 01: revalidacao server-side de uma edicao humana sobre comunicacao persistida (content_spec minimizado).
+describe('Approval Path Fix 01: acao validar_edicao em /api/comunicacao', () => {
+  // gera uma comunicacao "persistida" com o proprio servidor (spec reconstruido, snapshot minimizado no INSERT)
+  const persistida = async () => { const log: Log[] = []; ultimoPedido = { ...pedido, canal: 'WHATSAPP' }; const r = await tratarGeracaoComunicacao(req(pedido), depsRealistas({}, log)); expect(r.status).toBe(201); return { id: U(55), ...specDoInsert(log)! } as unknown as Record<string, unknown> & { generated_content: { versaoPrincipal: string; assunto?: string } }; };
+  const corpo = (row: Record<string, unknown>, texto: string, extra: Record<string, unknown> = {}) => ({ acao: 'validar_edicao', communicationId: String(row.id), textoEditado: texto, ...extra });
+  const escritas = (log: Log[]) => log.filter((l) => l.init?.method && l.init.method !== 'GET').length;
+  it('E) edição válida → 200 com veredito ok (hash do contexto e do texto), sem nenhuma escrita; o snapshot minimizado nunca é usado (spec reconstruído)', async () => {
+    const row = await persistida(); const log: Log[] = []; const d = deps({ existente: row }, log);
+    const texto = row.generated_content.versaoPrincipal + '\n\nObrigado pela atenção.';
+    const r = await tratarGeracaoComunicacao(req(corpo(row, texto)), d);
+    expect(r.status, JSON.stringify(r.corpo)).toBe(200);
+    expect(r.corpo.veredito).toMatchObject({ ok: true, problemas: [], juiz: 'PASS', communicationId: String(row.id), contextHash: row.context_hash, textoHash: hashTextoEfetivo(texto, row.generated_content.assunto), versoesDiferentes: false });
+    expect(escritas(log)).toBe(0); expect(d.mensagensLlm).toHaveLength(0); // sem geracao: so o juiz
+    expect(JSON.stringify((row.content_spec as { deniedClaims: unknown[] }).deniedClaims)).not.toContain('"texto"'); // o snapshot e minimizado mesmo
+  });
+  it('D) edição inválida → 422 validacao_deterministica com motivos, veredito ok=false, nenhuma escrita, juiz não chamado', async () => {
+    const row = await persistida(); const log: Log[] = []; let juiz = 0;
+    const d = deps({ existente: row }, log, { julgar: async () => { juiz++; return { json: { verdict: 'PASS', reasons: [] }, modelo: 'm', inputTokens: 1, outputTokens: 1, latenciaMs: 1 }; } });
+    const r = await tratarGeracaoComunicacao(req(corpo(row, row.generated_content.versaoPrincipal + ' Investimento de R$ 500 milhões.')), d);
+    expect(r.status).toBe(422); expect(r.corpo.erro).toBe('validacao_deterministica'); expect(JSON.stringify(r.corpo.motivos)).toMatch(/500/); expect((r.corpo.veredito as { ok: boolean; juiz: string })).toMatchObject({ ok: false, juiz: 'SKIPPED' });
+    expect(escritas(log)).toBe(0); expect(juiz).toBe(0);
+    // juiz semantico reprova → 422 validacao_semantica
+    const d2 = deps({ existente: row }, [], { julgar: async () => ({ json: { verdict: 'FAIL', reasons: ['tom inadequado'] }, modelo: 'm', inputTokens: 1, outputTokens: 1, latenciaMs: 1 }) });
+    const r2 = await tratarGeracaoComunicacao(req(corpo(row, row.generated_content.versaoPrincipal)), d2);
+    expect(r2.status).toBe(422); expect(r2.corpo).toMatchObject({ erro: 'validacao_semantica', motivos: ['tom inadequado'] });
+  });
+  it('F) contexto alterado (hash divergente, contato de outra empresa) → 409 context_changed com mensagem humana; estado fora de revisão → 409; outra organização → 403; contrato estrito → 400', async () => {
+    const row = await persistida();
+    const r = await tratarGeracaoComunicacao(req(corpo(row, row.generated_content.versaoPrincipal)), deps({ existente: { ...row, context_hash: 'f'.repeat(64) } }));
+    expect(r.status).toBe(409); expect(r.corpo).toMatchObject({ erro: 'context_changed', mensagem: MENSAGEM_CONTEXTO_MUDOU, detalhe: 'context_hash divergente' });
+    const r2 = await tratarGeracaoComunicacao(req(corpo(row, row.generated_content.versaoPrincipal)), deps({ existente: { ...row, contact_id: CON_B } }));
+    expect(r2.status).toBe(409); expect(r2.corpo.erro).toBe('context_changed');
+    expect((await tratarGeracaoComunicacao(req(corpo(row, 'x')), deps({ existente: { ...row, state: 'APPROVED' } }))).corpo).toMatchObject({ erro: 'estado_invalido' });
+    expect((await tratarGeracaoComunicacao(req(corpo(row, 'x')), deps({ existente: { ...row, organization_id: ORG2 } }))).status).toBe(403);
+    expect((await tratarGeracaoComunicacao(req(corpo(row, 'x')), deps({}))).status).toBe(404);
+    expect((await tratarGeracaoComunicacao(req(corpo(row, 'x', { spec: {} })), deps({ existente: row }))).status).toBe(400);
+    expect((await tratarGeracaoComunicacao(req(corpo(row, '')), deps({ existente: row }))).status).toBe(400);
+    expect((await tratarGeracaoComunicacao(req({ ...pedido, acao: 'outra' }), deps())).status).toBe(400); // acao desconhecida nao entra na geracao
+    expect((await tratarGeracaoComunicacao(req(corpo(row, 'x'), null), deps({ existente: row }))).status).toBe(401);
+  });
+  it('juiz que estoura o tempo → 503 controlado; sem chave → 501; nada gravado', async () => {
+    const row = await persistida(); const log: Log[] = [];
+    const d = deps({ existente: row }, log, { julgar: async () => { throw new ErroTimeoutLlm('timeout simulado'); } });
+    const r = await tratarGeracaoComunicacao(req(corpo(row, row.generated_content.versaoPrincipal)), d);
+    expect(r.status).toBe(503); expect(r.corpo).toMatchObject({ erro: 'llm_timeout', etapa: 'juiz' }); expect(escritas(log)).toBe(0);
+    const semLlm = deps({ existente: row }); semLlm.llmDisponivel = false;
+    expect((await tratarGeracaoComunicacao(req(corpo(row, row.generated_content.versaoPrincipal)), semLlm)).status).toBe(501);
   });
 });

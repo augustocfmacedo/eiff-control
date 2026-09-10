@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { NOME_CANAL, NOME_PERSONA, NOME_TOM, OBJETIVOS, PLAYBOOKS, contextoComunicacaoDe, type Canal } from '../../core/radar';
+import { NOME_CANAL, NOME_PERSONA, NOME_TOM, OBJETIVOS, PLAYBOOKS, contextoComunicacaoDe, type Canal, type VeredictoEdicao } from '../../core/radar';
 import type { ComunicacaoRadar } from '../../core/radar/types';
-import { actions, pode, useStore } from '../../data/store';
+import { actions, getState, pode, useStore } from '../../data/store';
 import { tokenSessao } from '../../data/supabase';
 import { Badge, Field, Select, tentar, useToast } from '../../ui/components';
 
@@ -40,6 +40,26 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
       setIaIndisponivel(null);
       toast(d.existente ? 'Já existia um rascunho para este contexto: reaproveitado, sem nova geração.' : 'Rascunho gerado com IA e validado. Revise antes de aprovar.');
     } catch (e) { toast((e as Error).message); } finally { setGerandoIa(false); }
+  };
+  // Aprovacao (Approval Path Fix 01): sem edicao, o store aprova preservando o snapshot (a geracao ja foi validada antes de
+  // persistir); com edicao humana em producao, o conteudo efetivo e revalidado no servidor (Server Truth) antes da transicao.
+  const mensagemHumana = (e: unknown) => { const m = (e as Error)?.message ?? ''; return e instanceof TypeError || /Cannot read|undefined|is not a function/.test(m) ? 'Não foi possível aprovar porque o contexto precisa ser revalidado.' : m; };
+  const aprovar = async (c: ComunicacaoRadar) => {
+    const editada = c.textoEditado !== undefined || c.assuntoEditado !== undefined;
+    try {
+      if (editada && getState().modo === 'remoto') {
+        const token = await tokenSessao();
+        if (!token) throw new Error('Sessão não encontrada: a revalidação do texto editado exige login.');
+        const resp = await fetch('/api/comunicacao', { method: 'POST', headers: { 'content-type': 'application/json', 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', authorization: `Bearer ${token}` }, body: JSON.stringify({ acao: 'validar_edicao', communicationId: c.id, textoEditado: c.textoEditado ?? c.resultado.versaoPrincipal, assuntoEditado: c.assuntoEditado }) });
+        const d = (await resp.json().catch(() => ({}))) as { ok?: boolean; erro?: string; mensagem?: string; motivos?: string[]; veredito?: VeredictoEdicao };
+        if (resp.status === 409 && d.erro === 'context_changed') throw new Error(d.mensagem ?? 'O contexto comercial mudou desde a geração. Gere uma nova abordagem antes de aprovar.');
+        if (resp.status === 422) throw new Error(`O conteúdo editado não passou pela validação${d.motivos?.length ? ': ' + d.motivos.join('; ') : '.'}`);
+        if (resp.status === 503) throw new Error('A validação demorou além do limite desta tentativa. Nada foi alterado. Tente novamente.');
+        if (!resp.ok || !d.ok || !d.veredito) throw new Error(d.mensagem ?? 'Não foi possível aprovar porque o conteúdo editado precisa ser revalidado no servidor.');
+        actions.transicionarComunicacaoRadar(c.id, 'APPROVED', { validacaoServidor: d.veredito });
+      } else actions.transicionarComunicacaoRadar(c.id, 'APPROVED');
+      toast('Aprovado. O envio é manual: registre o contato como atividade.');
+    } catch (e) { toast(mensagemHumana(e)); }
   };
   const gerar = (canal: Canal) => tentar(() => actions.gerarComunicacaoRadar(empresaId, { contatoId: ctx.contato?.id, canal, citarIndicacao, horaLocal: new Date().getHours() }), toast, () => toast(`Rascunho ${NOME_CANAL[canal]} pronto para revisão.`));
   const ob = ctx.objetivo ? OBJETIVOS[ctx.objetivo] : undefined; const pb = ctx.playbook ? PLAYBOOKS[ctx.playbook] : undefined;
@@ -94,7 +114,7 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
             {podeAgir && c.estado === 'SENT' && (() => { const ats = r.atividades.filter((a) => a.empresaId === empresaId && a.contatoId === c.contatoId && a.tipo !== 'NOTE' && !!a.resultado && a.id !== c.atividadeEnvioId && a.ocorreuEm >= (c.enviadaEm ?? c.criadoEm)).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1)); return ats.length ? <div className="row" style={{ gap: 8, marginTop: 8 }}><button className="btn sm" onClick={() => tentar(() => actions.transicionarComunicacaoRadar(c.id, 'REPLIED', { atividadeId: ats[0].id }), toast, () => toast('Marcada como respondida.'))}>Marcar respondida ({ats[0].resultado})</button></div> : <div className="small muted" style={{ marginTop: 8 }}>enviada: registre a atividade com o resultado para marcar como respondida</div>; })()}
             {podeAgir && (c.estado === 'READY_FOR_REVIEW' || c.estado === 'REJECTED' || c.estado === 'APPROVED') && editando?.id !== c.id && (
               <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                {c.estado === 'READY_FOR_REVIEW' && <button className="btn sm primary" onClick={() => tentar(() => actions.transicionarComunicacaoRadar(c.id, 'APPROVED'), toast, () => toast('Aprovado. O envio é manual: registre o contato como atividade.'))}>Aprovar</button>}
+                {c.estado === 'READY_FOR_REVIEW' && <button className="btn sm primary" onClick={() => void aprovar(c)}>Aprovar</button>}
                 {c.estado !== 'APPROVED' && <button className="btn sm" onClick={() => setEditando({ id: c.id, texto, assunto })}>Editar</button>}
                 {c.estado === 'READY_FOR_REVIEW' && <><input className="input" placeholder="motivo da rejeição" value={motivo} onChange={(e) => setMotivo(e.target.value)} style={{ minWidth: 200 }} /><button className="btn sm danger" onClick={() => tentar(() => actions.transicionarComunicacaoRadar(c.id, 'REJECTED', { motivo }), toast, () => { setMotivo(''); toast('Rejeitado.'); })}>Rejeitar</button></>}
                 {c.estado === 'APPROVED' && (() => { const ats = r.atividades.filter((a) => a.empresaId === empresaId && a.contatoId === c.contatoId && a.tipo !== 'NOTE' && a.ocorreuEm >= (c.aprovadoEm ?? c.criadoEm).slice(0, 10)).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1)); return ats.length ? <button className="btn sm" onClick={() => tentar(() => actions.transicionarComunicacaoRadar(c.id, 'SENT', { atividadeId: ats[0].id }), toast, () => toast('Marcada como enviada, ligada à atividade registrada.'))}>Marcar enviada (atividade de {new Date(ats[0].ocorreuEm).toLocaleDateString('pt-BR')})</button> : <span className="small muted">aprovado: envie pelo canal e registre a atividade do contato; depois marque como enviada</span>; })()}

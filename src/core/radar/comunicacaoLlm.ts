@@ -240,7 +240,7 @@ export interface TemposLlm { generation_ms?: number; regeneration_ms?: number; d
 export interface OrcamentoLlm { restanteMs: () => number; timeoutChamadaMs: number }
 export interface OpcoesOrquestracao { orcamento?: OrcamentoLlm; tempos?: TemposLlm; relogio?: () => number }
 export interface GeracaoLlmOk { resultado: ResultadoGeracao; validacao: ValidacaoGeracao & { juiz: 'PASS'; regenerado: boolean }; tempos: TemposLlm }
-function comTimeout<T>(p: Promise<T>, ms: number, etapa: EtapaLlm): Promise<T> {
+export function comTimeout<T>(p: Promise<T>, ms: number, etapa: EtapaLlm): Promise<T> {
   if (!Number.isFinite(ms)) return p;
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new ErroGeracaoLlm(`tempo esgotado na etapa ${etapa} (${ms} ms)`, 'llm_timeout', [`timeout ${ms} ms`], etapa)), ms);

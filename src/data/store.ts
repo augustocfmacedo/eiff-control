@@ -48,7 +48,7 @@ import type { ComposicaoImportada, InsumoImportado } from '../core/sinapi';
 import type { ConjuntoImportado, EtapaPeso } from '../core/materiais';
 import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
-import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, gerarComunicacaoSincrona, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type Canal, type ContentSpec, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
+import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { PAPEIS_RADAR } from '../core/radar/comunicacaoLlm';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
@@ -1817,7 +1817,7 @@ export const actions = {
    * atividade do contato manual (o sistema nunca envia); REPLIED so com a atividade que registrou o resultado. Toda transicao
    * entra no historico (e, no banco, em radar_communication_event via trigger).
    */
-  transicionarComunicacaoRadar(id: string, para: EstadoComunicacao, opts: { motivo?: string; atividadeId?: string } = {}) {
+  transicionarComunicacaoRadar(id: string, para: EstadoComunicacao, opts: { motivo?: string; atividadeId?: string; validacaoServidor?: VeredictoEdicao } = {}) {
     let ds = state.ds;
     exigir('radar');
     const r = ds.radar;
@@ -1831,9 +1831,24 @@ export const actions = {
     if (!v.ok) throw new RegraDeNegocioError(v.motivo ?? 'Transição inválida.');
     if (para === 'REJECTED' && !opts.motivo?.trim()) throw new RegraDeNegocioError('Motivo da rejeição é obrigatório.');
     if (para === 'APPROVED') {
-      const efetivo = { ...c.resultado, versaoPrincipal: c.textoEditado ?? c.resultado.versaoPrincipal, assunto: c.assuntoEditado ?? c.resultado.assunto } as unknown as ResultadoGeracao;
-      const g = validarGeracao(c.spec as ContentSpec, efetivo);
-      if (!g.ok) throw new RegraDeNegocioError(`Aprovação bloqueada pelo fact gate: ${g.problemas.join('; ')}`);
+      const editada = c.textoEditado !== undefined || c.assuntoEditado !== undefined;
+      if (!editada) {
+        // sem edicao: a geracao original ja passou por fact gate + juiz antes de persistir. Aprovar preservando o snapshot;
+        // NUNCA revalidar o content_spec minimizado (deniedClaims sem texto, technicalClaims como ids) como se fosse spec completo
+        if (!c.validacao?.ok) throw new RegraDeNegocioError(`Não é possível aprovar: a validação original não passou${c.validacao?.problemas?.length ? ` (${c.validacao.problemas.join('; ')})` : ''}. Edite o texto ou gere uma nova abordagem.`);
+      } else {
+        const efetivo = { ...c.resultado, versaoPrincipal: c.textoEditado ?? c.resultado.versaoPrincipal, assunto: c.assuntoEditado ?? c.resultado.assunto } as unknown as ResultadoGeracao;
+        const vs = opts.validacaoServidor;
+        if (vs) {
+          // veredito server-side (Server Truth): tem de ser deste rascunho, deste contexto e deste texto
+          if (vs.communicationId !== c.id || vs.contextHash !== c.contextHash || vs.textoHash !== hashTextoEfetivo(efetivo.versaoPrincipal, efetivo.assunto)) throw new RegraDeNegocioError('A validação do servidor não corresponde a este texto. Valide novamente antes de aprovar.');
+          if (!vs.ok) throw new RegraDeNegocioError(`O conteúdo editado não passou pela validação: ${vs.problemas.join('; ')}`);
+        } else if (state.modo === 'local' && ehContentSpecCompleto(c.spec)) {
+          // modo local (sem servidor): so com o spec COMPLETO em memoria; o snapshot minimizado nunca valida
+          const g = validarGeracao(c.spec, efetivo);
+          if (!g.ok) throw new RegraDeNegocioError(`O conteúdo editado não passou pela validação (fact gate): ${g.problemas.join('; ')}`);
+        } else throw new RegraDeNegocioError('Não foi possível aprovar porque o conteúdo editado precisa ser revalidado no servidor.');
+      }
     }
     const novo: ComunicacaoRadar = { ...c, estado: para, ultimoMotivo: opts.motivo ?? para, atualizadoEm: agora(), historico: [...c.historico, { de: c.estado, para, em: agora(), por: state.usuario.nome, motivo: opts.motivo }],
       ...(para === 'APPROVED' ? { aprovadoPor: state.usuario.id, aprovadoEm: agora() } : {}), ...(para === 'REJECTED' ? { rejeitadoPor: state.usuario.id, rejeitadoEm: agora(), motivoRejeicao: opts.motivo } : {}),

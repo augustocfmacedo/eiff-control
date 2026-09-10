@@ -186,8 +186,27 @@ export function localEventoNaoSuportado(spec: Pick<ContentSpec, 'allowedClaims' 
   return problemas;
 }
 
+/** Diferenca estrutural entre o snapshot persistido (contentSpecPersistivel: deniedClaims sem texto, technicalClaims como ids)
+ *  e o ContentSpec completo que o fact gate exige. Devolve os motivos; vazio = completo. Defesa: nunca TypeError. */
+export function problemasEstruturaisDoSpec(spec: unknown): string[] {
+  const p: string[] = [];
+  if (!spec || typeof spec !== 'object') return ['content spec ausente'];
+  const s = spec as Record<string, unknown>;
+  const lista = (nome: string) => { const v = s[nome]; if (!Array.isArray(v)) { p.push(`${nome} ausente`); return []; } return v as unknown[]; };
+  for (const nome of ['allowedClaims', 'deniedClaims', 'technicalClaims']) { const v = lista(nome); if (v.some((c) => !c || typeof c !== 'object' || typeof (c as Record<string, unknown>).texto !== 'string')) p.push(`${nome} sem texto (snapshot minimizado)`); }
+  for (const nome of ['elementosObrigatorios', 'elementosProibidos']) if (!Array.isArray(s[nome])) p.push(`${nome} ausente`);
+  for (const nome of ['audiencia', 'remetente']) if (!s[nome] || typeof s[nome] !== 'object') p.push(`${nome} ausente`);
+  if (typeof s.cta !== 'string' || typeof s.objetivo !== 'string' || typeof s.canal !== 'string') p.push('objetivo, canal ou cta ausente');
+  if (typeof s.maxPalavras !== 'number') p.push('maxPalavras ausente');
+  return p;
+}
+export const ehContentSpecCompleto = (spec: unknown): spec is ContentSpec => problemasEstruturaisDoSpec(spec).length === 0;
 /** Fact gate pos-geracao: numeros, datas e entidades so de allowedClaims; elementos obrigatorios/proibidos; CTA do objetivo; sem presuncoes. */
 export function validarGeracao(spec: ContentSpec, r: ResultadoGeracao): ValidacaoGeracao {
+  // defesa estrutural: um snapshot minimizado ou um resultado incompleto devolvem FAIL explicito, nunca excecao
+  const estrutura = problemasEstruturaisDoSpec(spec);
+  if (!r || typeof r !== 'object' || typeof r.versaoPrincipal !== 'string' || !Array.isArray(r.claimsUsados)) estrutura.push('resultado da geração incompleto');
+  if (estrutura.length) return { ok: false, problemas: [`content spec incompleto para validação: ${estrutura.join('; ')}`] };
   const problemas: string[] = [];
   const texto = [r.versaoPrincipal, r.assunto ?? ''].join('\n');
   const t = norm(texto);
