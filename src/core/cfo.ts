@@ -3,7 +3,7 @@
 // atencao, nao recomendado) com a alcada exigida, monta a previsao de lancamento e o alinhamento diario da Diretoria.
 // A IA (funcao Netlify /api/diretor-financeiro) so ajuda a INTERPRETAR o texto; os numeros e a decisao vem daqui.
 import type { Dataset, Lancamento, Papel, Usuario } from './types';
-import { addDays, calcLancamentos, etapasExigidas, mapaPlano, posicaoBancaria, type LancamentoCalc } from './engine';
+import { addDays, calcLancamentos, etapasExigidas, mapaPlano, posicaoBancaria, reservaVinculadaTotal, type LancamentoCalc } from './engine';
 
 export const ORIGEM_DF = 'diretor-financeiro';
 export const NOME_DF = 'Diretor Financeiro';
@@ -130,7 +130,7 @@ export function interpretarPedido(texto: string, catalogo: CatalogoDF): PedidoIn
 // ---------------------------------------------------------------------------
 // Projecao diaria de caixa e parecer
 // ---------------------------------------------------------------------------
-export interface DiaCaixa { data: string; entradas: number; saidas: number; saldo: number }
+export interface DiaCaixa { data: string; entradas: number; saidas: number; saldoInicio: number; saldo: number }
 /** Caixa de fato: saldo bancario de hoje pelo extrato da Tesouraria (abertura + creditos - debitos), somando as contas ativas. */
 export const saldoBancarioHoje = (ds: Dataset, lancs?: LancamentoCalc[]) => posicaoBancaria(ds, lancs).reduce((a, p) => a + p.saldoBancario, 0);
 /** Ate quando o extrato foi importado (ultima transacao das contas ativas) e quantos dias o saldo esta defasado em relacao a hoje. */
@@ -163,7 +163,7 @@ export function projecaoDiaria(ds: Dataset, ate: string, lancs: LancamentoCalc[]
   }
   for (const x of extras) if (x.data <= ate) add(x.data, x.valor);
   const out: DiaCaixa[] = [];
-  for (let d = hoje; d <= ate; d = addDays(d, 1)) { const x = porDia.get(d) ?? { e: 0, s: 0 }; saldo += x.e - x.s; out.push({ data: d, entradas: x.e, saidas: x.s, saldo: Math.round(saldo * 100) / 100 }); }
+  for (let d = hoje; d <= ate; d = addDays(d, 1)) { const x = porDia.get(d) ?? { e: 0, s: 0 }; const inicio = saldo; saldo += x.e - x.s; out.push({ data: d, entradas: x.e, saidas: x.s, saldoInicio: Math.round(inicio * 100) / 100, saldo: Math.round(saldo * 100) / 100 }); }
   return out;
 }
 
@@ -171,7 +171,7 @@ export type DecisaoDF = 'liberar' | 'reagendar' | 'atencao' | 'nao_recomendado';
 export interface Parecer {
   decisao: DecisaoDF;
   valor: number; vencimento: string; dataSugerida?: string;
-  saldoHoje: number; saldoNaData: number; saldoDepois: number; menorSaldoDepois: number; menorSaldoDia: string; reserva: number; folga: number;
+  saldoHoje: number; compromissosHoje: number; saldoAposHoje: number; saldoNaData: number; saldoDepois: number; menorSaldoDepois: number; menorSaldoDia: string; reserva: number; reservaVinculada: number; folga: number;
   vencidos: number; saidas7d: number; entradas7d: number;
   precisaAprovacao: boolean; alcada: Papel[]; excecao: boolean; foraOrcamento: boolean;
   motivos: string[];
@@ -188,8 +188,11 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   const proj = projecaoDiaria(ds, addDays(ate, 30), lancs);
   const saldoEm = (d: string) => proj.find((x) => x.data === d)?.saldo ?? proj[proj.length - 1].saldo;
   const minDesde = (d: string, janela = 30) => { const fatia = proj.filter((x) => x.data >= d && x.data <= addDays(d, janela)); const m = fatia.reduce((a, x) => (x.saldo < a.saldo ? x : a), fatia[0]); return m; };
-  const reserva = p.reservaMinima;
-  const saldoHoje = saldoEm(hoje);
+  const reservaVinculada = reservaVinculadaTotal(ds);
+  const reserva = p.reservaMinima + reservaVinculada; // piso: reserva operacional (parametro) + dinheiro ja separado nas contas
+  const saldoHoje = proj[0].saldoInicio; // saldo bancario de hoje, o mesmo da Posicao diaria da Tesouraria
+  const compromissosHoje = arred(proj[0].saidas - proj[0].entradas); // vencidos + vencendo hoje, ainda nao pagos
+  const saldoAposHoje = proj[0].saldo;
   const saldoNaData = saldoEm(venc);
   const saldoDepois = arred(saldoNaData - pedido.valor);
   const menor = minDesde(venc);
@@ -209,8 +212,10 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   const alcada = precisaAprovacao ? etapasExigidas(p, pedido.valor, !!obra, excecao) : [];
   const motivos: string[] = [];
   const extrato = defasagemExtrato(ds);
-  motivos.push(`Caixa hoje ${fmt(saldoHoje)} (saldo bancário, ${extrato.texto}); reserva mínima ${fmt(reserva)}.`);
+  motivos.push(`Caixa hoje ${fmt(saldoHoje)}: saldo bancário da Posição diária, ${extrato.texto}.`);
   if (extrato.alerta) motivos.push(extrato.alerta);
+  if (compromissosHoje !== 0) motivos.push(`Vencidos e vencendo hoje ainda não pagos: ${fmt(compromissosHoje)} → sobra ${fmt(saldoAposHoje)}.`);
+  motivos.push(`Piso do caixa: reserva mínima ${fmt(p.reservaMinima)}${reservaVinculada > 0 ? ` + reserva vinculada das contas ${fmt(reservaVinculada)} = ${fmt(reserva)}` : ''}.`);
   const recVenc = recebiveisVencidos(lancs); if (recVenc > 0) motivos.push(`Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.`);
   motivos.push(`Na data pedida (${br(venc)}) o saldo projetado antes do pagamento é ${fmt(saldoNaData)}; depois, ${fmt(saldoDepois)}.`);
   if (menor.data !== venc) motivos.push(`O ponto mais apertado dos 30 dias seguintes é ${br(menor.data)}, com ${fmt(menorSaldoDepois)} já contando este pagamento.`);
@@ -220,7 +225,7 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   if (decisao === 'atencao') motivos.push('Cabe no caixa, mas consome a reserva mínima nos 30 dias: só com aval da Diretoria.');
   if (decisao === 'nao_recomendado') motivos.push('Nos próximos 30 dias o caixa não comporta este pagamento sem ficar negativo.');
   if (precisaAprovacao) motivos.push(`Alçada: ${alcada.join(' → ')}${pedido.valor > p.alcadas.limiteGestorObra ? ` (acima de ${fmt(p.alcadas.limiteGestorObra)})` : ''}.`);
-  return { decisao, valor: pedido.valor, vencimento: venc, dataSugerida, saldoHoje, saldoNaData, saldoDepois, menorSaldoDepois, menorSaldoDia: menor.data, reserva, folga: arred(saldoDepois - reserva), vencidos, saidas7d: em7('Saída'), entradas7d: em7('Entrada'), precisaAprovacao, alcada, excecao, foraOrcamento: false, motivos, extrato };
+  return { decisao, valor: pedido.valor, vencimento: venc, dataSugerida, saldoHoje, compromissosHoje, saldoAposHoje, saldoNaData, saldoDepois, menorSaldoDepois, menorSaldoDia: menor.data, reserva, reservaVinculada, folga: arred(saldoDepois - reserva), vencidos, saidas7d: em7('Saída'), entradas7d: em7('Entrada'), precisaAprovacao, alcada, excecao, foraOrcamento: false, motivos, extrato };
 }
 
 export const fmt = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -243,7 +248,7 @@ export const resumoParecer = (p: Parecer) => `${p.decisao === 'liberar' ? 'cabe 
 
 export interface ItemAlinhamento { lancamento: LancamentoCalc; parecerAtual: Parecer; solicitante: string; diasEsperando: number }
 export interface DiaAlinhamento { data: string; saidas: number; entradas: number; saldo: number; saldoComPrevisoes: number; previsoes: number; abaixoReserva: boolean }
-export interface Alinhamento { previsoes: ItemAlinhamento[]; dias: DiaAlinhamento[]; reserva: number; saldoHoje: number; totalPrevisoes: number; alertas: string[]; venceHoje: LancamentoCalc[]; extrato: ReturnType<typeof defasagemExtrato> }
+export interface Alinhamento { previsoes: ItemAlinhamento[]; dias: DiaAlinhamento[]; reserva: number; saldoHoje: number; totalPrevisoes: number; alertas: string[]; venceHoje: LancamentoCalc[]; extrato: ReturnType<typeof defasagemExtrato>; compromissosHoje: number }
 export const previsoesDF = (ds: Dataset) => calcLancamentos(ds).filter((l) => l.origem === ORIGEM_DF && l.status === 'Rascunho' && !l.excluidoEm && l.incluir);
 /** Alinhamento do dia: previsoes do DF aguardando decisao e o caixa da semana com e sem elas. */
 export function alinhamentoDoDia(ds: Dataset, dias = 7): Alinhamento {
@@ -254,7 +259,7 @@ export function alinhamentoDoDia(ds: Dataset, dias = 7): Alinhamento {
   const ate = addDays(hoje, dias - 1);
   const sem = projecaoDiaria(ds, ate, lancs);
   const com = projecaoDiaria(ds, ate, lancs, prevs.map((l) => ({ data: l.vencimento, valor: -l.valorLiquidoPrevisto })));
-  const reserva = ds.params.reservaMinima;
+  const reserva = ds.params.reservaMinima + reservaVinculadaTotal(ds);
   const diasOut: DiaAlinhamento[] = sem.map((d, i) => ({ data: d.data, saidas: d.saidas, entradas: d.entradas, saldo: d.saldo, saldoComPrevisoes: com[i].saldo, previsoes: prevs.filter((l) => l.vencimento === d.data || (d.data === hoje && l.vencimento < hoje)).reduce((s, l) => s + l.valorLiquidoPrevisto, 0), abaixoReserva: com[i].saldo < reserva }));
   const alertas: string[] = [];
   const ext = defasagemExtrato(ds); if (ext.alerta) alertas.push(ext.alerta);
@@ -262,7 +267,7 @@ export function alinhamentoDoDia(ds: Dataset, dias = 7): Alinhamento {
   const negativo = diasOut.find((d) => d.saldoComPrevisoes < 0); if (negativo) alertas.push(`Caixa negativo em ${br(negativo.data)}: ${fmt(negativo.saldoComPrevisoes)}.`);
   const atrasadas = previsoes.filter((p) => p.lancamento.vencimento < hoje); if (atrasadas.length) alertas.push(`${atrasadas.length} previsão(ões) com data já passada aguardando decisão.`);
   const venceHoje = lancs.filter((l) => l.oficial && l.tipo === 'Saída' && !l.direto && l.status !== 'Realizado' && l.status !== 'Cancelado' && l.vencimento === hoje);
-  return { previsoes, dias: diasOut, reserva, saldoHoje: sem[0]?.saldo ?? 0, totalPrevisoes: prevs.reduce((s, l) => s + l.valorLiquidoPrevisto, 0), alertas, venceHoje, extrato: ext };
+  return { previsoes, dias: diasOut, reserva, saldoHoje: sem[0]?.saldoInicio ?? 0, compromissosHoje: sem[0] ? arred(sem[0].saidas - sem[0].entradas) : 0, totalPrevisoes: prevs.reduce((s, l) => s + l.valorLiquidoPrevisto, 0), alertas, venceHoje, extrato: ext };
 }
 
 // ---------------------------------------------------------------------------
@@ -277,12 +282,13 @@ export function redigirParecer(p: Parecer, pedido: PedidoInterpretado, usuario: 
 }
 export function redigirCaixa(ds: Dataset): string {
   const proj = projecaoDiaria(ds, addDays(ds.params.dataBase, 13));
-  const reserva = ds.params.reservaMinima; const hoje = proj[0];
+  const reserva = ds.params.reservaMinima + reservaVinculadaTotal(ds); const hoje = proj[0];
   const menor = proj.reduce((a, x) => (x.saldo < a.saldo ? x : a), proj[0]);
   const linhas = proj.slice(0, 7).map((d) => `- ${br(d.data)}: ${d.entradas ? `+${fmt(d.entradas)} ` : ''}${d.saidas ? `−${fmt(d.saidas)} ` : ''}→ saldo ${fmt(d.saldo)}${d.saldo < reserva ? ' ⚠ abaixo da reserva' : ''}`);
   const recVenc = recebiveisVencidos(calcLancamentos(ds));
   const ext = defasagemExtrato(ds);
-  return [`Caixa hoje (saldo bancário, ${ext.texto}, já com os pagamentos vencidos): **${fmt(hoje.saldo)}** (reserva mínima ${fmt(reserva)}, folga ${fmt(hoje.saldo - reserva)}).`, ext.alerta ? `⚠ ${ext.alerta}` : '', `Ponto mais baixo em 14 dias: ${br(menor.data)} com ${fmt(menor.saldo)}.`, recVenc > 0 ? `Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.` : '', 'Próximos 7 dias:', ...linhas].filter(Boolean).join('\n');
+  const compromissos = hoje.saidas - hoje.entradas;
+  return [`Caixa hoje: **${fmt(hoje.saldoInicio)}** (saldo bancário da Posição diária, ${ext.texto}).`, ext.alerta ? `⚠ ${ext.alerta}` : '', compromissos !== 0 ? `Vencidos e vencendo hoje ainda não pagos: ${fmt(compromissos)} → sobra ${fmt(hoje.saldo)}.` : 'Nada vencido nem vencendo hoje.', `Piso do caixa (reserva mínima + reserva vinculada): ${fmt(reserva)}; folga após hoje ${fmt(hoje.saldo - reserva)}.`, `Ponto mais baixo em 14 dias: ${br(menor.data)} com ${fmt(menor.saldo)}.`, recVenc > 0 ? `Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.` : '', 'Próximos 7 dias:', ...linhas].filter(Boolean).join('\n');
 }
 export function redigirVencimentos(ds: Dataset): string {
   const hoje = ds.params.dataBase; const ate = addDays(hoje, 7);
@@ -345,7 +351,7 @@ export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpr
 // ---------------------------------------------------------------------------
 /** Orientacao do DF para a Diretoria, em uma frase, a partir do parecer. */
 export function orientacaoDF(p: Parecer): { titulo: string; detalhe: string; acaoSugerida: 'programar' | 'reagendar' | 'avaliar' | 'recusar'; dataSugerida?: string } {
-  if (p.decisao === 'liberar') return { titulo: `Recomendo programar para ${br(p.vencimento)}`, detalhe: `Saldo na data ${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}; menor saldo em 30 dias ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), acima da reserva de ${fmt(p.reserva)}.${p.precisaAprovacao ? ` Passa pela alçada ${p.alcada.join(' → ')}.` : ''}`, acaoSugerida: 'programar' };
+  if (p.decisao === 'liberar') return { titulo: `Recomendo programar para ${br(p.vencimento)}`, detalhe: `Saldo na data ${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}; menor saldo em 30 dias ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), acima do piso de ${fmt(p.reserva)}.${p.precisaAprovacao ? ` Passa pela alçada ${p.alcada.join(' → ')}.` : ''}`, acaoSugerida: 'programar' };
   if (p.decisao === 'reagendar') return { titulo: `Recomendo reagendar para ${br(p.dataSugerida)}`, detalhe: `Em ${br(p.vencimento)} o saldo cairia para ${fmt(p.saldoDepois)} e o menor saldo em 30 dias para ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}. Em ${br(p.dataSugerida)} cabe sem tocar na reserva.`, acaoSugerida: 'reagendar', dataSugerida: p.dataSugerida };
   if (p.decisao === 'atencao') return { titulo: 'Só com seu aval: consome a reserva', detalhe: `Cabe no caixa (${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}), mas o menor saldo em 30 dias fica em ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}, e não há data em 30 dias em que caiba.`, acaoSugerida: 'avaliar' };
   return { titulo: 'Não recomendo: caixa ficaria negativo', detalhe: `Saldo na data ${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}; menor saldo em 30 dias ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}). Vencidos: ${fmt(p.vencidos)}. Se for inadiável, precisa de entrada nova ou adiamento de outro pagamento.`, acaoSugerida: 'recusar' };
@@ -363,7 +369,7 @@ export function centralDF(ds: Dataset, dias = 14): CentralDF {
   const n = al.previsoes.length;
   const linhas = [
     `${n ? `${n} pedido(s) da equipe aguardam sua decisão, ${fmt(al.totalPrevisoes)} no total.` : 'Nenhum pedido da equipe aguardando decisão.'}`,
-    `Caixa hoje ${fmt(al.saldoHoje)} (saldo bancário, ${al.extrato.texto}); menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; reserva ${fmt(al.reserva)}.`,
+    `Caixa hoje ${fmt(al.saldoHoje)} (saldo bancário da Posição diária, ${al.extrato.texto})${al.compromissosHoje ? `, com ${fmt(al.compromissosHoje)} vencidos ou vencendo hoje ainda a pagar` : ''}; menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; piso ${fmt(al.reserva)}.`,
     n ? `Minha orientação: ${[contagem.programar ? `programar ${contagem.programar}` : null, contagem.reagendar ? `reagendar ${contagem.reagendar}` : null, contagem.avaliar ? `${contagem.avaliar} depende(m) do seu aval (reserva)` : null, contagem.recusar ? `${contagem.recusar} não recomendado(s)` : null].filter(Boolean).join(', ')}.` : '',
     al.venceHoje.length ? `Vence hoje: ${al.venceHoje.length} pagamento(s), ${fmt(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}.` : 'Nada vence hoje.',
     ...al.alertas.map((a) => `Atenção: ${a}`),

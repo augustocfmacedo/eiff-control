@@ -58,6 +58,7 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     const proj = projecaoDiaria(ds, addDays(hoje, 5));
     expect(proj).toHaveLength(6); expect(proj[0].data).toBe(hoje);
     const dia0 = lancs.filter((l) => l.oficial && !l.direto && l.status !== 'Cancelado' && l.status !== 'Realizado' && !!l.dataCaixa && (l.dataCaixa === hoje || (l.dataCaixa < hoje && l.tipo === 'Saída'))).reduce((s, l) => s + l.valorCaixaProjetado, 0);
+    expect(proj[0].saldoInicio).toBeCloseTo(banco, 2); // dia 0 comeca exatamente no saldo da Posicao diaria
     expect(proj[0].saldo).toBeCloseTo(banco + dia0, 2);
     // o recebivel vencido do demo nao entra: o saldo do dia 0 fica abaixo de banco + recebiveis vencidos
     if (recebiveisVencidos(lancs) > 0) expect(proj[0].saldo).toBeLessThan(banco + dia0 + recebiveisVencidos(lancs));
@@ -96,6 +97,14 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     const cabe = analisarPagamento(ds, { valor: 500, vencimento: dataBoa });
     expect(cabe.decisao).toBe('liberar'); expect(cabe.precisaAprovacao).toBe(false); expect(cabe.motivos.length).toBeGreaterThan(2);
     expect(cabe.saldoHoje).toBeCloseTo(saldoBancarioHoje(ds), 2);
+    // pagamento vencido nao muda o "caixa hoje" (igual a Tesouraria): aparece como compromisso de hoje
+    const venc = actions.salvarLancamento(actions.novoLancamento({ categoria: 'Outros pagamentos', contraparte: 'Teste', descricao: 'boleto vencido', competencia: addDays(hoje, -2), vencimento: addDays(hoje, -2), status: 'Programado', valorBruto: 777 })).lancamento;
+    const comVencido = analisarPagamento(getState().ds, { valor: 10, vencimento: dataBoa });
+    expect(comVencido.saldoHoje).toBeCloseTo(saldoBancarioHoje(getState().ds), 2);
+    expect(comVencido.compromissosHoje).toBeGreaterThanOrEqual(777);
+    expect(comVencido.saldoAposHoje).toBeCloseTo(comVencido.saldoHoje - comVencido.compromissosHoje, 2);
+    expect(comVencido.motivos.some((m) => /Vencidos e vencendo hoje/.test(m))).toBe(true);
+    actions.cancelarLancamento(venc.id, 'teste');
     const grande = analisarPagamento(ds, { valor: ds.params.alcadas.limiteGestorObra + 1, vencimento: addDays(hoje, 1), codigoObra: ds.obras[0].codigo });
     expect(grande.precisaAprovacao).toBe(true); expect(grande.alcada.length).toBeGreaterThan(0);
     const impossivel = analisarPagamento(ds, { valor: 1e9, vencimento: hoje });

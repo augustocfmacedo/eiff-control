@@ -176,7 +176,7 @@ export function CentralDF() {
       </div>
       <div className="grid cols-4" style={{ margin: '14px 0' }}>
         <div className="kpi"><div className="label">Pedidos para decidir</div><div className="value">{al.previsoes.length}</div><div className="hint">{money(al.totalPrevisoes)}</div></div>
-        <div className="kpi"><div className="label">Caixa hoje</div><div className="value">{money(al.saldoHoje)}</div><div className="hint">{al.extrato.texto} · reserva {money(al.reserva)}</div></div>
+        <div className="kpi"><div className="label">Caixa hoje · Posição diária</div><div className="value">{money(al.saldoHoje)}</div><div className="hint">{al.extrato.texto}{al.compromissosHoje ? ` · vencidos e hoje −${money(al.compromissosHoje)}` : ''} · piso {money(al.reserva)}</div></div>
         <div className="kpi"><div className="label">Menor saldo da semana</div><div className="value">{money(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}</div><div className="hint">com os pedidos</div></div>
         <div className="kpi"><div className="label">Vence hoje</div><div className="value">{al.venceHoje.length}</div><div className="hint">{money(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}</div></div>
       </div>
@@ -208,7 +208,7 @@ export function CentralDF() {
           <div className="barras"><i className="sem" style={{ height: `${Math.max(2, (Math.max(0, d.saldo) / max) * 100)}%` }} /><i className="com" style={{ height: `${Math.max(2, (Math.max(0, d.saldoComPrevisoes) / max) * 100)}%` }} /></div>
           <b>{br(d.data)}</b><span>{money(d.saldoComPrevisoes)}</span>{d.previsoes > 0 && <span className="muted">−{money(d.previsoes)}</span>}
         </div>)}</div>
-        <div className="small muted">Barra clara: caixa projetado com os lançamentos oficiais. Barra laranja: incluindo os pedidos acima. Reserva: {money(al.reserva)}.</div>
+        <div className="small muted">Barra clara: caixa projetado com os lançamentos oficiais. Barra laranja: incluindo os pedidos acima. Piso (reserva mínima + vinculada): {money(al.reserva)}.</div>
       </div>
 
       <div className="card">
