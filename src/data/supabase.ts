@@ -376,7 +376,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
   ds.movimentosEstoque = stockMovs.map((x) => ({ id: x.id, data: x.moved_on, tipo: x.kind, itemId: x.item_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], quantidade: Number(x.quantity_kg), pecas: x.pieces != null ? Number(x.pieces) : undefined, corrida: x.heat_number ?? undefined, certificado: x.certificate ?? undefined, fornecedor: x.supplier ?? undefined, pedidoId: x.purchase_order_id ?? undefined, notaFiscal: x.invoice ?? undefined, custoUnitario: Number(x.unit_cost ?? 0), origemId: x.origin_id ?? undefined, origemTipo: x.origin_kind ?? undefined, observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.treinamentos = trainingRows.map((x) => ({ id: x.id, usuarioId: x.user_id, licaoId: x.lesson_id, concluidoEm: x.completed_at, acertos: x.score != null ? Number(x.score) : undefined }));
-  ds.fotos = fotoRows.map((x) => ({ id: x.id, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? '' : '', referenciaTipo: x.ref_type, referenciaId: x.ref_id, tomadaEm: x.taken_at, tomadaPor: x.taken_by ?? '', nota: x.note ?? undefined, dataUrl: x.data_url }));
+  ds.fotos = fotoRows.map((x) => ({ id: x.id, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? '' : '', referenciaTipo: x.ref_type, referenciaId: x.ref_id, tomadaEm: x.taken_at, tomadaPor: x.taken_by ?? '', nota: x.note ?? undefined, dataUrl: x.data_url ?? undefined, caminho: x.storage_path ?? undefined }));
   ds.radar = await carregarRadar({ sel: selTodos, orgId: org.id });
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
@@ -407,6 +407,19 @@ async function gravar(tabela: string, filtro: Record<string, string | null | und
   const { data, error } = await sb.from(tabela).insert({ ...row, ...extraInsert }).select('id');
   falha(`inserir ${tabela}`, error);
   return data?.[0];
+}
+
+export const BUCKET_FOTOS = 'fotos-campo';
+const urlsAssinadas = new Map<string, { url: string; ate: number }>();
+/** URL para exibir uma foto: a imagem local quando existe; senao uma URL assinada do Storage (cache de 50 min). Sem rede e sem imagem local: null. */
+export async function urlFoto(f: { dataUrl?: string; caminho?: string }): Promise<string | null> {
+  if (f.dataUrl) return f.dataUrl;
+  if (!f.caminho || !supabase) return null;
+  const c = urlsAssinadas.get(f.caminho); if (c && c.ate > Date.now()) return c.url;
+  const { data, error } = await supabase.storage.from(BUCKET_FOTOS).createSignedUrl(f.caminho, 3600);
+  if (error || !data?.signedUrl) return null;
+  urlsAssinadas.set(f.caminho, { url: data.signedUrl, ate: Date.now() + 50 * 60_000 });
+  return data.signedUrl;
 }
 
 /** O provedor remoto ja carregou (refs prontas) e pode gravar. */
@@ -819,16 +832,26 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     r.treinamentos.delete(t.id);
   }
 
-  // fotos de campo (imutaveis: insere as novas, apaga as removidas)
+  // fotos de campo (imutaveis): a imagem sobe para o Storage (bucket fotos-campo) e a linha guarda so o caminho;
+  // se o upload falhar (sem rede), o erro sobe e a fila offline guarda a foto com a imagem local ate a proxima tentativa
   for (const f of (depois.fotos ?? []).filter((x) => !r.fotos.get(x.id))) {
-    const { data, error } = await sb.from('field_photo').insert({ organization_id: r.orgId, project_id: f.codigoObra ? r.obras.get(f.codigoObra) ?? null : null, ref_type: f.referenciaTipo, ref_id: f.referenciaId, taken_at: f.tomadaEm, taken_by: atorId, note: f.nota ?? null, data_url: f.dataUrl }).select('id');
+    const projectId = f.codigoObra ? r.obras.get(f.codigoObra) ?? null : null;
+    let caminho = f.caminho ?? null;
+    if (!caminho && f.dataUrl) {
+      caminho = `${r.orgId}/${projectId ?? 'sem-obra'}/${f.id}.jpg`;
+      const blob = await (await fetch(f.dataUrl)).blob();
+      const { error: eUp } = await sb.storage.from(BUCKET_FOTOS).upload(caminho, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+      if (eUp) throw new RemotoError(`enviar foto de campo: ${eUp.message}`);
+    }
+    const { data, error } = await sb.from('field_photo').insert({ organization_id: r.orgId, project_id: projectId, ref_type: f.referenciaTipo, ref_id: f.referenciaId, taken_at: f.tomadaEm, taken_by: atorId, note: f.nota ?? null, storage_path: caminho, data_url: caminho ? null : (f.dataUrl ?? null) }).select('id');
     falha('registrar foto de campo', error);
-    if (data?.[0]) r.fotos.set(f.id, data[0].id);
+    if (data?.[0]) { r.fotos.set(f.id, data[0].id); f.caminho = caminho ?? undefined; }
   }
   const fotoDepois = new Set((depois.fotos ?? []).map((f) => f.id));
   for (const f of (antes.fotos ?? []).filter((x) => !fotoDepois.has(x.id) && r.fotos.get(x.id))) {
     const { error } = await sb.from('field_photo').delete().eq('id', r.fotos.get(f.id)!);
     falha('excluir foto de campo', error);
+    if (f.caminho) await sb.storage.from(BUCKET_FOTOS).remove([f.caminho]).catch(() => undefined);
     r.fotos.delete(f.id);
   }
 

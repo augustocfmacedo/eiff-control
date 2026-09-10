@@ -118,6 +118,16 @@ export function StatusBadge({ s }: { s: string }) {
 }
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+  const caixa = useRef<HTMLDivElement>(null);
+  // foco: entra no primeiro campo/botao do modal, fica preso nele (Tab circula) e volta ao elemento de origem ao fechar
+  useEffect(() => {
+    const origem = document.activeElement as HTMLElement | null;
+    const focaveis = () => Array.from(caixa.current?.querySelectorAll<HTMLElement>('input, select, textarea, button, [href], [tabindex]:not([tabindex="-1"])') ?? []).filter((e) => !e.hasAttribute('disabled'));
+    setTimeout(() => { const f = focaveis(); (f.find((e) => e.tagName !== 'BUTTON') ?? f[0])?.focus(); }, 0);
+    const trap = (e: KeyboardEvent) => { if (e.key !== 'Tab') return; const f = focaveis(); if (!f.length) return; const i = f.indexOf(document.activeElement as HTMLElement); if (e.shiftKey && (i <= 0)) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); } };
+    window.addEventListener('keydown', trap);
+    return () => { window.removeEventListener('keydown', trap); origem?.focus?.(); };
+  }, []);
   useEffect(() => {
     const on = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', on);
@@ -125,7 +135,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   }, [onClose]);
   return (
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={wide ? { width: 'min(1200px, 100%)' } : undefined} role="dialog" aria-modal="true" aria-label={title}>
+      <div className="modal" ref={caixa} style={wide ? { width: 'min(1200px, 100%)' } : undefined} role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         {children}
       </div>
@@ -209,9 +219,9 @@ export function PageHead({ title, subtitle, children }: { title: string; subtitl
 
 export function Tabs<T extends string>({ value, onChange, items }: { value: T; onChange: (v: T) => void; items: { id: T; label: string }[] }) {
   return (
-    <div className="tabs">
+    <div className="tabs" role="tablist">
       {items.map((i) => (
-        <button key={i.id} className={i.id === value ? 'active' : ''} onClick={() => onChange(i.id)}>{i.label}</button>
+        <button key={i.id} role="tab" aria-selected={i.id === value} className={i.id === value ? 'active' : ''} onClick={() => onChange(i.id)} onKeyDown={(e) => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const k = items.findIndex((x) => x.id === i.id); const prox = items[(k + (e.key === 'ArrowRight' ? 1 : items.length - 1)) % items.length]; onChange(prox.id); (e.currentTarget.parentElement?.children[items.indexOf(prox)] as HTMLElement | undefined)?.focus(); } }}>{i.label}</button>
       ))}
     </div>
   );
@@ -238,7 +248,7 @@ export function useToast() {
     const t = setTimeout(() => setMsg(null), 3500);
     return () => clearTimeout(t);
   }, [msg]);
-  return { msg, toast: setMsg, el: msg ? <div className="toast">{msg}</div> : null };
+  return { msg, toast: setMsg, el: <div className="toast-area" role="status" aria-live="polite">{msg ? <div className="toast">{msg}</div> : null}</div> };
 }
 
 /** Executa uma acao do store e retorna a mensagem de erro (regra de negocio) se houver. */

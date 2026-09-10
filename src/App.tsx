@@ -178,12 +178,13 @@ export default function App() {
 
   return (
     <div className={`app ${recolhida ? 'recolhida' : ''}`}>
-      <aside className="sidebar">
+      <a className="salto" href="#conteudo" onClick={(e) => { e.preventDefault(); document.getElementById('conteudo')?.focus(); }}>Ir para o conteúdo</a>
+      <aside className="sidebar" aria-label="Menu principal">
         <div className="brand">
           {recolhida ? <Marca size={26} /> : <><Logotipo height={40} /><div className="nav-label brand-txt"><b>Control</b><span>Do orçamento ao caixa</span></div></>}
           <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}><Icon name={recolhida ? 'expandir' : 'recolher'} size={16} /></button>
         </div>
-        <nav className="nav">
+        <nav className="nav" aria-label="Telas">
           <IndicadorNav chave={`${rota.path}|${favoritos.join(',')}|${gruposFechados.join(',')}|${recolhida}`} />
           {favoritos.length > 0 && !recolhida && <><h3 className="grupo fixo"><span>Favoritos</span></h3>{favoritos.map((to) => rotasVisiveis.find((r) => r.to === to)).filter((r): r is (typeof ROTAS_NAV)[number] => !!r).map(itemNav)}</>}
           {grupos.map((g) => { const itens = rotasVisiveis.filter((r) => r.grupo === g); const fechado = !recolhida && gruposFechados.includes(g) && !itens.some((r) => ativa(r.to)); return (
@@ -238,7 +239,7 @@ export default function App() {
             </label>
           )}
         </header>
-        <main className="content"><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}><Sugestoes rota={rota.path} />{tela}</Revelar></Suspense></main>
+        <main className="content" id="conteudo" tabIndex={-1}><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}><Sugestoes rota={rota.path} />{tela}</Revelar></Suspense></main>
       </div>
       <Paleta aberta={paleta} onFechar={() => setPaleta(false)} acoes={acoesPaleta} permite={(p) => pode(usuario, p as never)} />
       <Tour rota={rota.path} aberto={tour} onFechar={() => setTour(false)} />

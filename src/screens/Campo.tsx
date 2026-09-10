@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { carteiraObras } from '../core/engine';
 import { calcTarefas, locaisDoDia } from '../core/equipe';
 import { resumoProducao } from '../core/obras';
@@ -6,10 +6,18 @@ import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Empty, tentar, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
 import { comprimirFoto } from '../ui/foto';
+import { urlFoto } from '../data/supabase';
 import type { Foto } from '../core/types';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 
+/** Miniatura que resolve a imagem: local (data URL) ou URL assinada do Storage; sem rede e sem imagem local, mostra um marcador. */
+function ImagemFoto({ foto }: { foto: Foto }) {
+  const [url, setUrl] = useState<string | null>(foto.dataUrl ?? null);
+  useEffect(() => { let ativo = true; if (!foto.dataUrl) void urlFoto(foto).then((u) => { if (ativo) setUrl(u); }); return () => { ativo = false; }; }, [foto]);
+  if (!url) return <span className="miniatura-vazia" title="Foto no servidor; abre com conexão">☁</span>;
+  return <img src={url} alt="foto de campo" loading="lazy" onClick={() => window.open(url, '_blank')} />;
+}
 /** Botao de foto do modo campo: abre a camera, comprime e registra a evidencia ligada ao item; miniaturas com exclusao. */
 function BotaoFoto({ codigoObra, tipo, refId, onErro, onOk }: { codigoObra: string; tipo: Foto['referenciaTipo']; refId: string; onErro: (m: string) => void; onOk: (m: string) => void }) {
   const { ds, usuario } = useStore();
@@ -28,7 +36,7 @@ function BotaoFoto({ codigoObra, tipo, refId, onErro, onOk }: { codigoObra: stri
       <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void escolher(e.target.files?.[0])} />
       <button className="btn" disabled={ocupado} onClick={() => input.current?.click()}>{ocupado ? 'Comprimindo…' : `📷 Foto${fotos.length ? ` (${fotos.length})` : ''}`}</button>
       {fotos.length > 0 && <div className="miniaturas">{fotos.slice(-6).map((f) => (
-        <span key={f.id} className="miniatura"><img src={f.dataUrl} alt="foto de campo" loading="lazy" onClick={() => window.open(f.dataUrl, '_blank')} />{(f.tomadaPor === usuario.id || pode(usuario, 'editar_obra', codigoObra || undefined)) && <button className="apagar" title="Excluir foto" aria-label="Excluir foto" onClick={() => { if (window.confirm('Excluir esta foto?')) tentar(() => actions.excluirFoto(f.id), onErro); }}>×</button>}</span>
+        <span key={f.id} className="miniatura"><ImagemFoto foto={f} />{(f.tomadaPor === usuario.id || pode(usuario, 'editar_obra', codigoObra || undefined)) && <button className="apagar" title="Excluir foto" aria-label="Excluir foto" onClick={() => { if (window.confirm('Excluir esta foto?')) tentar(() => actions.excluirFoto(f.id), onErro); }}>×</button>}</span>
       ))}</div>}
     </div>
   );

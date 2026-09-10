@@ -1930,7 +1930,7 @@ export const actions = {
   registrarFoto(f: Omit<Foto, 'id' | 'tomadaEm' | 'tomadaPor'>): Foto {
     let ds = state.ds;
     if (f.codigoObra) exigir('comentar', f.codigoObra);
-    if (!f.dataUrl.startsWith('data:image/')) throw new RegraDeNegocioError('Foto inválida.');
+    if (!f.dataUrl || !f.dataUrl.startsWith('data:image/')) throw new RegraDeNegocioError('Foto inválida.');
     if (f.dataUrl.length > 800_000) throw new RegraDeNegocioError('Foto grande demais (limite 800 KB depois de comprimida).');
     const foto: Foto = { ...f, id: `FOTO-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, tomadaEm: agora(), tomadaPor: state.usuario.id };
     ds = registrar({ ...ds, fotos: [...(ds.fotos ?? []), foto] }, 'registrar_foto', f.referenciaTipo, f.referenciaId, undefined, { obra: f.codigoObra, bytes: f.dataUrl.length });

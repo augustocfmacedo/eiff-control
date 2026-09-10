@@ -738,7 +738,8 @@ export interface Foto {
   tomadaEm: string;
   tomadaPor: string;
   nota?: string;
-  dataUrl: string;
+  dataUrl?: string; // imagem comprimida no aparelho (antes do envio, ou fotos antigas guardadas na linha)
+  caminho?: string; // objeto no Supabase Storage (bucket fotos-campo) depois do envio
 }
 
 export interface Dataset {
