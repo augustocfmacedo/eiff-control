@@ -100,6 +100,8 @@ interface Refs {
   movEstoque: Map<string, string>;
   treinamentos: Map<string, string>;
   fotos: Map<string, string>;
+  funcoes: Map<string, string>;
+  alocacoes: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -179,7 +181,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const [pedidosRows, pedidosItens, conjuntosRows, avancosRows] = await Promise.all([selTodos('purchase_order', 'code'), selTodos('purchase_order_item', 'item_order'), selTodos('assembly', 'mark'), selTodos('service_progress', 'measured_on')]);
   const [estacaoRows, romaneioRows, stockItems, stockMovs] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number'), selTodos('stock_item', 'code'), selTodos('stock_movement', 'moved_on')]);
   const trainingRows = await selTodos('training_progress', 'completed_at');
-  const fotoRows = await selTodos('field_photo', 'taken_at'); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
+  const fotoRows = await selTodos('field_photo', 'taken_at');
+  const [funcRows, alocRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on')]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -235,6 +238,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     movEstoque: new Map(stockMovs.map((x) => [x.id, x.id])),
     treinamentos: new Map(trainingRows.map((x) => [x.id, x.id])),
     fotos: new Map(fotoRows.map((x) => [x.id, x.id])),
+    funcoes: new Map(funcRows.map((x) => [x.id, x.id])),
+    alocacoes: new Map(alocRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -343,7 +348,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], fotos: [], radar: radarVazio(),
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], fotos: [], funcoes: [], alocacoes: [], radar: radarVazio(),
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -377,6 +382,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.movimentosEstoque = stockMovs.map((x) => ({ id: x.id, data: x.moved_on, tipo: x.kind, itemId: x.item_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], quantidade: Number(x.quantity_kg), pecas: x.pieces != null ? Number(x.pieces) : undefined, corrida: x.heat_number ?? undefined, certificado: x.certificate ?? undefined, fornecedor: x.supplier ?? undefined, pedidoId: x.purchase_order_id ?? undefined, notaFiscal: x.invoice ?? undefined, custoUnitario: Number(x.unit_cost ?? 0), origemId: x.origin_id ?? undefined, origemTipo: x.origin_kind ?? undefined, observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.treinamentos = trainingRows.map((x) => ({ id: x.id, usuarioId: x.user_id, licaoId: x.lesson_id, concluidoEm: x.completed_at, acertos: x.score != null ? Number(x.score) : undefined }));
   ds.fotos = fotoRows.map((x) => ({ id: x.id, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? '' : '', referenciaTipo: x.ref_type, referenciaId: x.ref_id, tomadaEm: x.taken_at, tomadaPor: x.taken_by ?? '', nota: x.note ?? undefined, dataUrl: x.data_url ?? undefined, caminho: x.storage_path ?? undefined }));
+  ds.funcoes = funcRows.map((x) => ({ id: x.id, nome: x.name, categoria: x.category, custoHoraPadrao: x.default_hourly_cost === null || x.default_hourly_cost === undefined ? undefined : Number(x.default_hourly_cost), descricao: x.description ?? '', ativa: !!x.active }));
+  ds.alocacoes = alocRows.map((x) => ({ id: x.id, colaboradorId: x.worker_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? undefined : undefined, de: x.starts_on, ate: x.ends_on ?? undefined, percentual: Number(x.share), observacoes: x.notes ?? '' }));
   ds.radar = await carregarRadar({ sel: selTodos, orgId: org.id });
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
@@ -853,6 +860,23 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     falha('excluir foto de campo', error);
     if (f.caminho) await sb.storage.from(BUCKET_FOTOS).remove([f.caminho]).catch(() => undefined);
     r.fotos.delete(f.id);
+  }
+
+  // funcoes (catalogo) e alocacoes por periodo
+  for (const f of mudou(antes.funcoes ?? [], depois.funcoes ?? [], 'id')) {
+    const data = await gravar('job_function', { id: r.funcoes.get(f.id) }, { name: f.nome, category: f.categoria, default_hourly_cost: f.custoHoraPadrao ?? null, description: f.descricao || null, active: f.ativa }, { organization_id: r.orgId });
+    if (data) r.funcoes.set(f.id, data.id);
+  }
+  for (const a of mudou(antes.alocacoes ?? [], depois.alocacoes ?? [], 'id')) {
+    const workerId = r.colaboradores.get(a.colaboradorId) ?? a.colaboradorId;
+    const data = await gravar('worker_allocation', { id: r.alocacoes.get(a.id) }, { worker_id: workerId, location: a.local, project_id: a.codigoObra ? r.obras.get(a.codigoObra) ?? null : null, starts_on: a.de, ends_on: a.ate ?? null, share: a.percentual, notes: a.observacoes || null }, { organization_id: r.orgId });
+    if (data) r.alocacoes.set(a.id, data.id);
+  }
+  const alocDepois = new Set((depois.alocacoes ?? []).map((a) => a.id));
+  for (const a of (antes.alocacoes ?? []).filter((x) => !alocDepois.has(x.id) && r.alocacoes.get(x.id))) {
+    const { error } = await sb.from('worker_allocation').delete().eq('id', r.alocacoes.get(a.id)!);
+    falha('excluir alocação', error);
+    r.alocacoes.delete(a.id);
   }
 
   // EIFF Radar

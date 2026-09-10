@@ -1,7 +1,7 @@
 // Equipe e produtividade: efetivo, horas, custo de mao de obra apropriado, producao e ocorrencias,
 // calculados a partir dos apontamentos diarios de obra e de fabrica.
 
-import type { Apontamento, ApontamentoLinha, Colaborador, Dataset, LocalTrabalho, Tarefa } from './types';
+import type { Apontamento, ApontamentoLinha, Colaborador, Dataset, LocalTrabalho, Tarefa, Alocacao } from './types';
 
 export const FATOR_HORA_EXTRA = 1.5;
 
@@ -151,13 +151,38 @@ export interface LocalApontamento {
 }
 
 /** Locais que devem ter diario no dia: obras ativas com equipe e a fabrica, com o status do apontamento. */
+/** Alocacoes vigentes numa data (de <= data <= ate, ou sem fim). */
+export function alocacoesVigentes(ds: Pick<Dataset, 'alocacoes'>, data: string): Alocacao[] {
+  const d = data.slice(0, 10);
+  return (ds.alocacoes ?? []).filter((a) => a.de.slice(0, 10) <= d && (!a.ate || a.ate.slice(0, 10) >= d));
+}
+/** Onde o colaborador esta numa data: a alocacao vigente de maior percentual; sem alocacao, o local/obra padrao do cadastro. */
+export function localDoColaborador(ds: Pick<Dataset, 'alocacoes'>, c: Colaborador, data: string): { local: LocalTrabalho; codigoObra?: string; percentual: number; origem: 'alocacao' | 'cadastro' } {
+  const minhas = alocacoesVigentes(ds, data).filter((a) => a.colaboradorId === c.id).sort((a, b) => b.percentual - a.percentual);
+  if (minhas.length) return { local: minhas[0].local, codigoObra: minhas[0].codigoObra, percentual: minhas[0].percentual, origem: 'alocacao' };
+  return { local: c.local, codigoObra: c.local === 'Obra' ? c.codigoObraPadrao : undefined, percentual: 1, origem: 'cadastro' };
+}
+/** Alocacoes do mesmo colaborador que se sobrepoem a esta e cuja soma de percentual passaria de 100% em algum dia. */
+export function conflitosAlocacao(alocacoes: Alocacao[], nova: Alocacao): Alocacao[] {
+  const sobrepoe = (a: Alocacao, b: Alocacao) => a.de.slice(0, 10) <= (b.ate ?? '9999-12-31').slice(0, 10) && b.de.slice(0, 10) <= (a.ate ?? '9999-12-31').slice(0, 10);
+  const outras = alocacoes.filter((a) => a.id !== nova.id && a.colaboradorId === nova.colaboradorId && sobrepoe(a, nova));
+  const soma = outras.reduce((s, a) => s + a.percentual, 0) + nova.percentual;
+  return soma > 1.0001 ? outras : [];
+}
+/** Diario do dia por local: quem esta em cada obra, na fabrica e no escritorio naquela data (alocacao vigente, senao cadastro). */
 export function locaisDoDia(ds: Dataset, data: string): LocalApontamento[] {
   const colabs = (ds.colaboradores ?? []).filter((c) => c.ativo);
+  const onde = new Map(colabs.map((c) => [c.id, alocacoesVigentes(ds, data).filter((a) => a.colaboradorId === c.id)]));
+  const esta = (c: Colaborador, local: LocalTrabalho, codigoObra?: string) => {
+    const al = onde.get(c.id) ?? [];
+    if (al.length) return al.some((a) => a.local === local && (local !== 'Obra' || a.codigoObra === codigoObra));
+    return c.local === local && (local !== 'Obra' || !c.codigoObraPadrao || c.codigoObraPadrao === codigoObra);
+  };
   const out: LocalApontamento[] = [];
-  const fab = colabs.filter((c) => c.local === 'Fábrica');
+  const fab = colabs.filter((c) => esta(c, 'Fábrica'));
   if (fab.length) out.push({ local: 'Fábrica', rotulo: 'Fábrica', apontamento: apontamentoDoDia(ds, data, 'Fábrica'), colaboradores: fab });
   for (const o of ds.obras.filter((x) => x.status === 'Em execução' || x.status === 'Planejamento')) {
-    const equipe = colabs.filter((c) => c.local === 'Obra' && (!c.codigoObraPadrao || c.codigoObraPadrao === o.codigo));
+    const equipe = colabs.filter((c) => esta(c, 'Obra', o.codigo));
     out.push({ local: 'Obra', codigoObra: o.codigo, rotulo: `${o.codigo} · ${o.nome}`, apontamento: apontamentoDoDia(ds, data, 'Obra', o.codigo), colaboradores: equipe });
   }
   return out;

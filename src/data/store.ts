@@ -6,6 +6,8 @@
 import { useSyncExternalStore } from 'react';
 import seed from './seed.json';
 import type {
+  Alocacao,
+  FuncaoColaborador,
   Foto,
   Treinamento,
   ItemEstoque,
@@ -42,6 +44,7 @@ import type {
   TransacaoBancaria,
   Usuario,
 } from '../core/types';
+import { conflitosAlocacao } from '../core/equipe';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
@@ -889,6 +892,53 @@ export const actions = {
     const atual = ds.colaboradores.find((x) => x.id === c.id);
     const colaboradores = atual ? ds.colaboradores.map((x) => (x.id === c.id ? c : x)) : [...ds.colaboradores, c];
     ds = registrar({ ...ds, colaboradores }, atual ? 'alterar_colaborador' : 'criar_colaborador', 'colaborador', c.id, atual, c);
+    commit(ds);
+  },
+
+  /** Catalogo de funcoes (Cadastros): nome unico por organizacao; inativar preserva historico. */
+  salvarFuncao(f: FuncaoColaborador): FuncaoColaborador {
+    let ds = state.ds;
+    exigir('editar_cadastros');
+    const nome = f.nome.trim().replace(/\s+/g, ' ');
+    if (!nome) throw new RegraDeNegocioError('Nome da função é obrigatório.');
+    if ((ds.funcoes ?? []).some((x) => x.id !== f.id && x.nome.localeCompare(nome, 'pt-BR', { sensitivity: 'base' }) === 0)) throw new RegraDeNegocioError(`Função "${nome}" já existe.`);
+    if (f.custoHoraPadrao !== undefined && f.custoHoraPadrao < 0) throw new RegraDeNegocioError('Custo/hora padrão deve ser positivo.');
+    const nova: FuncaoColaborador = { ...f, nome, id: f.id || `FUN-${Date.now().toString(36)}` };
+    const atual = (ds.funcoes ?? []).find((x) => x.id === nova.id);
+    ds = registrar({ ...ds, funcoes: atual ? ds.funcoes.map((x) => (x.id === nova.id ? nova : x)) : [...(ds.funcoes ?? []), nova] }, atual ? 'alterar_funcao' : 'criar_funcao', 'funcao', nova.id, atual, nova);
+    commit(ds);
+    return nova;
+  },
+  excluirFuncao(id: string) {
+    let ds = state.ds;
+    exigir('editar_cadastros');
+    const f = (ds.funcoes ?? []).find((x) => x.id === id); if (!f) throw new RegraDeNegocioError('Função não encontrada.');
+    ds = registrar({ ...ds, funcoes: ds.funcoes.map((x) => (x.id === id ? { ...x, ativa: false } : x)) }, 'inativar_funcao', 'funcao', id, f, { ...f, ativa: false });
+    commit(ds);
+  },
+  /** Alocacao por periodo: obra obrigatoria quando o local e Obra; datas coerentes; percentual 0-1; soma no periodo <= 100%. */
+  salvarAlocacao(a: Alocacao): Alocacao {
+    let ds = state.ds;
+    exigir('editar_obra', a.local === 'Obra' ? a.codigoObra : undefined);
+    const c = ds.colaboradores.find((x) => x.id === a.colaboradorId);
+    if (!c) throw new RegraDeNegocioError('Colaborador não encontrado.');
+    if (a.local === 'Obra' && (!a.codigoObra || !ds.obras.some((o) => o.codigo === a.codigoObra))) throw new RegraDeNegocioError('Alocação em obra exige uma obra cadastrada.');
+    if (!a.de) throw new RegraDeNegocioError('Data de início é obrigatória.');
+    if (a.ate && a.ate < a.de) throw new RegraDeNegocioError('Data final anterior à data de início.');
+    if (!(a.percentual > 0 && a.percentual <= 1)) throw new RegraDeNegocioError('Percentual de dedicação deve estar entre 1% e 100%.');
+    const nova: Alocacao = { ...a, codigoObra: a.local === 'Obra' ? a.codigoObra : undefined, id: a.id || `ALO-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}` };
+    const conflitos = conflitosAlocacao(ds.alocacoes ?? [], nova);
+    if (conflitos.length) { const soma = Math.round((conflitos.reduce((s, x) => s + x.percentual, 0) + nova.percentual) * 100); throw new RegraDeNegocioError(`Soma das alocações de ${c.nome} no período chegaria a ${soma}%: ajuste os percentuais ou as datas (${conflitos.map((x) => `${x.local}${x.codigoObra ? ` ${x.codigoObra}` : ''} ${Math.round(x.percentual * 100)}%`).join(', ')}).`); }
+    const atual = (ds.alocacoes ?? []).find((x) => x.id === nova.id);
+    ds = registrar({ ...ds, alocacoes: atual ? ds.alocacoes.map((x) => (x.id === nova.id ? nova : x)) : [...(ds.alocacoes ?? []), nova] }, atual ? 'alterar_alocacao' : 'criar_alocacao', 'colaborador', c.id, atual, nova);
+    commit(ds);
+    return nova;
+  },
+  excluirAlocacao(id: string) {
+    let ds = state.ds;
+    const a = (ds.alocacoes ?? []).find((x) => x.id === id); if (!a) throw new RegraDeNegocioError('Alocação não encontrada.');
+    exigir('editar_obra', a.local === 'Obra' ? a.codigoObra : undefined);
+    ds = registrar({ ...ds, alocacoes: ds.alocacoes.filter((x) => x.id !== id) }, 'excluir_alocacao', 'colaborador', a.colaboradorId, a, undefined);
     commit(ds);
   },
 

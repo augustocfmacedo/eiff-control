@@ -412,6 +412,12 @@ export interface Colaborador {
   observacoes: string;
 }
 
+export type CategoriaFuncao = 'Fábrica' | 'Canteiro' | 'Escritório';
+/** Catalogo de funcoes (Cadastros): nome unico, categoria e custo/hora padrao sugerido ao cadastrar o colaborador. */
+export interface FuncaoColaborador { id: string; nome: string; categoria: CategoriaFuncao; custoHoraPadrao?: number; descricao: string; ativa: boolean }
+/** Alocacao de colaborador por periodo: onde ele esta (obra, fabrica, escritorio), de/ate e percentual de dedicacao (0-1). */
+export interface Alocacao { id: string; colaboradorId: string; local: LocalTrabalho; codigoObra?: string; de: string; ate?: string; percentual: number; observacoes: string }
+
 export type Presenca = 'Presente' | 'Falta' | 'Atestado' | 'Férias' | 'Folga';
 
 export interface ApontamentoLinha {
@@ -775,5 +781,7 @@ export interface Dataset {
   movimentosEstoque: MovimentoEstoque[];
   treinamentos: Treinamento[];
   fotos: Foto[]; // fotos de campo (field_photo)
+  funcoes: FuncaoColaborador[]; // catalogo de funcoes (job_function)
+  alocacoes: Alocacao[]; // alocacoes por periodo (worker_allocation)
   radar: RadarDataset; // EIFF Radar (src/core/radar)
 }

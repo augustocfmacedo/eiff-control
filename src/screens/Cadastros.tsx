@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import type { Cenario, ContaFinanceira, Params, PlanoConta, TipoLancamento } from '../core/types';
+import type { Alocacao, CategoriaFuncao, Cenario, ContaFinanceira, FuncaoColaborador, LocalTrabalho, Params, PlanoConta, TipoLancamento } from '../core/types';
+import { conflitosAlocacao, localDoColaborador } from '../core/equipe';
 import { actions, pode, useStore } from '../data/store';
-import { Badge, Field, Input, Modal, Money, NumberInput, PageHead, Select, Tabs, money, tentar, useToast } from '../ui/components';
+import { Badge, Field, Input, Modal, Money, NumberInput, PageHead, Select, Tabs, data, money, tentar, useToast } from '../ui/components';
 
 const GRUPOS_FLUXO = ['Receitas Operacionais', 'Outras Entradas', 'Financiamento e Capital', 'Custos Diretos de Obras', 'Despesas com Pessoal', 'Despesas Administrativas', 'Despesas Comerciais', 'Despesas Operacionais', 'Tributos', 'Serviço da Dívida', 'Investimentos', 'Outras Saídas'];
 const GRUPOS_DRE = ['Receita Operacional', 'Deduções da Receita', 'Outras Receitas Operacionais', 'Outras Receitas', 'Custos Diretos', 'Despesas com Pessoal', 'Despesas Administrativas', 'Despesas Comerciais', 'Despesas Operacionais', 'Outras Despesas', 'Tributos', 'Resultado Financeiro', 'Não DRE'];
@@ -10,7 +11,17 @@ const CLASSES = ['Operacional', 'Custo direto', 'Despesa indireta', 'Tributo', '
 export default function Cadastros({ aba0 }: { aba0?: string }) {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'plano' | 'contas' | 'parametros' | 'usuarios' | 'dados'>((aba0 as 'plano') ?? 'plano');
+  const [aba, setAba] = useState<'plano' | 'contas' | 'funcoes' | 'alocacoes' | 'parametros' | 'usuarios' | 'dados'>((aba0 as 'plano') ?? 'plano');
+  const [funcao, setFuncao] = useState<FuncaoColaborador | null>(null);
+  const [aloc, setAloc] = useState<Alocacao | null>(null);
+  const [filtroAloc, setFiltroAloc] = useState<{ obra: string; vigentes: boolean; colaborador: string }>({ obra: '', vigentes: true, colaborador: '' });
+  const hoje = ds.params.dataBase;
+  const podeAlocar = pode(usuario, 'editar_obra');
+  const nomeColab = (id: string) => ds.colaboradores.find((c) => c.id === id)?.nome ?? id;
+  const rotuloLocal = (a: { local: LocalTrabalho; codigoObra?: string }) => a.local === 'Obra' ? `${a.codigoObra} · ${ds.obras.find((o) => o.codigo === a.codigoObra)?.nome ?? ''}` : a.local;
+  const vigente = (a: Alocacao) => a.de <= hoje && (!a.ate || a.ate >= hoje);
+  const alocacoesFiltradas = (ds.alocacoes ?? []).filter((a) => (!filtroAloc.obra || a.codigoObra === filtroAloc.obra) && (!filtroAloc.vigentes || vigente(a) || a.de > hoje) && (!filtroAloc.colaborador || a.colaboradorId === filtroAloc.colaborador)).sort((a, b) => nomeColab(a.colaboradorId).localeCompare(nomeColab(b.colaboradorId)) || a.de.localeCompare(b.de));
+  const conflitosDe = aloc ? conflitosAlocacao(ds.alocacoes ?? [], aloc) : [];
   const [pc, setPc] = useState<{ item: PlanoConta; original?: string } | null>(null);
   const [conta, setConta] = useState<ContaFinanceira | null>(null);
   const [params, setParams] = useState<Params>(ds.params);
@@ -21,7 +32,7 @@ export default function Cadastros({ aba0 }: { aba0?: string }) {
   return (
     <>
       <PageHead title="Cadastros mestres e parâmetros" subtitle="Plano de contas com mapas de fluxo e DRE, contas financeiras, parâmetros de cenário, reserva e alçadas, usuários e escopos." />
-      <Tabs value={aba} onChange={setAba} items={[{ id: 'plano', label: `Plano de contas (${ds.planoContas.length})` }, { id: 'contas', label: 'Contas financeiras' }, { id: 'parametros', label: 'Parâmetros e alçadas' }, { id: 'usuarios', label: 'Usuários e permissões' }, { id: 'dados', label: 'Dados e migração' }]} />
+      <Tabs value={aba} onChange={setAba} items={[{ id: 'plano', label: `Plano de contas (${ds.planoContas.length})` }, { id: 'contas', label: 'Contas financeiras' }, { id: 'funcoes', label: `Funções (${(ds.funcoes ?? []).filter((f) => f.ativa).length})` }, { id: 'alocacoes', label: `Alocações (${(ds.alocacoes ?? []).filter(vigente).length} vigentes)` }, { id: 'parametros', label: 'Parâmetros e alçadas' }, { id: 'usuarios', label: 'Usuários e permissões' }, { id: 'dados', label: 'Dados e migração' }]} />
 
       {aba === 'plano' && (
         <div className="card table-wrap">
@@ -37,6 +48,38 @@ export default function Cadastros({ aba0 }: { aba0?: string }) {
           {podeCad && <div className="actions" style={{ marginBottom: 8 }}><button className="btn primary sm" onClick={() => setConta({ id: `CTA-${String(ds.contas.length + 1).padStart(3, '0')}`, registro: 'Real', instituicao: '', conta: '', tipo: 'Conta corrente', saldoInicial: 0, reservaVinculada: 0, ativa: true })}>+ Conta</button></div>}
           <table><thead><tr><th>ID</th><th>Registro</th><th>Instituição</th><th>Conta</th><th>Tipo</th><th>Saldo abertura (dia anterior à data-base)</th><th>Reserva vinculada</th><th>Ativa</th></tr></thead><tbody>
             {ds.contas.map((c) => <tr key={c.id} className={podeCad ? 'clickable' : ''} onClick={() => podeCad && setConta(c)}><td>{c.id}</td><td>{c.registro}</td><td>{c.instituicao}</td><td>{c.conta}</td><td>{c.tipo}</td><td>{pode(usuario, 'ver_bancos') ? <Money v={c.saldoInicial} /> : '•••'}</td><td>{pode(usuario, 'ver_bancos') ? <Money v={c.reservaVinculada} /> : '•••'}</td><td>{c.ativa ? 'Sim' : 'Não'}</td></tr>)}
+          </tbody></table>
+        </div>
+      )}
+
+      {aba === 'funcoes' && (
+        <div className="card table-wrap">
+          <p className="small muted">Catálogo de funções dos colaboradores: categoria (fábrica, canteiro ou escritório) e custo/hora padrão sugerido ao cadastrar. Inativar preserva o histórico de quem já tem a função.</p>
+          {podeCad && <div className="actions" style={{ marginBottom: 8 }}><button className="btn primary sm" onClick={() => setFuncao({ id: '', nome: '', categoria: 'Canteiro', descricao: '', ativa: true })}>Nova função</button></div>}
+          {!(ds.funcoes ?? []).length && <p className="small muted">Nenhuma função cadastrada. As funções digitadas livremente nos colaboradores continuam válidas; cadastre-as aqui para padronizar nome e custo/hora.</p>}
+          {!!(ds.funcoes ?? []).length && <table><thead><tr><th>Função</th><th>Categoria</th><th>Custo/hora padrão</th><th>Colaboradores</th><th>Descrição</th><th>Situação</th></tr></thead><tbody>
+            {[...ds.funcoes].sort((a, b) => Number(b.ativa) - Number(a.ativa) || a.nome.localeCompare(b.nome)).map((f) => { const n = ds.colaboradores.filter((c) => c.ativo && c.funcao === f.nome).length; return <tr key={f.id} className={podeCad ? 'clickable' : ''} onClick={() => podeCad && setFuncao(f)}><td><b>{f.nome}</b></td><td>{f.categoria}</td><td>{f.custoHoraPadrao !== undefined ? money(f.custoHoraPadrao) : <span className="muted">—</span>}</td><td>{n}</td><td className="small">{f.descricao}</td><td>{f.ativa ? <Badge tone="ok">ativa</Badge> : <Badge tone="muted">inativa</Badge>}</td></tr>; })}
+          </tbody></table>}
+        </div>
+      )}
+
+      {aba === 'alocacoes' && (
+        <div className="card table-wrap">
+          <p className="small muted">Onde cada colaborador está por período: obra, fábrica ou escritório, com percentual de dedicação. A alocação vigente define quem aparece no diário do dia e no custo de cada obra; sem alocação vale o local e a obra padrão do cadastro do colaborador.</p>
+          <div className="actions" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+            {podeAlocar && <button className="btn primary sm" disabled={!ds.colaboradores.some((c) => c.ativo)} title={ds.colaboradores.some((c) => c.ativo) ? undefined : 'Cadastre colaboradores ativos em Equipe antes de alocar'} onClick={() => setAloc({ id: '', colaboradorId: ds.colaboradores.find((c) => c.ativo)?.id ?? '', local: 'Obra', codigoObra: ds.obras.find((o) => o.status === 'Em execução')?.codigo ?? ds.obras[0]?.codigo, de: hoje, percentual: 1, observacoes: '' })}>Nova alocação</button>}
+            <Select value={filtroAloc.colaborador} onChange={(v) => setFiltroAloc({ ...filtroAloc, colaborador: v })} allowEmpty="Todos os colaboradores" options={[...ds.colaboradores].filter((c) => c.ativo).sort((a, b) => a.nome.localeCompare(b.nome)).map((c) => ({ value: c.id, label: c.nome }))} />
+            <Select value={filtroAloc.obra} onChange={(v) => setFiltroAloc({ ...filtroAloc, obra: v })} allowEmpty="Todas as obras" options={ds.obras.map((o) => ({ value: o.codigo, label: `${o.codigo} · ${o.nome}` }))} />
+            <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={filtroAloc.vigentes} onChange={(e) => setFiltroAloc({ ...filtroAloc, vigentes: e.target.checked })} /> Só vigentes e futuras</label>
+          </div>
+          {!ds.colaboradores.some((c) => c.ativo) && <p className="small muted">Nenhum colaborador ativo: cadastre a equipe em Equipe › Colaboradores antes de alocar.</p>}
+          {!alocacoesFiltradas.length && <p className="small muted">Nenhuma alocação {filtroAloc.vigentes ? 'vigente ou futura' : ''} com esses filtros. Enquanto não houver alocações, o diário do dia usa o local e a obra padrão de cada colaborador.</p>}
+          {!!alocacoesFiltradas.length && <table><thead><tr><th>Colaborador</th><th>Função</th><th>Local</th><th>De</th><th>Até</th><th>Dedicação</th><th>Situação</th><th>Observações</th></tr></thead><tbody>
+            {alocacoesFiltradas.map((a) => { const c = ds.colaboradores.find((x) => x.id === a.colaboradorId); const sit = vigente(a) ? <Badge tone="ok">vigente</Badge> : a.de > hoje ? <Badge tone="info">futura</Badge> : <Badge tone="muted">encerrada</Badge>; return <tr key={a.id} className={podeAlocar ? 'clickable' : ''} onClick={() => podeAlocar && setAloc(a)}><td><b>{c?.nome ?? a.colaboradorId}</b>{c && !c.ativo && <> <Badge tone="muted">inativo</Badge></>}</td><td className="small">{c?.funcao}</td><td>{rotuloLocal(a)}</td><td>{data(a.de)}</td><td>{a.ate ? data(a.ate) : <span className="muted">em aberto</span>}</td><td>{Math.round(a.percentual * 100)}%</td><td>{sit}</td><td className="small">{a.observacoes}</td></tr>; })}
+          </tbody></table>}
+          <h3 style={{ marginTop: 16 }}>Hoje ({data(hoje)}): onde está cada colaborador ativo</h3>
+          <table className="small"><thead><tr><th>Colaborador</th><th>Função</th><th>Local hoje</th><th>Dedicação</th><th>Origem</th></tr></thead><tbody>
+            {[...ds.colaboradores].filter((c) => c.ativo && (!filtroAloc.colaborador || c.id === filtroAloc.colaborador)).sort((a, b) => a.nome.localeCompare(b.nome)).map((c) => { const l = localDoColaborador(ds, c, hoje); if (filtroAloc.obra && l.codigoObra !== filtroAloc.obra) return null; return <tr key={c.id}><td>{c.nome}</td><td>{c.funcao}</td><td>{l.local === 'Obra' && !l.codigoObra ? 'Obra (qualquer)' : rotuloLocal(l)}</td><td>{Math.round(l.percentual * 100)}%</td><td>{l.origem === 'alocacao' ? <Badge tone="ok">alocação</Badge> : <Badge tone="muted">cadastro</Badge>}</td></tr>; })}
           </tbody></table>
         </div>
       )}
@@ -115,6 +158,38 @@ export default function Cadastros({ aba0 }: { aba0?: string }) {
             <Field label="Orientação de uso" full><Input value={pc.item.orientacao} onChange={(e) => setPc({ ...pc, item: { ...pc.item, orientacao: e.target.value } })} /></Field>
           </div>
           <div className="foot"><button className="btn" onClick={() => setPc(null)}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.salvarPlanoConta(pc.item, pc.original), toast, () => setPc(null))}>Salvar</button></div>
+        </Modal>
+      )}
+      {funcao && (
+        <Modal title={funcao.id ? `Função ${funcao.nome}` : 'Nova função'} onClose={() => setFuncao(null)}>
+          <div className="form">
+            <Field label="Nome" req hint="Único no catálogo; é o texto que aparece no cadastro do colaborador"><Input value={funcao.nome} onChange={(e) => setFuncao({ ...funcao, nome: e.target.value })} /></Field>
+            <Field label="Categoria"><Select value={funcao.categoria} onChange={(v) => setFuncao({ ...funcao, categoria: v as CategoriaFuncao })} options={['Fábrica', 'Canteiro', 'Escritório']} /></Field>
+            <Field label="Custo/hora padrão (R$)" hint="Sugerido ao cadastrar um colaborador com esta função; não altera quem já existe"><NumberInput value={funcao.custoHoraPadrao ?? 0} onChange={(v) => setFuncao({ ...funcao, custoHoraPadrao: v > 0 ? v : undefined })} /></Field>
+            <Field label="Situação"><Select value={funcao.ativa ? 'Ativa' : 'Inativa'} onChange={(v) => setFuncao({ ...funcao, ativa: v === 'Ativa' })} options={['Ativa', 'Inativa']} /></Field>
+            <Field label="Descrição" full><Input value={funcao.descricao} onChange={(e) => setFuncao({ ...funcao, descricao: e.target.value })} /></Field>
+          </div>
+          <div className="foot"><button className="btn" onClick={() => setFuncao(null)}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.salvarFuncao(funcao), toast, () => { setFuncao(null); toast('Função salva.'); })}>Salvar</button></div>
+        </Modal>
+      )}
+      {aloc && (
+        <Modal title={aloc.id ? `Alocação de ${nomeColab(aloc.colaboradorId)}` : 'Nova alocação'} onClose={() => setAloc(null)}>
+          {conflitosDe.length > 0 && <div className="alert warn">Soma das alocações no período passaria de 100%: {conflitosDe.map((x) => `${rotuloLocal(x)} ${Math.round(x.percentual * 100)}% (${data(x.de)}${x.ate ? ` a ${data(x.ate)}` : ' em aberto'})`).join('; ')}. Ajuste percentuais ou datas.</div>}
+          <div className="form">
+            <Field label="Colaborador" req><Select value={aloc.colaboradorId} onChange={(v) => setAloc({ ...aloc, colaboradorId: v })} options={[...ds.colaboradores].filter((c) => c.ativo || c.id === aloc.colaboradorId).sort((a, b) => a.nome.localeCompare(b.nome)).map((c) => ({ value: c.id, label: `${c.nome} · ${c.funcao}` }))} /></Field>
+            <Field label="Local" req><Select value={aloc.local} onChange={(v) => setAloc({ ...aloc, local: v as LocalTrabalho, codigoObra: v === 'Obra' ? aloc.codigoObra ?? ds.obras[0]?.codigo : undefined })} options={['Obra', 'Fábrica', 'Escritório']} /></Field>
+            {aloc.local === 'Obra' && <Field label="Obra" req><Select value={aloc.codigoObra ?? ''} onChange={(v) => setAloc({ ...aloc, codigoObra: v })} options={ds.obras.map((o) => ({ value: o.codigo, label: `${o.codigo} · ${o.nome}` }))} /></Field>}
+            <Field label="De" req><Input type="date" value={aloc.de} onChange={(e) => setAloc({ ...aloc, de: e.target.value })} /></Field>
+            <Field label="Até" hint="Vazio = em aberto, vale até ser encerrada"><Input type="date" value={aloc.ate ?? ''} onChange={(e) => setAloc({ ...aloc, ate: e.target.value || undefined })} /></Field>
+            <Field label="Dedicação (%)" req hint="Parte da jornada dedicada a este local; a soma no período não passa de 100%"><NumberInput value={Math.round(aloc.percentual * 100)} onChange={(v) => setAloc({ ...aloc, percentual: Math.min(100, Math.max(0, v)) / 100 })} /></Field>
+            <Field label="Observações" full><Input value={aloc.observacoes} onChange={(e) => setAloc({ ...aloc, observacoes: e.target.value })} /></Field>
+          </div>
+          <div className="foot">
+            {aloc.id && !aloc.ate && <button className="btn" onClick={() => tentar(() => actions.salvarAlocacao({ ...aloc, ate: hoje }), toast, () => { setAloc(null); toast('Alocação encerrada hoje.'); })}>Encerrar hoje</button>}
+            {aloc.id && <button className="btn danger" onClick={() => window.confirm('Excluir esta alocação? O histórico do diário não muda.') && tentar(() => actions.excluirAlocacao(aloc.id), toast, () => { setAloc(null); toast('Alocação excluída.'); })}>Excluir</button>}
+            <button className="btn" onClick={() => setAloc(null)}>Cancelar</button>
+            <button className="btn primary" onClick={() => tentar(() => actions.salvarAlocacao(aloc), toast, () => { setAloc(null); toast('Alocação salva.'); })}>Salvar</button>
+          </div>
         </Modal>
       )}
       {conta && (
