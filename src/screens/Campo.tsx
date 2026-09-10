@@ -1,13 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { carteiraObras } from '../core/engine';
-import { calcTarefas, locaisDoDia } from '../core/equipe';
+import { calcTarefas, locaisDoDia, resumoDiaCampo } from '../core/equipe';
+import CampoDiario from './CampoDiario';
+import CampoEstacao from './CampoEstacao';
 import { resumoProducao } from '../core/obras';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Empty, tentar, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
 import { comprimirFoto } from '../ui/foto';
 import { urlFoto } from '../data/supabase';
-import type { Foto } from '../core/types';
+import type { Foto, LocalTrabalho } from '../core/types';
+
+const CHAVE_DATA = 'eiff-control:campo:data';
+const kg = (v: number) => `${Math.round(v).toLocaleString('pt-BR')} kg`;
+const n1 = (v: number) => (Math.round(v * 10) / 10).toLocaleString('pt-BR');
+const diaAntes = (iso: string, n: number) => { const t = new Date(`${iso}T00:00:00`); t.setDate(t.getDate() - n); return t.toISOString().slice(0, 10); };
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 
@@ -43,12 +50,18 @@ function BotaoFoto({ codigoObra, tipo, refId, onErro, onOk }: { codigoObra: stri
 }
 
 /** Modo campo: tela simplificada para celular, usada no canteiro e na fabrica. */
-export default function Campo({ secao }: { secao?: string }) {
+export default function Campo({ secao, query }: { secao?: string; query?: URLSearchParams }) {
   const { ds, usuario, sync } = useStore();
   const { toast, el } = useToast();
   const [bloq, setBloq] = useState<{ id: string; motivo: string } | null>(null);
-  const hoje = ds.params.dataBase;
+  const hojeBase = ds.params.dataBase;
+  // dia apontado: hoje por padrao; "ontem" e data livre ficam guardados na sessao para o encarregado fechar o dia anterior
+  const [hoje, setHojeRaw] = useState<string>(() => { try { const v = sessionStorage.getItem(CHAVE_DATA); return v && v <= hojeBase && v >= diaAntes(hojeBase, 7) ? v : hojeBase; } catch { return hojeBase; } });
+  const setHoje = (v: string) => { setHojeRaw(v); try { sessionStorage.setItem(CHAVE_DATA, v); } catch { /* ignore */ } };
   const locais = locaisDoDia(ds, hoje);
+  const resumo = resumoDiaCampo(ds, hoje);
+  const podeEstacao = pode(usuario, 'comentar');
+  const Fotos = ({ codigoObra, refId }: { codigoObra: string; refId: string }) => <BotaoFoto codigoObra={codigoObra} tipo="apontamento" refId={refId} onErro={toast} onOk={toast} />;
   const meuColab = ds.colaboradores.find((c) => c.usuarioId === usuario.id);
   const tarefas = calcTarefas(ds, hoje).filter((t) => t.status !== 'Concluída' && (t.responsavel === usuario.id || (meuColab && t.colaboradorId === meuColab.id) || pode(usuario, 'editar_obra'))).sort((a, b) => (a.prazo < b.prazo ? -1 : 1));
   const visiveis = new Set(obrasVisiveis(usuario, ds.obras).map((o) => o.codigo));
@@ -56,27 +69,58 @@ export default function Campo({ secao }: { secao?: string }) {
   const fab = resumoProducao(ds.ordens.filter((o) => visiveis.has(o.codigoObra)), 'Fabricação', hoje);
   const mon = resumoProducao(ds.ordens.filter((o) => visiveis.has(o.codigoObra)), 'Montagem', hoje);
   const ordens = [...fab.ordens, ...mon.ordens].filter((o) => o.status !== 'Concluída').sort((a, b) => ((a.dataNecessidade ?? '9') < (b.dataNecessidade ?? '9') ? -1 : 1));
-  const big: React.CSSProperties = { display: 'block', width: '100%', padding: '16px 14px', fontSize: 16, textAlign: 'left', marginBottom: 10 };
+  const abrirDiario = (local: LocalTrabalho, codigoObra?: string) => navegar(`/campo/diario?local=${encodeURIComponent(local)}${codigoObra ? `&obra=${encodeURIComponent(codigoObra)}` : ''}`);
+  const SeletorDia = () => (
+    <div className="chips" style={{ marginBottom: 10 }}>
+      <button className={`chip sm ${hoje === hojeBase ? 'on' : ''}`} onClick={() => setHoje(hojeBase)}>Hoje</button>
+      <button className={`chip sm ${hoje === diaAntes(hojeBase, 1) ? 'on' : ''}`} onClick={() => setHoje(diaAntes(hojeBase, 1))}>Ontem</button>
+      <input type="date" value={hoje} max={hojeBase} min={diaAntes(hojeBase, 7)} onChange={(e) => e.target.value && setHoje(e.target.value)} style={{ minHeight: 40, padding: '0 8px', fontSize: 14 }} aria-label="Dia do apontamento" />
+    </div>
+  );
+  const Local = ({ l }: { l: (typeof locais)[number] }) => (
+    <button className={`btn grande ${l.apontamento ? '' : 'primary'}`} onClick={() => abrirDiario(l.local, l.codigoObra)}>
+      <span>{l.rotulo}<span className="sub">{l.colaboradores.length} pessoa(s){l.apontamento ? ` · ${l.apontamento.linhas.filter((x) => x.presenca === 'Presente').length} presentes` : ''}</span></span>
+      <Badge tone={l.apontamento?.status === 'Fechado' ? 'ok' : l.apontamento ? 'warn' : 'muted'}>{l.apontamento?.status === 'Fechado' ? 'fechado' : l.apontamento ? 'rascunho' : 'apontar'}</Badge>
+    </button>
+  );
 
   const Home = () => (
     <div>
-      <p className="muted small">Olá, {usuario.nome.split(' ')[0]}. {d(hoje)}.{sync.status === 'pendente' && <> <Badge tone="warn">offline · guardado no aparelho</Badge></>}{sync.status === 'erro' && <> <Badge tone="bad">não sincronizado</Badge></>}</p>
-      <button className="btn primary" style={big} onClick={() => navegar('/campo/dia')}>📋 Apontar o dia <span className="muted small" style={{ float: 'right', color: 'inherit' }}>{locais.filter((l) => l.apontamento?.status === 'Fechado').length}/{locais.length} fechados</span></button>
-      <button className="btn" style={big} onClick={() => navegar('/campo/tarefas')}>✅ Minhas tarefas <span style={{ float: 'right' }}>{tarefas.length}{tarefas.some((t) => t.atrasada) && <Badge tone="bad">atrasadas</Badge>}</span></button>
-      <button className="btn" style={big} onClick={() => navegar('/campo/checklist')}>☑️ Check-list de hoje <span style={{ float: 'right' }}>{demandas.length} pendente(s)</span></button>
-      <button className="btn" style={big} onClick={() => navegar('/campo/producao')}>🏭 Fabricação e montagem <span style={{ float: 'right' }}>{ordens.length} em aberto</span></button>
-      <button className="btn" style={big} onClick={() => navegar('/')}>📊 Painel completo</button>
+      <p className="muted small">Olá, {usuario.nome.split(' ')[0]}.{sync.status === 'pendente' && <> <Badge tone="warn">offline · guardado no aparelho</Badge></>}{sync.status === 'erro' && <> <Badge tone="bad">não sincronizado</Badge></>}</p>
+      <SeletorDia />
+      <div className="faixa-dia" aria-label="resumo do dia">
+        <div><b>{resumo.fechados}/{resumo.locais}</b><span>diários fechados</span></div>
+        <div><b>{resumo.presentes || resumo.efetivo}</b><span>{resumo.presentes ? 'presentes' : 'na equipe'}</span></div>
+        <div><b>{n1(resumo.horas)}</b><span>horas do dia</span></div>
+        <div><b>{n1((resumo.kgFabrica + resumo.kgCanteiro) / 1000)}</b><span>t apontadas</span></div>
+      </div>
+
+      <div className="bloco-campo">
+        <h3>Equipe do dia · {d(hoje)}</h3>
+        {locais.length === 0 ? <Empty>Sem equipe cadastrada. Cadastre colaboradores e alocações em Cadastros.</Empty> : locais.map((l) => <Local key={l.rotulo} l={l} />)}
+      </div>
+
+      {podeEstacao && <div className="bloco-campo">
+        <h3>Produção por estação</h3>
+        <button className="btn grande" onClick={() => navegar('/campo/fabrica')}><span>Fábrica<span className="sub">corte, furação, montagem, solda, pintura, expedição</span></span><span className="small">{resumo.kgFabrica ? kg(resumo.kgFabrica) : '—'}</span></button>
+        <button className="btn grande" onClick={() => navegar('/campo/montagem')}><span>Montagem no canteiro<span className="sub">recebimento, pré-montagem, içamento, fixação, liberação</span></span><span className="small">{resumo.kgCanteiro ? kg(resumo.kgCanteiro) : '—'}</span></button>
+      </div>}
+
+      <div className="bloco-campo">
+        <h3>Acompanhamento</h3>
+        <button className="btn grande" onClick={() => navegar('/campo/producao')}><span>Ordens de fabricação e montagem<span className="sub">etapa atual, avanço, fotos</span></span><span className="small">{ordens.length} em aberto</span></button>
+        <button className="btn grande" onClick={() => navegar('/campo/tarefas')}><span>Minhas tarefas</span><span className="small">{tarefas.length}{tarefas.some((t) => t.atrasada) && <> <Badge tone="bad">atrasadas</Badge></>}</span></button>
+        <button className="btn grande" onClick={() => navegar('/campo/checklist')}><span>Check-list do dia</span><span className="small">{demandas.length} pendente(s)</span></button>
+        <button className="btn grande" onClick={() => navegar('/')}><span>Painel completo</span></button>
+      </div>
     </div>
   );
 
   const Dia = () => (
     <div>
-      <h2>Apontar o dia · {d(hoje)}</h2>
-      {locais.length === 0 ? <Empty>Sem equipe cadastrada.</Empty> : locais.map((l) => (
-        <button key={l.rotulo} className={`btn ${l.apontamento ? '' : 'primary'}`} style={big} onClick={() => { if (l.apontamento) navegar(`/apontamentos/${l.apontamento.id}`); else { const a = actions.novoApontamento(hoje, l.local, l.codigoObra); navegar(`/apontamentos/novo?data=${hoje}&local=${l.local}&obra=${l.codigoObra ?? ''}&id=${a.id}`); } }}>
-          {l.rotulo}<div className="small" style={{ opacity: 0.8 }}>{l.colaboradores.length} pessoas · {l.apontamento ? l.apontamento.status : 'não apontado'}</div>
-        </button>
-      ))}
+      <h2>Equipe do dia</h2>
+      <SeletorDia />
+      {locais.length === 0 ? <Empty>Sem equipe cadastrada.</Empty> : locais.map((l) => <Local key={l.rotulo} l={l} />)}
     </div>
   );
 
@@ -134,9 +178,12 @@ export default function Campo({ secao }: { secao?: string }) {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto' }}>
-      {secao && <button className="btn sm" style={{ marginBottom: 10 }} onClick={() => navegar('/campo')}>← Início</button>}
+      {secao && <button className="btn sm" style={{ marginBottom: 10 }} onClick={() => navegar(secao === 'diario' ? '/campo/dia' : '/campo')}>← {secao === 'diario' ? 'Equipe do dia' : 'Início'}</button>}
       {!secao && <Home />}
       {secao === 'dia' && <Dia />}
+      {secao === 'diario' && query?.get('local') && <CampoDiario key={`${hoje}|${query.get('local')}|${query.get('obra') ?? ''}`} data={hoje} local={query.get('local') as LocalTrabalho} codigoObra={query.get('obra') || undefined} toast={toast} Fotos={Fotos} />}
+      {secao === 'fabrica' && <CampoEstacao key={hoje} data={hoje} linha="Fabricação" toast={toast} />}
+      {secao === 'montagem' && <CampoEstacao key={hoje} data={hoje} linha="Montagem" toast={toast} />}
       {secao === 'tarefas' && <Tarefas />}
       {secao === 'checklist' && <Checklist />}
       {secao === 'producao' && <Producao />}

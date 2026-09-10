@@ -44,7 +44,7 @@ import type {
   TransacaoBancaria,
   Usuario,
 } from '../core/types';
-import { conflitosAlocacao } from '../core/equipe';
+import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
@@ -945,10 +945,10 @@ export const actions = {
   /** Abre o diario do dia para um local, pre-preenchido com a equipe do local (presenca e jornada padrao). */
   novoApontamento(data: string, local: Colaborador['local'], codigoObra?: string): Apontamento {
     const ds = state.ds;
-    const equipe = ds.colaboradores.filter((c) => c.ativo && c.local === local && (local !== 'Obra' || !c.codigoObraPadrao || c.codigoObraPadrao === codigoObra));
+    const equipe = equipeDoLocal(ds, data, local, codigoObra);
     return {
       id: seq('APT', ds.apontamentos.map((a) => a.id)), data, local, codigoObra: local === 'Obra' ? codigoObra : undefined,
-      linhas: equipe.map((c) => ({ colaboradorId: c.id, presenca: 'Presente', horas: c.jornadaDiaria, horasExtras: 0 })),
+      linhas: linhasPadrao(equipe),
       producao: [], ocorrencias: [], fotos: [], observacoes: '', status: 'Rascunho', responsavel: state.usuario.nome, criadoEm: agora(),
     };
   },

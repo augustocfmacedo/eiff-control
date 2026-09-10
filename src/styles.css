@@ -322,6 +322,41 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .campo .content { max-width: 640px; margin: 0 auto; padding-bottom: 40px; }
 .campo .btn { min-height: 44px; }
 .campo input, .campo select { min-height: 42px; font-size: 16px; }
+.campo h2 { font-size: var(--text-xl, 20px); margin: 4px 0 10px; }
+.campo .bloco-campo { margin-bottom: 14px; }
+.campo .bloco-campo h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 14px 0 6px; }
+.campo .btn.grande { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; font-size: 16px; text-align: left; margin-bottom: 8px; min-height: 56px; }
+.campo .btn.grande .sub { display: block; font-size: 12.5px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+.campo .btn.grande.primary .sub { color: inherit; opacity: 0.85; }
+.campo .faixa-dia { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0 14px; }
+.campo .faixa-dia > div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 6px; text-align: center; }
+.campo .faixa-dia b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.campo .faixa-dia span { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.campo .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.campo .chip { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 8px 12px; font-size: 14px; min-height: 40px; cursor: pointer; }
+.campo .chip.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+.campo .chip.sm { padding: 5px 10px; min-height: 32px; font-size: 13px; }
+.campo .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.campo .seg button { border: 0; background: var(--surface-2); color: var(--muted); padding: 8px 10px; min-height: 40px; min-width: 40px; font-weight: 700; font-size: 13px; cursor: pointer; }
+.campo .seg button + button { border-left: 1px solid var(--border); }
+.campo .seg button.on { background: var(--brand); color: #fff; }
+.campo .seg button.on.falta { background: var(--bad); }
+.campo .seg button.on.neutro { background: var(--surface-3, var(--surface-2)); color: var(--text); }
+.campo .stepper { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.campo .stepper button { border: 0; background: var(--surface-2); color: var(--text); width: 40px; min-height: 40px; font-size: 18px; cursor: pointer; }
+.campo .stepper input { border: 0; width: 58px; text-align: center; min-height: 40px; padding: 0; background: var(--surface); font-variant-numeric: tabular-nums; font-weight: 700; }
+.campo .stepper .un { font-size: 12px; color: var(--muted); padding-right: 8px; }
+.campo .linha-colab { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: 8px; }
+.campo .linha-colab.ausente { opacity: 0.72; }
+.campo .linha-colab .nome { font-weight: 700; }
+.campo .linha-colab .nome small { display: block; color: var(--muted); font-weight: 500; }
+.campo .linha-colab .horas { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 13px; color: var(--muted); }
+.campo .rodape-fixo { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 6px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; margin-top: 12px; z-index: 2; }
+.campo .rodape-fixo .tot { flex: 1; font-size: 13px; color: var(--muted); line-height: 1.3; }
+.campo .rodape-fixo .tot b { color: var(--text); font-size: 15px; }
+.campo .num-grande { width: 100%; font-size: 28px; font-weight: 800; text-align: center; min-height: 60px; font-variant-numeric: tabular-nums; }
+.campo .lista-simples { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.campo .lista-simples li { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
 @media (max-width: 800px) {
   .btn { min-height: 40px; }
   input, select, textarea { font-size: 16px; }

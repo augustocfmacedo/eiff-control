@@ -156,7 +156,7 @@ export default function App() {
     case 'auditoria': tela = <Auditoria />; break;
     case 'equipe': tela = <Equipe aba0={p1} key={p1} />; break;
     case 'apontamentos': tela = <ApontamentoTela id={p1 ?? 'novo'} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
-    case 'campo': tela = <Campo secao={p1} key={p1} />; break;
+    case 'campo': tela = <Campo secao={p1} query={rota.query} key={p1} />; break;
     default: tela = <div className="empty">Página não encontrada.</div>;
   }
 

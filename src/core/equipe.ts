@@ -169,23 +169,43 @@ export function conflitosAlocacao(alocacoes: Alocacao[], nova: Alocacao): Alocac
   const soma = outras.reduce((s, a) => s + a.percentual, 0) + nova.percentual;
   return soma > 1.0001 ? outras : [];
 }
-/** Diario do dia por local: quem esta em cada obra, na fabrica e no escritorio naquela data (alocacao vigente, senao cadastro). */
-export function locaisDoDia(ds: Dataset, data: string): LocalApontamento[] {
-  const colabs = (ds.colaboradores ?? []).filter((c) => c.ativo);
-  const onde = new Map(colabs.map((c) => [c.id, alocacoesVigentes(ds, data).filter((a) => a.colaboradorId === c.id)]));
-  const esta = (c: Colaborador, local: LocalTrabalho, codigoObra?: string) => {
-    const al = onde.get(c.id) ?? [];
+/** Colaboradores ativos que estao num local na data: alocacao vigente quando existe, senao local/obra padrao do cadastro. */
+export function equipeDoLocal(ds: Pick<Dataset, 'colaboradores' | 'alocacoes'>, data: string, local: LocalTrabalho, codigoObra?: string): Colaborador[] {
+  const vigentes = alocacoesVigentes(ds, data);
+  return (ds.colaboradores ?? []).filter((c) => {
+    if (!c.ativo) return false;
+    const al = vigentes.filter((a) => a.colaboradorId === c.id);
     if (al.length) return al.some((a) => a.local === local && (local !== 'Obra' || a.codigoObra === codigoObra));
     return c.local === local && (local !== 'Obra' || !c.codigoObraPadrao || c.codigoObraPadrao === codigoObra);
-  };
+  });
+}
+/** Diario do dia por local: quem esta em cada obra, na fabrica e no escritorio naquela data (alocacao vigente, senao cadastro). */
+export function locaisDoDia(ds: Dataset, data: string): LocalApontamento[] {
   const out: LocalApontamento[] = [];
-  const fab = colabs.filter((c) => esta(c, 'Fábrica'));
+  const fab = equipeDoLocal(ds, data, 'Fábrica');
   if (fab.length) out.push({ local: 'Fábrica', rotulo: 'Fábrica', apontamento: apontamentoDoDia(ds, data, 'Fábrica'), colaboradores: fab });
   for (const o of ds.obras.filter((x) => x.status === 'Em execução' || x.status === 'Planejamento')) {
-    const equipe = colabs.filter((c) => esta(c, 'Obra', o.codigo));
-    out.push({ local: 'Obra', codigoObra: o.codigo, rotulo: `${o.codigo} · ${o.nome}`, apontamento: apontamentoDoDia(ds, data, 'Obra', o.codigo), colaboradores: equipe });
+    out.push({ local: 'Obra', codigoObra: o.codigo, rotulo: `${o.codigo} · ${o.nome}`, apontamento: apontamentoDoDia(ds, data, 'Obra', o.codigo), colaboradores: equipeDoLocal(ds, data, 'Obra', o.codigo) });
   }
   return out;
+}
+/** Linhas iniciais do diario: todos presentes com a jornada padrao. */
+export const linhasPadrao = (equipe: Colaborador[]): ApontamentoLinha[] => equipe.map((c) => ({ colaboradorId: c.id, presenca: 'Presente', horas: c.jornadaDiaria, horasExtras: 0 }));
+
+/** Resumo do dia para a tela inicial do modo campo: diarios fechados, efetivo presente, horas e kg por linha de producao. */
+export interface ResumoDiaCampo { locais: number; fechados: number; rascunhos: number; presentes: number; efetivo: number; horas: number; kgFabrica: number; kgCanteiro: number; horasEstacao: number; apontamentosEstacao: number }
+export function resumoDiaCampo(ds: Dataset, data: string): ResumoDiaCampo {
+  const locais = locaisDoDia(ds, data);
+  const aps = locais.map((l) => l.apontamento).filter((a): a is Apontamento => !!a);
+  const presentes = aps.reduce((s, a) => s + a.linhas.filter((l) => l.presenca === 'Presente').length, 0);
+  const horas = aps.reduce((s, a) => s + a.linhas.filter((l) => l.presenca === 'Presente').reduce((h, l) => h + l.horas + l.horasExtras, 0), 0);
+  const est = (ds.apontamentosEstacao ?? []).filter((a) => a.data === data);
+  return {
+    locais: locais.length, fechados: aps.filter((a) => a.status === 'Fechado').length, rascunhos: aps.filter((a) => a.status === 'Rascunho').length,
+    presentes, efetivo: locais.reduce((s, l) => s + l.colaboradores.length, 0), horas,
+    kgFabrica: est.filter((a) => a.linha === 'Fabricação').reduce((s, a) => s + a.pesoKg, 0), kgCanteiro: est.filter((a) => a.linha === 'Montagem').reduce((s, a) => s + a.pesoKg, 0),
+    horasEstacao: est.reduce((s, a) => s + a.colaboradores.reduce((h, c) => h + c.horas, 0), 0), apontamentosEstacao: est.length,
+  };
 }
 
 export interface TarefaCalc extends Tarefa {

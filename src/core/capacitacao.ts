@@ -429,9 +429,9 @@ export const LICOES: Licao[] = [
     id: 'eq-apontamento-diario', titulo: 'Apontamento diário e modo campo', area: 'Equipe', rota: '/campo', minutos: 10,
     objetivo: 'Registrar presença, horas, produção e ocorrências do dia, do celular ou do escritório.',
     passos: [
-      'Modo campo (celular): seção Dia abre o diário do local pré-preenchido com a equipe; marque presença, horas e horas extras.',
-      'Registre a produção do dia (quantidade e unidade por serviço) e as ocorrências (chuva, falta de material, acidente).',
-      'Seção Produção: aponta a estação da fábrica direto do chão de fábrica. Checklist: itens de segurança e liberação.',
+      'Modo campo (celular): escolha o dia (Hoje, Ontem ou data) e toque no local em "Equipe do dia"; o diário abre com quem está alocado ali (Cadastros › Alocações, senão o local padrão do cadastro), todos presentes na jornada.',
+      'Toque em P/F/At/Fé/Fo para a presença; ajuste horas e extras nos botões − e +; "Adicionar pessoa de outra equipe" inclui quem foi emprestado. Ocorrências entram por chip (chuva, falta de material, acidente) com horas perdidas; produção do dia e clima são opcionais.',
+      '"Fábrica" e "Montagem no canteiro" apontam a estação com quilos, peças, conjuntos da lista e horas de quem trabalhou (a equipe do local já vem marcada com as horas do diário); o kg/HH aparece antes de registrar.',
       'Feche o dia. Apontamento fechado só Gestor, Financeiro, Diretoria ou Administrador alteram.',
     ],
     obrigatorios: ['Data', 'Local'],
