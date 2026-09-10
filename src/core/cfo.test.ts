@@ -1,7 +1,7 @@
 // Diretor Financeiro virtual: interpretacao do pedido, projecao diaria, parecer, previsao e alinhamento.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { addDays } from './engine';
-import { alinhamentoDoDia, analisarPagamento, catalogoDe, centralDF, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, orientacaoDF, previsoesDF, projecaoDiaria, responderDF, statusPedidoDF } from './cfo';
+import { addDays, calcLancamentos, posicaoBancaria } from './engine';
+import { alinhamentoDoDia, analisarPagamento, catalogoDe, centralDF, recebiveisVencidos, saldoBancarioHoje, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, orientacaoDF, previsoesDF, projecaoDiaria, responderDF, statusPedidoDF } from './cfo';
 import { RegraDeNegocioError, actions, getState } from '../data/store';
 
 const HOJE = '2026-09-01';
@@ -50,25 +50,41 @@ describe('Diretor Financeiro: interpretação do pedido', () => {
 
 describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
   beforeAll(() => { actions.trocarUsuario('u-admin'); actions.restaurarPlanilha(); });
-  it('projeção diária começa no saldo de abertura e acumula entradas e saídas por dia', () => {
-    const ds = getState().ds;
-    const proj = projecaoDiaria(ds, addDays(ds.params.dataBase, 5));
-    expect(proj).toHaveLength(6); expect(proj[0].data).toBe(ds.params.dataBase);
+  it('projeção diária parte do saldo bancário do extrato; realizados e recebíveis vencidos ficam fora, pagamentos vencidos entram no primeiro dia', () => {
+    const ds = getState().ds; const hoje = ds.params.dataBase;
+    const lancs = calcLancamentos(ds);
+    const banco = posicaoBancaria(ds, lancs).reduce((a, p) => a + p.saldoBancario, 0);
+    expect(saldoBancarioHoje(ds)).toBeCloseTo(banco, 2);
+    const proj = projecaoDiaria(ds, addDays(hoje, 5));
+    expect(proj).toHaveLength(6); expect(proj[0].data).toBe(hoje);
+    const dia0 = lancs.filter((l) => l.oficial && !l.direto && l.status !== 'Cancelado' && l.status !== 'Realizado' && !!l.dataCaixa && (l.dataCaixa === hoje || (l.dataCaixa < hoje && l.tipo === 'Saída'))).reduce((s, l) => s + l.valorCaixaProjetado, 0);
+    expect(proj[0].saldo).toBeCloseTo(banco + dia0, 2);
+    // o recebivel vencido do demo nao entra: o saldo do dia 0 fica abaixo de banco + recebiveis vencidos
+    if (recebiveisVencidos(lancs) > 0) expect(proj[0].saldo).toBeLessThan(banco + dia0 + recebiveisVencidos(lancs));
     for (let i = 1; i < proj.length; i++) expect(proj[i].saldo).toBeCloseTo(proj[i - 1].saldo + proj[i].entradas - proj[i].saidas, 2);
   });
   it('parecer libera quando cabe, reagenda quando aperta e sinaliza alçada acima do limite do gestor', () => {
-    actions.salvarParametros({ ...getState().ds.params, reservaMinima: 5000 });
-    const ds = getState().ds; const hoje = ds.params.dataBase;
-    const proj = projecaoDiaria(ds, addDays(hoje, 40));
+    const ds0 = getState().ds; const hoje = ds0.params.dataBase;
+    const proj = projecaoDiaria(ds0, addDays(hoje, 40));
     const min30 = Math.min(...proj.filter((d) => d.data >= addDays(hoje, 1) && d.data <= addDays(hoje, 31)).map((d) => d.saldo));
-    const folga = min30 - 5000;
-    const cabe = analisarPagamento(ds, { valor: Math.max(1, Math.min(Math.floor(folga / 2), ds.params.alcadas.limiteGestorObra - 1)), vencimento: addDays(hoje, 1) });
+    // reserva abaixo do menor saldo do periodo: um pagamento pequeno cabe; um do tamanho da folga + 1 nao cabe
+    const reserva = Math.max(0, Math.floor(min30) - 1000);
+    actions.salvarParametros({ ...ds0.params, reservaMinima: reserva });
+    const ds = getState().ds;
+    const folga = min30 - reserva;
+    // primeira data em que os 30 dias seguintes ficam acima da reserva com folga: um pagamento pequeno cabe nela
+    const proj2 = projecaoDiaria(ds, addDays(hoje, 75));
+    const minDesde = (d: string) => Math.min(...proj2.filter((x) => x.data >= d && x.data <= addDays(d, 30)).map((x) => x.saldo));
+    const dataBoa = proj2.map((x) => x.data).find((d) => d > hoje && minDesde(d) - reserva > 1000);
+    expect(dataBoa).toBeDefined();
+    const cabe = analisarPagamento(ds, { valor: 500, vencimento: dataBoa });
     expect(cabe.decisao).toBe('liberar'); expect(cabe.precisaAprovacao).toBe(false); expect(cabe.motivos.length).toBeGreaterThan(2);
+    expect(cabe.saldoHoje).toBeCloseTo(saldoBancarioHoje(ds), 2);
     const grande = analisarPagamento(ds, { valor: ds.params.alcadas.limiteGestorObra + 1, vencimento: addDays(hoje, 1), codigoObra: ds.obras[0].codigo });
     expect(grande.precisaAprovacao).toBe(true); expect(grande.alcada.length).toBeGreaterThan(0);
     const impossivel = analisarPagamento(ds, { valor: 1e9, vencimento: hoje });
     expect(impossivel.decisao).toBe('nao_recomendado'); expect(impossivel.saldoDepois).toBeLessThan(0);
-    const apertado = analisarPagamento(ds, { valor: folga + 1, vencimento: addDays(hoje, 1) });
+    const apertado = analisarPagamento(ds, { valor: Math.max(1, Math.floor(folga) + 1), vencimento: addDays(hoje, 1) });
     expect(['reagendar', 'atencao', 'nao_recomendado']).toContain(apertado.decisao);
     if (apertado.decisao === 'reagendar') expect(apertado.dataSugerida! > addDays(hoje, 1)).toBe(true);
   });
@@ -83,9 +99,9 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     const prev = montarPrevisao(ds, pedido, r.parecer!, r.parecer!.dataSugerida ?? r.parecer!.vencimento);
     expect(prev.categoria).toBe('Transporte e mobilização');
     const l = actions.registrarPrevisaoDF(prev);
-    expect(l.status).toBe('Rascunho'); expect(l.origem).toBe('diretor-financeiro'); expect(l.valorBruto).toBe(300); expect(l.vencimento).toBe(addDays(hoje, 1));
+    expect(l.status).toBe('Rascunho'); expect(l.origem).toBe('diretor-financeiro'); expect(l.valorBruto).toBe(300); expect(l.vencimento).toBe(r.parecer!.dataSugerida ?? addDays(hoje, 1));
     expect(previsoesDF(getState().ds).some((x) => x.id === l.id)).toBe(true);
-    const al = alinhamentoDoDia(getState().ds);
+    const al = alinhamentoDoDia(getState().ds, 40);
     expect(al.previsoes.some((p) => p.lancamento.id === l.id)).toBe(true);
     const dia = al.dias.find((d) => d.data === l.vencimento)!;
     expect(dia.saldoComPrevisoes).toBeCloseTo(dia.saldo - 300, 2);
