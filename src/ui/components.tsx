@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { NumeroVivo, Valor, useCrescer } from './motion';
+import { formatarMoedaEntrada, parseMoeda } from './numero';
 import { fmtBr } from '../core/engine';
 import { href, navegar } from './router';
-import { Icon, Logotipo, type IconName } from './icons';
+import { Icon, Marca, Logotipo, type IconName } from './icons';
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 });
 const brlInt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -138,16 +139,25 @@ type FieldProps = {
   full?: boolean;
   children: React.ReactNode;
   hint?: string;
+  erro?: string; // validacao inline: mensagem junto do campo (o resumo geral pode continuar existindo)
 };
-export function Field({ label, req, full, children, hint }: FieldProps) {
+export function Field({ label, req, full, children, hint, erro }: FieldProps) {
   return (
-    <label className={`field ${req ? 'req' : ''} ${full ? 'full' : ''}`}>
+    <label className={`field ${req ? 'req' : ''} ${full ? 'full' : ''} ${erro ? 'invalida' : ''}`}>
       <span>{label}</span>
       {children}
-      {hint && <small className="muted">{hint}</small>}
+      {erro ? <small className="erro" role="alert">{erro}</small> : hint && <small className="muted">{hint}</small>}
     </label>
   );
 }
+/** Entrada de moeda em pt-BR: digita "1.234,56" (ou 1234,56 / 1234.56), formata ao sair do campo; devolve numero. */
+export function MoedaInput({ value, onChange, ...rest }: { value: number; onChange: (v: number) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const [txt, setTxt] = useState(() => formatarMoedaEntrada(value)); const [foco, setFoco] = useState(false);
+  useEffect(() => { if (!foco) setTxt(formatarMoedaEntrada(value)); }, [value, foco]);
+  return <input inputMode="decimal" className="moeda" value={txt} onFocus={(e) => { setFoco(true); e.target.select(); }} onBlur={() => { setFoco(false); setTxt(formatarMoedaEntrada(value)); }} onChange={(e) => { setTxt(e.target.value); const n = parseMoeda(e.target.value); if (n !== null) onChange(n); }} {...rest} />;
+}
+/** Encontra, numa lista de mensagens de validacao, a que pertence a um campo (por expressao). */
+export const erroDoCampo = (erros: string[], re: RegExp) => erros.find((e) => re.test(e));
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} />;
@@ -164,12 +174,21 @@ export function Select({ value, onChange, options, allowEmpty, ...rest }: { valu
   );
 }
 
+/** Estado de erro padrao: o que aconteceu, a causa provavel e o que fazer, com as acoes possiveis. */
+export function EstadoErro({ titulo, causa, children, acoes }: { titulo: string; causa?: React.ReactNode; children?: React.ReactNode; acoes?: React.ReactNode }) {
+  return (
+    <div className="estado-erro" role="alert">
+      <span className="estado-erro-ico"><Icon name="aviso" size={22} /></span>
+      <div><h2>{titulo}</h2>{causa && <div className="alert bad" style={{ marginTop: 8 }}>{causa}</div>}{children && <p className="small muted" style={{ marginTop: 8 }}>{children}</p>}{acoes && <div className="actions" style={{ marginTop: 12 }}>{acoes}</div>}</div>
+    </div>
+  );
+}
 export function Alert({ tone, children }: { tone: 'ok' | 'warn' | 'bad' | 'info'; children: React.ReactNode }) {
   return <div className={`alert ${tone}`}>{children}</div>;
 }
 
-export function Empty({ children, icone = 'vazio', titulo }: { children: React.ReactNode; icone?: IconName; titulo?: string }) {
-  return <div className="empty"><Icon name={icone} size={26} />{titulo && <div className="empty-title">{titulo}</div>}<div>{children}</div></div>;
+export function Empty({ children, icone = 'vazio', titulo, acao }: { children: React.ReactNode; icone?: IconName; titulo?: string; acao?: React.ReactNode }) {
+  return <div className="empty"><span className="empty-marca" aria-hidden="true"><Marca size={54} /></span><Icon name={icone} size={26} />{titulo && <div className="empty-title">{titulo}</div>}<div>{children}</div>{acao && <div className="actions" style={{ justifyContent: 'center', marginTop: 6 }}>{acao}</div>}</div>;
 }
 
 export function Link({ to, children, className }: { to: string; children: React.ReactNode; className?: string }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decomporNumero, ehTextoNaoNumerico, recomporNumero, textoIntermediario } from './numero';
+import { decomporNumero, ehTextoNaoNumerico, formatarMoedaEntrada, parseMoeda, recomporNumero, textoIntermediario } from './numero';
 
 describe('numeros animados (pt-BR)', () => {
   it('decompõe e recompõe moeda, percentual, quantidade e negativo preservando prefixo, separadores e sufixo', () => {
@@ -17,5 +17,10 @@ describe('numeros animados (pt-BR)', () => {
     expect(textoIntermediario('R$ 40,00', 'sem número', 0.5)).toBe('sem número');
     expect(ehTextoNaoNumerico('09/09/2026')).toBe(true); expect(ehTextoNaoNumerico('14:30')).toBe(true); expect(ehTextoNaoNumerico('2026')).toBe(true);
     expect(ehTextoNaoNumerico('R$ 2.026,00')).toBe(false); expect(ehTextoNaoNumerico('12,5%')).toBe(false); expect(ehTextoNaoNumerico('26')).toBe(false);
+  });
+  it('entrada de moeda pt-BR: aceita milhar com ponto, vírgula decimal, ponto decimal simples e vazio; formata de volta', () => {
+    expect(parseMoeda('1.234,56')).toBe(1234.56); expect(parseMoeda('1234,5')).toBe(1234.5); expect(parseMoeda('1234.56')).toBe(1234.56); expect(parseMoeda('1.234')).toBe(1234);
+    expect(parseMoeda('R$ 12,00')).toBe(12); expect(parseMoeda('')).toBe(0); expect(parseMoeda('abc')).toBeNull(); expect(parseMoeda('-5,5')).toBe(-5.5);
+    expect(formatarMoedaEntrada(1234.5)).toBe('1.234,50'); expect(formatarMoedaEntrada(NaN)).toBe('0,00');
   });
 });

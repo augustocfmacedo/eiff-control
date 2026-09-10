@@ -41,6 +41,8 @@ const PATHS: Record<string, React.ReactNode> = {
   aviso: <><path d="M12 3l10 18H2L12 3z" /><path d="M12 10v4M12 17.5h.01" /></>,
   buscar: <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></>,
   densidade: <><path d="M4 6h16M4 10h16M4 14h16M4 18h16" /></>,
+  seta: <path d="M6 9l6 6 6-6" />,
+  estrela: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 16.9l-5.3 2.8 1.1-5.9-4.3-4.1 5.9-.8z" />,
   vazio: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /><path d="M8 15h4" /></>,
 };
 

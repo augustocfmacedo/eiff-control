@@ -32,3 +32,15 @@ export function textoIntermediario(de: string, para: string, t: number): string 
 }
 
 export const reduzMovimento = (): boolean => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Entrada de moeda em pt-BR: "1.234,56" ou "1234,56" ou "1234.56" -> 1234.56; vazio -> 0; invalido -> null. */
+export function parseMoeda(texto: string): number | null {
+  const s = texto.replace(/R\$/g, '').replace(/\s/g, '').trim();
+  if (!s) return 0;
+  let n: number;
+  if (s.includes(',')) n = Number(s.replace(/\./g, '').replace(',', '.'));
+  else if (/^-?\d+\.\d{1,2}$/.test(s)) n = Number(s);
+  else n = Number(s.replace(/\./g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+export const formatarMoedaEntrada = (n: number) => (Number.isFinite(n) ? n : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

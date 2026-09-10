@@ -2,14 +2,14 @@ import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { CenaEstrutura, IndicadorNav, MicroInteracoes, Revelar } from './ui/motion';
 import { dashboard } from './core/engine';
 import { actions, inicializar, pode, useStore } from './data/store';
-import { Badge, SkeletonTela, StatusBadge, dataHora } from './ui/components';
+import { Badge, EstadoErro, SkeletonTela, StatusBadge, dataHora } from './ui/components';
 import { href, useRota } from './ui/router';
 import Login from './screens/Login';
 import { trilhaDe } from './core/capacitacao';
 import { Assistente } from './ui/Assistente';
 import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
-import { Icon, Logotipo, Marca, type IconName } from './ui/icons';
-import { Paleta, type AcaoPaleta } from './ui/Paleta';
+import { Icon, Logotipo, Marca } from './ui/icons';
+import { Paleta, ROTAS_NAV, type AcaoPaleta } from './ui/Paleta';
 import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
 // telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
@@ -54,6 +54,11 @@ export default function App() {
   const [paleta, setPaleta] = useState(false);
   const [densidade, setDensidade] = useState<Densidade>(() => lerDensidade());
   useEffect(() => { aplicarDensidade(densidade); }, [densidade]);
+  const [escala, setEscala] = useState<'normal' | 'grande'>(() => { try { return localStorage.getItem('eiff-control:escala') === 'grande' ? 'grande' : 'normal'; } catch { return 'normal'; } });
+  useEffect(() => { document.documentElement.dataset.escala = escala; try { localStorage.setItem('eiff-control:escala', escala); } catch { /* ignore */ } }, [escala]);
+  const lerLista = (chave: string): string[] => { try { const v = JSON.parse(localStorage.getItem(chave) ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch { return []; } };
+  const [favoritos, setFavoritos] = useState<string[]>(() => lerLista('eiff-control:favoritos'));
+  const [gruposFechados, setGruposFechados] = useState<string[]>(() => lerLista('eiff-control:grupos'));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaleta((p) => !p); } };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
@@ -62,6 +67,7 @@ export default function App() {
     { id: 'tema', rotulo: 'Alternar tema claro/escuro', icone: 'sol', executar: () => setTema((t) => (t === 'dark' ? 'light' : 'dark')) },
     { id: 'menu', rotulo: 'Recolher ou expandir o menu', icone: 'menu', executar: () => setRecolhida((r) => { const v = !r; try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ } return v; }) },
     { id: 'densidade', rotulo: 'Alternar densidade das tabelas', sub: 'normal ou compacta', icone: 'densidade', executar: () => setDensidade((d) => (d === 'compacta' ? 'normal' : 'compacta')) },
+    { id: 'texto', rotulo: 'Alternar tamanho do texto', sub: 'normal ou grande', icone: 'livro', executar: () => setEscala((e) => (e === 'grande' ? 'normal' : 'grande')) },
     { id: 'imprimir', rotulo: 'Imprimir a tela atual', icone: 'dre', executar: () => setTimeout(() => window.print(), 150) },
     { id: 'recarregar', rotulo: 'Recarregar dados', icone: 'fluxo', executar: () => { void actions.recarregar().catch(() => undefined); } },
     { id: 'sair', rotulo: 'Sair', icone: 'sair', executar: () => { void actions.sair(); } },
@@ -71,15 +77,9 @@ export default function App() {
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
     return (
-      <div className="empty" style={{ paddingTop: 100 }}>
-        <div className="card" style={{ maxWidth: 560, margin: '0 auto', textAlign: 'left' }}>
-          <h2>Não foi possível carregar os dados</h2>
-          <div className="alert bad">{erroInicial}</div>
-          <p className="small muted">A sessão continua válida. Verifique a conexão e tente de novo; se persistir, saia e entre novamente.</p>
-          <div className="actions">
-            <button className="btn primary" onClick={() => void actions.recarregar().catch(() => undefined)}>Tentar de novo</button>
-            <button className="btn" onClick={() => void actions.sair()}>Sair</button>
-          </div>
+      <div className="carregando" style={{ placeItems: 'center' }}>
+        <div className="card" style={{ maxWidth: 600, width: '92vw', position: 'relative', zIndex: 1 }}>
+          <EstadoErro titulo="Não foi possível carregar os dados" causa={erroInicial} acoes={<><button className="btn primary" onClick={() => void actions.recarregar().catch(() => undefined)}>Tentar de novo</button><button className="btn" onClick={() => void actions.sair()}>Sair</button></>}>A sessão continua válida. Verifique a conexão e tente de novo; se persistir, saia e entre novamente.</EstadoErro>
         </div>
       </div>
     );
@@ -87,7 +87,6 @@ export default function App() {
   const d = dashboard(ds);
   const pend = ds.aprovacoes.filter((a) => a.status === 'Pendente' && a.etapas.find((e) => e.status === 'Pendente')?.papel === usuario.papel && a.solicitante !== usuario.nome).length;
   const tarefas = ds.tarefas.filter((t) => t.status === 'Aberta' && t.responsavel === usuario.id).length;
-  const bancos = pode(usuario, 'ver_bancos');
   const radarHoje = (ds.radar?.tarefas ?? []).filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) <= ds.params.dataBase).length;
   const radarAlertas = oportunidadesSemProximaAcao(ds.radar ?? radarVazio()).length + (ds.radar?.duplicatas ?? []).filter((d) => d.status === 'pendente').length;
   const licoesPendentes = trilhaDe(usuario.papel).filter((l) => !ds.treinamentos.some((t) => t.usuarioId === usuario.id && t.licaoId === l.id)).length;
@@ -97,15 +96,23 @@ export default function App() {
     setRecolhida(v);
     try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ }
   };
-  const ICONES: Record<string, IconName> = {
-    '/': 'painel', '/inbox': 'inbox', '/central': 'central', '/obras': 'obras', '/orcamentos': 'orcamento', '/compras': 'compras', '/producao': 'fabrica', '/estoque': 'estoque', '/equipe': 'equipe', '/campo': 'campo', '/pagar': 'pagar', '/receber': 'receber', '/lancamentos': 'lancamentos', '/aprovacoes': 'aprovacoes',
-    '/posicao': 'banco', '/fluxo13': 'fluxo', '/fluxo24': 'calendario', '/conciliacao': 'conciliacao', '/dividas': 'dividas', '/dre': 'dre', '/checks': 'checks', '/cadastros': 'cadastros', '/auditoria': 'auditoria', '/capacitacao': 'capacitacao', '/radar': 'radar', '/radar/hoje': 'hoje', '/radar/empresas': 'empresas',
+  // sidebar gerada da mesma lista da paleta (ROTAS_NAV): grupos recolhiveis e favoritos lembrados por navegador
+  const contagens: Record<string, number> = {
+    '/inbox': pend + tarefas, '/capacitacao': licoesPendentes, '/orcamentos': ds.orcamentos.filter((o) => o.status === 'Rascunho' || o.status === 'Enviado').length,
+    '/equipe': ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length, '/radar': radarAlertas, '/radar/hoje': radarHoje,
+    '/compras': ds.pedidos.filter((p) => p.status === 'Emitido' || p.status === 'Recebido parcial').length, '/aprovacoes': ds.aprovacoes.filter((a) => a.status === 'Pendente').length,
   };
-  const nav = (to: string, label: string, cnt?: number) => (
-    <a key={to} href={href(to)} className={rota.path === to || (to !== '/' && to !== '/radar' && rota.path.startsWith(to)) ? 'active' : ''} title={label}>
-      <span className="nav-ico" aria-hidden="true"><Icon name={ICONES[to] ?? 'obras'} size={17} /></span><span className="nav-label">{label}</span>{cnt ? <span className="cnt">{cnt}</span> : null}
-    </a>
+  const rotasVisiveis = ROTAS_NAV.filter((r) => !r.permissao || pode(usuario, r.permissao as never));
+  const ativa = (to: string) => rota.path === to || (to !== '/' && to !== '/radar' && rota.path.startsWith(to));
+  const alternarFavorito = (to: string) => setFavoritos((f) => { const v = f.includes(to) ? f.filter((x) => x !== to) : [...f, to]; try { localStorage.setItem('eiff-control:favoritos', JSON.stringify(v)); } catch { /* ignore */ } return v; });
+  const alternarGrupo = (g: string) => setGruposFechados((f) => { const v = f.includes(g) ? f.filter((x) => x !== g) : [...f, g]; try { localStorage.setItem('eiff-control:grupos', JSON.stringify(v)); } catch { /* ignore */ } return v; });
+  const itemNav = (r: (typeof ROTAS_NAV)[number]) => (
+    <div key={r.to} className={`nav-item ${favoritos.includes(r.to) ? 'fav' : ''}`}>
+      <a href={href(r.to)} className={ativa(r.to) ? 'active' : ''} title={r.rotulo}><span className="nav-ico" aria-hidden="true"><Icon name={r.icone} size={17} /></span><span className="nav-label">{r.rotulo}</span>{contagens[r.to] ? <span className="cnt">{contagens[r.to]}</span> : null}</a>
+      <button className="nav-fav" onClick={() => alternarFavorito(r.to)} title={favoritos.includes(r.to) ? 'Tirar dos favoritos' : 'Favoritar'} aria-label={favoritos.includes(r.to) ? 'Tirar dos favoritos' : 'Favoritar'}><Icon name="estrela" size={12} /></button>
+    </div>
   );
+  const grupos = [...new Set(rotasVisiveis.map((r) => r.grupo))];
 
   let tela: React.ReactNode;
   const [p0, p1, p2] = rota.partes;
@@ -162,40 +169,14 @@ export default function App() {
           <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}><Icon name={recolhida ? 'expandir' : 'recolher'} size={16} /></button>
         </div>
         <nav className="nav">
-          <IndicadorNav chave={rota.path} />
-          {nav('/', 'Painel executivo')}
-          {nav('/inbox', 'Minha caixa de entrada', pend + tarefas)}
-          {nav('/capacitacao', 'Capacitação', licoesPendentes)}
-          <h3>Obras</h3>
-          {nav('/central', 'Central de obras')}
-          {nav('/obras', 'Obras e contratos')}
-          {nav('/orcamentos', 'Orçamentos e composições', ds.orcamentos.filter((o) => o.status === 'Rascunho' || o.status === 'Enviado').length)}
-          {nav('/producao', 'Fábrica e montagem')}
-          {nav('/estoque', 'Estoque de aço')}
-          {nav('/equipe', 'Equipe e produtividade', ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length)}
-          {nav('/campo', 'Modo campo (celular)')}
-          <h3>Comercial</h3>
-          {nav('/radar', 'Radar · Command Center', radarAlertas)}
-          {nav('/radar/hoje', 'Radar · Hoje', radarHoje)}
-          {nav('/radar/empresas', 'Radar · Empresas')}
-          <h3>Financeiro</h3>
-          {nav('/compras', 'Compras e pedidos', ds.pedidos.filter((p) => p.status === 'Emitido' || p.status === 'Recebido parcial').length)}
-          {nav('/pagar', 'Contas a pagar')}
-          {nav('/receber', 'Contas a receber')}
-          {nav('/lancamentos', 'Lançamentos')}
-          {nav('/aprovacoes', 'Central de aprovações', ds.aprovacoes.filter((a) => a.status === 'Pendente').length)}
-          <h3>Tesouraria</h3>
-          {bancos && nav('/posicao', 'Posição diária')}
-          {nav('/fluxo13', 'Fluxo 13 semanas')}
-          {nav('/fluxo24', 'Fluxo 24 meses')}
-          {bancos && nav('/conciliacao', 'Bancos e conciliação')}
-          {bancos && nav('/dividas', 'Dívidas')}
-          <h3>Controladoria</h3>
-          {nav('/dre', 'DRE gerencial')}
-          {nav('/checks', 'Checks e fechamento')}
-          <h3>Administração</h3>
-          {nav('/cadastros', 'Cadastros e parâmetros')}
-          {pode(usuario, 'ver_auditoria') && nav('/auditoria', 'Auditoria')}
+          <IndicadorNav chave={`${rota.path}|${favoritos.join(',')}|${gruposFechados.join(',')}|${recolhida}`} />
+          {favoritos.length > 0 && !recolhida && <><h3 className="grupo fixo"><span>Favoritos</span></h3>{favoritos.map((to) => rotasVisiveis.find((r) => r.to === to)).filter((r): r is (typeof ROTAS_NAV)[number] => !!r).map(itemNav)}</>}
+          {grupos.map((g) => { const itens = rotasVisiveis.filter((r) => r.grupo === g); const fechado = !recolhida && gruposFechados.includes(g) && !itens.some((r) => ativa(r.to)); return (
+            <React.Fragment key={g}>
+              {g !== 'Início' && <h3 className={`grupo ${fechado ? 'fechado' : ''}`} onClick={() => alternarGrupo(g)} role="button" aria-expanded={!fechado} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alternarGrupo(g); } }}><span>{g}</span><Icon name="seta" size={12} /></h3>}
+              {!fechado && itens.map(itemNav)}
+            </React.Fragment>
+          ); })}
         </nav>
       </aside>
       <div className="main">
