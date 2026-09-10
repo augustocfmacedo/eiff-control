@@ -2,7 +2,7 @@
 // Cada teste confere tambem se houve (ou nao) POST no provider: a garantia mais importante desta fase.
 import { describe, expect, it } from 'vitest';
 import { autorizarDestino, interpretarRespostaEnvio, lerModoEnvio, lerNumerosCanary, permitePostar, validarCoerenciaCanal, type ModoEnvio } from './canais';
-import { tratarCanal, type DepsCanal } from './canaisServidor';
+import { octadeskProvider, tratarCanal, type DepsCanal } from './canaisServidor';
 
 const URL_SB = 'https://sb.test';
 const OCTA = 'https://api.octadesk.test';
@@ -264,5 +264,53 @@ describe('leitura da resposta do provider', () => {
     expect(interpretarRespostaEnvio({ httpStatus: 500 }).status).toBe('UNKNOWN');
     expect(interpretarRespostaEnvio({ timeout: true }).status).toBe('UNKNOWN');
     expect(interpretarRespostaEnvio({ httpStatus: 201, corpo: {} }).status).toBe('UNKNOWN');
+  });
+});
+
+
+describe('fronteira do efeito externo: sendApproved é fail-closed', () => {
+  /** Provider isolado, sem handler: prova que a guarda vive no próprio ponto que dispara o POST. */
+  function providerDireto(modoEnvio: ModoEnvio, allowlist: string[] = [AUTORIZADO]) {
+    const chamadas: { url: string; metodo: string }[] = [];
+    const fetchMock = (async (url: string, init?: RequestInit) => {
+      chamadas.push({ url: String(url), metodo: init?.method ?? 'GET' });
+      return new Response(JSON.stringify({ id: 'msg-1', chatId: 'chat-1', status: 'sended' }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const deps: DepsCanal = { fetch: fetchMock, supabaseUrl: URL_SB, anon: 'anon', octadesk: { baseUrl: OCTA, apiKey: 'segredo-nunca-vaza' }, modoEnvio, canaryNumeros: allowlist };
+    return { provider: octadeskProvider(deps.octadesk, deps), posts: () => chamadas.filter((x) => x.metodo === 'POST'), chamadas };
+  }
+  const pedido = (telefone = AUTORIZADO) => ({ comunicacaoId: COM, contatoId: CONTATO, canal: 'WHATSAPP' as const, modo: 'FREEFORM' as const, idempotencyKey: 'k', telefone, conversaId: 'chat-1', texto: 'oi' });
+
+  it('modo disabled → erro e nenhuma requisição, mesmo chamando o provider direto', async () => {
+    const { provider, chamadas } = providerDireto('disabled');
+    await expect(provider.sendApproved(pedido())).rejects.toMatchObject({ codigo: 'envio_desligado' });
+    expect(chamadas).toHaveLength(0);
+  });
+  it('modo pilot → erro e nenhuma requisição (pilot não libera destino nesta fase)', async () => {
+    const { provider, chamadas } = providerDireto('pilot');
+    await expect(provider.sendApproved(pedido())).rejects.toMatchObject({ codigo: 'modo_pilot_nao_liberado' });
+    expect(chamadas).toHaveLength(0);
+  });
+  it('canary com destino fora da allowlist → erro e nenhuma requisição', async () => {
+    const { provider, chamadas } = providerDireto('canary', ['556230000000']);
+    await expect(provider.sendApproved(pedido())).rejects.toMatchObject({ codigo: 'canary_destination_not_allowed' });
+    expect(chamadas).toHaveLength(0);
+  });
+  it('sem telefone → erro e nenhuma requisição', async () => {
+    const { provider, chamadas } = providerDireto('canary');
+    await expect(provider.sendApproved(pedido(''))).rejects.toMatchObject({ codigo: 'sem_telefone' });
+    expect(chamadas).toHaveLength(0);
+  });
+  it('canary com destino autorizado → exatamente um POST', async () => {
+    const { provider, posts } = providerDireto('canary');
+    const r = await provider.sendApproved(pedido());
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0].url).toContain('/chat/chat-1/messages');
+    expect(r.aceito).toBe(true); expect(r.mensagemId).toBe('msg-1');
+  });
+  it('a allowlist do provider é independente do handler: allowlist vazia bloqueia tudo', async () => {
+    const { provider, chamadas } = providerDireto('canary', []);
+    await expect(provider.sendApproved(pedido())).rejects.toMatchObject({ codigo: 'canary_destination_not_allowed' });
+    expect(chamadas).toHaveLength(0);
   });
 });

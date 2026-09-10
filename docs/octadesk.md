@@ -186,6 +186,11 @@ O caminho real de envio existe, mas está fechado por três chaves independentes
 A allowlist **nunca** vai para o navegador: a resposta traz só `destinoAutorizado` e o motivo. Nenhum
 número real aparece em arquivo versionado.
 
+As três guardas valem em **duas camadas**: o handler autoriza antes de criar a entrega, e o próprio
+`sendApproved` do provider — que é a fronteira do efeito externo — repete `autorizarDestino` antes de
+montar qualquer requisição. Assim, um caminho server-side futuro que chame `sendApproved` direto não
+escapa: `disabled`, `pilot` e destino fora da allowlist nunca viram POST (fail-closed).
+
 ### Ordem obrigatória (delivery first)
 
 1. reconstruir tudo no servidor (comunicação APPROVED, contato, supressão, conteúdo aprovado efetivo,

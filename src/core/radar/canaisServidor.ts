@@ -1,8 +1,10 @@
 // Provider Octadesk, SOMENTE server-side (mesmo padrao de vibeServidor/comunicacaoServidor: fetch injetado, testavel).
-// Nesta fase e READ-ONLY: GET /auth/check, /chat/numbers, /chat/templates-message e /chat (busca de conversa).
-// Nenhum POST de mensagem existe aqui: sendApproved chama recusarEnvio(). A chave OCTADESK_API_KEY nunca sai desta
-// camada (nem para o navegador, nem para log, nem para a resposta). Contrato da API em docs/octadesk.md.
-import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, comProvaDeJanela, direcaoMensagem, impressaoMensagem, mascararTelefone, reconciliarEntrega, recusarEnvio, whatsappDoContato, type ComandoReconciliacao, type CommunicationChannelProvider, type ConversaCanal, type ConversaCandidata, type Entregabilidade, type EstadoProvider, type MensagemCanal, type ModoEntrega, type Reconciliacao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
+// Leitura: GET /auth/check, /chat/numbers, /chat/templates-message, /chat e /chat/{id}/messages.
+// Envio (Send Canary 01): sendApproved e a FRONTEIRA do efeito externo e e fail-closed — repete autorizarDestino
+// antes de montar qualquer requisicao, entao disabled, pilot e destino fora da allowlist nunca viram POST, mesmo que
+// outro caminho server-side venha a chamar o metodo direto. A chave OCTADESK_API_KEY nunca sai desta camada
+// (nem para o navegador, nem para log, nem para a resposta). Contrato da API em docs/octadesk.md.
+import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, comProvaDeJanela, direcaoMensagem, impressaoMensagem, mascararTelefone, reconciliarEntrega, whatsappDoContato, type ComandoReconciliacao, type CommunicationChannelProvider, type ConversaCanal, type ConversaCandidata, type Entregabilidade, type EstadoProvider, type MensagemCanal, type ModoEntrega, type Reconciliacao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
 import { autorizarDestino, chaveIdempotencia, impressaoComando, interpretarRespostaEnvio, permitePostar, permiteReenvioAutomatico, validarCoerenciaCanal, type AutorizacaoDestino, type EstadoEntrega, type ModoEnvio, type PedidoEnvio, type ResultadoEnvio } from './canais';
 import { autenticar, type Sessao } from './comunicacaoServidor';
 import type { Canal, Contato } from './types';
@@ -145,7 +147,11 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
      * canario (conferida no handler) e entregabilidade. FREEFORM usa a conversa existente; TEMPLATE abre conversa.
      */
     sendApproved: async (p: PedidoEnvio): Promise<ResultadoEnvio> => {
-      if ((d.modoEnvio ?? 'disabled') === 'disabled') recusarEnvio();
+      // Fail-closed na FRONTEIRA do efeito externo: o handler ja autoriza antes, mas quem dispara o POST e este
+      // metodo. Qualquer outro caminho server-side que venha a chamar sendApproved passa pela mesma guarda —
+      // disabled, pilot e destino fora da allowlist nunca chegam a montar requisicao.
+      const autorizacao = autorizarDestino(p.telefone, d.modoEnvio ?? 'disabled', d.canaryNumeros ?? []);
+      if (!autorizacao.permitido) throw new ErroCanal(autorizacao.codigo ?? 'destino_nao_autorizado', autorizacao.motivo, 403);
       const c = exigir();
       const inicio = Date.now();
       const ctrl = new AbortController();
