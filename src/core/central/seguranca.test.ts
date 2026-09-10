@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { comparacaoConstante, metaCloudProvider, seguroMeta, tratarWebhookMeta, verificarAssinaturaMeta, type ConfigMeta, type DepsMeta } from './metaServidor';
 import { contextoDoNumero, normalizarEventosMeta, verificarDesafioMeta } from './metaEventos';
-import { CONFIANCA_MINIMA, INTENCOES_INTERNAS, PERMISSAO_POR_INTENCAO, decisaoSegura, resolverIdentidade, type WhatsappIdentity } from './tipos';
+import { AGENTE_POR_INTENCAO, CATALOGO_ACOES, CONFIANCA_MINIMA, INTENCOES_INTERNAS, autorizarAcao, decisaoSegura, definicaoDaAcao, resolverIdentidade, type AcaoProposta, type WhatsappIdentity } from './tipos';
 import { PROVIDERS_ENTREGA, validarCoerenciaCanal } from '../radar/canais';
 import { analisarPagamento, catalogoDe, interpretacaoDaIa, interpretarPedido, responderDF, ORIGEM_DF, type PrevisaoDF } from '../cfo';
 import { RegraDeNegocioError, actions, getState, pode } from '../../data/store';
@@ -74,7 +74,9 @@ describe('ameaça 1: spoof de identidade', () => {
     const r = resolverIdentidade(ATACANTE, [identidade()], 'INTERNAL');
     expect(r).toMatchObject({ conhecida: false, verificada: false });
     const d = decisaoSegura({ intent: 'FINANCE', confidence: 1, motivo: 'pedido de pagamento' }, r);
-    expect(d).toMatchObject({ requiresHuman: true, requiresConfirmation: true, requiredPermission: 'editar_lancamento' });
+    // a decisao nao carrega permissao: rotear nao autoriza (a permissao vem da acao proposta)
+    expect(d).toMatchObject({ requiresHuman: true, requiresConfirmation: true });
+    expect(d).not.toHaveProperty('requiredPermission');
   });
   it('identidade REVOKED (chip devolvido, pessoa desligada) não volta a agir, nem com outra linha VERIFIED do mesmo dono', () => {
     const revogada = identidade({ situacao: 'REVOKED', revogadoEm: '2026-09-05' });
@@ -356,14 +358,31 @@ describe('ameaça 7: dado financeiro não autorizado', () => {
     actions.trocarUsuario('u-obra');
     const usuario = getState().usuario;
     const fonte = ler('src/data/store.ts');
-    for (const i of INTENCOES_INTERNAS) {
-      const permissao = PERMISSAO_POR_INTENCAO[i];
-      expect(() => pode(usuario, permissao as never)).not.toThrow();
-      expect(typeof pode(usuario, permissao as never)).toBe('boolean');
-      expect(fonte, `${i} → ${permissao}`).toMatch(new RegExp(`^\\s{2}${permissao}: \\[`, 'm')); // a ação existe na MATRIZ
+    // a permissao vem da ACAO, nunca da intencao: cada acao do catalogo aponta para uma acao real da MATRIZ
+    for (const a of CATALOGO_ACOES) {
+      if (a.permissao === null) continue;
+      expect(typeof pode(usuario, a.permissao)).toBe('boolean');
+      expect(fonte, `${a.codigo} → ${a.permissao}`).toMatch(new RegExp(`^\\s{2}${a.permissao}: \\[`, 'm'));
     }
-    expect(PERMISSAO_POR_INTENCAO.EXECUTIVE).toBe('ver_bancos');
-    expect(pode(usuario, 'ver_bancos')).toBe(false); // o gestor de obra não abre a intenção EXECUTIVE
+    // a intencao so escolhe agente
+    for (const i of INTENCOES_INTERNAS) expect(AGENTE_POR_INTENCAO[i]).toBeTruthy();
+    expect(definicaoDaAcao('EXECUTIVE_PAINEL')?.permissao).toBe('ver_bancos');
+    expect(pode(usuario, 'ver_bancos')).toBe(false); // o gestor de obra nao le o painel executivo
+  });
+  it('escalada de privilégio: trocar o código da ação não rebaixa a permissão exigida', () => {
+    actions.trocarUsuario('u-obra');
+    const usuario = getState().usuario;
+    const verificada = { conhecida: true, verificada: true, motivo: 'ok' };
+    const podeReal = (acao: Parameters<typeof pode>[1], obra?: string) => pode(usuario, acao, obra);
+    const consulta: AcaoProposta = { codigo: 'FINANCE_CONSULTA_CAIXA', titulo: 'x', descricao: 'x', permissao: 'ver_bancos', exigeConfirmacao: false, reversivel: true, parametros: {} };
+    // Gestor de obra nao tem ver_bancos: consultar caixa e recusado
+    expect(autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: consulta, identidade: verificada }, podeReal).autorizado).toBe(false);
+    // trocar o codigo mantendo a permissao fraca declarada nao libera a acao forte
+    const r = autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: { ...consulta, codigo: 'FINANCE_LIQUIDAR' }, identidade: verificada }, podeReal);
+    expect(r.autorizado).toBe(false);
+    expect(r.permissao).toBe('liquidar'); // a exigencia vem do catalogo, nao da proposta
+    // nem com a matriz mentindo "sim" para tudo o codigo desconhecido passa
+    expect(autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: { ...consulta, codigo: 'FINANCE_LIQUIDAR_TUDO' }, identidade: verificada }, () => true).autorizado).toBe(false);
   });
   it.todo('dado financeiro: o agente FINANCE calcula veCaixa com pode(usuario, "ver_bancos") e responde só com texto — depende de agenteFinanceiro.ts');
   it.todo('dado financeiro: conversa EXTERNAL (cliente/lead) nunca alcança nenhuma leitura financeira — depende de permissoes.ts');
@@ -383,7 +402,9 @@ describe('ameaça 8: mutação direta por LLM', () => {
     for (const f of fontesTs('src/core/central').filter((x) => !x.endsWith('.test.ts'))) {
       const t = ler(f);
       expect(t, f).not.toMatch(/from\s+['"](@supabase|\.\.\/\.\.\/data\/supabase)/);
-      expect(t, f).not.toMatch(/\.(insert|upsert|update|delete)\(/);
+      // `delete` fora: e metodo de Map/Set (memoria), nao de banco. `insert`/`upsert`/`update` nao existem em Map.
+      expect(t, f).not.toMatch(/\.(insert|upsert|update)\(/);
+      expect(t, f).not.toMatch(/\bfrom\(['"`][a-z_]+['"`]\)\s*\.delete\(/); // delete de tabela, esse sim
       expect(t, f).not.toMatch(/\brpc\(/);
       expect(t, f).not.toMatch(/api\.anthropic\.com/);
     }
@@ -525,7 +546,10 @@ describe('ameaça 10: envio indevido', () => {
     for (const f of fontesTs('src/core/central').filter((x) => !x.endsWith('.test.ts'))) {
       const t = ler(f);
       expect(t, f).not.toMatch(/method:\s*'(POST|PUT|PATCH)'/);
-      expect(t, f).not.toMatch(/send-template|\/messages['"`]/);
+      // metaEnvio.ts MONTA o caminho /{id}/messages de proposito (caminho pronto, fechado por modo e
+      // allowlist). O que nao pode existir e a EXECUCAO: nenhum modulo da Central conhece fetch.
+      if (!f.endsWith('metaServidor.ts')) expect(t, f).not.toMatch(/\bfetch\s*\(/);
+      expect(t, f).not.toMatch(/send-template/);
     }
   });
   it('META_CLOUD ainda não é provider de entrega: o banco recusa e, quando abrir, a coerência de canal tem de fechar junto', () => {

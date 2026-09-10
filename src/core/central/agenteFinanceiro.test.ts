@@ -7,7 +7,7 @@ import {
   ACAO_REGISTRAR_PREVISAO, PERMISSAO_FINANCEIRA, criarAgenteFinanceiro, leituraDoPedido, pedidoDaLeitura, portasDoStore,
   type PortasFinanceiro,
 } from './agenteFinanceiro';
-import { PERMISSAO_POR_INTENCAO, resolverIdentidade, type ContextoAgente, type EnterpriseAgent, type WhatsappIdentity } from './tipos';
+import { definicaoDaAcao, resolverIdentidade, type ContextoAgente, type EnterpriseAgent, type WhatsappIdentity } from './tipos';
 import { ORIGEM_DF, alinhamentoDoDia, analisarPagamento, catalogoDe, fmt, interpretarPedido, previsoesDF, projecaoDiaria } from '../cfo';
 import { addDays } from '../engine';
 import { actions, getState, pode } from '../../data/store';
@@ -32,7 +32,8 @@ describe('FINANCE_AGENT: contrato e adapter', () => {
     const a: EnterpriseAgent = criarAgenteFinanceiro();
     expect(a.code).toBe('FINANCE_AGENT');
     expect(PERMISSAO_FINANCEIRA).toBe('editar_lancamento');
-    expect(PERMISSAO_FINANCEIRA).toBe(PERMISSAO_POR_INTENCAO.FINANCE);
+    // a permissao vem da ACAO no catalogo, nunca da intencao
+    expect(PERMISSAO_FINANCEIRA).toBe(definicaoDaAcao(ACAO_REGISTRAR_PREVISAO)?.permissao);
     expect(a.canHandle('FINANCE', ctxDe('pagar frete', 'u-obra'))).toBe(true);
     expect(a.canHandle('PURCHASE', ctxDe('pagar frete', 'u-obra'))).toBe(false);
     expect(a.canHandle('FINANCE', ctxDe('   ', 'u-obra'))).toBe(false);

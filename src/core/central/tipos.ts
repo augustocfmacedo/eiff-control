@@ -3,6 +3,9 @@
 // a auditoria registra. Nunca LLM escrevendo direto no banco.
 // Este arquivo e puro: nao conhece Graph API, nao faz rede e nao importa provider nenhum.
 import type { CommunicationContext } from '../radar/canais';
+// SO TIPO: a matriz de permissoes do EIFF Control e a unica ACL; o WhatsApp nao cria uma segunda.
+// Nenhum acoplamento em tempo de execucao (store.ts nao importa nada de central/).
+import type { Acao } from '../../data/store';
 
 export type { CommunicationContext };
 
@@ -51,19 +54,14 @@ export const AGENTES = ['FINANCE_AGENT', 'PURCHASE_AGENT', 'WORKSITE_AGENT', 'IN
 export type CodigoAgente = (typeof AGENTES)[number];
 
 /**
- * Permissao exigida por intencao, reaproveitando a MATRIZ do EIFF Control: o WhatsApp NAO cria uma segunda ACL.
- * Os valores sao acoes de `src/data/store.ts` (type Acao); o teste prende essa correspondencia.
+ * REGRA DEFINITIVA: a INTENCAO escolhe o AGENTE; a ACAO PROPOSTA escolhe a PERMISSAO.
+ *
+ * Nao existe mais mapa de intencao -> permissao. Ele era autoridade errada: "FINANCE" nao diz o que a pessoa
+ * quer FAZER, e a mesma intencao cobre desde consultar o caixa (`ver_bancos`) ate liquidar (`liquidar`).
+ * Autorizar pela intencao ou daria permissao demais para uma consulta, ou de menos para uma execucao — e nos
+ * dois casos a decisao teria saido do roteador, que interpreta linguagem, em vez do catalogo de acoes.
+ * A permissao vem de CATALOGO_ACOES (secao 3b), pelo codigo da acao, e e conferida com `pode()` do Control.
  */
-export const PERMISSAO_POR_INTENCAO: Record<InternalIntent, string> = {
-  FINANCE: 'editar_lancamento',
-  PURCHASE: 'comprar',
-  WORKSITE: 'editar_obra',
-  INVENTORY: 'editar_etc',
-  COMMERCIAL: 'radar',
-  HR_ADMIN: 'editar_cadastros',
-  EXECUTIVE: 'ver_bancos',
-  GENERAL: 'comentar',
-};
 export const AGENTE_POR_INTENCAO: Record<InternalIntent, CodigoAgente> = {
   FINANCE: 'FINANCE_AGENT', PURCHASE: 'PURCHASE_AGENT', WORKSITE: 'WORKSITE_AGENT', INVENTORY: 'INVENTORY_AGENT',
   COMMERCIAL: 'COMMERCIAL_AGENT', HR_ADMIN: 'HR_AGENT', EXECUTIVE: 'EXECUTIVE_AGENT', GENERAL: 'GENERAL_AGENT',
@@ -75,7 +73,7 @@ export interface OrchestratorDecision {
   targetAgent: CodigoAgente;
   requiresHuman: boolean;
   requiresConfirmation: boolean;
-  requiredPermission: string;
+  /** NUNCA carrega permissao: rotear nao e autorizar. Quem autoriza e a acao proposta, na secao 3b. */
   motivo: string;
 }
 /** Contrato do orquestrador: recebe texto e contexto, devolve DECISAO. Nao executa, nao grava, nao envia. */
@@ -88,7 +86,7 @@ export function decisaoSegura(base: Pick<OrchestratorDecision, 'intent' | 'confi
   const exigeHumano = !identidade.verificada || base.confidence < CONFIANCA_MINIMA;
   return {
     intent: base.intent, confidence: base.confidence, targetAgent: AGENTE_POR_INTENCAO[base.intent],
-    requiresHuman: exigeHumano, requiresConfirmation: true, requiredPermission: PERMISSAO_POR_INTENCAO[base.intent],
+    requiresHuman: exigeHumano, requiresConfirmation: true,
     motivo: exigeHumano ? `${base.motivo}; exige revisão humana (${identidade.verificada ? 'confiança baixa' : identidade.motivo})` : base.motivo,
   };
 }
@@ -106,8 +104,15 @@ export interface LeituraAgente { resumo: string; campos: Record<string, string |
  * existente (nunca escrevendo direto no banco, nunca por LLM).
  */
 export interface AcaoProposta {
+  /** Codigo do CATALOGO_ACOES. E ele, e nao o campo `permissao` abaixo, que decide o que a acao exige. */
   codigo: string; titulo: string; descricao: string;
-  permissao: string; exigeConfirmacao: boolean; reversivel: boolean;
+  /**
+   * Permissao que o agente DECLARA precisar. E declaracao, nao autoridade: `autorizarAcao` confere contra o
+   * catalogo e recusa quando divergem. Agente com defeito nao consegue pedir menos permissao do que a acao exige.
+   */
+  permissao: Acao; exigeConfirmacao: boolean; reversivel: boolean;
+  /** Obra sobre a qual a acao age, quando houver: e o escopo passado a `pode(usuario, acao, codigoObra)`. */
+  escopoObra?: string;
   parametros: Record<string, unknown>;
 }
 export interface ResultadoAcao { ok: boolean; mensagem: string; referencia?: string }
@@ -119,6 +124,86 @@ export interface EnterpriseAgent {
   /** Executa a acao JA autorizada. Quem autoriza e a camada de permissoes + motor, nunca o agente. */
   execute(acao: AcaoProposta, ctx: ContextoAgente): Promise<ResultadoAcao>;
 }
+// ---------------------------------------------------------------------------
+// 3b) Catalogo de acoes: a ACAO escolhe a PERMISSAO (autoridade unica de autorizacao)
+// ---------------------------------------------------------------------------
+/**
+ * Definicao congelada de uma acao concreta. A permissao mora AQUI, nao na intencao e nao na proposta:
+ * a proposta apenas DECLARA o que acha que precisa, e `autorizarAcao` confere contra este catalogo.
+ * Assim um agente com defeito (ou adulterado) nao consegue pedir uma permissao mais fraca do que a acao exige.
+ */
+export interface DefinicaoAcao {
+  codigo: string;
+  agente: CodigoAgente;
+  /** Acao da matriz do EIFF Control. `null` = ajuda/roteiro, sem dado de negocio (ainda exige identidade VERIFIED). */
+  permissao: Acao | null;
+  /** Acao que muda estado exige confirmacao humana explicita antes de executar. Consulta nao exige. */
+  exigeConfirmacao: boolean;
+  /** Acao que age sobre uma obra: sem `escopoObra` nao autoriza, porque `pode()` confere a obra do usuario. */
+  exigeObra: boolean;
+  /** So le. Nunca chama caminho de escrita do motor. */
+  leitura: boolean;
+  titulo: string;
+}
+
+/**
+ * Uma intencao cobre acoes de permissoes MUITO diferentes — e por isso que a intencao nao autoriza:
+ * FINANCE vai de consultar o caixa (`ver_bancos`) a liquidar (`liquidar`, so Administrador e Financeiro).
+ */
+export const CATALOGO_ACOES: DefinicaoAcao[] = [
+  // FINANCE
+  { codigo: 'FINANCE_CONSULTA_CAIXA', agente: 'FINANCE_AGENT', permissao: 'ver_bancos', exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Consultar o caixa projetado' },
+  { codigo: 'FINANCE_VENCIMENTOS', agente: 'FINANCE_AGENT', permissao: 'ver_bancos', exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Consultar vencimentos' },
+  { codigo: 'FINANCE_MEUS_PEDIDOS', agente: 'FINANCE_AGENT', permissao: null, exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Ver o andamento dos meus pedidos' },
+  { codigo: 'FINANCE_REGISTRAR_PREVISAO', agente: 'FINANCE_AGENT', permissao: 'editar_lancamento', exigeConfirmacao: true, exigeObra: false, leitura: false, titulo: 'Registrar previsão de pagamento (rascunho)' },
+  { codigo: 'FINANCE_APROVAR', agente: 'FINANCE_AGENT', permissao: 'aprovar', exigeConfirmacao: true, exigeObra: false, leitura: false, titulo: 'Aprovar pedido na alçada' },
+  { codigo: 'FINANCE_LIQUIDAR', agente: 'FINANCE_AGENT', permissao: 'liquidar', exigeConfirmacao: true, exigeObra: false, leitura: false, titulo: 'Liquidar título' },
+  // demais dominios: contrato declarado agora para que a permissao nunca nasca no agente
+  { codigo: 'PURCHASE_REGISTRAR_PEDIDO', agente: 'PURCHASE_AGENT', permissao: 'comprar', exigeConfirmacao: true, exigeObra: false, leitura: false, titulo: 'Registrar pedido de compra' },
+  { codigo: 'WORKSITE_APONTAR_DIARIO', agente: 'WORKSITE_AGENT', permissao: 'editar_obra', exigeConfirmacao: true, exigeObra: true, leitura: false, titulo: 'Apontar o diário da obra' },
+  { codigo: 'INVENTORY_MOVIMENTO', agente: 'INVENTORY_AGENT', permissao: 'editar_etc', exigeConfirmacao: true, exigeObra: true, leitura: false, titulo: 'Registrar movimento de estoque' },
+  { codigo: 'COMMERCIAL_CONSULTAR', agente: 'COMMERCIAL_AGENT', permissao: 'radar', exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Consultar o Radar' },
+  { codigo: 'HR_CONSULTAR_EQUIPE', agente: 'HR_AGENT', permissao: 'editar_cadastros', exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Consultar equipe e alocações' },
+  { codigo: 'EXECUTIVE_PAINEL', agente: 'EXECUTIVE_AGENT', permissao: 'ver_bancos', exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Leitura consolidada do painel' },
+  { codigo: 'GENERAL_AJUDA', agente: 'GENERAL_AGENT', permissao: null, exigeConfirmacao: false, exigeObra: false, leitura: true, titulo: 'Ajuda do manual' },
+];
+const POR_CODIGO = new Map(CATALOGO_ACOES.map((a) => [a.codigo, a]));
+export const definicaoDaAcao = (codigo: string): DefinicaoAcao | undefined => POR_CODIGO.get(codigo);
+
+export interface AutorizacaoAcao { autorizado: boolean; permissao: Acao | null; motivo: string }
+/**
+ * PONTE DE PERMISSAO. Unico caminho de autorizacao da Central, e ele parte da ACAO PROPOSTA:
+ *
+ *   mensagem -> identidade -> intencao -> agente -> ACAO PROPOSTA -> permissao DA ACAO
+ *            -> pode(usuario, permissao, escopo) -> motor -> confirmacao -> execucao -> auditoria
+ *
+ * A decisao do orquestrador nao entra nesta conta: rotear nao autoriza. `pode` chega por parametro para que
+ * este modulo continue puro — quem liga a matriz real do Control e o servidor.
+ */
+export function autorizarAcao(
+  entrada: { usuario: { ativo: boolean; papel: string }; agente: CodigoAgente; proposta: AcaoProposta; identidade: IdentidadeResolvida },
+  pode: (acao: Acao, escopoObra?: string) => boolean,
+): AutorizacaoAcao {
+  const { proposta, identidade } = entrada;
+  const def = definicaoDaAcao(proposta.codigo);
+  if (!def) return { autorizado: false, permissao: null, motivo: `ação "${proposta.codigo}" não está no catálogo: nada é executado` };
+  // identidade primeiro: numero nao verificado nunca age, mesmo que o papel tivesse a permissao
+  if (!identidade.verificada) return { autorizado: false, permissao: def.permissao, motivo: `identidade não verificada (${identidade.motivo})` };
+  if (!entrada.usuario.ativo) return { autorizado: false, permissao: def.permissao, motivo: 'usuário inativo' };
+  // o agente que propoe tem de ser o dono da acao: GENERAL_AGENT nao proproe FINANCE_LIQUIDAR
+  if (def.agente !== entrada.agente) return { autorizado: false, permissao: def.permissao, motivo: `ação ${def.codigo} não pertence ao agente ${entrada.agente}` };
+  // a permissao declarada na proposta e conferida contra o catalogo: declarar menos nao vale
+  if (proposta.permissao !== def.permissao && def.permissao !== null) {
+    return { autorizado: false, permissao: def.permissao, motivo: `a proposta declarou "${proposta.permissao}" mas ${def.codigo} exige "${def.permissao}"` };
+  }
+  if (def.exigeObra && !proposta.escopoObra) return { autorizado: false, permissao: def.permissao, motivo: `${def.codigo} age sobre uma obra e nenhuma foi informada` };
+  if (def.permissao === null) return { autorizado: true, permissao: null, motivo: 'ação de ajuda, sem dado de negócio' };
+  if (!pode(def.permissao, proposta.escopoObra)) {
+    return { autorizado: false, permissao: def.permissao, motivo: `perfil ${entrada.usuario.papel} não tem "${def.permissao}"${proposta.escopoObra ? ` na obra ${proposta.escopoObra}` : ''}` };
+  }
+  return { autorizado: true, permissao: def.permissao, motivo: `autorizado por "${def.permissao}"` };
+}
+
 /**
  * FINANCE_AGENT sera um ADAPTER sobre o Diretor Financeiro que ja existe (src/core/cfo.ts): a IA so interpreta o
  * texto e o parecer continua vindo do motor deterministico (projecao diaria, reserva, alcadas). Nenhuma regra

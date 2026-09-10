@@ -15,17 +15,20 @@ import {
 } from '../cfo';
 import { RegraDeNegocioError, actions, getState, pode, type Acao } from '../../data/store';
 import {
-  PERMISSAO_POR_INTENCAO,
+  definicaoDaAcao,
   type AcaoProposta, type CodigoAgente, type ContextoAgente, type EnterpriseAgent, type InternalIntent,
   type LeituraAgente, type ResultadoAcao,
 } from './tipos';
 
 export const CODIGO_FINANCE: CodigoAgente = 'FINANCE_AGENT';
 export const INTENCAO_FINANCE: InternalIntent = 'FINANCE';
-/** Permissao exigida: vem da matriz do EIFF Control pela tabela do contrato. O WhatsApp nao cria uma segunda ACL. */
-export const PERMISSAO_FINANCEIRA = PERMISSAO_POR_INTENCAO.FINANCE as Acao;
 /** Unica acao que este agente sabe propor: registrar a PREVISAO em rascunho para a Diretoria decidir na Central do CFO. */
 export const ACAO_REGISTRAR_PREVISAO = 'FINANCE_REGISTRAR_PREVISAO';
+/**
+ * A permissao vem da ACAO, no catalogo congelado — nunca da intencao FINANCE, que cobre desde consultar o caixa
+ * (`ver_bancos`) ate liquidar (`liquidar`). Registrar previsao e escrita de rascunho: `editar_lancamento`.
+ */
+export const PERMISSAO_FINANCEIRA = definicaoDaAcao(ACAO_REGISTRAR_PREVISAO)!.permissao as Acao;
 
 // ---------------------------------------------------------------------------
 // Portas (o que vem de fora: dataset, usuario da identidade e a escrita no store)
@@ -190,6 +193,7 @@ export function criarAgenteFinanceiro(portas: PortasFinanceiro = portasDoStore()
         // sem saldo, reserva ou parecer: so o que a propria pessoa pediu
         descricao: `Cria um lançamento em Rascunho (origem Diretor Financeiro) de ${quanto} em ${quando}, categoria ${previsao.categoria}${previsao.codigoObra ? `, obra ${previsao.codigoObra}` : ''}, fornecedor ${previsao.contraparte}. Não entra no caixa oficial nem abre alçada: a Diretoria decide na Central do Diretor Financeiro.`,
         permissao: PERMISSAO_FINANCEIRA,
+        escopoObra: previsao.codigoObra || undefined,
         exigeConfirmacao: true,
         reversivel: true, // rascunho: a Diretoria pode reagendar ou recusar (cancelamento com motivo), nada e apagado
         parametros: {

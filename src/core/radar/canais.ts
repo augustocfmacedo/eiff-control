@@ -449,6 +449,7 @@ export function autorizarDestino(telefone: string | undefined, modo: ModoEnvio, 
 export function validarCoerenciaCanal(p: { canalComunicacao: Canal; canalEntrega: Canal; provider: CodigoProvider }): { ok: boolean; motivo: string } {
   if (p.canalComunicacao !== p.canalEntrega) return { ok: false, motivo: `canal da entrega (${p.canalEntrega}) diferente do canal da comunicação (${p.canalComunicacao})` };
   if (p.provider === 'OCTADESK' && p.canalComunicacao !== 'WHATSAPP') return { ok: false, motivo: `Octadesk só entrega WhatsApp; esta comunicação é ${p.canalComunicacao}` };
+  if (p.provider === 'META_CLOUD' && p.canalComunicacao !== 'WHATSAPP') return { ok: false, motivo: `Meta Cloud só entrega WhatsApp; esta comunicação é ${p.canalComunicacao}` };
   return { ok: true, motivo: 'canal coerente' };
 }
 
