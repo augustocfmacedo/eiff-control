@@ -119,9 +119,9 @@ export function Sparkline({ valores, referencia, altura = 44, rotulos }: { valor
     <svg className="viz-root" viewBox={`0 0 ${w} ${altura}`} width="100%" height={altura} preserveAspectRatio="none" role="img" aria-label={rotulos ? `${rotulos[0]} a ${rotulos[rotulos.length - 1]}` : 'tendência'}>
       {min < 0 && <line x1={0} x2={w} y1={y(0)} y2={y(0)} className="viz-grid" />}
       {referencia !== undefined && <line x1={0} x2={w} y1={y(referencia)} y2={y(referencia)} className="viz-hoje" />}
-      <path d={`${d} L${x(valores.length - 1).toFixed(1)},${altura} L${x(0).toFixed(1)},${altura} Z`} fill={negativo ? 'var(--bad)' : 'var(--brand)'} opacity={0.12} stroke="none" />
-      <path d={d} fill="none" stroke={negativo ? 'var(--bad)' : 'var(--brand)'} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-      <circle cx={x(valores.length - 1)} cy={y(ultimo)} r={3.5} fill={negativo ? 'var(--bad)' : 'var(--brand)'} stroke="var(--surface)" strokeWidth={1.5} />
+      <path className="viz-area" d={`${d} L${x(valores.length - 1).toFixed(1)},${altura} L${x(0).toFixed(1)},${altura} Z`} fill={negativo ? 'var(--bad)' : 'var(--brand)'} opacity={0.12} stroke="none" />
+      <path className="viz-traco" pathLength={1} d={d} fill="none" stroke={negativo ? 'var(--bad)' : 'var(--brand)'} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      <circle className="viz-ponto" cx={x(valores.length - 1)} cy={y(ultimo)} r={3.5} fill={negativo ? 'var(--bad)' : 'var(--brand)'} stroke="var(--surface)" strokeWidth={1.5} />
     </svg>
   );
 }

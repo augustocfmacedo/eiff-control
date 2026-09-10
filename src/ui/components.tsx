@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Valor, useCrescer } from './motion';
 import { fmtBr } from '../core/engine';
 import { href, navegar } from './router';
 import { Icon, Logotipo, type IconName } from './icons';
@@ -22,7 +23,7 @@ export function Kpi({ label, value, hint, tone, to }: { label: string; value: Re
   return (
     <div className={`kpi ${tone ?? ''} ${to ? 'link' : ''}`} onClick={to ? () => navegar(to) : undefined} title={to ? 'Ver origem do número' : undefined}>
       <div className="label">{label}</div>
-      <div className="value">{value}</div>
+      <div className="value"><Valor v={value} /></div>
       {hint && <div className="hint">{hint}</div>}
     </div>
   );
@@ -35,11 +36,11 @@ export function KpiHero({ label, value, sufixo, hint, tone, to, children, secund
   return (
     <div className={`kpi hero ${tone ?? ''} ${to ? 'link' : ''}`} onClick={to ? () => navegar(to) : undefined}>
       <div className="label">{label}</div>
-      <div className="value">{value}{sufixo && <small>{sufixo}</small>}</div>
+      <div className="value"><Valor v={value} />{sufixo && <small>{sufixo}</small>}</div>
       {hint && <div className="hint">{hint}</div>}
       {children && <div className="kpi-spark">{children}</div>}
       {secundarios && secundarios.length > 0 && (
-        <div className="kpi-sec">{secundarios.map((s) => <div key={s.label}><div className="label">{s.label}</div><div className={`v ${s.tone ?? ''}`}>{s.value}</div></div>)}</div>
+        <div className="kpi-sec">{secundarios.map((s) => <div key={s.label}><div className="label">{s.label}</div><div className={`v ${s.tone ?? ''}`}><Valor v={s.value} /></div></div>)}</div>
       )}
     </div>
   );
@@ -52,7 +53,7 @@ export function KpiStrip({ itens }: { itens: { label: string; value: React.React
       {itens.map((i) => (
         <div key={i.label} className={i.to ? 'link' : ''} onClick={i.to ? () => navegar(i.to!) : undefined}>
           <div className="label">{i.label}</div>
-          <div className={`v ${i.tone ?? ''}`}>{i.value}</div>
+          <div className={`v ${i.tone ?? ''}`}><Valor v={i.value} /></div>
           {i.hint && <div className="hint">{i.hint}</div>}
         </div>
       ))}
@@ -62,10 +63,11 @@ export function KpiStrip({ itens }: { itens: { label: string; value: React.React
 
 export function ProgressRow({ label, valor, texto, tone }: { label: string; valor: number; texto?: string; tone?: 'ok' | 'warn' | 'bad' }) {
   const cor = tone === 'bad' ? 'var(--bad)' : tone === 'warn' ? 'var(--warn)' : tone === 'ok' ? 'var(--ok)' : 'var(--brand)';
+  const barra = useRef<HTMLElement>(null); const fracao = Math.max(0, Math.min(1, valor)); useCrescer(barra, fracao);
   return (
     <div className="progress-row">
       <span className="label">{label}</span>
-      <div className="progress"><i style={{ width: `${Math.max(0, Math.min(1, valor)) * 100}%`, background: cor }} /></div>
+      <div className="progress"><i ref={barra} style={{ width: `${fracao * 100}%`, background: cor }} /></div>
       <span className="v">{texto ?? pct(valor)}</span>
     </div>
   );

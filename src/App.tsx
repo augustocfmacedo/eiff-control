@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { CenaEstrutura, IndicadorNav, MicroInteracoes, useRevelar } from './ui/motion';
 import { dashboard } from './core/engine';
 import { actions, inicializar, pode, useStore } from './data/store';
 import { Badge, StatusBadge, dataHora } from './ui/components';
@@ -44,7 +45,10 @@ export default function App() {
   const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
   const [tema, setTema] = useState<'dark' | 'light'>(() => { try { return localStorage.getItem('eiff-control:tema') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } });
   useEffect(() => { document.documentElement.dataset.theme = tema; try { localStorage.setItem('eiff-control:tema', tema); } catch { /* ignore */ } }, [tema]);
-  if (modo === 'remoto' && carregando) return <div className="empty" style={{ paddingTop: 120 }}>Carregando dados do Supabase…</div>;
+  // movimento: cada tela entra em cascata; a chave muda a cada rota (as telas ja remontam por key)
+  const conteudo = useRef<HTMLElement>(null);
+  useRevelar(conteudo, `${rota.path}?${rota.query.toString()}`);
+  if (modo === 'remoto' && carregando) return <div className="carregando"><CenaEstrutura variante="carregando" /><div className="carregando-txt">Carregando dados do Supabase…</div></div>;
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
     return (
@@ -126,7 +130,7 @@ export default function App() {
           {modo === 'remoto' && sync.status === 'erro' && <Badge tone="bad">não sincronizado</Badge>}
           {modo === 'remoto' && <button className="btn sm" onClick={() => void actions.sair()}>Sair</button>}
         </header>
-        <main className="content" style={{ padding: 14 }}>{tela}</main>
+        <main className="content" ref={conteudo} style={{ padding: 14 }}>{tela}</main>
       </div>
     );
   }
@@ -139,6 +143,7 @@ export default function App() {
           <button className="btn sm sidebar-toggle" onClick={alternarSidebar} title={recolhida ? 'Expandir menu' : 'Recolher menu'} aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}><Icon name={recolhida ? 'expandir' : 'recolher'} size={16} /></button>
         </div>
         <nav className="nav">
+          <IndicadorNav chave={rota.path} />
           {nav('/', 'Painel executivo')}
           {nav('/inbox', 'Minha caixa de entrada', pend + tarefas)}
           {nav('/capacitacao', 'Capacitação', licoesPendentes)}
@@ -209,8 +214,9 @@ export default function App() {
             </label>
           )}
         </header>
-        <main className="content">{tela}</main>
+        <main className="content" ref={conteudo}>{tela}</main>
       </div>
+      <MicroInteracoes />
       <Assistente tela={rota.path} />
     </div>
   );

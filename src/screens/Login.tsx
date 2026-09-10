@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Logotipo } from '../ui/icons';
+import { CenaEstrutura, useEntrada } from '../ui/motion';
 import { actions, useStore } from '../data/store';
 
 export default function Login() {
@@ -8,6 +9,7 @@ export default function Login() {
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const cartao = useRef<HTMLFormElement>(null); useEntrada(cartao);
   const entrar = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro(null);
@@ -21,8 +23,9 @@ export default function Login() {
     }
   };
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
-      <form className="card" style={{ width: 'min(400px, 92vw)' }} onSubmit={entrar}>
+    <div className="login">
+      <CenaEstrutura variante="login" />
+      <form className="card login-card" ref={cartao} onSubmit={entrar}>
         <div className="brand" style={{ paddingLeft: 0 }}><Logotipo height={56} /><div className="brand-txt"><b>Control</b><span>Do orçamento ao caixa</span></div></div>
         <p className="muted small">Acesso restrito. Use o e-mail e a senha cadastrados pelo administrador no Supabase.</p>
         {erroInicial && <div className="alert warn">{erroInicial}</div>}
