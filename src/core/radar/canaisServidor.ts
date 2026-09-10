@@ -2,7 +2,8 @@
 // Nesta fase e READ-ONLY: GET /auth/check, /chat/numbers, /chat/templates-message e /chat (busca de conversa).
 // Nenhum POST de mensagem existe aqui: sendApproved chama recusarEnvio(). A chave OCTADESK_API_KEY nunca sai desta
 // camada (nem para o navegador, nem para log, nem para a resposta). Contrato da API em docs/octadesk.md.
-import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, comProvaDeJanela, direcaoMensagem, impressaoComparavel, mascararTelefone, reconciliarPorMensagens, recusarEnvio, whatsappDoContato, type CommunicationChannelProvider, type ConversaCanal, type EntregaParaReconciliar, type Entregabilidade, type EstadoProvider, type MensagemCanal, type Reconciliacao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
+import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, comProvaDeJanela, direcaoMensagem, impressaoMensagem, mascararTelefone, reconciliarEntrega, recusarEnvio, whatsappDoContato, type ComandoReconciliacao, type CommunicationChannelProvider, type ConversaCanal, type ConversaCandidata, type Entregabilidade, type EstadoProvider, type MensagemCanal, type ModoEntrega, type Reconciliacao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
+import { permiteReenvioAutomatico, type EstadoEntrega } from './canais';
 import { autenticar, type Sessao } from './comunicacaoServidor';
 import type { Canal, Contato } from './types';
 
@@ -75,7 +76,7 @@ export function normalizarMensagens(bruto: unknown, conversaId?: string): (Mensa
       id: String(x.id), conversaId: chat, em: txt(x.time) ?? '',
       direcao: direcaoMensagem(txt((x.sentBy as Row | undefined)?.type)),
       status: st || undefined, interna: txt(x.type) === 'internal',
-      impressao: corpo ? impressaoComparavel({ conversaId: chat || undefined, texto: corpo }) : undefined,
+      impressao: corpo && chat ? impressaoMensagem({ conversaId: chat, texto: corpo }) : undefined,
     };
   });
 }
@@ -135,17 +136,19 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
     getConversation: async (id: string) => normalizarConversas([await get(`/chat/${encodeURIComponent(id)}`, 'chat_get')])[0],
     getMessages: (id: string) => lerMensagens(id),
     sendApproved: async () => recusarEnvio(), // Channel Provider 01: nenhum POST de mensagem
-    reconcileDelivery: async (entrega: EntregaParaReconciliar): Promise<Reconciliacao> => {
+    reconcileDelivery: async (cmd: ComandoReconciliacao): Promise<Reconciliacao> => {
       // read-only: descobre se o envio ambiguo chegou. Nunca reenvia, nunca transiciona sozinho.
-      let conversaId = entrega.conversaProviderId;
-      if (!conversaId && entrega.telefone) {
-        const lista = normalizarConversas(await get(`/chat?${filtros([{ property: PROPRIEDADE_TELEFONE, operator: 'eq', value: entrega.telefone }])}&page=1&limit=20`, 'chat_lookup'));
-        if (lista.length > 1) return { resultado: 'AMBIGUOUS', candidatos: lista.length, motivo: `${lista.length} conversas para o mesmo número: identifique a conversa antes de decidir` };
-        conversaId = lista[0]?.id;
+      // Conversa desconhecida (send-template com resposta perdida): TODAS as conversas do telefone viram candidatas,
+      // e a impressao esperada e recalculada com o id de CADA candidata (nunca hash(null + texto)).
+      let ids = cmd.conversaProviderId ? [cmd.conversaProviderId] : [];
+      if (!ids.length && cmd.telefone) {
+        const lista = normalizarConversas(await get(`/chat?${filtros([{ property: PROPRIEDADE_TELEFONE, operator: 'eq', value: cmd.telefone }])}&page=1&limit=20`, 'chat_lookup'));
+        ids = lista.map((c) => c.id);
       }
-      if (!conversaId) return { resultado: 'NOT_FOUND', candidatos: 0, motivo: 'nenhuma conversa no provider para este contato' };
-      const msgs = await lerMensagens(conversaId);
-      return reconciliarPorMensagens(msgs, { solicitadoEm: entrega.solicitadoEm, impressaoEsperada: entrega.impressaoEsperada, conversaId });
+      if (!ids.length) return { resultado: 'NOT_FOUND', candidatos: 0, motivo: 'nenhuma conversa no provider para este contato' };
+      const candidatas: ConversaCandidata[] = [];
+      for (const id of ids.slice(0, 10)) candidatas.push({ conversaId: id, mensagens: await lerMensagens(id) });
+      return reconciliarEntrega(candidatas, cmd);
     },
   };
 }
@@ -153,10 +156,10 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
 // ---------------------------------------------------------------------------
 // Handler /api/channel/octadesk (read-only)
 // ---------------------------------------------------------------------------
-export const ACOES_CANAL = ['status', 'numbers', 'templates', 'conversa', 'verificar'] as const;
+export const ACOES_CANAL = ['status', 'numbers', 'templates', 'conversa', 'verificar', 'reconciliar'] as const;
 export type AcaoCanal = (typeof ACOES_CANAL)[number];
-export interface PedidoCanal { acao: AcaoCanal; comunicacaoId?: string; contatoId?: string }
-export const CAMPOS_CANAL = ['acao', 'comunicacaoId', 'contatoId'] as const;
+export interface PedidoCanal { acao: AcaoCanal; comunicacaoId?: string; contatoId?: string; deliveryId?: string }
+export const CAMPOS_CANAL = ['acao', 'comunicacaoId', 'contatoId', 'deliveryId'] as const;
 
 /** Contrato publico minimo: so acao + ids. Telefone, chave e configuracao nunca vem do navegador. */
 export function validarPedidoCanal(bruto: unknown): PedidoCanal | { erro: string; campos?: string[] } {
@@ -165,8 +168,9 @@ export function validarPedidoCanal(bruto: unknown): PedidoCanal | { erro: string
   const extras = Object.keys(o).filter((k) => !(CAMPOS_CANAL as readonly string[]).includes(k));
   if (extras.length) return { erro: 'campos_nao_permitidos', campos: extras };
   if (!(ACOES_CANAL as readonly string[]).includes(o.acao as string)) return { erro: 'acao_invalida' };
-  for (const k of ['comunicacaoId', 'contatoId'] as const) if (o[k] !== undefined && !(typeof o[k] === 'string' && UUID.test(o[k] as string))) return { erro: `${k}_invalido` };
-  return { acao: o.acao as AcaoCanal, comunicacaoId: o.comunicacaoId as string | undefined, contatoId: o.contatoId as string | undefined };
+  for (const k of ['comunicacaoId', 'contatoId', 'deliveryId'] as const) if (o[k] !== undefined && !(typeof o[k] === 'string' && UUID.test(o[k] as string))) return { erro: `${k}_invalido` };
+  if (o.acao === 'reconciliar' && !o.deliveryId) return { erro: 'deliveryId_obrigatorio' };
+  return { acao: o.acao as AcaoCanal, comunicacaoId: o.comunicacaoId as string | undefined, contatoId: o.contatoId as string | undefined, deliveryId: o.deliveryId as string | undefined };
 }
 
 const contatoDaLinha = (x: Row): Pick<Contato, 'whatsapp' | 'celular' | 'telefone' | 'statusTelefone' | 'situacao'> => ({
@@ -194,6 +198,7 @@ export async function tratarCanal(req: Req, d: DepsCanal): Promise<Resp> {
   if (saude.estado !== 'CONNECTED') return resp(200, { ...base, remetentes: [], templates: [] });
 
   const ler = async <T>(f: () => Promise<T>, vazio: T): Promise<T> => { try { return await f(); } catch (e) { base.aviso = seguro((e as Error).message); return vazio; } };
+  if (p.acao === 'reconciliar') return tratarReconciliacao(p.deliveryId!, sessao, provider, base);
   if (p.acao === 'numbers') return resp(200, { ...base, remetentes: await ler(() => provider.listSenders(), [] as RemetenteCanal[]) });
   if (p.acao === 'templates') return resp(200, { ...base, templates: await ler(() => provider.listTemplates(), [] as TemplateCanal[]) });
 
@@ -225,4 +230,44 @@ export async function tratarCanal(req: Req, d: DepsCanal): Promise<Resp> {
   d.log?.({ evento: 'channel_check', provider: 'OCTADESK', operation: p.acao, communication_id: p.comunicacaoId ?? null, conversa_id: conversa?.id ?? null, resultado: entregabilidade?.resultado ?? null, remetentes: remetentes.length, templates: templates.length });
   // telefone sai mascarado: a resposta vai para o navegador
   return resp(200, { ...base, remetentes, templates, conversa, telefoneMascarado: mascararTelefone(telefone), entregabilidade: entregabilidade ? { ...entregabilidade, telefone: undefined } : undefined });
+}
+
+/**
+ * Server Truth da reconciliacao: o navegador manda SO o deliveryId. Aqui o servidor carrega a entrega, a comunicacao,
+ * o conteudo aprovado efetivo (edicao humana quando existe) e o contato, e so entao consulta o provider.
+ * Nada de impressao pronta vinda do cliente. Somente leitura: nao transiciona a entrega.
+ */
+async function tratarReconciliacao(deliveryId: string, sessao: Sessao, provider: CommunicationChannelProvider, base: Record<string, unknown>): Promise<Resp> {
+  const org = sessao.perfil.organization_id;
+  const ent = ((await sessao.get(`radar_communication_delivery?id=eq.${deliveryId}&select=id,organization_id,communication_id,contact_id,provider,channel,mode,status,requested_at,created_at,provider_conversation_id`)) ?? [])[0];
+  if (!ent) return resp(404, { erro: 'entrega_nao_encontrada' });
+  if (ent.organization_id !== org) return resp(403, { erro: 'entrega_de_outra_organizacao' });
+  const com = ((await sessao.get(`radar_communication?id=eq.${ent.communication_id}&select=id,organization_id,state,generated_content,edited_content`)) ?? [])[0];
+  if (!com) return resp(404, { erro: 'comunicacao_nao_encontrada' });
+  if (com.organization_id !== org) return resp(403, { erro: 'comunicacao_de_outra_organizacao' });
+  const contatoRow = ent.contact_id ? ((await sessao.get(`radar_contact?id=eq.${ent.contact_id}&select=id,organization_id,phone,mobile_phone,whatsapp,phone_status,status`)) ?? [])[0] : undefined;
+  if (contatoRow && contatoRow.organization_id !== org) return resp(403, { erro: 'contato_de_outra_organizacao' });
+
+  // conteudo aprovado efetivo: edicao humana quando existe, senao a versao principal gerada
+  const editado = (com.edited_content as Row | null)?.texto;
+  const gerado = (com.generated_content as Row | null)?.versaoPrincipal;
+  const modo = String(ent.mode) as ModoEntrega;
+  const textoAprovado = modo === 'TEMPLATE' ? undefined : (typeof editado === 'string' && editado.trim() ? editado : typeof gerado === 'string' ? gerado : undefined);
+  const cmd: ComandoReconciliacao = {
+    deliveryId, comunicacaoId: String(ent.communication_id), modo,
+    solicitadoEm: String(ent.requested_at ?? ent.created_at),
+    telefone: contatoRow ? whatsappDoContato(contatoDaLinha(contatoRow)) : undefined,
+    conversaProviderId: txt(ent.provider_conversation_id),
+    textoAprovado,
+  };
+  let r: Reconciliacao;
+  try { r = await provider.reconcileDelivery(cmd); }
+  catch (e) { return resp(200, { ...base, entrega: { id: deliveryId, status: ent.status }, reconciliacao: { resultado: 'AMBIGUOUS', candidatos: 0, motivo: `provider indisponível: ${seguro((e as Error).message)}` } }); }
+  return resp(200, {
+    ...base,
+    entrega: { id: deliveryId, status: ent.status, modo, provider: ent.provider, canal: ent.channel },
+    reconciliacao: r,
+    // a decisao de reenviar nunca e automatica: a resposta diz explicitamente o que e permitido
+    reenvioAutomatico: permiteReenvioAutomatico(String(ent.status) as EstadoEntrega, r),
+  });
 }

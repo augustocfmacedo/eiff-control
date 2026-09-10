@@ -1,6 +1,7 @@
 // Channel Provider 01: abstracao de canal, entregabilidade, idempotencia e a garantia de que nada envia nesta fase.
+import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ENVIO_BLOQUEADO, JANELA_LIVRE_HORAS, MAPEAMENTOS_TEMPLATE, TRANSICOES_ENTREGA, WEBHOOK_INBOUND_DISPONIVEL, avaliarEntregabilidade, avaliarJanelaLivre, chaveIdempotencia, comProvaDeJanela, direcaoMensagem, impressaoComparavel, impressaoEnvio, mascararTelefone, normalizarTelefone, permiteReenvioAutomatico, podeTransicionarEntrega, providerManual, reconciliarPorMensagens, transicionarEntrega, whatsappDoContato, type EstadoEntrega, type EstadoProvider, type MensagemCanal, type TemplateCanal } from './canais';
+import { ENVIO_BLOQUEADO, JANELA_LIVRE_HORAS, MAPEAMENTOS_TEMPLATE, TRANSICOES_ENTREGA, WEBHOOK_INBOUND_DISPONIVEL, avaliarEntregabilidade, avaliarJanelaLivre, chaveIdempotencia, classificarFalhaEnvio, comProvaDeJanela, direcaoMensagem, impressaoComando, impressaoMensagem, mascararTelefone, normalizarTelefone, permiteReenvioAutomatico, podeTransicionarEntrega, providerManual, reconciliarEntrega, transicionarEntrega, whatsappDoContato, type ComandoReconciliacao, type ConversaCandidata, type EstadoEntrega, type EstadoProvider, type MensagemCanal, type TemplateCanal } from './canais';
 import type { Canal } from './types';
 
 const HOJE = '2026-09-10T12:00:00.000Z';
@@ -162,24 +163,61 @@ describe('máquina de estados da entrega', () => {
   });
 });
 
-describe('resultado ambíguo e reconciliação', () => {
-  const saida = (id: string, em: string, impressao?: string) => ({ ...msg(id, em, 'saida'), impressao });
-  const pedido = { solicitadoEm: '2026-09-10T12:00:00.000Z', conversaId: 'chat1' };
-  it('sem mensagem de saída na janela → NOT_FOUND', () => {
-    expect(reconciliarPorMensagens([], pedido).resultado).toBe('NOT_FOUND');
-    expect(reconciliarPorMensagens([saida('m1', '2026-09-09T12:00:00.000Z', 'h')], { ...pedido, impressaoEsperada: 'h' }).resultado).toBe('NOT_FOUND');
-    expect(reconciliarPorMensagens([msg('m1', '2026-09-10T12:01:00.000Z', 'entrada')], pedido).resultado).toBe('NOT_FOUND');
+describe('reconciliação por conversa candidata', () => {
+  const TEXTO = 'Bom dia, tudo bem? Queria entender a frente de expansão.';
+  const solicitadoEm = '2026-09-10T12:00:00.000Z';
+  const cmd = (extra: Partial<ComandoReconciliacao> = {}): ComandoReconciliacao => ({ comunicacaoId: 'com-1', modo: 'FREEFORM', solicitadoEm, textoAprovado: TEXTO, ...extra });
+  /** Mensagem de saída numa conversa, com a impressão que o provider produziria para aquele corpo naquela conversa. */
+  const saida = (conversaId: string, id: string, em: string, texto?: string, direcao: MensagemCanal['direcao'] = 'saida') =>
+    ({ id, conversaId, em, direcao, interna: false, impressao: texto ? impressaoMensagem({ conversaId, texto }) : undefined });
+  const conversa = (conversaId: string, mensagens: (MensagemCanal & { impressao?: string })[]): ConversaCandidata => ({ conversaId, mensagens });
+
+  it('A) conversa conhecida com uma mensagem igual → FOUND', () => {
+    const r = reconciliarEntrega([conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z', TEXTO)])], cmd({ conversaProviderId: 'chatA' }));
+    expect(r.resultado).toBe('FOUND'); expect(r.conversaId).toBe('chatA'); expect(r.mensagemId).toBe('m1');
   });
-  it('uma mensagem com a nossa impressão → FOUND', () => {
-    const h = impressaoComparavel({ conversaId: 'chat1', texto: 'Bom dia, tudo bem?' });
-    const r = reconciliarPorMensagens([saida('m1', '2026-09-10T12:01:00.000Z', h)], { ...pedido, impressaoEsperada: h });
-    expect(r.resultado).toBe('FOUND'); expect(r.mensagemId).toBe('m1'); expect(r.conversaId).toBe('chat1');
+  it('B) conversa desconhecida, uma única conversa do contato com a mensagem → FOUND', () => {
+    const r = reconciliarEntrega([conversa('chatNovo', [saida('chatNovo', 'm9', '2026-09-10T12:00:30.000Z', TEXTO)])], cmd());
+    expect(r.resultado).toBe('FOUND'); expect(r.conversaId).toBe('chatNovo');
   });
-  it('sem impressão para comparar, impressão diferente ou duplicidade → AMBIGUOUS', () => {
-    expect(reconciliarPorMensagens([saida('m1', '2026-09-10T12:01:00.000Z', 'h')], pedido).resultado).toBe('AMBIGUOUS');
-    expect(reconciliarPorMensagens([saida('m1', '2026-09-10T12:01:00.000Z', 'outra')], { ...pedido, impressaoEsperada: 'h' }).resultado).toBe('AMBIGUOUS');
-    const dupe = reconciliarPorMensagens([saida('m1', '2026-09-10T12:01:00.000Z', 'h'), saida('m2', '2026-09-10T12:02:00.000Z', 'h')], { ...pedido, impressaoEsperada: 'h' });
-    expect(dupe.resultado).toBe('AMBIGUOUS'); expect(dupe.motivo).toMatch(/duplicidade/i);
+  it('C) várias conversas do contato, só uma contém a mensagem → FOUND na conversa certa', () => {
+    const r = reconciliarEntrega([
+      conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z', 'outro assunto qualquer')]),
+      conversa('chatB', [saida('chatB', 'm2', '2026-09-10T12:01:00.000Z', TEXTO)]),
+      conversa('chatC', []),
+    ], cmd());
+    expect(r.resultado).toBe('FOUND'); expect(r.conversaId).toBe('chatB'); expect(r.mensagemId).toBe('m2');
+  });
+  it('a impressão é recalculada por conversa: o mesmo texto em outra conversa tem outro hash', () => {
+    expect(impressaoMensagem({ conversaId: 'chatA', texto: TEXTO })).not.toBe(impressaoMensagem({ conversaId: 'chatB', texto: TEXTO }));
+    // e o hash do comando (auditável) nunca é igual ao hash de casamento de mensagem
+    expect(impressaoComando({ comunicacaoId: 'com-1', provider: 'OCTADESK', canal: 'WHATSAPP', modo: 'FREEFORM', texto: TEXTO })).not.toBe(impressaoMensagem({ conversaId: 'chatA', texto: TEXTO }));
+  });
+  it('D) duas conversas com a mesma mensagem → AMBIGUOUS', () => {
+    const r = reconciliarEntrega([
+      conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z', TEXTO)]),
+      conversa('chatB', [saida('chatB', 'm2', '2026-09-10T12:02:00.000Z', TEXTO)]),
+    ], cmd());
+    expect(r.resultado).toBe('AMBIGUOUS'); expect(r.motivo).toMatch(/duplicidade/i);
+  });
+  it('E) nenhuma conversa contém a mensagem → NOT_FOUND', () => {
+    expect(reconciliarEntrega([conversa('chatA', []), conversa('chatB', [])], cmd()).resultado).toBe('NOT_FOUND');
+    expect(reconciliarEntrega([], cmd()).resultado).toBe('NOT_FOUND');
+    // fora da janela do pedido também não conta
+    expect(reconciliarEntrega([conversa('chatA', [saida('chatA', 'm1', '2026-09-09T12:00:00.000Z', TEXTO)])], cmd()).resultado).toBe('NOT_FOUND');
+  });
+  it('F) mensagem sem corpo, com direção desconhecida ou interna nunca prova FOUND', () => {
+    const semCorpo = reconciliarEntrega([conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z')])], cmd());
+    expect(semCorpo.resultado).toBe('AMBIGUOUS'); expect(semCorpo.candidatos).toBe(1);
+    const direcaoIndefinida = reconciliarEntrega([conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z', TEXTO, 'desconhecida')])], cmd());
+    expect(direcaoIndefinida.resultado).toBe('AMBIGUOUS');
+    const entrada = reconciliarEntrega([conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z', TEXTO, 'entrada')])], cmd());
+    expect(entrada.resultado).toBe('NOT_FOUND'); // mensagem do contato não é candidata a envio nosso
+  });
+  it('modo TEMPLATE não prova FOUND: o corpo no provider é o template renderizado', () => {
+    const r = reconciliarEntrega([conversa('chatA', [saida('chatA', 'm1', '2026-09-10T12:01:00.000Z', 'Olá Fulano, tudo bem?')])], cmd({ modo: 'TEMPLATE', textoAprovado: undefined }));
+    expect(r.resultado).toBe('AMBIGUOUS'); expect(r.motivo).toMatch(/template renderizado/i);
+    expect(reconciliarEntrega([conversa('chatA', [])], cmd({ modo: 'TEMPLATE', textoAprovado: undefined })).resultado).toBe('NOT_FOUND');
   });
   it('UNKNOWN e AMBIGUOUS nunca autorizam reenvio automático', () => {
     expect(permiteReenvioAutomatico('UNKNOWN').permite).toBe(false);
@@ -188,17 +226,58 @@ describe('resultado ambíguo e reconciliação', () => {
     expect(permiteReenvioAutomatico('FAILED', { resultado: 'FOUND', candidatos: 1, motivo: '' }).permite).toBe(false);
     expect(permiteReenvioAutomatico('ACCEPTED').permite).toBe(false);
     expect(permiteReenvioAutomatico('REQUESTED').permite).toBe(false);
-    expect(permiteReenvioAutomatico('FAILED').permite).toBe(false); // falha sem reconciliação também não
+    expect(permiteReenvioAutomatico('FAILED').permite).toBe(false);
     expect(permiteReenvioAutomatico('FAILED', { resultado: 'NOT_FOUND', candidatos: 0, motivo: '' }).permite).toBe(true);
   });
-  it('fingerprint é hash: nunca telefone nem texto em claro, e muda com qualquer campo', () => {
+  it('fingerprint do comando é hash e não vaza telefone nem texto', () => {
     const base = { comunicacaoId: 'c1', provider: 'OCTADESK' as const, canal: 'WHATSAPP' as Canal, modo: 'TEMPLATE' as const, remetenteId: 'n1', templateId: 't1', telefone: '5562999991234', texto: 'Bom dia' };
-    const f = impressaoEnvio(base);
+    const f = impressaoComando(base);
     expect(f).toMatch(/^[a-f0-9]{64}$/);
     expect(f).not.toContain('5562'); expect(f).not.toContain('Bom');
-    expect(impressaoEnvio(base)).toBe(f);
-    expect(impressaoEnvio({ ...base, texto: 'Boa tarde' })).not.toBe(f);
-    expect(impressaoEnvio({ ...base, telefone: '5562999991235' })).not.toBe(f);
-    expect(impressaoComparavel({ conversaId: 'chat1', texto: ' Bom dia ' })).toBe(impressaoComparavel({ conversaId: 'chat1', texto: 'Bom dia' }));
+    expect(impressaoComando(base)).toBe(f);
+    expect(impressaoComando({ ...base, texto: 'Boa tarde' })).not.toBe(f);
+    expect(impressaoComando({ ...base, telefone: '5562999991235' })).not.toBe(f);
+    expect(impressaoMensagem({ conversaId: 'chat1', texto: ' Bom dia ' })).toBe(impressaoMensagem({ conversaId: 'chat1', texto: 'Bom dia' }));
+  });
+});
+
+describe('classificação de falha do provider (regra do Send Pilot)', () => {
+  it('rejeição explícita e definitiva → FAILED', () => {
+    const r = classificarFalhaEnvio({ httpStatus: 400, erroCodigo: 'INVALID_TEMPLATE' });
+    expect(r.status).toBe('FAILED'); expect(r.motivo).toMatch(/rejeição explícita/i);
+  });
+  it('timeout, rede, 5xx e resposta ininteligível → UNKNOWN, nunca FAILED', () => {
+    expect(classificarFalhaEnvio({ timeout: true }).status).toBe('UNKNOWN');
+    expect(classificarFalhaEnvio({ rede: true }).status).toBe('UNKNOWN');
+    for (const s of [500, 502, 503, 504]) expect(classificarFalhaEnvio({ httpStatus: s }).status).toBe('UNKNOWN');
+    expect(classificarFalhaEnvio({ httpStatus: 200, corpoInterpretavel: false }).status).toBe('UNKNOWN');
+    expect(classificarFalhaEnvio({}).status).toBe('UNKNOWN');
+  });
+  it('4xx sem código de erro identificado não vira FAILED', () => {
+    expect(classificarFalhaEnvio({ httpStatus: 429 }).status).toBe('UNKNOWN');
+  });
+  it('timeout tem precedência sobre o status HTTP', () => {
+    expect(classificarFalhaEnvio({ timeout: true, httpStatus: 400, erroCodigo: 'X' }).status).toBe('UNKNOWN');
+  });
+});
+
+describe('autoridade do ledger: o navegador não escreve entrega', () => {
+  const arquivos = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? arquivos(`${dir}/${e.name}`) : [`${dir}/${e.name}`]));
+  it('nenhum código de tela ou store escreve em radar_communication_delivery nem chama as RPCs server-only', () => {
+    const fontes = arquivos('src').filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes('canaisServidor') && !f.endsWith('.test.ts'));
+    for (const f of fontes) {
+      const t = fs.readFileSync(f, 'utf8');
+      expect(t, f).not.toMatch(/radar_delivery_create|radar_delivery_transition/);
+      if (/radar_communication_delivery/.test(t)) expect(t, f).not.toMatch(/insert|update|upsert/i);
+    }
+  });
+  it('a migration 0047 revoga insert/update de authenticated e deixa as RPCs só para service_role', () => {
+    const sql = fs.readFileSync('supabase/migrations/0047_radar_delivery_authority.sql', 'utf8');
+    expect(sql).toMatch(/revoke insert, update, delete, truncate on radar_communication_delivery from authenticated/);
+    expect(sql).toMatch(/grant select on radar_communication_delivery to authenticated/);
+    for (const fn of ['radar_delivery_create', 'radar_delivery_transition']) {
+      expect(sql).toMatch(new RegExp(`revoke execute on function ${fn}[^;]*from public, anon, authenticated`));
+      expect(sql).toMatch(new RegExp(`grant execute on function ${fn}[^;]*to service_role`));
+    }
   });
 });

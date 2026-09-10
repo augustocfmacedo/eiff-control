@@ -49,7 +49,7 @@ export interface CommunicationChannelProvider {
   getMessages(id: string): Promise<MensagemCanal[]>;
   sendApproved(pedido: PedidoEnvio): Promise<ResultadoEnvio>;
   /** Descobre se um envio de resultado ambiguo (UNKNOWN) chegou mesmo ao provider. Nunca reenvia. */
-  reconcileDelivery(entrega: EntregaParaReconciliar): Promise<Reconciliacao>;
+  reconcileDelivery(cmd: ComandoReconciliacao): Promise<Reconciliacao>;
 }
 
 export const ENVIO_BLOQUEADO = 'envio_bloqueado_piloto';
@@ -293,45 +293,69 @@ export function transicionarEntrega(de: EstadoEntrega, para: EstadoEntrega, ctx:
 }
 
 // ---------------------------------------------------------------------------
-// 9) Impressao do envio (fingerprint) — hash, nunca conteudo em texto claro
+// 9) Duas impressoes com papeis DIFERENTES (nunca intercambiaveis)
 // ---------------------------------------------------------------------------
 export const VERSAO_IMPRESSAO = 1;
-/** Fingerprint do envio para o ledger: so hashes; telefone e texto nunca aparecem em claro. */
-export function impressaoEnvio(p: { comunicacaoId: string; provider: CodigoProvider; canal: Canal; modo: ModoEntrega; remetenteId?: string; templateId?: string; telefone?: string; texto?: string }): string {
+/**
+ * request_fingerprint: identidade AUDITAVEL do comando de envio, gravada no ledger. Descreve o que foi mandado
+ * fazer (comunicacao, provider, canal, modo, remetente, template, destino e texto) — tudo em hash, nunca em claro.
+ * NAO serve para casar mensagem no provider: o id da conversa nem existe quando o comando e criado.
+ */
+export function impressaoComando(p: { comunicacaoId: string; provider: CodigoProvider; canal: Canal; modo: ModoEntrega; remetenteId?: string; templateId?: string; telefone?: string; texto?: string }): string {
   return hashCanonico({
-    v: VERSAO_IMPRESSAO, comunicacao: p.comunicacaoId, provider: p.provider, canal: p.canal, modo: p.modo,
+    v: VERSAO_IMPRESSAO, tipo: 'comando', comunicacao: p.comunicacaoId, provider: p.provider, canal: p.canal, modo: p.modo,
     remetente: p.remetenteId ?? null, template: p.templateId ?? null,
     telefone: p.telefone ? sha256Hex(p.telefone) : null, texto: p.texto ? sha256Hex(p.texto.trim()) : null,
   });
 }
-/** Parte comparavel na reconciliacao: existe dos dois lados (o que mandamos x o que aparece no provider). */
-export const impressaoComparavel = (p: { conversaId?: string; texto: string }) => hashCanonico({ v: VERSAO_IMPRESSAO, conversa: p.conversaId ?? null, texto: sha256Hex(p.texto.trim()) });
+/**
+ * message_match_fingerprint: impressao TRANSITORIA para casar uma mensagem DENTRO de uma conversa candidata.
+ * O id da conversa e obrigatorio de proposito: comparar hash(null + texto) com hash(chatA + texto) nunca casa,
+ * e era exatamente o furo da reconciliacao de conversa nova. Calculada em memoria, nunca gravada.
+ */
+export const impressaoMensagem = (p: { conversaId: string; texto: string }) => hashCanonico({ v: VERSAO_IMPRESSAO, tipo: 'mensagem', conversa: p.conversaId, texto: sha256Hex(p.texto.trim()) });
 
 // ---------------------------------------------------------------------------
 // 10) Reconciliacao de resultado ambiguo
 // ---------------------------------------------------------------------------
 export type ResultadoReconciliacao = 'FOUND' | 'NOT_FOUND' | 'AMBIGUOUS';
 export interface Reconciliacao { resultado: ResultadoReconciliacao; conversaId?: string; mensagemId?: string; candidatos: number; motivo: string; statusProvider?: string }
-export interface EntregaParaReconciliar { comunicacaoId: string; telefone?: string; conversaProviderId?: string; solicitadoEm: string; impressaoEsperada?: string }
+/** Comando reconstruido pelo servidor (Server Truth). O navegador manda so o deliveryId. */
+export interface ComandoReconciliacao {
+  deliveryId?: string; comunicacaoId: string; modo: ModoEntrega; solicitadoEm: string;
+  telefone?: string; conversaProviderId?: string;
+  /** Texto aprovado efetivo. Ausente em modo TEMPLATE: o corpo no provider e o template renderizado, que nao conhecemos. */
+  textoAprovado?: string;
+}
+/** Uma conversa candidata do contato, com as mensagens ja lidas do provider. */
+export interface ConversaCandidata { conversaId: string; mensagens: (MensagemCanal & { impressao?: string })[] }
 export const TOLERANCIA_RECONCILIACAO_MS = 15 * 60_000; // janela de busca em torno do pedido
 
 /**
- * Decide FOUND / NOT_FOUND / AMBIGUOUS a partir das mensagens lidas do provider. Sem impressao comparavel,
- * ou com mais de um candidato, o resultado e AMBIGUOUS: nada e dado como enviado sem prova.
+ * Reconciliacao por CONVERSA CANDIDATA. Para cada conversa, a impressao esperada e recalculada com o id DAQUELA
+ * conversa (impressaoMensagem) e comparada com a impressao das mensagens dela. Resolve o caso critico: send-template
+ * aceito, resposta perdida e id de conversa desconhecido — as candidatas vem da busca pelo telefone.
+ * So conta como prova a mensagem de SAIDA, com corpo (impressao presente) e impressao igual: direcao desconhecida
+ * ou mensagem sem corpo nunca provam FOUND.
  */
-export function reconciliarPorMensagens(
-  mensagens: (MensagemCanal & { impressao?: string })[],
-  p: { solicitadoEm: string; impressaoEsperada?: string; toleranciaMs?: number; conversaId?: string },
-): Reconciliacao {
-  const inicio = Date.parse(p.solicitadoEm) - 60_000; // um minuto de folga para relogio
-  const fim = Date.parse(p.solicitadoEm) + (p.toleranciaMs ?? TOLERANCIA_RECONCILIACAO_MS);
-  const candidatos = mensagens.filter((m) => m.direcao !== 'entrada' && !m.interna && Number.isFinite(Date.parse(m.em)) && Date.parse(m.em) >= inicio && Date.parse(m.em) <= fim);
-  if (!candidatos.length) return { resultado: 'NOT_FOUND', candidatos: 0, conversaId: p.conversaId, motivo: 'nenhuma mensagem de saída na janela do pedido: o envio não chegou ao provider' };
-  if (!p.impressaoEsperada) return { resultado: 'AMBIGUOUS', candidatos: candidatos.length, conversaId: p.conversaId, motivo: 'há mensagem na janela, mas sem impressão para comparar: não dá para provar que é a nossa' };
-  const iguais = candidatos.filter((m) => m.impressao && m.impressao === p.impressaoEsperada);
-  if (iguais.length === 1) return { resultado: 'FOUND', candidatos: candidatos.length, conversaId: p.conversaId ?? iguais[0].conversaId, mensagemId: iguais[0].id, statusProvider: iguais[0].status, motivo: 'mensagem com a mesma impressão encontrada na janela do pedido' };
-  if (iguais.length > 1) return { resultado: 'AMBIGUOUS', candidatos: candidatos.length, conversaId: p.conversaId, motivo: `${iguais.length} mensagens com a mesma impressão: duplicidade possível, decidir a mão` };
-  return { resultado: 'AMBIGUOUS', candidatos: candidatos.length, conversaId: p.conversaId, motivo: 'mensagens na janela, nenhuma com a nossa impressão: pode ser outro envio ou texto alterado' };
+export function reconciliarEntrega(candidatas: ConversaCandidata[], cmd: ComandoReconciliacao, opts: { toleranciaMs?: number } = {}): Reconciliacao {
+  const inicio = Date.parse(cmd.solicitadoEm) - 60_000; // um minuto de folga para relogio
+  const fim = Date.parse(cmd.solicitadoEm) + (opts.toleranciaMs ?? TOLERANCIA_RECONCILIACAO_MS);
+  const naJanela = (m: MensagemCanal) => m.direcao !== 'entrada' && !m.interna && Number.isFinite(Date.parse(m.em)) && Date.parse(m.em) >= inicio && Date.parse(m.em) <= fim;
+  let candidatos = 0;
+  const achados: { conversaId: string; m: MensagemCanal }[] = [];
+  for (const c of candidatas) {
+    const doPeriodo = c.mensagens.filter(naJanela);
+    candidatos += doPeriodo.length;
+    if (!cmd.textoAprovado) continue;
+    const esperada = impressaoMensagem({ conversaId: c.conversaId, texto: cmd.textoAprovado });
+    for (const m of doPeriodo) if (m.direcao === 'saida' && m.impressao && m.impressao === esperada) achados.push({ conversaId: c.conversaId, m });
+  }
+  if (achados.length === 1) return { resultado: 'FOUND', candidatos, conversaId: achados[0].conversaId, mensagemId: achados[0].m.id, statusProvider: achados[0].m.status, motivo: 'mensagem com a impressão do texto aprovado encontrada na conversa e na janela do pedido' };
+  if (achados.length > 1) return { resultado: 'AMBIGUOUS', candidatos, motivo: `${achados.length} mensagens iguais em conversas diferentes: duplicidade possível, decidir a mão` };
+  if (!candidatos) return { resultado: 'NOT_FOUND', candidatos: 0, conversaId: cmd.conversaProviderId, motivo: 'nenhuma mensagem de saída na janela do pedido: o envio não chegou ao provider' };
+  if (!cmd.textoAprovado) return { resultado: 'AMBIGUOUS', candidatos, motivo: 'modo template: o corpo no provider é o template renderizado, que não conhecemos — há mensagem na janela e não dá para provar que é a nossa' };
+  return { resultado: 'AMBIGUOUS', candidatos, motivo: 'mensagens na janela, nenhuma com a impressão do texto aprovado: pode ser outro envio ou texto alterado' };
 }
 
 /**
@@ -347,3 +371,31 @@ export function permiteReenvioAutomatico(status: EstadoEntrega, reconciliacao?: 
   if (status === 'FAILED' && reconciliacao?.resultado !== 'NOT_FOUND') return { permite: false, motivo: 'falha sem reconciliação: confirme que nada chegou antes de reenviar' };
   return { permite: true, motivo: status === 'FAILED' ? 'falha confirmada sem mensagem no provider' : 'entrega ainda não solicitada' };
 }
+
+
+// ---------------------------------------------------------------------------
+// 11) Classificacao da falha do provider (regra para o Send Pilot)
+// ---------------------------------------------------------------------------
+export interface RespostaProvider { httpStatus?: number; timeout?: boolean; rede?: boolean; corpoInterpretavel?: boolean; erroCodigo?: string; erroMensagem?: string }
+/**
+ * FAILED so com rejeicao EXPLICITA e DEFINITIVA do provider (4xx com codigo de erro identificado).
+ * Timeout, erro de rede, 5xx e resposta impossivel de interpretar depois do POST viram UNKNOWN — nunca FAILED,
+ * porque a mensagem pode ter sido aceita. UNKNOWN nunca reenvia sozinho (permiteReenvioAutomatico).
+ */
+export function classificarFalhaEnvio(r: RespostaProvider): { status: Extract<EstadoEntrega, 'FAILED' | 'UNKNOWN'>; motivo: string } {
+  if (r.timeout) return { status: 'UNKNOWN', motivo: 'tempo esgotado depois do POST: o provider pode ter aceitado' };
+  if (r.rede) return { status: 'UNKNOWN', motivo: 'falha de rede depois do POST: o provider pode ter aceitado' };
+  if (r.httpStatus && r.httpStatus >= 500) return { status: 'UNKNOWN', motivo: `provider respondeu ${r.httpStatus}: falha do lado dele, resultado indeterminado` };
+  if (r.corpoInterpretavel === false) return { status: 'UNKNOWN', motivo: 'resposta do provider não pôde ser interpretada: resultado indeterminado' };
+  if (r.httpStatus && r.httpStatus >= 400 && r.httpStatus < 500 && r.erroCodigo) return { status: 'FAILED', motivo: `rejeição explícita do provider (HTTP ${r.httpStatus}, código ${r.erroCodigo})` };
+  if (r.httpStatus && r.httpStatus >= 400 && r.httpStatus < 500) return { status: 'UNKNOWN', motivo: `HTTP ${r.httpStatus} sem código de erro identificado: rejeição não confirmada` };
+  return { status: 'UNKNOWN', motivo: 'resultado do provider indeterminado' };
+}
+
+// ---------------------------------------------------------------------------
+// 12) Ator da transicao: quem pediu x quem/qual processo transicionou
+// ---------------------------------------------------------------------------
+export const ORIGENS_ATOR = ['USER', 'SERVER', 'PROVIDER', 'SYSTEM'] as const;
+export type OrigemAtor = (typeof ORIGENS_ATOR)[number];
+/** Comando de transicao entregue a porta server-side. atorId vem SEMPRE do JWT validado no servidor. */
+export interface ComandoTransicao { deliveryId: string; para: EstadoEntrega; atorId: string; origemAtor: OrigemAtor; statusProvider?: string; motivoSeguro?: string; provider?: { conversaId?: string; mensagemId?: string } }

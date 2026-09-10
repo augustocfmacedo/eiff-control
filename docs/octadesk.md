@@ -100,16 +100,68 @@ Caminho implementado no Send Safety Patch 01 (ainda sem envio): a entrega nasce 
 **impressão** da mensagem — hash canônico do corpo, calculado em trânsito no servidor, nunca gravado
 em texto claro — com a impressão esperada do que queríamos enviar:
 
+A reconciliação recebe do navegador **apenas o `deliveryId`**. O servidor carrega a entrega, a
+comunicação, o conteúdo aprovado efetivo (edição humana quando existe), o contato e os dados do
+provider, e reconstrói tudo: nenhuma impressão pronta vem do cliente.
+
+**Conversa nova com id desconhecido** (o caso crítico: `send-template` aceito e resposta perdida):
+todas as conversas do telefone viram candidatas, e para **cada** candidata a impressão esperada é
+recalculada com o id daquela conversa. Nunca se compara `hash(null + texto)` com `hash(chatA + texto)`.
+
 | Situação | Resultado |
 | --- | --- |
 | nenhuma mensagem de saída na janela do pedido | `NOT_FOUND` |
-| exatamente uma com a nossa impressão | `FOUND` |
-| sem impressão para comparar, nenhuma igual, mais de uma igual, ou mais de uma conversa para o número | `AMBIGUOUS` |
+| exatamente uma mensagem com a impressão do texto aprovado | `FOUND` |
+| mais de uma conversa com a mesma mensagem | `AMBIGUOUS` |
+| mensagens na janela, nenhuma com a nossa impressão | `AMBIGUOUS` |
+| modo TEMPLATE (o corpo no provider é o template renderizado, que não conhecemos) | `AMBIGUOUS` ou `NOT_FOUND` |
+
+Mensagem sem corpo, interna ou com direção indeterminada **nunca** prova `FOUND`.
+
+### Dois fingerprints com papéis diferentes
+
+| Conceito | Onde vive | Para que serve |
+| --- | --- | --- |
+| `request_fingerprint` (`impressaoComando`) | gravado no ledger | identidade auditável do comando de envio |
+| `message_match_fingerprint` (`impressaoMensagem`) | só em memória, no servidor | casar uma mensagem **dentro de uma conversa candidata** |
+
+Os dois nunca são intercambiáveis: o id da conversa nem existe quando o comando é criado. Nenhum dos
+dois guarda texto ou telefone em claro.
+
+### Classificação da falha (regra do Send Pilot)
+
+| Situação | Estado |
+| --- | --- |
+| rejeição explícita e definitiva do provider (4xx com código de erro) | `FAILED` |
+| timeout, erro de rede, 5xx, resposta impossível de interpretar depois do POST, 4xx sem código | `UNKNOWN` |
+
+`UNKNOWN` nunca reenvia automaticamente.
 
 `AMBIGUOUS` **nunca** autoriza reenvio automático, e `UNKNOWN` também não: só decisão humana
 (`permiteReenvioAutomatico`). `UNKNOWN` é estado terminal na máquina — sair dele vai exigir regra
 aprovada numa fase futura; a reconciliação informa, mas não transiciona sozinha.
 **Enquanto o piloto não for liberado, o envio fica desligado.**
+
+## Autoridade sobre o ledger (quem pode escrever)
+
+`authenticated` tem **apenas SELECT** em `radar_communication_delivery` e em
+`radar_communication_delivery_event`. Criar e transicionar entrega acontece **só** por duas funções
+server-only, `radar_delivery_create` e `radar_delivery_transition` (`EXECUTE` apenas para
+`service_role`), chamadas pela função Netlify depois de validar JWT → perfil real → organização →
+permissão Radar, no mesmo padrão das RPCs do Vibe. O navegador nunca escreve na tabela nem chama as
+funções, e um teste varre `src/` para impedir a regressão.
+
+O **comando** da entrega é imutável depois do INSERT: `organization_id`, `communication_id`,
+`company_id`, `contact_id`, `provider`, `channel`, `mode`, `idempotency_key`,
+`request_fingerprint`, `provider_sender_id`, `provider_template_id`, `requested_by` e `created_at`.
+Mudar comando significa criar outra entrega. `requested_at` nasce nulo, é preenchido uma única vez na
+transição para `REQUESTED` e fica imutável a partir daí. Só os campos de resultado do provider
+(`provider_conversation_id`, `provider_message_id`, `provider_status`, `error_code`,
+`error_message_safe` e as datas de estado) evoluem, e sempre pela porta controlada.
+
+**Ator real da transição.** O evento distingue quem **pediu** (`requested_by`) de quem **transicionou**
+(`actor_id` + `actor_kind`, um de `USER`, `SERVER`, `PROVIDER`, `SYSTEM`). O `actor_id` vem sempre
+do JWT validado no servidor; o navegador não escolhe ator.
 
 ## Máquina de estados da entrega
 
