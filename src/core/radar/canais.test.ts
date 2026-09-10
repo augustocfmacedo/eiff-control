@@ -95,7 +95,7 @@ describe('idempotência e bloqueio de envio', () => {
   });
   it('nenhum provider envia nesta fase: sendApproved recusa', async () => {
     const p = providerManual();
-    await expect(p.sendApproved({ comunicacaoId: 'c', contatoId: 'x', canal: 'WHATSAPP', modo: 'MANUAL', idempotencyKey: 'k' })).rejects.toMatchObject({ codigo: ENVIO_BLOQUEADO });
+    await expect(p.sendApproved({ comunicacaoId: 'c', contatoId: 'x', canal: 'WHATSAPP', modo: 'MANUAL', idempotencyKey: 'k', telefone: '5562999991234' })).rejects.toMatchObject({ codigo: ENVIO_BLOQUEADO });
     expect(p.capabilities()).not.toContain('NEW_CONVERSATION_TEMPLATE');
   });
   it('webhook de entrada não está disponível e nenhum mapeamento de template é assumido', () => {

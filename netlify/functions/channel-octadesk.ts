@@ -1,8 +1,11 @@
-// /api/channel/octadesk: diagnostico READ-ONLY do canal WhatsApp Oficial (Channel Provider 01).
+// /api/channel/octadesk: diagnostico do canal WhatsApp Oficial e ENVIO CANARIO (Send Canary 01).
 // Valida o JWT do Supabase, le o papel SO do perfil no banco (permissao Radar) e consulta a Octadesk apenas com GET:
 // /auth/check, /chat/numbers, /chat/templates-message e /chat (busca da conversa do contato).
-// NENHUM POST de mensagem: sendApproved do provider recusa por desenho. Contrato da API em docs/octadesk.md.
-// Segredos so no painel do Netlify: OCTADESK_API_KEY, OCTADESK_BASE_URL, OCTADESK_AGENT_EMAIL (nunca VITE_, nunca em log).
+// O POST so acontece com OCTADESK_SEND_MODE=canary E destino na allowlist OCTADESK_CANARY_NUMBERS; o padrao e disabled.
+// A allowlist nunca vai para o navegador. Contrato da API em docs/octadesk.md.
+// Segredos so no painel do Netlify: OCTADESK_API_KEY, OCTADESK_BASE_URL, OCTADESK_AGENT_EMAIL, OCTADESK_SEND_MODE,
+// OCTADESK_CANARY_NUMBERS, OCTADESK_TEMPLATE_MAPPINGS e SUPABASE_SERVICE_ROLE_KEY (nunca VITE_, nunca em log).
+import { lerModoEnvio, lerNumerosCanary } from '../../src/core/radar/canais';
 import { VARIAVEIS_OCTADESK, tratarCanal, type ConfigOctadesk, type DepsCanal } from '../../src/core/radar/canaisServidor';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -22,8 +25,16 @@ export default async (req: Request): Promise<Response> => {
   let body: unknown;
   try { body = await req.json(); } catch { return json({ erro: 'corpo_invalido' }, 400); }
 
+  // mapeamentos de template: JSON server-side; sem mapeamento, template com variaveis nao envia
+  let mapeamentosTemplate: DepsCanal['mapeamentosTemplate'];
+  try { const m = JSON.parse(process.env.OCTADESK_TEMPLATE_MAPPINGS ?? '[]') as DepsCanal['mapeamentosTemplate']; if (Array.isArray(m)) mapeamentosTemplate = m; } catch { /* configuração inválida = sem mapeamento */ }
+
   const deps: DepsCanal = {
     fetch, supabaseUrl: url, anon, octadesk, faltando: [...faltando],
+    modoEnvio: lerModoEnvio(process.env.OCTADESK_SEND_MODE),
+    canaryNumeros: lerNumerosCanary(process.env.OCTADESK_CANARY_NUMBERS), // nunca devolvida ao navegador
+    serviceKey: (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim() || undefined, // só para as RPCs radar_delivery_*
+    mapeamentosTemplate,
     agora: () => new Date().toISOString(),
     // telemetria: so provider, operacao, status http, latencia e ids; nunca telefone, e-mail, texto ou chave
     log: (t) => { try { console.log(JSON.stringify({ evento: 'channel', ...t })); } catch { /* ignore */ } },

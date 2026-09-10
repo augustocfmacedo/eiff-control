@@ -3,7 +3,7 @@
 // Nenhum POST de mensagem existe aqui: sendApproved chama recusarEnvio(). A chave OCTADESK_API_KEY nunca sai desta
 // camada (nem para o navegador, nem para log, nem para a resposta). Contrato da API em docs/octadesk.md.
 import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, comProvaDeJanela, direcaoMensagem, impressaoMensagem, mascararTelefone, reconciliarEntrega, recusarEnvio, whatsappDoContato, type ComandoReconciliacao, type CommunicationChannelProvider, type ConversaCanal, type ConversaCandidata, type Entregabilidade, type EstadoProvider, type MensagemCanal, type ModoEntrega, type Reconciliacao, type RemetenteCanal, type SaudeProvider, type TemplateCanal } from './canais';
-import { permiteReenvioAutomatico, type EstadoEntrega } from './canais';
+import { autorizarDestino, chaveIdempotencia, impressaoComando, interpretarRespostaEnvio, permitePostar, permiteReenvioAutomatico, validarCoerenciaCanal, type AutorizacaoDestino, type EstadoEntrega, type ModoEnvio, type PedidoEnvio, type ResultadoEnvio } from './canais';
 import { autenticar, type Sessao } from './comunicacaoServidor';
 import type { Canal, Contato } from './types';
 
@@ -27,6 +27,11 @@ export interface DepsCanal {
   faltando?: string[]; // variaveis de ambiente ausentes (nomes, nunca valores)
   agora?: () => string;
   timeoutMs?: number;
+  // Send Canary 01: modo e allowlist vivem SO no servidor; a lista nunca vai para o navegador
+  modoEnvio?: ModoEnvio;
+  canaryNumeros?: string[];
+  serviceKey?: string; // service_role, so para as RPCs radar_delivery_*; nunca sai desta camada
+  mapeamentosTemplate?: { templateId: string; variaveis: { chave: string; origem: 'contato.nome' | 'contato.email' | 'fixo'; valorFixo?: string }[] }[];
   log?: (t: Record<string, unknown>) => void; // provider, operation, status, http_status, latency_ms, ids sanitizados
 }
 
@@ -135,7 +140,43 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
     },
     getConversation: async (id: string) => normalizarConversas([await get(`/chat/${encodeURIComponent(id)}`, 'chat_get')])[0],
     getMessages: (id: string) => lerMensagens(id),
-    sendApproved: async () => recusarEnvio(), // Channel Provider 01: nenhum POST de mensagem
+    /**
+     * Send Canary 01: POST real, guardado em tres camadas — modo de envio (disabled recusa aqui), allowlist do
+     * canario (conferida no handler) e entregabilidade. FREEFORM usa a conversa existente; TEMPLATE abre conversa.
+     */
+    sendApproved: async (p: PedidoEnvio): Promise<ResultadoEnvio> => {
+      if ((d.modoEnvio ?? 'disabled') === 'disabled') recusarEnvio();
+      const c = exigir();
+      const inicio = Date.now();
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), d.timeoutMs ?? TIMEOUT_PADRAO_MS);
+      const caminho = p.modo === 'FREEFORM' ? `/chat/${encodeURIComponent(p.conversaId ?? '')}/messages` : '/chat/send-template';
+      const corpoEnvio = p.modo === 'FREEFORM'
+        ? { type: 'public', channel: 'whatsapp', body: p.texto ?? '' }
+        : {
+            origin: { contact: { channel: 'whatsapp', code: p.remetenteNumero ?? '' } },
+            target: { contact: { channel: 'whatsapp', code: p.telefone, name: p.nomeContato, email: p.emailContato } },
+            content: { templateMessage: { ...(p.templateId ? { id: p.templateId } : {}), ...(p.templateCodigo ? { code: p.templateCodigo } : {}), variables: (p.variaveis ?? []).map((v) => ({ key: v.chave, value: v.valor })) } },
+            options: { automaticAssign: true },
+          };
+      try {
+        const r = await d.fetch(`${base}${caminho}`, {
+          method: 'POST', signal: ctrl.signal,
+          headers: { accept: 'application/json', 'content-type': 'application/json', 'X-API-KEY': c.apiKey, ...(c.agentEmail ? { 'octa-agent-email': c.agentEmail } : {}) },
+          body: JSON.stringify(corpoEnvio),
+        });
+        const texto = await r.text();
+        let corpo: unknown; try { corpo = texto ? JSON.parse(texto) : {}; } catch { corpo = undefined; }
+        d.log?.({ evento: 'channel_send', provider: 'OCTADESK', operation: p.modo === 'FREEFORM' ? 'send_message' : 'send_template', http_status: r.status, latency_ms: Date.now() - inicio });
+        const leitura = interpretarRespostaEnvio({ httpStatus: r.status, corpo });
+        return { aceito: leitura.status === 'ACCEPTED', conversaId: leitura.conversaId ?? p.conversaId, mensagemId: leitura.mensagemId, statusProvider: leitura.statusProvider ?? leitura.status, erroCodigo: leitura.erroCodigo, erroMensagem: leitura.motivo };
+      } catch (e) {
+        const abortou = (e as Error).name === 'AbortError';
+        d.log?.({ evento: 'channel_send', provider: 'OCTADESK', operation: p.modo === 'FREEFORM' ? 'send_message' : 'send_template', latency_ms: Date.now() - inicio, outcome: abortou ? 'timeout' : 'rede' });
+        const leitura = interpretarRespostaEnvio({ timeout: abortou, rede: !abortou });
+        return { aceito: false, statusProvider: 'UNKNOWN', erroMensagem: leitura.motivo };
+      } finally { clearTimeout(t); }
+    },
     reconcileDelivery: async (cmd: ComandoReconciliacao): Promise<Reconciliacao> => {
       // read-only: descobre se o envio ambiguo chegou. Nunca reenvia, nunca transiciona sozinho.
       // Conversa desconhecida (send-template com resposta perdida): TODAS as conversas do telefone viram candidatas,
@@ -156,10 +197,11 @@ export function octadeskProvider(cfg: ConfigOctadesk | undefined, d: DepsCanal):
 // ---------------------------------------------------------------------------
 // Handler /api/channel/octadesk (read-only)
 // ---------------------------------------------------------------------------
-export const ACOES_CANAL = ['status', 'numbers', 'templates', 'conversa', 'verificar', 'reconciliar'] as const;
+export const ACOES_CANAL = ['status', 'numbers', 'templates', 'conversa', 'verificar', 'reconciliar', 'preparar_envio', 'enviar_canary'] as const;
 export type AcaoCanal = (typeof ACOES_CANAL)[number];
-export interface PedidoCanal { acao: AcaoCanal; comunicacaoId?: string; contatoId?: string; deliveryId?: string }
-export const CAMPOS_CANAL = ['acao', 'comunicacaoId', 'contatoId', 'deliveryId'] as const;
+export interface PedidoCanal { acao: AcaoCanal; comunicacaoId?: string; contatoId?: string; deliveryId?: string; senderId?: string; templateId?: string }
+/** Contrato publico: so acao e IDENTIFICADORES. Telefone, texto, status, fingerprint e chave nunca vem do navegador. */
+export const CAMPOS_CANAL = ['acao', 'comunicacaoId', 'contatoId', 'deliveryId', 'senderId', 'templateId'] as const;
 
 /** Contrato publico minimo: so acao + ids. Telefone, chave e configuracao nunca vem do navegador. */
 export function validarPedidoCanal(bruto: unknown): PedidoCanal | { erro: string; campos?: string[] } {
@@ -170,7 +212,9 @@ export function validarPedidoCanal(bruto: unknown): PedidoCanal | { erro: string
   if (!(ACOES_CANAL as readonly string[]).includes(o.acao as string)) return { erro: 'acao_invalida' };
   for (const k of ['comunicacaoId', 'contatoId', 'deliveryId'] as const) if (o[k] !== undefined && !(typeof o[k] === 'string' && UUID.test(o[k] as string))) return { erro: `${k}_invalido` };
   if (o.acao === 'reconciliar' && !o.deliveryId) return { erro: 'deliveryId_obrigatorio' };
-  return { acao: o.acao as AcaoCanal, comunicacaoId: o.comunicacaoId as string | undefined, contatoId: o.contatoId as string | undefined, deliveryId: o.deliveryId as string | undefined };
+  if ((o.acao === 'preparar_envio' || o.acao === 'enviar_canary') && !o.comunicacaoId) return { erro: 'comunicacaoId_obrigatorio' };
+  for (const k of ['senderId', 'templateId'] as const) if (o[k] !== undefined && !(typeof o[k] === 'string' && o[k] && (o[k] as string).length <= 120)) return { erro: `${k}_invalido` };
+  return { acao: o.acao as AcaoCanal, comunicacaoId: o.comunicacaoId as string | undefined, contatoId: o.contatoId as string | undefined, deliveryId: o.deliveryId as string | undefined, senderId: o.senderId as string | undefined, templateId: o.templateId as string | undefined };
 }
 
 const contatoDaLinha = (x: Row): Pick<Contato, 'whatsapp' | 'celular' | 'telefone' | 'statusTelefone' | 'situacao'> => ({
@@ -199,6 +243,7 @@ export async function tratarCanal(req: Req, d: DepsCanal): Promise<Resp> {
 
   const ler = async <T>(f: () => Promise<T>, vazio: T): Promise<T> => { try { return await f(); } catch (e) { base.aviso = seguro((e as Error).message); return vazio; } };
   if (p.acao === 'reconciliar') return tratarReconciliacao(p.deliveryId!, sessao, provider, base);
+  if (p.acao === 'preparar_envio' || p.acao === 'enviar_canary') return tratarEnvio(p, sessao, provider, base, d);
   if (p.acao === 'numbers') return resp(200, { ...base, remetentes: await ler(() => provider.listSenders(), [] as RemetenteCanal[]) });
   if (p.acao === 'templates') return resp(200, { ...base, templates: await ler(() => provider.listTemplates(), [] as TemplateCanal[]) });
 
@@ -269,5 +314,147 @@ async function tratarReconciliacao(deliveryId: string, sessao: Sessao, provider:
     reconciliacao: r,
     // a decisao de reenviar nunca e automatica: a resposta diz explicitamente o que e permitido
     reenvioAutomatico: permiteReenvioAutomatico(String(ent.status) as EstadoEntrega, r),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Send Canary 01: preparo e envio, tudo reconstruido no servidor
+// ---------------------------------------------------------------------------
+interface ContextoEnvio {
+  comunicacao: Row; contato: Row; telefone?: string; texto?: string;
+  entregabilidade: Entregabilidade; conversa?: ConversaCanal;
+  remetentes: RemetenteCanal[]; templates: TemplateCanal[];
+  autorizacao: AutorizacaoDestino; coerencia: { ok: boolean; motivo: string };
+  modoEnvio: ModoEnvio;
+}
+/** Server Truth do envio: o navegador manda so o communicationId (e ids escolhidos entre opcoes que o servidor devolveu). */
+async function reconstruirEnvio(comunicacaoId: string, sessao: Sessao, provider: CommunicationChannelProvider, d: DepsCanal): Promise<Resp | ContextoEnvio> {
+  const org = sessao.perfil.organization_id;
+  const com = ((await sessao.get(`radar_communication?id=eq.${comunicacaoId}&select=id,organization_id,company_id,contact_id,channel,state,generated_content,edited_content`)) ?? [])[0];
+  if (!com) return resp(404, { erro: 'comunicacao_nao_encontrada' });
+  if (com.organization_id !== org) return resp(403, { erro: 'comunicacao_de_outra_organizacao' });
+  if (com.state !== 'APPROVED') return resp(409, { erro: 'comunicacao_nao_aprovada', estado: com.state });
+  const contato = ((await sessao.get(`radar_contact?id=eq.${com.contact_id}&select=id,organization_id,full_name,email,phone,mobile_phone,whatsapp,phone_status,status,active`)) ?? [])[0];
+  if (!contato) return resp(404, { erro: 'contato_nao_encontrado' });
+  if (contato.organization_id !== org) return resp(403, { erro: 'contato_de_outra_organizacao' });
+  const supressoes = (await sessao.get(`radar_suppression?contact_id=eq.${com.contact_id}&select=id`)) ?? [];
+
+  const coerencia = validarCoerenciaCanal({ canalComunicacao: String(com.channel) as Canal, canalEntrega: String(com.channel) as Canal, provider: provider.codigo });
+  const contatoApp = { ...contatoDaLinha(contato), suprimido: supressoes.length > 0 };
+  const telefone = whatsappDoContato(contatoApp);
+  const saude = await provider.healthCheck();
+  const [remetentes, templates] = saude.estado === 'CONNECTED'
+    ? await Promise.all([provider.listSenders(), provider.listTemplates()])
+    : [[] as RemetenteCanal[], [] as TemplateCanal[]];
+  const conversa = saude.estado === 'CONNECTED' && telefone ? await provider.findConversation(telefone) : undefined;
+  const entregabilidade = avaliarEntregabilidade({ estado: String(com.state), canal: String(com.channel) as Canal }, contatoApp, { provider: provider.codigo, saude, remetentes, templates, conversa, agora: d.agora?.() });
+  const editado = (com.edited_content as Row | null)?.texto;
+  const gerado = (com.generated_content as Row | null)?.versaoPrincipal;
+  const texto = typeof editado === 'string' && editado.trim() ? editado : typeof gerado === 'string' ? gerado : undefined;
+  const modoEnvio = d.modoEnvio ?? 'disabled';
+  return { comunicacao: com, contato, telefone, texto, entregabilidade, conversa, remetentes, templates, coerencia, modoEnvio, autorizacao: autorizarDestino(telefone, modoEnvio, d.canaryNumeros ?? []) };
+}
+
+/** RPC server-only (service_role) — a unica porta de escrita no ledger de entrega. */
+async function rpcEntrega(nome: 'radar_delivery_create' | 'radar_delivery_transition', args: Record<string, unknown>, d: DepsCanal): Promise<Row | undefined> {
+  if (!d.serviceKey) return undefined;
+  const r = await d.fetch(`${d.supabaseUrl}/rest/v1/rpc/${nome}`, {
+    method: 'POST',
+    headers: { apikey: d.serviceKey, authorization: `Bearer ${d.serviceKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  if (!r.ok) return undefined;
+  return (await r.json().catch(() => undefined)) as Row | undefined;
+}
+
+/** Variaveis do template: so mapeamento explicito do servidor; template com variaveis e sem mapeamento nao envia. */
+function variaveisDoTemplate(t: TemplateCanal, ctx: ContextoEnvio, d: DepsCanal): { ok: true; variaveis: { chave: string; valor: string }[] } | { ok: false; motivo: string } {
+  const mapa = (d.mapeamentosTemplate ?? []).find((m) => m.templateId === t.id);
+  if (mapa) {
+    const variaveis = mapa.variaveis.map((v) => ({ chave: v.chave, valor: v.origem === 'contato.nome' ? String(ctx.contato.full_name ?? '') : v.origem === 'contato.email' ? String(ctx.contato.email ?? '') : v.valorFixo ?? '' }));
+    return { ok: true, variaveis };
+  }
+  if (!t.variaveis.length) return { ok: true, variaveis: [] };
+  return { ok: false, motivo: `template "${t.nome}" tem variáveis (${t.variaveis.join(', ')}) e não há mapeamento aprovado no servidor` };
+}
+
+async function tratarEnvio(p: PedidoCanal, sessao: Sessao, provider: CommunicationChannelProvider, base: Record<string, unknown>, d: DepsCanal): Promise<Resp> {
+  const ctx = await reconstruirEnvio(p.comunicacaoId!, sessao, provider, d);
+  if (ehResp(ctx)) return ctx;
+  const c = ctx as ContextoEnvio;
+  const opcoes = {
+    modoEnvio: c.modoEnvio,
+    canal: c.comunicacao.channel,
+    coerenciaCanal: c.coerencia,
+    entregabilidade: { ...c.entregabilidade, telefone: undefined },
+    telefoneMascarado: mascararTelefone(c.telefone),
+    destinoAutorizado: c.autorizacao.permitido, // a allowlist em si nunca sai do servidor
+    destinoMotivo: c.autorizacao.motivo,
+    remetentes: c.remetentes,
+    templatesAprovados: c.templates.filter((t) => t.status === 'approved' && t.ativo),
+    conversa: c.conversa,
+  };
+  if (p.acao === 'preparar_envio') return resp(200, { ...base, envio: opcoes });
+
+  // ---- enviar_canary: cada guarda antes de qualquer POST
+  if (!c.coerencia.ok) return resp(409, { erro: 'canal_incoerente', mensagem: c.coerencia.motivo });
+  if (!c.autorizacao.permitido) return resp(403, { erro: c.autorizacao.codigo ?? 'destino_nao_autorizado', mensagem: c.autorizacao.motivo });
+  if (!c.entregabilidade.apto) return resp(409, { erro: 'nao_entregavel', mensagem: c.entregabilidade.motivo, resultado: c.entregabilidade.resultado });
+  const modo = c.entregabilidade.modo === 'FREEFORM' ? 'FREEFORM' : 'TEMPLATE';
+  if (modo === 'FREEFORM' && !(c.conversa?.aberta && c.conversa.janelaComprovada)) return resp(409, { erro: 'janela_nao_comprovada', mensagem: 'mensagem livre exige janela comprovada por mensagem do contato' });
+  if (modo === 'FREEFORM' && !c.texto) return resp(409, { erro: 'sem_texto_aprovado', mensagem: 'a comunicação não tem texto aprovado efetivo' });
+
+  const remetente = p.senderId ? c.remetentes.find((x) => x.id === p.senderId) : c.remetentes[0];
+  if (!remetente) return resp(409, { erro: 'remetente_invalido', mensagem: 'número oficial escolhido não está entre os números atuais do provider' });
+  let template: TemplateCanal | undefined; let variaveis: { chave: string; valor: string }[] = [];
+  if (modo === 'TEMPLATE') {
+    const aprovados = c.templates.filter((t) => t.status === 'approved' && t.ativo);
+    template = p.templateId ? aprovados.find((t) => t.id === p.templateId) : aprovados.length === 1 ? aprovados[0] : undefined;
+    if (!template) return resp(409, { erro: 'template_invalido', mensagem: 'escolha um template aprovado e ativo entre os atuais do provider' });
+    const v = variaveisDoTemplate(template, c, d);
+    if (!v.ok) return resp(409, { erro: 'template_sem_mapeamento', mensagem: v.motivo });
+    variaveis = v.variaveis;
+  }
+
+  // ---- delivery first: nada de POST sem entrega criada e em REQUESTED
+  const idempotencyKey = chaveIdempotencia({ comunicacaoId: String(c.comunicacao.id), provider: provider.codigo, canal: String(c.comunicacao.channel) as Canal, modo, remetenteId: remetente.id, templateId: template?.id });
+  const fingerprint = impressaoComando({ comunicacaoId: String(c.comunicacao.id), provider: provider.codigo, canal: String(c.comunicacao.channel) as Canal, modo, remetenteId: remetente.id, templateId: template?.id, telefone: c.telefone, texto: modo === 'FREEFORM' ? c.texto : undefined });
+  const criada = await rpcEntrega('radar_delivery_create', { p_user_id: sessao.uid, p_communication_id: c.comunicacao.id, p_provider: provider.codigo, p_channel: c.comunicacao.channel, p_mode: modo, p_idempotency_key: idempotencyKey, p_request_fingerprint: fingerprint, p_sender_id: remetente.id, p_template_id: template?.id ?? null }, d);
+  if (!criada?.ok) return resp(500, { erro: 'entrega_nao_criada', mensagem: String(criada?.erro ?? 'não foi possível registrar a entrega; nada foi enviado') });
+  const deliveryId = String(criada.delivery_id);
+  const statusAtual = String(criada.status) as EstadoEntrega;
+  // idempotencia real: entrega que JA existia (duplo clique, reenvio) nunca gera um segundo POST
+  if (criada.existente === true || !permitePostar(statusAtual)) {
+    // duplo clique / reenvio: a entrega ja andou, nenhum segundo POST
+    return resp(200, { ...base, envio: opcoes, entrega: { id: deliveryId, status: statusAtual, jaProcessada: true }, mensagem: 'esta entrega já foi processada; nenhum novo envio foi feito' });
+  }
+  if (statusAtual === 'READY') {
+    const req = await rpcEntrega('radar_delivery_transition', { p_user_id: sessao.uid, p_delivery_id: deliveryId, p_to_status: 'REQUESTED', p_actor_kind: 'USER' }, d);
+    if (!req?.ok) return resp(500, { erro: 'entrega_nao_solicitada', mensagem: String(req?.erro ?? 'não foi possível marcar a entrega como solicitada; nada foi enviado'), entrega: { id: deliveryId, status: 'READY' } });
+  }
+
+  // ---- POST no provider
+  const pedido: PedidoEnvio = {
+    comunicacaoId: String(c.comunicacao.id), contatoId: String(c.contato.id), canal: String(c.comunicacao.channel) as Canal, modo, idempotencyKey,
+    telefone: c.telefone!, nomeContato: txt(c.contato.full_name), emailContato: txt(c.contato.email),
+    remetenteId: remetente.id, remetenteNumero: remetente.numero,
+    templateId: template?.id, variaveis, conversaId: c.conversa?.id, texto: modo === 'FREEFORM' ? c.texto : undefined,
+  };
+  let r: ResultadoEnvio;
+  try { r = await provider.sendApproved(pedido); }
+  catch (e) { r = { aceito: false, statusProvider: 'UNKNOWN', erroMensagem: seguro((e as Error).message) }; }
+  const destino: EstadoEntrega = r.aceito ? 'ACCEPTED' : r.erroCodigo ? 'FAILED' : 'UNKNOWN';
+  await rpcEntrega('radar_delivery_transition', {
+    p_user_id: sessao.uid, p_delivery_id: deliveryId, p_to_status: destino, p_actor_kind: 'SERVER',
+    p_provider_conversation_id: r.conversaId ?? null, p_provider_message_id: r.mensagemId ?? null,
+    p_provider_status: r.statusProvider ?? null, p_error_code: r.erroCodigo ?? null, p_reason_safe: r.erroMensagem ? seguro(r.erroMensagem) : null,
+  }, d);
+  d.log?.({ evento: 'channel_send_result', provider: provider.codigo, operation: modo, delivery_id: deliveryId, communication_id: String(c.comunicacao.id), outcome: destino });
+  return resp(200, {
+    ...base, envio: opcoes,
+    entrega: { id: deliveryId, status: destino, modo, conversaProviderId: r.conversaId, mensagemProviderId: r.mensagemId, statusProvider: r.statusProvider, erroCodigo: r.erroCodigo },
+    // a comunicacao NAO vira SENT nesta fase: Delivery -> Activity -> SENT fica para o Send Pilot 02
+    comunicacaoMarcadaComoEnviada: false,
+    proximoPasso: destino === 'UNKNOWN' ? 'reconciliar' : destino === 'FAILED' ? 'revisar' : 'confirmado',
   });
 }

@@ -147,9 +147,10 @@ aprovada numa fase futura; a reconciliação informa, mas não transiciona sozin
 `authenticated` tem **apenas SELECT** em `radar_communication_delivery` e em
 `radar_communication_delivery_event`. Criar e transicionar entrega acontece **só** por duas funções
 server-only, `radar_delivery_create` e `radar_delivery_transition` (`EXECUTE` apenas para
-`service_role`), chamadas pela função Netlify depois de validar JWT → perfil real → organização →
-permissão Radar, no mesmo padrão das RPCs do Vibe. O navegador nunca escreve na tabela nem chama as
-funções, e um teste varre `src/` para impedir a regressão.
+`service_role`). Quem as chama é o **handler de envio** (`/api/channel/octadesk`, ações
+`preparar_envio` e `enviar_canary`), com `SUPABASE_SERVICE_ROLE_KEY`, depois de validar
+JWT → perfil real → organização → permissão Radar, no mesmo padrão das RPCs do Vibe. O navegador nunca
+escreve na tabela nem chama as funções, e um teste varre `src/` para impedir a regressão.
 
 O **comando** da entrega é imutável depois do INSERT: `organization_id`, `communication_id`,
 `company_id`, `contact_id`, `provider`, `channel`, `mode`, `idempotency_key`,
@@ -171,6 +172,61 @@ que se espelham: `TRANSICOES_ENTREGA` no core e o trigger `radar_delivery_estado
 (migration 0046), que é a **única** porta de mudança de status e produz o evento correspondente em
 `radar_communication_delivery_event` — tabela append-only, com `SELECT` como único privilégio de
 usuário autenticado.
+
+## Envio canário (Send Canary 01)
+
+O caminho real de envio existe, mas está fechado por três chaves independentes:
+
+| Guarda | Onde | Efeito |
+| --- | --- | --- |
+| `OCTADESK_SEND_MODE` | env do Netlify, padrão `disabled` | `disabled` recusa dentro do próprio provider; `pilot` ainda não libera nenhum destino nesta fase |
+| `OCTADESK_CANARY_NUMBERS` | env do Netlify, allowlist normalizada em E.164 | destino fora da lista devolve **403 `canary_destination_not_allowed`** |
+| entregabilidade | motor | precisa ser `SENDABLE_FREEFORM` (com janela comprovada) ou `SENDABLE_TEMPLATE` |
+
+A allowlist **nunca** vai para o navegador: a resposta traz só `destinoAutorizado` e o motivo. Nenhum
+número real aparece em arquivo versionado.
+
+### Ordem obrigatória (delivery first)
+
+1. reconstruir tudo no servidor (comunicação APPROVED, contato, supressão, conteúdo aprovado efetivo,
+   canal, provider, entregabilidade, remetentes e templates atuais);
+2. `radar_delivery_create` → `READY`;
+3. `radar_delivery_transition` `READY → REQUESTED`;
+4. **só então** o POST no Octadesk.
+
+Se qualquer passo antes do POST falhar, **nada é enviado**. Se a entrega já existia (duplo clique,
+reenvio), não há segundo POST: a resposta diz `jaProcessada`.
+
+### O que o navegador manda
+
+Só `communicationId` e, quando aplicável, `senderId` e `templateId` **escolhidos entre as opções que o
+servidor devolveu** em `preparar_envio` e revalidados contra a lista viva do provider no momento do
+envio. Telefone, texto, status, fingerprint e chave nunca vêm do cliente.
+
+### FREEFORM x TEMPLATE
+
+- `FREEFORM` (POST `/chat/{id}/messages`): só com janela comprovada por mensagem do contato.
+- `TEMPLATE` (POST `/chat/send-template`): só com template `approved` + `enable` na lista viva. O texto
+  do LLM **não** vira template automaticamente. Template com variáveis exige mapeamento explícito em
+  `OCTADESK_TEMPLATE_MAPPINGS` (server-side); sem mapeamento, o envio é recusado com
+  `template_sem_mapeamento`.
+
+### Classificação do retorno
+
+| Retorno | Estado da entrega |
+| --- | --- |
+| 2xx com `result.messageKey`/`roomKey` (ou `id`/`chatId`) | `ACCEPTED`, guardando só os ids e o status do provider |
+| rejeição explícita (`errorCode`) | `FAILED` |
+| timeout, rede, 5xx, 2xx sem identificadores | `UNKNOWN` → o botão vira **Reconciliar entrega**, nunca "tentar de novo" |
+
+Nada de payload bruto no ledger. A comunicação **não** vira `SENT` nesta fase: a ligação
+Delivery → Activity → SENT fica para o Send Pilot 02, depois da prova real.
+
+### Coerência de canal, também no banco
+
+`delivery.channel` tem de ser igual a `communication.channel`, e `OCTADESK` só entrega `WHATSAPP`.
+A regra vive no handler e em `radar_delivery_create` (migration 0048). Validado em produção: a única
+comunicação aprovada hoje é de **e-mail**, e a função recusou a entrega Octadesk com `canal_incoerente`.
 
 ## Webhook de entrada: NÃO DOCUMENTADO
 

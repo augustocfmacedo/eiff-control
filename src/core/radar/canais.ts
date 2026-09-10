@@ -30,7 +30,13 @@ export interface ConversaCanal {
 }
 export interface MensagemCanal { id: string; conversaId: string; em: string; direcao: 'entrada' | 'saida' | 'desconhecida'; status?: string; interna: boolean }
 
-export interface PedidoEnvio { comunicacaoId: string; contatoId: string; canal: Canal; modo: ModoEntrega; remetenteId?: string; templateId?: string; idempotencyKey: string }
+export interface PedidoEnvio {
+  comunicacaoId: string; contatoId: string; canal: Canal; modo: ModoEntrega; idempotencyKey: string;
+  telefone: string; nomeContato?: string; emailContato?: string;
+  remetenteId?: string; remetenteNumero?: string;
+  templateId?: string; templateCodigo?: string; variaveis?: { chave: string; valor: string }[];
+  conversaId?: string; texto?: string;
+}
 export interface ResultadoEnvio { aceito: boolean; conversaId?: string; mensagemId?: string; statusProvider?: string; erroCodigo?: string; erroMensagem?: string }
 
 /**
@@ -399,3 +405,65 @@ export const ORIGENS_ATOR = ['USER', 'SERVER', 'PROVIDER', 'SYSTEM'] as const;
 export type OrigemAtor = (typeof ORIGENS_ATOR)[number];
 /** Comando de transicao entregue a porta server-side. atorId vem SEMPRE do JWT validado no servidor. */
 export interface ComandoTransicao { deliveryId: string; para: EstadoEntrega; atorId: string; origemAtor: OrigemAtor; statusProvider?: string; motivoSeguro?: string; provider?: { conversaId?: string; mensagemId?: string } }
+
+
+// ---------------------------------------------------------------------------
+// 13) Modo de envio e allowlist do canario (Send Canary 01)
+// ---------------------------------------------------------------------------
+export const MODOS_ENVIO = ['disabled', 'canary', 'pilot'] as const;
+export type ModoEnvio = (typeof MODOS_ENVIO)[number];
+export const MODO_ENVIO_PADRAO: ModoEnvio = 'disabled';
+export const lerModoEnvio = (v?: string): ModoEnvio => ((MODOS_ENVIO as readonly string[]).includes((v ?? '').trim()) ? ((v as string).trim() as ModoEnvio) : MODO_ENVIO_PADRAO);
+/** Allowlist do canario: numeros normalizados, so no servidor. Nunca vai para o navegador nem para o repositorio. */
+export const lerNumerosCanary = (v?: string): string[] => (v ?? '').split(/[,;\r\n]+/).map((x) => normalizarTelefone(x)).filter((x): x is string => !!x);
+
+export interface AutorizacaoDestino { permitido: boolean; codigo?: 'envio_desligado' | 'canary_destination_not_allowed' | 'modo_pilot_nao_liberado' | 'sem_telefone'; motivo: string }
+/**
+ * Quem pode receber. disabled: ninguem. canary: so numeros da allowlist do servidor. pilot: ainda nao liberado
+ * nesta fase (Send Canary 01) — nenhum destino, por decisao explicita.
+ */
+export function autorizarDestino(telefone: string | undefined, modo: ModoEnvio, allowlist: string[]): AutorizacaoDestino {
+  if (!telefone) return { permitido: false, codigo: 'sem_telefone', motivo: 'contato sem WhatsApp válido' };
+  if (modo === 'disabled') return { permitido: false, codigo: 'envio_desligado', motivo: 'envio desligado (OCTADESK_SEND_MODE=disabled)' };
+  if (modo === 'pilot') return { permitido: false, codigo: 'modo_pilot_nao_liberado', motivo: 'modo pilot ainda não liberado: só canary nesta fase' };
+  if (!allowlist.includes(telefone)) return { permitido: false, codigo: 'canary_destination_not_allowed', motivo: 'destino fora da lista de números autorizados do canário' };
+  return { permitido: true, motivo: 'destino autorizado no canário' };
+}
+
+/** Canal da comunicacao x canal da entrega x provider: uma comunicacao de e-mail nunca vira envio Octadesk. */
+export function validarCoerenciaCanal(p: { canalComunicacao: Canal; canalEntrega: Canal; provider: CodigoProvider }): { ok: boolean; motivo: string } {
+  if (p.canalComunicacao !== p.canalEntrega) return { ok: false, motivo: `canal da entrega (${p.canalEntrega}) diferente do canal da comunicação (${p.canalComunicacao})` };
+  if (p.provider === 'OCTADESK' && p.canalComunicacao !== 'WHATSAPP') return { ok: false, motivo: `Octadesk só entrega WhatsApp; esta comunicação é ${p.canalComunicacao}` };
+  return { ok: true, motivo: 'canal coerente' };
+}
+
+// ---------------------------------------------------------------------------
+// 14) Interpretacao da resposta do POST de envio
+// ---------------------------------------------------------------------------
+export interface LeituraRespostaEnvio { status: Extract<EstadoEntrega, 'ACCEPTED' | 'FAILED' | 'UNKNOWN'>; conversaId?: string; mensagemId?: string; statusProvider?: string; erroCodigo?: string; motivo: string }
+/**
+ * Le a resposta do provider SEM guardar payload bruto. Positiva e interpretavel (ids presentes) = ACCEPTED;
+ * rejeicao explicita e definitiva = FAILED; qualquer ambiguidade (timeout, rede, 5xx, corpo sem ids) = UNKNOWN.
+ */
+export function interpretarRespostaEnvio(r: { httpStatus?: number; timeout?: boolean; rede?: boolean; corpo?: unknown }): LeituraRespostaEnvio {
+  if (r.timeout || r.rede || !r.httpStatus || r.httpStatus >= 500) {
+    const f = classificarFalhaEnvio({ timeout: r.timeout, rede: r.rede, httpStatus: r.httpStatus });
+    return { status: 'UNKNOWN', motivo: f.motivo };
+  }
+  const corpo = (r.corpo ?? {}) as Record<string, unknown>;
+  const texto = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const erroCodigo = texto(corpo.errorCode) ?? texto((corpo.error as Record<string, unknown> | undefined)?.code);
+  if (r.httpStatus >= 400) {
+    const f = classificarFalhaEnvio({ httpStatus: r.httpStatus, erroCodigo });
+    return { status: f.status, erroCodigo, motivo: f.motivo };
+  }
+  if (erroCodigo) return { status: 'FAILED', erroCodigo, motivo: `provider respondeu ${r.httpStatus} com código de erro ${erroCodigo}` };
+  const resultado = (corpo.result ?? {}) as Record<string, unknown>;
+  const mensagemId = texto(resultado.messageKey) ?? texto(corpo.id);
+  const conversaId = texto(resultado.roomKey) ?? texto(corpo.chatId);
+  if (mensagemId || conversaId) return { status: 'ACCEPTED', conversaId, mensagemId, statusProvider: texto(corpo.status), motivo: 'provider aceitou e devolveu identificadores' };
+  return { status: 'UNKNOWN', motivo: `provider respondeu ${r.httpStatus} sem identificadores: resultado indeterminado` };
+}
+
+/** Entrega ja em andamento nao pode virar um segundo POST (duplo clique). */
+export const permitePostar = (status: EstadoEntrega) => status === 'READY' || status === 'REQUESTED';

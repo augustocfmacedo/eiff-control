@@ -11,6 +11,9 @@ import { Badge } from '../../ui/components';
 const TOM_CONEXAO: Record<EstadoConexao, 'ok' | 'muted' | 'bad'> = { CONNECTED: 'ok', NOT_CONFIGURED: 'muted', ERROR: 'bad' };
 const ROTULO_CONEXAO: Record<EstadoConexao, string> = { CONNECTED: 'Conectado', NOT_CONFIGURED: 'Não configurado', ERROR: 'Erro' };
 interface Diagnostico { saude: SaudeProvider; remetentes: RemetenteCanal[]; templates: TemplateCanal[]; entregabilidade?: Entregabilidade; variaveisFaltando?: string[]; telefoneMascarado?: string; aviso?: string }
+interface OpcoesEnvio { modoEnvio: 'disabled' | 'canary' | 'pilot'; destinoAutorizado: boolean; destinoMotivo: string; coerenciaCanal: { ok: boolean; motivo: string }; entregabilidade?: Entregabilidade; remetentes: RemetenteCanal[]; templatesAprovados: TemplateCanal[]; telefoneMascarado?: string }
+interface EntregaResp { id: string; status: string; modo?: string; conversaProviderId?: string; mensagemProviderId?: string; statusProvider?: string; erroCodigo?: string; jaProcessada?: boolean }
+const ROTULO_ENTREGA: Record<string, string> = { READY: 'preparada', REQUESTED: 'solicitada', ACCEPTED: 'aceita pelo provider', DELIVERED: 'entregue', FAILED: 'recusada', UNKNOWN: 'resultado desconhecido' };
 
 export function Entrega({ c }: { c: ComunicacaoRadar }) {
   const { ds, modo } = useStore();
@@ -18,6 +21,11 @@ export function Entrega({ c }: { c: ComunicacaoRadar }) {
   const [d, setD] = useState<Diagnostico | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [envio, setEnvio] = useState<OpcoesEnvio | null>(null);
+  const [entrega, setEntrega] = useState<EntregaResp | null>(null);
+  const [reconc, setReconc] = useState<{ resultado: string; motivo: string } | null>(null);
+  const [remetenteSel, setRemetenteSel] = useState('');
+  const [templateSel, setTemplateSel] = useState('');
   const contato = ds.radar.contatos.find((x) => x.id === c.contatoId);
   const suprimido = ds.radar.supressoes?.some((s) => s.contatoId === c.contatoId) ?? false;
 
@@ -25,6 +33,33 @@ export function Entrega({ c }: { c: ComunicacaoRadar }) {
   const atual = provider === 'MANUAL' ? manual : d?.entregabilidade;
   const saude: SaudeProvider = provider === 'MANUAL' ? { estado: 'CONNECTED', detalhe: 'Envio pelo próprio usuário, por fora do sistema.' } : d?.saude ?? { estado: 'NOT_CONFIGURED', detalhe: 'Ainda não verificado.' };
 
+  const chamar = async (corpo: Record<string, unknown>) => {
+    const token = await tokenSessao();
+    if (!token) throw new Error('Sessão não encontrada: o canal só funciona em produção, com login.');
+    const resp = await fetch('/api/channel/octadesk', { method: 'POST', headers: { 'content-type': 'application/json', 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', authorization: `Bearer ${token}` }, body: JSON.stringify(corpo) });
+    const j = (await resp.json().catch(() => ({}))) as Record<string, unknown> & { erro?: string; mensagem?: string };
+    if (!resp.ok) throw new Error(`${j.mensagem ?? j.erro ?? `HTTP ${resp.status}`}`);
+    return j;
+  };
+  const preparar = async () => {
+    setOcupado(true); setErro(null);
+    try { const j = await chamar({ acao: 'preparar_envio', comunicacaoId: c.id }); const o = j.envio as OpcoesEnvio; setEnvio(o); setRemetenteSel(o.remetentes[0]?.id ?? ''); setTemplateSel(o.templatesAprovados[0]?.id ?? ''); }
+    catch (e) { setErro((e as Error).message); } finally { setOcupado(false); }
+  };
+  const enviarCanary = async () => {
+    if (!window.confirm('Enviar de verdade pelo WhatsApp Oficial para o número autorizado do canário?')) return;
+    setOcupado(true); setErro(null);
+    try {
+      const j = await chamar({ acao: 'enviar_canary', comunicacaoId: c.id, ...(remetenteSel ? { senderId: remetenteSel } : {}), ...(templateSel ? { templateId: templateSel } : {}) });
+      setEntrega(j.entrega as EntregaResp); setReconc(null);
+    } catch (e) { setErro((e as Error).message); } finally { setOcupado(false); }
+  };
+  const reconciliar = async () => {
+    if (!entrega) return;
+    setOcupado(true); setErro(null);
+    try { const j = await chamar({ acao: 'reconciliar', deliveryId: entrega.id }); setReconc(j.reconciliacao as { resultado: string; motivo: string }); }
+    catch (e) { setErro((e as Error).message); } finally { setOcupado(false); }
+  };
   const verificar = async () => {
     setOcupado(true); setErro(null);
     try {
@@ -63,9 +98,45 @@ export function Entrega({ c }: { c: ComunicacaoRadar }) {
       {erro && <div className="small" style={{ marginTop: 4, color: 'var(--bad)' }}>{erro}</div>}
       <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {provider === 'OCTADESK' && <button className="btn sm" disabled={ocupado || modo !== 'remoto'} onClick={() => void verificar()}>{ocupado ? 'Verificando…' : 'Verificar Octadesk'}</button>}
-        <button className="btn sm" disabled title="Channel Provider 01: infraestrutura pronta, envio desligado até fechar a reconciliação de idempotência">ENVIO DESATIVADO — PILOTO</button>
-        <span className="small muted">Nenhuma mensagem é enviada por aqui nesta fase.</span>
+        {provider === 'OCTADESK' && <button className="btn sm" disabled={ocupado || modo !== 'remoto'} onClick={() => void preparar()}>Preparar envio</button>}
+        {provider !== 'OCTADESK' && <span className="small muted">Provider manual: copie o texto aprovado e envie você mesmo.</span>}
       </div>
+      {envio && (
+        <div className="df-card" style={{ marginTop: 8 }}>
+          <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b>Envio</b>
+            <Badge tone={envio.modoEnvio === 'canary' ? 'warn' : 'muted'}>modo {envio.modoEnvio}</Badge>
+            <Badge tone={envio.destinoAutorizado ? 'ok' : 'bad'}>{envio.destinoAutorizado ? 'destino autorizado' : envio.destinoMotivo}</Badge>
+            {!envio.coerenciaCanal.ok && <Badge tone="bad">{envio.coerenciaCanal.motivo}</Badge>}
+          </div>
+          {envio.remetentes.length > 1 && <div className="small" style={{ marginTop: 6 }}>Número: <select value={remetenteSel} onChange={(e) => setRemetenteSel(e.target.value)}>{envio.remetentes.map((r) => <option key={r.id} value={r.id}>{r.nome ?? r.id}{r.numero ? ` (${r.numero})` : ''}</option>)}</select></div>}
+          {envio.entregabilidade?.modo === 'TEMPLATE' && <div className="small" style={{ marginTop: 6 }}>Template aprovado: {envio.templatesAprovados.length ? <select value={templateSel} onChange={(e) => setTemplateSel(e.target.value)}>{envio.templatesAprovados.map((t) => <option key={t.id} value={t.id}>{t.nome}{t.idioma ? ` · ${t.idioma}` : ''}{t.variaveis.length ? ` · ${t.variaveis.length} variável(is)` : ''}</option>)}</select> : <span className="muted">nenhum</span>}</div>}
+          <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {envio.modoEnvio === 'canary' && envio.destinoAutorizado && envio.entregabilidade?.apto && envio.coerenciaCanal.ok
+              ? <button className="btn sm primary" disabled={ocupado} onClick={() => void enviarCanary()}>Enviar (canário)</button>
+              : <button className="btn sm" disabled title={envio.modoEnvio !== 'canary' ? 'OCTADESK_SEND_MODE não está em canary' : !envio.destinoAutorizado ? envio.destinoMotivo : envio.entregabilidade?.motivo}>ENVIO BLOQUEADO — {envio.modoEnvio === 'canary' ? 'canário' : envio.modoEnvio}</button>}
+            <span className="small muted">Canário: só números autorizados no servidor. A comunicação não é marcada como enviada nesta fase.</span>
+          </div>
+        </div>
+      )}
+      {entrega && (
+        <div className="df-card" style={{ marginTop: 8 }}>
+          <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b>Entrega {entrega.id.slice(0, 8)}</b>
+            <Badge tone={entrega.status === 'ACCEPTED' || entrega.status === 'DELIVERED' ? 'ok' : entrega.status === 'FAILED' ? 'bad' : entrega.status === 'UNKNOWN' ? 'warn' : 'info'}>{ROTULO_ENTREGA[entrega.status] ?? entrega.status}</Badge>
+            {entrega.jaProcessada && <span className="muted">já processada; nenhum novo envio</span>}
+          </div>
+          {(entrega.conversaProviderId || entrega.mensagemProviderId) && <div className="small muted" style={{ marginTop: 4 }}>conversa {entrega.conversaProviderId ?? '—'} · mensagem {entrega.mensagemProviderId ?? '—'}{entrega.statusProvider ? ` · ${entrega.statusProvider}` : ''}</div>}
+          {entrega.erroCodigo && <div className="small" style={{ marginTop: 4, color: 'var(--bad)' }}>código do provider: {entrega.erroCodigo}</div>}
+          {entrega.status === 'UNKNOWN' && (
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button className="btn sm" disabled={ocupado} onClick={() => void reconciliar()}>Reconciliar entrega</button>
+              <span className="small muted">Resultado desconhecido: nunca reenviar sem reconciliar.</span>
+            </div>
+          )}
+          {reconc && <div className="small" style={{ marginTop: 6 }}><b>{reconc.resultado}</b> · {reconc.motivo}{reconc.resultado === 'AMBIGUOUS' ? ' — decisão sua.' : reconc.resultado === 'NOT_FOUND' ? ' — nada foi enviado; o reenvio continua sendo decisão sua.' : ''}</div>}
+        </div>
+      )}
     </div>
   );
 }
