@@ -3,6 +3,7 @@ import { calcLancamentos, fluxo13Semanas, obra360 } from '../core/engine';
 import { actions, pode, useStore } from '../data/store';
 import { Bars, Empty, Field, KpiHero, KpiStrip, Link, Modal, Money, NumberInput, PageHead, PrintHead, ProgressRow, StatusBadge, Tabs, money, pct, tentar, useToast } from '../ui/components';
 import { Sparkline } from '../ui/charts';
+import { Gantt } from '../ui/Gantt';
 import { Timeline } from '../ui/Timeline';
 import { ObraForm } from './Obras';
 import { LancamentoForm } from './LancamentoForm';
@@ -12,7 +13,7 @@ import { MateriaisTab } from './Materiais';
 export default function Obra360({ codigo }: { codigo: string }) {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'servicos' | 'materiais' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
+  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'cronograma' | 'servicos' | 'materiais' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
   const [editando, setEditando] = useState(false);
   const [novoLanc, setNovoLanc] = useState(false);
   const [exec, setExec] = useState<{ execucaoFisica: number; medidoFaturado: number; estimativaConcluir: number; justificativa: string } | null>(null);
@@ -74,6 +75,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
         <Tabs value={aba} onChange={setAba} items={[
           { id: 'resumo', label: 'Resumo econômico' },
           { id: 'medicoes', label: `Cronograma e medições (${o.medicoes.medicoes.filter((m) => m.medida).length}/${o.medicoes.medicoes.length})` },
+          { id: 'cronograma', label: 'Cronograma visual' },
           { id: 'servicos', label: `Serviços (${o.servicos.length})` },
           { id: 'materiais', label: `Materiais (${o.peso.pesoTotal ? `${Math.round(o.peso.pctMontado * 100)}% de ${(o.peso.pesoTotal / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} t` : 'kg'})` },
           { id: 'demandas', label: `Demandas (${o.demandasPendentes + o.demandasAtrasadas} pend.)` },
@@ -84,6 +86,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
           { id: 'timeline', label: 'Documentos e comunicação' },
         ]} />
         {aba === 'medicoes' && <MedicoesTab o={o} onErro={toast} onOk={toast} />}
+        {aba === 'cronograma' && <Gantt o={o} dataBase={ds.params.dataBase} />}
         {aba === 'servicos' && <ServicosTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'materiais' && <MateriaisTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'demandas' && <DemandasTab o={o} onErro={toast} />}

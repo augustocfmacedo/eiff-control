@@ -5,6 +5,7 @@ import type { ApontamentoEstacao, LinhaProducao, Romaneio } from '../core/types'
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Input, KpiHero, KpiStrip, Modal, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast, type Tone } from '../ui/components';
 import { Sparkline } from '../ui/charts';
+import Quiosque from './Quiosque';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 const kg = (v: number) => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} kg`;
@@ -127,6 +128,7 @@ export default function Producao({ query }: { query: URLSearchParams }) {
   const [ate, setAte] = useState(ds.params.dataBase);
   const [apontar, setApontar] = useState<ApontamentoEstacao | null>(null);
   const [romaneio, setRomaneio] = useState<Romaneio | null>(null);
+  const [quiosque, setQuiosque] = useState(query.get('quiosque') === '1'); // TV da fábrica: #/producao?quiosque=1
   const r = resumoProdutividade(ds, { codigoObra: obra || undefined, de, ate });
   const podeApontar = pode(usuario, 'comentar', obra || undefined);
   const podeExcluir = pode(usuario, 'editar_etc', obra || undefined);
@@ -136,10 +138,12 @@ export default function Producao({ query }: { query: URLSearchParams }) {
   const toneMeta = (v?: number): Tone => (v === undefined ? 'muted' : v >= 1 ? 'ok' : v >= 0.8 ? 'warn' : 'bad');
   return (
     <>
+      {quiosque && <Quiosque obra={obra} onSair={() => setQuiosque(false)} />}
       <PageHead title="Fábrica e montagem" subtitle="Apontamento por estação em quilos, peças e horas; produtividade em kg por hora-homem contra a meta das composições; romaneios de expedição. Pintura conclui a fabricação, Expedição e romaneio expedem, Liberação conclui a montagem.">
         <Select value={obra} onChange={setObra} options={obras.map((o) => ({ value: o.codigo, label: `${o.codigo} · ${o.nome}` }))} allowEmpty="Todas as obras" />
         <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} />
         <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} />
+        <button className="btn" onClick={() => setQuiosque(true)} title="Painel para a TV da fábrica (Esc sai)">Modo quiosque</button>
         {podeApontar && obra && <button className="btn" onClick={() => setRomaneio(actions.novoRomaneio(obra))}>Romaneio</button>}
         {podeApontar && <button className="btn primary" onClick={() => setApontar(actions.novoApontamentoEstacao({ codigoObra: obra }))}>+ Apontar estação</button>}
       </PageHead>

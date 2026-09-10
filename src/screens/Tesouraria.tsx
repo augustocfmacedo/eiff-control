@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { calcLancamentos, fluxo13Semanas, fluxo24Meses, posicaoBancaria, reservaVinculadaTotal, type FluxoCaixa } from '../core/engine';
 import type { Cenario } from '../core/types';
+import { AJUSTES_ZERO, aplicarCenario, cenarioAtivo, type AjustesCenario } from '../core/cenarioCaixa';
+import { LineChart } from '../ui/charts';
+import { MoedaInput } from '../ui/components';
 import { obrasVisiveis, pode, useStore } from '../data/store';
 import { Bars, Empty, Kpi, Link, Money, PageHead, money } from '../ui/components';
 import { navegar } from '../ui/router';
@@ -72,6 +75,7 @@ export function Fluxo13() {
       </div>
       {criticas.length > 0 && <div className="alert warn"><b>Semanas críticas:</b> {criticas.map((p) => p.rotulo).join(', ')}. Cada semana crítica precisa de plano de ação (cobrar, negociar, reprogramar ou capitalizar) registrado no comitê de caixa.</div>}
       <div className="card"><Bars valores={f.saldoFinal} rotulos={f.periodos.map((p) => p.rotulo)} /></div>
+      <CenarioInterativo cenario={cenario} obra={obra} base={f} />
       <div className="card"><TabelaFluxo f={f} onCelula={(linha, ini, fim) => navegar(`/lancamentos?busca=${encodeURIComponent(linha)}&de=${ini}&ate=${fim}`)} /></div>
       <div className="card">
         <h2>Comparação de cenários</h2>
@@ -138,5 +142,39 @@ export function PosicaoDiaria() {
         </table>
       </div>
     </>
+  );
+}
+
+/** Cenarios interativos: ajustes hipoteticos (atraso de recebimentos, adiamento de pagamentos, corte, novo contrato) sobre uma
+ *  copia dos lancamentos; o motor recalcula as 13 semanas e a curva do cenario aparece contra a base. Nada e gravado. */
+function CenarioInterativo({ cenario, obra, base }: { cenario: Cenario; obra: string; base: FluxoCaixa }) {
+  const { ds } = useStore();
+  const [a, setA] = useState<AjustesCenario>(AJUSTES_ZERO);
+  const ativo = cenarioAtivo(a);
+  const f = useMemo(() => (ativo ? fluxo13Semanas(aplicarCenario(ds, a), cenario, 13, obra ? (l) => l.codigoObra === obra : undefined) : base), [ds, a, cenario, obra, base, ativo]);
+  const up = (p: Partial<AjustesCenario>) => setA((x) => ({ ...x, ...p }));
+  const delta = f.menorSaldo - base.menorSaldo;
+  return (
+    <div className="card cenario">
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>E se… (cenário interativo, nada é gravado)</h2>
+        {ativo && <button className="btn sm" onClick={() => setA(AJUSTES_ZERO)}>Limpar cenário</button>}
+      </div>
+      <div className="cenario-controles">
+        <label className="field"><span>Recebimentos atrasam <b>{a.atrasoRecebimentosDias} dias</b></span><input type="range" min={0} max={60} step={5} value={a.atrasoRecebimentosDias} onChange={(e) => up({ atrasoRecebimentosDias: Number(e.target.value) })} /></label>
+        <label className="field"><span>Pagamentos adiados <b>{a.adiamentoPagamentosDias} dias</b></span><input type="range" min={0} max={60} step={5} value={a.adiamentoPagamentosDias} onChange={(e) => up({ adiamentoPagamentosDias: Number(e.target.value) })} /></label>
+        <label className="field"><span>Corte em despesas sem obra <b>{Math.round(a.corteDespesasPct * 100)}%</b></span><input type="range" min={0} max={50} step={5} value={Math.round(a.corteDespesasPct * 100)} onChange={(e) => up({ corteDespesasPct: Number(e.target.value) / 100 })} /></label>
+        <label className="field"><span>Novo contrato (receita líquida)</span><MoedaInput value={a.novoContratoValor} onChange={(v) => up({ novoContratoValor: Math.max(0, v) })} /></label>
+        <label className="field"><span>Primeira parcela em <b>{a.novoContratoInicioSemanas} semana(s)</b></span><input type="range" min={0} max={12} step={1} value={a.novoContratoInicioSemanas} onChange={(e) => up({ novoContratoInicioSemanas: Number(e.target.value) })} /></label>
+        <label className="field"><span>Parcelas mensais <b>{a.novoContratoParcelas}</b></span><input type="range" min={1} max={12} step={1} value={a.novoContratoParcelas} onChange={(e) => up({ novoContratoParcelas: Number(e.target.value) })} /></label>
+      </div>
+      <div className="grid cols-4" style={{ marginTop: 12 }}>
+        <Kpi label="Menor saldo (cenário)" value={money(f.menorSaldo)} hint={ativo ? `${delta >= 0 ? '+' : ''}${money(delta, true)} vs. base` : 'ajuste um controle'} tone={f.menorSaldo < f.reservaMinima ? 'bad' : 'ok'} />
+        <Kpi label="Saldo final S13 (cenário)" value={money(f.saldoFinal[12])} hint={ativo ? `${f.saldoFinal[12] - base.saldoFinal[12] >= 0 ? '+' : ''}${money(f.saldoFinal[12] - base.saldoFinal[12], true)} vs. base` : undefined} tone={f.saldoFinal[12] < f.reservaMinima ? 'bad' : 'ok'} />
+        <Kpi label="Necessidade máxima (cenário)" value={money(f.necessidadeMaxima)} tone={f.necessidadeMaxima > 0 ? 'warn' : 'ok'} />
+        <Kpi label="Semanas críticas" value={String(f.periodos.filter((_, i) => f.excesso[i] < 0).length)} hint={`base: ${base.periodos.filter((_, i) => base.excesso[i] < 0).length}`} />
+      </div>
+      <div style={{ marginTop: 12 }}><LineChart rotulos={base.periodos.map((p) => p.rotulo)} series={[{ nome: 'Base', valores: base.saldoFinal, tracejada: true }, { nome: ativo ? 'Cenário' : 'Cenário (= base)', valores: f.saldoFinal }, { nome: 'Reserva mínima', valores: base.periodos.map(() => base.reservaMinima), tracejada: true }]} /></div>
+    </div>
   );
 }

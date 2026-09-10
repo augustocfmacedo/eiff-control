@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
+import { CORES_SITUACAO } from '../ui/CenaObra';
+const CenaObra = React.lazy(() => import('../ui/CenaObra'));
 import type { Obra360 } from '../core/engine';
 import { TIPOS_CONJUNTO, parseListaMateriais, type ConjuntoCalc, type ConjuntoImportado, type EtapaPeso } from '../core/materiais';
 import type { Planilha } from '../core/sinapi';
@@ -132,6 +134,7 @@ export function MateriaisTab({ o, onErro, onOk }: { o: Obra360; onErro: (m: stri
   const [busca, setBusca] = useState('');
   const [tipo, setTipo] = useState('');
   const [servico, setServico] = useState('');
+  const [ver3d, setVer3d] = useState(false);
   const r = o.peso;
   const lista = r.conjuntos.filter((c) => (!tipo || c.tipo === tipo) && (!servico || c.servicoId === servico) && (!busca || `${c.marca} ${c.descricao} ${c.perfil ?? ''}`.toLowerCase().includes(busca.toLowerCase())));
   const podeEditar = pode(usuario, 'editar_etc', o.obra.codigo);
@@ -141,6 +144,16 @@ export function MateriaisTab({ o, onErro, onOk }: { o: Obra360; onErro: (m: stri
   const nomeServ = (id?: string) => { const s = id ? ds.servicos.find((x) => x.id === id) : undefined; return s ? s.codigo : '—'; };
   return (
     <>
+      <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+        <button className={`btn sm ${ver3d ? 'primary' : ''}`} onClick={() => setVer3d((v) => !v)} disabled={!r.conjuntos.length} title="Estrutura esquemática com a cor do estado real de cada conjunto">{ver3d ? 'Ocultar estrutura 3D' : 'Ver estrutura 3D do avanço'}</button>
+        {ver3d && <span className="small muted">Disposição esquemática (a lista não tem coordenadas): a cor é o estado real de cada conjunto e o tamanho acompanha o peso.</span>}
+      </div>
+      {ver3d && r.conjuntos.length > 0 && (
+        <div className="cena-obra-painel card" style={{ marginBottom: 12 }}>
+          <Suspense fallback={<div className="empty">Carregando a cena…</div>}><CenaObra conjuntos={lista} /></Suspense>
+          <div className="viz-legend cena-obra-legenda">{(Object.keys(CORES_SITUACAO) as (keyof typeof CORES_SITUACAO)[]).map((s) => { const n = lista.filter((c) => c.situacao === s); const kgS = n.reduce((a, c) => a + c.pesoTotal, 0); return <span key={s}><i className="viz-swatch" style={{ background: `var(${CORES_SITUACAO[s].css})`, opacity: CORES_SITUACAO[s].opacidade }} />{s}: {n.length} ({Math.round(kgS).toLocaleString('pt-BR')} kg)</span>; })}</div>
+        </div>
+      )}
       {r.conjuntos.length === 0 ? (
         <Empty icone="central" titulo="Sem lista de materiais">Importe a lista de conjuntos (marcas) com peso, ou cadastre manualmente. O avanço físico da obra passa a ser medido em quilos.</Empty>
       ) : (
