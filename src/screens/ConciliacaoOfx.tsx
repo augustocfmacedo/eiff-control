@@ -40,7 +40,7 @@ export function ImportarOfxModal({ onClose, onOk, onErro }: { onClose: () => voi
     tentar(
       () => {
         const r = actions.importarTransacoes(conta, novas.map((t) => ({ data: t.data, historico: t.memo || t.tipo, documento: t.documento ?? '', debito: t.valor < 0 ? -t.valor : 0, credito: t.valor > 0 ? t.valor : 0, idExterno: t.fitid })));
-        onOk(`${r.importadas} transação(ões) importada(s) para ${conta}${r.duplicadas ? `, ${r.duplicadas} já existia(m)` : ''}.`);
+        onOk(`${r.importadas} transação(ões) importada(s) para ${conta}${r.duplicadas ? `, ${r.duplicadas} já existia(m)` : ''}${r.antesDoCorte ? `, ${r.antesDoCorte} anterior(es) ao corte do extrato ignorada(s)` : ''}.`);
       },
       onErro,
       onClose,

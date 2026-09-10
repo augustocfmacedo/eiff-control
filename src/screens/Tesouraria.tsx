@@ -121,7 +121,8 @@ export function PosicaoDiaria() {
   const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
   return (
     <>
-      <PageHead title="Posição diária" subtitle={`Saldo bancário = saldo de abertura em ${d(ds.params.dataBase)} + créditos − débitos do extrato importado, conciliados ou não. O saldo por lançamentos considera só o que já foi lançado; a diferença é o que falta conciliar ou lançar.`} />
+      <PageHead title="Posição diária" subtitle={`Saldo bancário = saldo de abertura em ${d(ds.params.dataBase)} + créditos − débitos do extrato importado, conciliados ou não${ds.params.corteExtrato ? ` (só movimentos a partir de ${d(ds.params.corteExtrato)}, corte do extrato)` : ''}. O saldo por lançamentos considera só o que já foi lançado; a diferença é o que falta conciliar ou lançar.`} />
+      {ds.params.corteExtrato && contas.some((x) => (x.conta.saldoInicialData ?? ds.params.dataBase) < ds.params.corteExtrato!) && <div className="alert warn">Corte do extrato em {d(ds.params.corteExtrato)}: {contas.filter((x) => (x.conta.saldoInicialData ?? ds.params.dataBase) < ds.params.corteExtrato!).map((x) => x.conta.instituicao).join(', ')} tem saldo de abertura anterior ao corte. Ajuste em Cadastros › Contas financeiras a data e o saldo de abertura para {d(ds.params.corteExtrato)} (saldo do extrato naquele dia), senão o saldo bancário fica sem os movimentos entre a abertura e o corte.</div>}
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <Kpi label="Saldo bancário hoje" value={money(tot((x) => x.saldoBancario))} hint={`abertura ${money(tot((x) => x.saldoInicial))} · extrato até ${d(contas.map((x) => x.ultimaTransacao).filter(Boolean).sort().pop())}`} />
         <Kpi label="Saldo por lançamentos" value={money(tot((x) => x.saldoLancamentos))} hint={`${money(Math.abs(naoLancado))} ${naoLancado < 0 ? 'de saídas' : 'de entradas'} do extrato ainda não lançadas`} tone={pendentes ? 'warn' : 'ok'} to="/conciliacao" />

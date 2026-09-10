@@ -67,6 +67,8 @@ export const fmtBr = (s?: string): string => (s ? `${s.slice(8, 10)}/${s.slice(5
 // ---------------------------------------------------------------------------
 // Inclusao no modelo (coluna "Incluir Modelo")
 // ---------------------------------------------------------------------------
+/** Transacao do extrato conta se o registro e incluido e a data nao e anterior ao corte do extrato (params.corteExtrato). */
+export const incluirTransacao = (t: { registro: Registro; data: string }, params: Params): boolean => incluirRegistro(t.registro, params) && (!params.corteExtrato || t.data >= params.corteExtrato);
 export const incluirRegistro = (registro: Registro, params: Params): boolean =>
   registro === 'Real' || (registro === 'Exemplo' && params.incluirDemo);
 
@@ -245,8 +247,9 @@ export function posicaoBancaria(ds: Dataset, lancs: LancamentoCalc[] = calcLanca
   return ds.contas
     .filter((c) => c.ativa && incluirRegistro(c.registro, ds.params))
     .map((c) => {
-      const ini = dataAbertura(c, ds); // movimentos contam a partir da data do saldo de abertura, nao da data-base
-      const trans = ds.transacoes.filter((t) => t.conta === c.instituicao && incluirRegistro(t.registro, ds.params) && t.data >= ini);
+      // movimentos contam a partir da data do saldo de abertura (nao da data-base) e nunca antes do corte do extrato
+      const ini = [dataAbertura(c, ds), ds.params.corteExtrato ?? ''].sort().pop()!;
+      const trans = ds.transacoes.filter((t) => t.conta === c.instituicao && incluirTransacao(t, ds.params) && t.data >= ini);
       const creditosBanco = trans.reduce((a, t) => a + t.credito, 0);
       const debitosBanco = trans.reduce((a, t) => a + t.debito, 0);
       const pend = trans.filter((t) => !t.lancamentoIds.length);
@@ -675,7 +678,7 @@ export function calcTransacoes(ds: Dataset, lancs: LancamentoCalc[] = calcLancam
   const tol = ds.params.alcadas.toleranciaConciliacao;
   const porId = new Map(lancs.map((l) => [l.id, l]));
   return ds.transacoes
-    .filter((t) => incluirRegistro(t.registro, ds.params))
+    .filter((t) => incluirTransacao(t, ds.params))
     .map((t) => {
       const movimento = t.credito - t.debito;
       const valorLancamentos = t.lancamentoIds.reduce((a, id) => a + (porId.get(id)?.valorCaixaProjetado ?? 0), 0);

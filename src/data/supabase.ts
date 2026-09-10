@@ -260,6 +260,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     cenario: p?.scenario ?? 'Base',
     incluirDemo: !!p?.include_demo,
     reservaMinima: Number(p?.min_reserve ?? 0),
+    corteExtrato: p?.statement_cutoff ?? undefined,
     fatores: { Conservador: fator('Conservador'), Base: fator('Base'), Otimista: fator('Otimista') },
     alcadas: {
       limiteGestorObra: Number(p?.limit_project_manager ?? 0),
@@ -442,7 +443,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   if (JSON.stringify(antes.params) !== JSON.stringify(depois.params)) {
     const p = depois.params;
     const { data, error } = await sb.from('parameter_set').update({
-      base_date: p.dataBase, auto_base_date: p.dataBaseAutomatica ?? false, scenario: p.cenario, include_demo: p.incluirDemo, min_reserve: p.reservaMinima,
+      base_date: p.dataBase, auto_base_date: p.dataBaseAutomatica ?? false, scenario: p.cenario, include_demo: p.incluirDemo, min_reserve: p.reservaMinima, statement_cutoff: p.corteExtrato ?? null,
       limit_project_manager: p.alcadas.limiteGestorObra, limit_finance: p.alcadas.limiteFinanceiro, limit_board: p.alcadas.limiteDiretoria,
       budget_deviation_allowed: p.alcadas.desvioOrcamentoPermitido, reconciliation_tolerance: p.alcadas.toleranciaConciliacao, approval_sla_hours: p.alcadas.slaAprovacaoHoras,
       responsible: p.responsavel, version: p.versao,

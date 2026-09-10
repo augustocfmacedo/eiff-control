@@ -86,7 +86,7 @@ describe('jornada: compromisso de obra acima da alçada', () => {
       { data: '2026-09-25', historico: 'TED GERDAU PED-001', documento: 'PED-001', debito: 100000, credito: 0 },
     ];
     const r = actions.importarTransacoes('Caixa', linhas);
-    expect(r).toEqual({ importadas: 2, duplicadas: 1 });
+    expect(r).toEqual({ importadas: 2, duplicadas: 1, antesDoCorte: 0 });
     const t1 = getState().ds.transacoes[0];
     // 1 transacao de 100k contra titulo de 180k = divergente sem justificativa
     expect(() => actions.conciliar(t1.id, [id])).toThrow(/tolerância/);
@@ -160,8 +160,8 @@ describe('extrato OFX: dedup por FITID e lançar a partir da transação', () =>
       { data: '2026-09-03', historico: 'TARIFA PACOTE SERVICOS', documento: '', debito: 89.9, credito: 0, idExterno: 'F1' },
       { data: '2026-09-03', historico: 'PIX RECEBIDO INVEST MARKET NF 47', documento: 'NF 47', debito: 0, credito: 150076.25, idExterno: 'F2' },
     ];
-    expect(actions.importarTransacoes('Caixa', linhas)).toEqual({ importadas: 2, duplicadas: 0 });
-    expect(actions.importarTransacoes('Caixa', [...linhas, { data: '2026-09-04', historico: 'IOF', documento: '', debito: 1.5, credito: 0, idExterno: 'F3' }])).toEqual({ importadas: 1, duplicadas: 2 });
+    expect(actions.importarTransacoes('Caixa', linhas)).toEqual({ importadas: 2, duplicadas: 0, antesDoCorte: 0 });
+    expect(actions.importarTransacoes('Caixa', [...linhas, { data: '2026-09-04', historico: 'IOF', documento: '', debito: 1.5, credito: 0, idExterno: 'F3' }])).toEqual({ importadas: 1, duplicadas: 2, antesDoCorte: 0 });
     expect(getState().ds.transacoes.find((t) => t.idExterno === 'F1')!.origem).toBe('ofx');
   });
   it('cria lançamento realizado, liquidado e conciliado a partir da tarifa', () => {

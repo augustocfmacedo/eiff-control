@@ -2454,6 +2454,7 @@ export const actions = {
     exigir('editar_parametros');
     if (!params.dataBase) throw new RegraDeNegocioError('Data-base obrigatória.');
     if (!params.fatores[params.cenario]) throw new RegraDeNegocioError('Cenário inválido.');
+    if (params.corteExtrato && !/^\d{4}-\d{2}-\d{2}$/.test(params.corteExtrato)) throw new RegraDeNegocioError('Corte do extrato inválido.');
     ds = registrar({ ...ds, params }, 'alterar_parametros', 'parametros', 'params', ds.params, params);
     commit(ds);
     ajustarDataBase();
@@ -2498,9 +2499,11 @@ export const actions = {
     const existentes = new Set(ds.transacoes.map((t) => `${t.conta}|${t.data}|${t.debito}|${t.credito}|${t.historico}`));
     const externos = new Set(ds.transacoes.filter((t) => t.idExterno).map((t) => `${t.conta}|${t.idExterno}`));
     const novas: TransacaoBancaria[] = [];
-    let duplicadas = 0;
+    let duplicadas = 0; let antesDoCorte = 0;
     const ids = ds.transacoes.map((t) => t.id);
+    const corte = ds.params.corteExtrato;
     for (const l of linhas) {
+      if (corte && l.data < corte) { antesDoCorte++; continue; } // anterior ao corte do extrato: nem entra
       // FITID do banco e a chave primaria de deduplicacao; sem ele, usa data+valor+historico
       const chaveExt = l.idExterno ? `${conta}|${l.idExterno}` : null;
       const chave = `${conta}|${l.data}|${l.debito}|${l.credito}|${l.historico}`;
@@ -2510,9 +2513,9 @@ export const actions = {
       const id = seq('EXT', [...ids, ...novas.map((n) => n.id)]);
       novas.push({ id, registro: 'Real', conta, data: l.data, historico: l.historico, documento: l.documento, debito: l.debito, credito: l.credito, lancamentoIds: [], origem: l.idExterno ? 'ofx' : 'importacao', idExterno: l.idExterno });
     }
-    ds = registrar({ ...ds, transacoes: [...ds.transacoes, ...novas] }, 'importar_extrato', 'transacoes', conta, undefined, { importadas: novas.length, duplicadas });
+    ds = registrar({ ...ds, transacoes: [...ds.transacoes, ...novas] }, 'importar_extrato', 'transacoes', conta, undefined, { importadas: novas.length, duplicadas, antesDoCorte });
     commit(ds);
-    return { importadas: novas.length, duplicadas };
+    return { importadas: novas.length, duplicadas, antesDoCorte };
   },
 
   /** BAN-004: concilia 1:1, 1:N; divergencia acima da tolerancia exige justificativa. */

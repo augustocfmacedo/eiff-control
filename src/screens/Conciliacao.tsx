@@ -41,6 +41,7 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
   const sug = t ? sugerirConciliacao(ds, t, lancs) : [];
   const lista = trans.filter((x) => filtro === 'todos' || x.status === filtro).sort((a, b) => (a.data < b.data ? 1 : -1));
   const taxa = trans.length ? trans.filter((x) => x.status !== 'Pendente').length / trans.length : 1;
+  const foraDoCorte = ds.params.corteExtrato ? ds.transacoes.filter((x) => x.data < ds.params.corteExtrato!).length : 0;
   const somaMarcados = marcados.reduce((a, id) => a + (lancs.find((l) => l.id === id)?.valorCaixaProjetado ?? 0), 0);
   const dif = t ? t.movimento - somaMarcados : 0;
   const selecionar = (id: string) => { setSel(id); setMarcados(trans.find((x) => x.id === id)?.lancamentoIds ?? []); setJust(''); };
@@ -66,6 +67,7 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
   return (
     <>
       <PageHead title="Bancos e conciliação" subtitle="Transação bancária é imutável. Sugestão por valor, data, documento e contraparte; divergência fora da tolerância exige justificativa.">
+      {foraDoCorte > 0 && <div className="alert info small">{foraDoCorte} transação(ões) anterior(es) ao corte do extrato ({ds.params.corteExtrato!.split('-').reverse().join('/')}) ficam fora da conciliação e da posição bancária. O corte se ajusta em Cadastros › Parâmetros.</div>}
         {podeConciliar && <button className="btn primary" onClick={() => setOfx(true)}>Importar OFX</button>}
         {podeConciliar && <button className="btn" onClick={() => setImportar({ conta: ds.contas[0]?.instituicao ?? 'Caixa', texto: '' })}>Colar extrato (CSV)</button>}
       </PageHead>

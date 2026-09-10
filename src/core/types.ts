@@ -49,6 +49,7 @@ export interface Params {
   cenario: Cenario;
   incluirDemo: boolean;
   reservaMinima: number;
+  corteExtrato?: string; // yyyy-mm-dd: movimentos do extrato anteriores ficam fora da posicao, da conciliacao e das importacoes
   fatores: Record<Cenario, FatoresCenario>;
   alcadas: Alcadas;
   responsavel: string;
