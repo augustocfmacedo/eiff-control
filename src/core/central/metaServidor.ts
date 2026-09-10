@@ -4,6 +4,7 @@
 // Contratos da Graph API conferidos na documentacao oficial: ver docs/eiff-central.md.
 import { ErroCanal, NOME_PROVIDER, autorizarDestino, mascararTelefone, normalizarTelefone, recusarEnvio, type CommunicationChannelProvider, type ModoEnvio, type PedidoEnvio, type RemetenteCanal, type ResultadoEnvio, type SaudeProvider, type TemplateCanal } from '../radar/canais';
 import { normalizarEventosMeta, verificarDesafioMeta, type NumerosCentral, type OpcoesNormalizacao } from './metaEventos';
+import { validarCoerenciaCanalMeta, type PedidoEnvioMeta } from './metaEnvio';
 
 type Row = Record<string, unknown>;
 const txt = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
@@ -121,13 +122,22 @@ export function metaCloudProvider(cfg: ConfigMeta | undefined, d: DepsMeta): Com
     // a Cloud API nao tem "conversa" consultavel como o Octadesk: o estado da janela vem do webhook (fase futura)
     findConversation: async () => undefined, getConversation: async () => undefined, getMessages: vazio,
     /**
-     * Fronteira do efeito externo: fail-closed. Nesta fase a Central e READ-ONLY, entao alem da guarda de
-     * modo/allowlist o envio termina recusado. Nenhum POST na Graph API existe neste arquivo.
+     * Fronteira do efeito externo: fail-closed, em SEGUNDA camada (a primeira e o handler, antes de criar a
+     * entrega). Repete as tres guardas com o que o pedido carrega — modo de envio, allowlist do canario e
+     * entregabilidade (canal coerente, janela comprovada no modo livre) — e ainda assim RECUSA: nesta onda a
+     * Central nao envia. A montagem da requisicao e o rito completo do canario vivem em metaEnvio.ts
+     * (executarEnvioMeta), ja implementados e testados; o POST entra na onda de liberacao do envio.
+     * Nenhum POST na Graph API existe neste arquivo.
      */
     sendApproved: async (p: PedidoEnvio): Promise<ResultadoEnvio> => {
-      const autorizacao = autorizarDestino(p.telefone, d.modoEnvio ?? 'disabled', d.canaryNumeros ?? []);
+      const pm = p as PedidoEnvioMeta;
+      const autorizacao = autorizarDestino(pm.telefone, d.modoEnvio ?? 'disabled', d.canaryNumeros ?? []);
       if (!autorizacao.permitido) throw new ErroCanal(autorizacao.codigo ?? 'destino_nao_autorizado', autorizacao.motivo, 403);
-      return recusarEnvio(); // EIFF Central 01: envio entra em fase propria, depois da prova de webhook e identidade
+      const coerencia = validarCoerenciaCanalMeta({ canalComunicacao: pm.canal, canalEntrega: pm.canal });
+      if (!coerencia.ok) throw new ErroCanal('canal_incoerente', coerencia.motivo, 409);
+      if (pm.entregabilidade && !pm.entregabilidade.apto) throw new ErroCanal('nao_entregavel', pm.entregabilidade.motivo, 409);
+      if (pm.modo === 'FREEFORM' && !pm.janela?.janelaComprovada) throw new ErroCanal('janela_nao_comprovada', 'mensagem livre exige janela de 24 h comprovada por mensagem do contato (webhook MESSAGE_RECEIVED)', 409);
+      return recusarEnvio(); // EIFF Central: envio entra em fase propria, depois da prova de webhook e identidade
     },
     reconcileDelivery: async () => ({ resultado: 'NOT_FOUND', candidatos: 0, motivo: 'Meta Cloud: reconciliação entra com o envio, na fase seguinte.' }),
     numeroInfo,

@@ -23,20 +23,46 @@ const iso = (unix: unknown): string => {
   const n = Number(unix);
   return Number.isFinite(n) && n > 0 ? new Date(n * 1000).toISOString() : new Date(0).toISOString();
 };
+/** Como `iso`, mas sem inventar data: campo ausente ou invalido fica indefinido. */
+const isoOpcional = (unix: unknown): string | undefined => {
+  const n = Number(unix);
+  return Number.isFinite(n) && n > 0 ? new Date(n * 1000).toISOString() : undefined;
+};
 const txt = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 type Row = Record<string, unknown>;
 const arr = (v: unknown): Row[] => (Array.isArray(v) ? (v as Row[]) : []);
 
 export interface OpcoesNormalizacao { numeros?: NumerosCentral; agoraIso?: string }
 /**
+ * Evento da Central: o contrato generico `ChannelInboundEvent` mais o que so a Meta informa e que a fase de envio
+ * precisa — o titulo/detalhe do erro (`errors[]`, ao lado do codigo) e a janela de atendimento que a propria Meta
+ * devolve no status (`conversation.expiration_timestamp` e `conversation.origin.type`). Nada disso e PII.
+ */
+export interface EventoCentralMeta extends ChannelInboundEvent {
+  erroTitulo?: string;
+  erroDetalhe?: string;
+  /** Fim da janela de 24 h informado pela Meta (quando vem no status). A prova continua sendo a mensagem do contato. */
+  janelaExpiraEm?: string;
+  origemConversa?: string;
+}
+const erroDe = (linha: Row | undefined): { erroCodigo?: string; erroTitulo?: string; erroDetalhe?: string } => {
+  if (!linha) return {};
+  const dados = (linha.error_data ?? {}) as Row;
+  return {
+    erroCodigo: txt(linha.code) ?? (linha.code !== undefined && linha.code !== null ? String(linha.code) : undefined),
+    erroTitulo: txt(linha.title),
+    erroDetalhe: txt(dados.details) ?? txt(linha.message),
+  };
+};
+/**
  * Normaliza a notificacao do webhook. Estrutura oficial:
  * { object: 'whatsapp_business_account', entry: [{ id, changes: [{ field: 'messages', value: { metadata, messages[], statuses[] } }] }] }
  * Payload de outro `object`, ou change de outro `field`, e ignorado em silencio (nao e erro: a Meta manda varios).
  */
-export function normalizarEventosMeta(payload: unknown, opts: OpcoesNormalizacao = {}): ChannelInboundEvent[] {
+export function normalizarEventosMeta(payload: unknown, opts: OpcoesNormalizacao = {}): EventoCentralMeta[] {
   const p = (payload ?? {}) as Row;
   if (txt(p.object) !== 'whatsapp_business_account') return [];
-  const eventos: ChannelInboundEvent[] = [];
+  const eventos: EventoCentralMeta[] = [];
   for (const entrada of arr(p.entry)) {
     for (const mudanca of arr(entrada.changes)) {
       if (txt(mudanca.field) !== 'messages') continue;
@@ -53,6 +79,8 @@ export function normalizarEventosMeta(payload: unknown, opts: OpcoesNormalizacao
           externalConversationId: normalizarTelefone(txt(m.from)) ?? txt(m.from) ?? '',
           externalMessageId: id, direction: 'inbound', eventType: 'MESSAGE_RECEIVED',
           occurredAt: iso(m.timestamp), contactPhone: normalizarTelefone(txt(m.from)), messageType: txt(m.type) ?? 'desconhecido',
+          // mensagem recebida tambem pode vir com erro (tipo nao suportado, midia expirada)
+          ...erroDe(arr(m.errors)[0]),
         });
       }
       // status das mensagens que NOS enviamos
@@ -62,14 +90,15 @@ export function normalizarEventosMeta(payload: unknown, opts: OpcoesNormalizacao
         const tipo = EVENTO_POR_STATUS[status];
         if (!id || !tipo) continue;
         const conversa = (s.conversation ?? {}) as Row;
-        const erro = arr(s.errors)[0];
         eventos.push({
           provider: 'META_CLOUD', phoneNumberId, contexto,
           externalConversationId: txt(conversa.id) ?? normalizarTelefone(txt(s.recipient_id)) ?? '',
           externalMessageId: id, direction: 'outbound', eventType: tipo,
           occurredAt: iso(s.timestamp), externalStatus: status,
           contactPhone: normalizarTelefone(txt(s.recipient_id)),
-          erroCodigo: erro ? (txt(erro.code) ?? (erro.code !== undefined && erro.code !== null ? String(erro.code) : undefined)) : undefined,
+          ...erroDe(arr(s.errors)[0]),
+          janelaExpiraEm: isoOpcional(conversa.expiration_timestamp),
+          origemConversa: txt((conversa.origin as Row | undefined)?.type),
         });
       }
     }
