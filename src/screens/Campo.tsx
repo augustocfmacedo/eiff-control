@@ -3,13 +3,15 @@ import { carteiraObras } from '../core/engine';
 import { calcTarefas, locaisDoDia, resumoDiaCampo } from '../core/equipe';
 import CampoDiario from './CampoDiario';
 import CampoEstacao from './CampoEstacao';
+import CampoFluxo from './CampoFluxo';
+import { estadoDoFluxo, type Frente } from '../core/campoFluxo';
 import { resumoProducao } from '../core/obras';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Empty, tentar, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
 import { comprimirFoto } from '../ui/foto';
 import { urlFoto } from '../data/supabase';
-import type { Foto, LocalTrabalho } from '../core/types';
+import type { Foto, LinhaProducao, LocalTrabalho } from '../core/types';
 
 const CHAVE_DATA = 'eiff-control:campo:data';
 const kg = (v: number) => `${Math.round(v).toLocaleString('pt-BR')} kg`;
@@ -84,6 +86,19 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
     </button>
   );
 
+  const obrasCanteiro = obrasVisiveis(usuario, ds.obras).filter((o) => o.status === 'Em execução');
+  const Frente = ({ frente, codigoObra }: { frente: Frente; codigoObra?: string }) => {
+    const e = estadoDoFluxo(ds, hoje, frente, codigoObra);
+    const obra = ds.obras.find((o) => o.codigo === codigoObra);
+    const sub = e.situacao === 'fechado' ? `${e.presentes} presentes${e.faltas ? `, ${e.faltas} ausente(s)` : ''}${e.extras ? `, ${n1(e.extras)} h extras` : ''}${e.kgEstacoes ? ` · ${kg(e.kgEstacoes)}` : ''}` : e.situacao === 'rascunho' ? 'em preenchimento: continue de onde parou' : `${e.equipe.length} pessoa(s) alocadas · passo a passo em 2 minutos`;
+    return (
+      <button className={`btn grande ${e.situacao === 'nao_iniciado' ? 'primary' : ''}`} onClick={() => navegar(frente === 'fabrica' ? '/campo/fabrica' : `/campo/canteiro?obra=${encodeURIComponent(codigoObra ?? '')}`)}>
+        <span>{frente === 'fabrica' ? 'Fábrica' : `Canteiro · ${codigoObra}`}<span className="sub">{obra && frente === 'canteiro' ? `${obra.nome} · ` : ''}{sub}</span></span>
+        <Badge tone={e.situacao === 'fechado' ? 'ok' : e.situacao === 'rascunho' ? 'warn' : 'info'}>{e.situacao === 'fechado' ? 'fechado' : e.situacao === 'rascunho' ? 'continuar' : 'começar'}</Badge>
+      </button>
+    );
+  };
+
   const Home = () => (
     <div>
       <p className="muted small">Olá, {usuario.nome.split(' ')[0]}.{sync.status === 'pendente' && <> <Badge tone="warn">offline · guardado no aparelho</Badge></>}{sync.status === 'erro' && <> <Badge tone="bad">não sincronizado</Badge></>}</p>
@@ -96,14 +111,17 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
       </div>
 
       <div className="bloco-campo">
-        <h3>Equipe do dia · {d(hoje)}</h3>
-        {locais.length === 0 ? <Empty>Sem equipe cadastrada. Cadastre colaboradores e alocações em Cadastros.</Empty> : locais.map((l) => <Local key={l.rotulo} l={l} />)}
+        <h3>Preencher o dia · {d(hoje)}</h3>
+        <Frente frente="fabrica" />
+        {obrasCanteiro.map((o) => <Frente key={o.codigo} frente="canteiro" codigoObra={o.codigo} />)}
+        {obrasCanteiro.length === 0 && <div className="muted small">Nenhuma obra em execução visível para o canteiro.</div>}
       </div>
 
       {podeEstacao && <div className="bloco-campo">
-        <h3>Produção por estação</h3>
-        <button className="btn grande" onClick={() => navegar('/campo/fabrica')}><span>Fábrica<span className="sub">corte, furação, montagem, solda, pintura, expedição</span></span><span className="small">{resumo.kgFabrica ? kg(resumo.kgFabrica) : '—'}</span></button>
-        <button className="btn grande" onClick={() => navegar('/campo/montagem')}><span>Montagem no canteiro<span className="sub">recebimento, pré-montagem, içamento, fixação, liberação</span></span><span className="small">{resumo.kgCanteiro ? kg(resumo.kgCanteiro) : '—'}</span></button>
+        <h3>Registro avulso</h3>
+        <button className="btn grande" onClick={() => navegar('/campo/estacao?linha=Fabricação')}><span>Estação da fábrica<span className="sub">com conjuntos da lista e ordem</span></span><span className="small">{resumo.kgFabrica ? kg(resumo.kgFabrica) : '—'}</span></button>
+        <button className="btn grande" onClick={() => navegar('/campo/estacao?linha=Montagem')}><span>Estação do canteiro<span className="sub">com conjuntos da lista e ordem</span></span><span className="small">{resumo.kgCanteiro ? kg(resumo.kgCanteiro) : '—'}</span></button>
+        <button className="btn grande" onClick={() => navegar('/campo/dia')}><span>Diários por local<span className="sub">formulário completo, um local por vez</span></span><span className="small">{resumo.fechados}/{resumo.locais}</span></button>
       </div>}
 
       <div className="bloco-campo">
@@ -182,8 +200,9 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
       {!secao && <Home />}
       {secao === 'dia' && <Dia />}
       {secao === 'diario' && query?.get('local') && <CampoDiario key={`${hoje}|${query.get('local')}|${query.get('obra') ?? ''}`} data={hoje} local={query.get('local') as LocalTrabalho} codigoObra={query.get('obra') || undefined} toast={toast} Fotos={Fotos} />}
-      {secao === 'fabrica' && <CampoEstacao key={hoje} data={hoje} linha="Fabricação" toast={toast} />}
-      {secao === 'montagem' && <CampoEstacao key={hoje} data={hoje} linha="Montagem" toast={toast} />}
+      {secao === 'fabrica' && <CampoFluxo key={`fab|${hoje}`} data={hoje} frente="fabrica" toast={toast} Fotos={Fotos} />}
+      {secao === 'canteiro' && query?.get('obra') && <CampoFluxo key={`cant|${hoje}|${query.get('obra')}`} data={hoje} frente="canteiro" codigoObra={query.get('obra')!} toast={toast} Fotos={Fotos} />}
+      {secao === 'estacao' && <CampoEstacao key={`${hoje}|${query?.get('linha')}`} data={hoje} linha={(query?.get('linha') as LinhaProducao) === 'Montagem' ? 'Montagem' : 'Fabricação'} toast={toast} />}
       {secao === 'tarefas' && <Tarefas />}
       {secao === 'checklist' && <Checklist />}
       {secao === 'producao' && <Producao />}

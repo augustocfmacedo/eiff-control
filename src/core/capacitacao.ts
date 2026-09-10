@@ -429,9 +429,9 @@ export const LICOES: Licao[] = [
     id: 'eq-apontamento-diario', titulo: 'Apontamento diário e modo campo', area: 'Equipe', rota: '/campo', minutos: 10,
     objetivo: 'Registrar presença, horas, produção e ocorrências do dia, do celular ou do escritório.',
     passos: [
-      'Modo campo (celular): escolha o dia (Hoje, Ontem ou data) e toque no local em "Equipe do dia"; o diário abre com quem está alocado ali (Cadastros › Alocações, senão o local padrão do cadastro), todos presentes na jornada.',
-      'Toque em P/F/At/Fé/Fo para a presença; ajuste horas e extras nos botões − e +; "Adicionar pessoa de outra equipe" inclui quem foi emprestado. Ocorrências entram por chip (chuva, falta de material, acidente) com horas perdidas; produção do dia e clima são opcionais.',
-      '"Fábrica" e "Montagem no canteiro" apontam a estação com quilos, peças, conjuntos da lista e horas de quem trabalhou (a equipe do local já vem marcada com as horas do diário); o kg/HH aparece antes de registrar.',
+      'Modo campo (celular): escolha o dia (Hoje, Ontem ou data) e toque em "Fábrica" ou "Canteiro · obra" em "Preencher o dia". O assistente faz uma pergunta por passo: O dia (clima no canteiro, temperatura, turno, observação) → Faltas (toque só em quem NÃO veio e escolha o motivo; os demais ficam presentes na jornada) → Hora extra (toque em quem fez e ajuste; ou "Ninguém fez") → Produção (quilos por estação e quem trabalhou nela) → Ocorrências (chip por tipo com horas perdidas; ou "Nenhuma") → Fechar (resumo e pendências).',
+      'O rascunho fica guardado no aparelho até fechar; "Guardar" grava no sistema para continuar depois. Ao fechar, o diário e cada estação com quilos entram de uma vez: as horas de cada pessoa vêm do diário e se dividem entre as estações marcadas. Só o gestor reabre um dia fechado, com motivo.',
+      'Registro avulso: "Estação da fábrica/canteiro" aponta uma estação com conjuntos da lista e ordem; "Diários por local" abre o diário completo de um local.',
       'Feche o dia. Apontamento fechado só Gestor, Financeiro, Diretoria ou Administrador alteram.',
     ],
     obrigatorios: ['Data', 'Local'],

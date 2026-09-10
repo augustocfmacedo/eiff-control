@@ -111,7 +111,7 @@ export default function CampoDiario({ data, local, codigoObra, toast, Fotos }: {
           </div>
         ))}
         {podeEditar && <button className="btn" style={{ width: '100%' }} onClick={() => up({ producao: [...a.producao, { descricao: '', quantidade: 0, unidade: local === 'Fábrica' ? 't' : 'pç', servicoId: servicos[0]?.id }] })}>+ Produção</button>}
-        <p className="muted small" style={{ marginTop: 6 }}>Quilos por estação (corte, solda, içamento…) vão em <a href="#/campo/fabrica" onClick={(e) => { e.preventDefault(); navegar(local === 'Obra' ? '/campo/montagem' : '/campo/fabrica'); }}>Apontar estação</a>.</p>
+        <p className="muted small" style={{ marginTop: 6 }}>Quilos por estação (corte, solda, içamento…) vão em <a href="#/campo/fabrica" onClick={(e) => { e.preventDefault(); navegar(local === 'Obra' ? '/campo/estacao?linha=Montagem' : '/campo/estacao?linha=Fabricação'); }}>Apontar estação</a>.</p>
       </div>
 
       {local === 'Obra' && <div className="bloco-campo">
