@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import Apresentacao from './Apresentacao';
 import { carteiraObras, dashboard, posicaoBancaria } from '../core/engine';
 import { useStore } from '../data/store';
 import { Badge, Empty, KpiHero, KpiStrip, Link, Money, PageHead, PrintHead, StatusBadge, money, pct } from '../ui/components';
@@ -22,9 +23,12 @@ export default function Dashboard() {
   ];
   const pendentes = alertas.filter((a) => !a.ok);
   const semanaMenor = d.fluxo13.saldoFinal.indexOf(d.menorSaldo13s);
+  const [apresentando, setApresentando] = useState(false);
   return (
     <>
+      {apresentando && <Apresentacao onSair={() => setApresentando(false)} />}
       <PageHead title="Painel executivo" subtitle={<>Caixa, carteira de obras, compromissos e alertas. Data-base <b>{ds.params.dataBase.split('-').reverse().join('/')}</b> · cenário <b>{ds.params.cenario}</b> · controles <StatusBadge s={d.statusModelo} /></>}>
+        <button className="btn no-print" onClick={() => setApresentando(true)} title="Modo apresentação para reunião (setas avançam, Esc sai)">Apresentar</button>
         <button className="btn no-print" onClick={() => window.print()}>Imprimir</button>
       </PageHead>
       <PrintHead titulo="Painel executivo" subtitulo={`${ds.params.empresa} · data-base ${ds.params.dataBase.split('-').reverse().join('/')} · cenário ${ds.params.cenario}`} />

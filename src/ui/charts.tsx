@@ -52,9 +52,9 @@ export function LineChart({ rotulos, series, titulo, marcador }: { rotulos: stri
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={H - PAD.bottom} className="viz-crosshair" />}
         {series.map((s, si) => (
           <g key={s.nome}>
-            <path d={path(s)} className={`viz-line viz-c${si + 1}`} strokeDasharray={s.tracejada ? '6 4' : undefined} />
-            {ultimo(s) >= 0 && <circle cx={x(ultimo(s))} cy={y(s.valores[ultimo(s)]!)} r={5} className={`viz-dot viz-c${si + 1}`} />}
-            {ultimo(s) >= 0 && <text x={Math.min(x(ultimo(s)) + 8, W - 4)} y={y(s.valores[ultimo(s)]!) + 4} className="viz-label" textAnchor={x(ultimo(s)) > W - 90 ? 'end' : 'start'} dx={x(ultimo(s)) > W - 90 ? -10 : 0}>{fmtEixo(s.valores[ultimo(s)]!)}</text>}
+            <path d={path(s)} className={`viz-line viz-c${si + 1} ${s.tracejada ? 'viz-aparece' : 'viz-traco-serie'}`} pathLength={s.tracejada ? undefined : 1} strokeDasharray={s.tracejada ? '6 4' : undefined} style={s.tracejada ? undefined : { animationDelay: `${si * 180}ms` }} />
+            {ultimo(s) >= 0 && <circle cx={x(ultimo(s))} cy={y(s.valores[ultimo(s)]!)} r={5} className={`viz-dot viz-c${si + 1} viz-aparece`} />}
+            {ultimo(s) >= 0 && <text x={Math.min(x(ultimo(s)) + 8, W - 4)} y={y(s.valores[ultimo(s)]!) + 4} className="viz-label viz-aparece" textAnchor={x(ultimo(s)) > W - 90 ? 'end' : 'start'} dx={x(ultimo(s)) > W - 90 ? -10 : 0}>{fmtEixo(s.valores[ultimo(s)]!)}</text>}
             {hover !== null && s.valores[hover] !== undefined && <circle cx={x(hover)} cy={y(s.valores[hover]!)} r={5} className={`viz-dot viz-c${si + 1}`} />}
           </g>
         ))}
@@ -81,7 +81,7 @@ export function DivergingBars({ itens, titulo, formato = money }: { itens: { nom
             <span className="viz-bar-name">{i.nome}</span>
             <span className="viz-bar-track">
               <span className="viz-bar-zero" />
-              <i className={i.valor < 0 ? 'neg' : 'pos'} style={{ width: `${(Math.abs(i.valor) / max) * 50}%`, [i.valor < 0 ? 'right' : 'left']: '50%' } as React.CSSProperties} />
+              <i className={`${i.valor < 0 ? 'neg' : 'pos'} viz-cresce-h ${i.valor < 0 ? 'dir' : ''}`} style={{ width: `${(Math.abs(i.valor) / max) * 50}%`, [i.valor < 0 ? 'right' : 'left']: '50%' } as React.CSSProperties} />
             </span>
             <span className={`viz-bar-val ${i.valor > 0 ? 'neg' : ''}`}>{formato(i.valor)}</span>
           </div>
@@ -98,7 +98,7 @@ export function Gauge({ label, valor, meta, formato = (v: number) => `${Math.rou
   return (
     <div className="viz-gauge">
       <div className="viz-gauge-head"><span>{label}</span><b className={ok ? 'pos' : 'neg'}>{formato(valor)}</b></div>
-      <div className="viz-gauge-track"><i style={{ width: `${pctV * 100}%` }} className={ok ? 'ok' : 'bad'} />{meta !== undefined && <span className="viz-gauge-meta" style={{ left: `${Math.max(0, Math.min(1, meta)) * 100}%` }} title={`meta ${formato(meta)}`} />}</div>
+      <div className="viz-gauge-track"><i style={{ width: `${pctV * 100}%` }} className={`${ok ? 'ok' : 'bad'} viz-cresce-h`} />{meta !== undefined && <span className="viz-gauge-meta" style={{ left: `${Math.max(0, Math.min(1, meta)) * 100}%` }} title={`meta ${formato(meta)}`} />}</div>
     </div>
   );
 }

@@ -473,3 +473,37 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .carregando-txt { position: relative; z-index: 1; color: var(--muted); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; padding-top: 66vh; }
 @media (prefers-reduced-motion: reduce) { .viz-traco, .viz-area, .viz-ponto, .toast { animation: none; } .kpi.link:hover, .strip .link:hover, .nav a:hover { transform: none; } }
 @media print { .cena3d, .nav-indicador, .ripple { display: none !important; } }
+
+/* movimento 2: graficos que se desenham, tabelas que contam, modo apresentacao */
+.viz-traco-serie { stroke-dasharray: 1; stroke-dashoffset: 1; animation: traco 1400ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+.viz-aparece { animation: fade 500ms ease-out 1100ms both; }
+.viz-cresce-h { transform-origin: 0 50%; animation: cresceH 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.viz-cresce-h.dir { transform-origin: 100% 50%; }
+.viz-cresce-v { transform-origin: 50% 100%; animation: cresceV 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes cresceH { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes cresceV { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+tbody tr { transition: background 120ms; }
+.apresentacao { position: fixed; inset: 0; z-index: 70; background: var(--bg); color: var(--text); overflow: hidden; cursor: default; user-select: none; }
+.apresentacao .cena3d { opacity: 0.6; }
+.apresentacao::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 60%, transparent 0%, color-mix(in srgb, var(--bg) 90%, transparent) 72%); pointer-events: none; }
+.apresentacao .cabeca { position: absolute; top: 3vh; left: 6vw; right: 6vw; z-index: 1; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700; }
+.apresentacao .cabeca .marca { color: var(--brand); }
+.apresentacao .slide { position: relative; z-index: 1; height: 100%; display: grid; align-content: center; padding: 8vh 6vw 12vh; gap: 16px; }
+.apresentacao .slide .rotulo { font-size: clamp(12px, 1.3vw, 17px); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.apresentacao .slide .valor { font-size: clamp(52px, 9vw, 132px); font-weight: 800; letter-spacing: -0.035em; line-height: 1; font-variant-numeric: tabular-nums; }
+.apresentacao .slide .valor.neg { color: var(--bad); } .apresentacao .slide .valor.warn { color: var(--warn); } .apresentacao .slide .valor.pos { color: var(--ok); }
+.apresentacao .slide .dica { font-size: clamp(14px, 1.6vw, 21px); color: var(--text-2); max-width: 64ch; }
+.apresentacao .sec { display: flex; flex-wrap: wrap; gap: 26px 52px; margin-top: 10px; }
+.apresentacao .sec .label { font-size: clamp(10px, 1vw, 13px); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.apresentacao .sec .v { font-size: clamp(22px, 3vw, 42px); font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.apresentacao .sec .v.neg { color: var(--bad); } .apresentacao .sec .v.warn { color: var(--warn); } .apresentacao .sec .v.pos { color: var(--ok); }
+.apresentacao .obras { max-width: 720px; margin-top: 10px; font-size: clamp(13px, 1.3vw, 17px); }
+.apresentacao .obras .progress { height: 8px; }
+.apresentacao .alertas { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.apresentacao .alertas .badge { font-size: clamp(13px, 1.3vw, 17px); padding: 6px 12px; }
+.apresentacao .rodape { position: absolute; left: 6vw; right: 6vw; bottom: 4vh; z-index: 1; display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 12px; }
+.apresentacao .pontos { display: inline-flex; gap: 6px; }
+.apresentacao .pontos i { width: 30px; height: 3px; border-radius: 2px; background: var(--border-strong); cursor: pointer; transition: background 200ms, transform 200ms; }
+.apresentacao .pontos i.ativo { background: var(--brand); transform: scaleY(1.6); }
+.apresentacao .btn.sair { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) { .viz-traco-serie, .viz-aparece, .viz-cresce-h, .viz-cresce-v { animation: none; } }

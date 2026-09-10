@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Valor, useCrescer } from './motion';
+import { NumeroVivo, Valor, useCrescer } from './motion';
 import { fmtBr } from '../core/engine';
 import { href, navegar } from './router';
 import { Icon, Logotipo, type IconName } from './icons';
@@ -16,7 +16,7 @@ export const dataHora = (iso?: string) => (iso ? new Date(iso).toLocaleString('p
 export function Money({ v, compact, sign }: { v: number | undefined; compact?: boolean; sign?: boolean }) {
   if (v === undefined) return <span className="num" />;
   const cls = sign ? (v < 0 ? 'num neg' : v > 0 ? 'num pos' : 'num') : v < 0 ? 'num neg' : 'num';
-  return <span className={cls}>{money(v, compact)}</span>;
+  return <NumeroVivo className={cls} texto={money(v, compact)} leve />;
 }
 
 export function Kpi({ label, value, hint, tone, to }: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: 'ok' | 'warn' | 'bad'; to?: string }) {
@@ -188,7 +188,7 @@ export function Bars({ valores, rotulos }: { valores: number[]; rotulos: string[
     <div className="bars">
       {valores.map((v, i) => (
         <div className="bar" key={i} title={`${rotulos[i]}: ${money(v)}`}>
-          <div className={v < 0 ? 'neg' : ''} style={{ height: `${Math.max(2, (Math.abs(v) / max) * 90)}%` }} />
+          <div className={`${v < 0 ? 'neg' : ''} viz-cresce-v`} style={{ height: `${Math.max(2, (Math.abs(v) / max) * 90)}%`, animationDelay: `${i * 40}ms` }} />
           <span>{rotulos[i].split(' ')[0]}</span>
         </div>
       ))}

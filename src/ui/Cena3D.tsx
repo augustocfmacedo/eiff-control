@@ -6,7 +6,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { reduzMovimento } from './numero';
 
-export type VarianteCena = 'login' | 'carregando';
+export type VarianteCena = 'login' | 'carregando' | 'apresentacao';
 
 /** Segmentos (pares de vertices) e nos da estrutura, na ordem em que se montam: porticos, tercas/beirais, contraventamentos. */
 function estrutura(): { segmentos: THREE.Vector3[]; nos: THREE.Vector3[] } {
@@ -65,13 +65,14 @@ export default function Cena3D({ variante = 'login' }: { variante?: VarianteCena
     window.addEventListener('pointermove', onMove, { passive: true });
     const resize = () => { const w = host.clientWidth || 1, h = host.clientHeight || 1; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
     const ro = new ResizeObserver(resize); ro.observe(host); resize();
-    const raio = variante === 'login' ? 33 : 30; const alturaCam = variante === 'login' ? 10 : 11;
+    const raio = variante === 'login' ? 33 : variante === 'apresentacao' ? 38 : 30; const alturaCam = variante === 'login' ? 10 : variante === 'apresentacao' ? 13 : 11;
+    const velocidade = variante === 'apresentacao' ? 0.03 : 0.05;
     let raf = 0; let rodando = false; let t0 = performance.now(); let acumulado = 0;
     const quadro = () => {
       const t = acumulado + (performance.now() - t0) / 1000;
       if (!estatico) { const f = Math.min(1, t / 3.4); const e = 1 - Math.pow(1 - f, 3); geo.setDrawRange(0, Math.floor(e * total)); matNos.opacity = 0.9 * e; }
       mx += (alvoX - mx) * 0.06; my += (alvoY - my) * 0.06;
-      const ang = 0.55 + (estatico ? 0 : t * 0.05) + mx * 0.45;
+      const ang = 0.55 + (estatico ? 0 : t * velocidade) + mx * 0.45;
       camera.position.set(Math.sin(ang) * raio, alturaCam - my * 4, Math.cos(ang) * raio); camera.lookAt(0, 2.6, 0);
       renderer.render(scene, camera);
       if (!estatico) raf = requestAnimationFrame(quadro); else rodando = false;
