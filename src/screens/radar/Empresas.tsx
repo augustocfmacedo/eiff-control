@@ -3,6 +3,7 @@ import { NOME_SINAL, decisorDe, empresaSuprimida, sinalPrincipal, type Empresa }
 import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, Input, KpiStrip, Link, PageHead, Select, useToast } from '../../ui/components';
 import { EmpresaForm, ImportarForm, ScoreModal, ScorePill, d } from './comum';
+import { Tabela } from '../../ui/Tabela';
 
 export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
   const { ds, usuario } = useStore();
@@ -57,10 +58,10 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
           <span className="small muted">{lista.length} de {todas.length}</span>
         </div>
         {!lista.length ? <Empty icone="empresas" titulo={todas.length ? 'Nenhuma empresa com esses filtros' : 'Nenhuma empresa'}>{todas.length ? 'Ajuste os filtros.' : 'Importe uma base em CSV ou cadastre a primeira empresa.'}</Empty> : (
-          <table>
-            <thead><tr><th>Empresa</th><th>Local</th><th>Setor</th><th className="num">Prioridade</th><th className="num">Fit</th><th className="num">Timing</th><th className="num">Intenção</th><th>Sinal principal</th><th>Decisor</th><th>Último contato</th><th>Próxima ação</th></tr></thead>
-            <tbody>{lista.slice(0, limite).map((e) => { const s = sinalPrincipal(e.id, r, hoje); const dec = decisorDe(e.id, r); const venc = e.proximaAcaoEm && e.proximaAcaoEm.slice(0, 10) < hoje; return (
-              <tr key={e.id}>
+          <Tabela linhas={lista.slice(0, limite)} chave={(e) => e.id} altura="calc(100vh - 300px)"
+            colunas={[{ titulo: 'Empresa', ordenar: (e) => e.nomeFantasia ?? e.razaoSocial }, { titulo: 'Local', ordenar: (e) => [e.cidade, e.uf].filter(Boolean).join('/') || undefined }, { titulo: 'Setor', ordenar: (e) => e.setor }, { titulo: 'Prioridade', num: true, ordenar: (e) => e.priorityScore }, { titulo: 'Fit', num: true, ordenar: (e) => e.fitScore }, { titulo: 'Timing', num: true, ordenar: (e) => e.timingScore }, { titulo: 'Intenção', num: true, ordenar: (e) => e.intentScore }, { titulo: 'Sinal principal' }, { titulo: 'Decisor' }, { titulo: 'Último contato', ordenar: (e) => e.ultimoContatoEm }, { titulo: 'Próxima ação', ordenar: (e) => e.proximaAcaoEm }]}
+            linha={(e) => { const s = sinalPrincipal(e.id, r, hoje); const dec = decisorDe(e.id, r); const venc = e.proximaAcaoEm && e.proximaAcaoEm.slice(0, 10) < hoje; return (
+              <>
                 <td><Link to={`/radar/empresas/${e.id}`}><b>{e.nomeFantasia ?? e.razaoSocial}</b></Link>{e.nomeFantasia && <div className="muted small">{e.razaoSocial}</div>}{empresaSuprimida(e.id, r) && <Badge tone="bad">não contatar</Badge>}</td>
                 <td className="small">{[e.cidade, e.uf].filter(Boolean).join('/') || '—'}</td><td className="small">{e.setor ?? '—'}</td>
                 <td className="num"><ScorePill e={e} onClick={() => setScore(e)} /></td><td className="num">{n(e.fitScore)}</td><td className="num">{n(e.timingScore)}</td><td className="num">{n(e.intentScore)}</td>
@@ -68,9 +69,8 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
                 <td className="small">{dec ? `${dec.nome}${dec.decisor ? '' : ' (?)'}` : '—'}</td>
                 <td className="small">{d(e.ultimoContatoEm)}</td>
                 <td className={`small ${venc ? 'neg' : ''}`}>{d(e.proximaAcaoEm)}</td>
-              </tr>
-            ); })}</tbody>
-          </table>
+              </>
+            ); }} />
         )}
         {lista.length > limite && <button className="btn" style={{ marginTop: 8 }} onClick={() => setLimite(limite + 50)}>Mostrar mais ({lista.length - limite})</button>}
       </div>

@@ -4,6 +4,7 @@ import type { Lancamento } from '../core/types';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Kpi, Money, PageHead, StatusBadge, money, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
+import { Tabela, type Coluna } from '../ui/Tabela';
 import { LancamentoForm } from './LancamentoForm';
 
 export type ModoLista = 'todos' | 'pagar' | 'receber';
@@ -76,6 +77,12 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
     a.download = `${titulo.toLowerCase().replace(/ /g, '-')}.csv`;
     a.click();
   };
+  const colunas: Coluna<(typeof lista)[number]>[] = [
+    { titulo: 'ID', ordenar: (l) => l.id }, { titulo: 'Categoria', ordenar: (l) => l.categoria }, { titulo: 'Obra', ordenar: (l) => l.codigoObra || undefined }, { titulo: 'Contraparte', ordenar: (l) => l.contraparte }, { titulo: 'Descrição', ordenar: (l) => l.descricao },
+    { titulo: 'Competência', ordenar: (l) => l.competencia }, { titulo: 'Vencimento', ordenar: (l) => l.vencimento }, { titulo: 'Data caixa', ordenar: (l) => l.dataCaixa },
+    { titulo: 'Líquido', num: true, ordenar: (l) => (l.tipo === 'Entrada' ? l.valorLiquidoPrevisto : -l.valorLiquidoPrevisto) }, { titulo: 'Saldo aberto', num: true, ordenar: (l) => l.saldoAberto }, { titulo: 'Caixa proj.', num: true, ordenar: (l) => l.valorCaixaProjetado },
+    { titulo: 'Status', ordenar: (l) => l.status }, { titulo: 'Situação', ordenar: (l) => l.situacao }, { titulo: 'Conc.', oculta: !verBancos, ordenar: (l) => (l.vinculoBancario ? 1 : 0) },
+  ];
 
   return (
     <>
@@ -108,12 +115,8 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
         <label className="field"><span>Excluídos</span><input type="checkbox" checked={f.excluidos} onChange={(e) => setF({ ...f, excluidos: e.target.checked })} title="mostrar lançamentos excluídos" /></label>
         <button className="btn sm" onClick={() => setF({ busca: '', obra: '', categoria: '', status: '', situacao: '', de: '', ate: '', contraparte: '', excluidos: false })}>Limpar</button>
       </div>
-      <div className="card table-wrap">
-        <table>
-          <thead><tr><th>ID</th><th>Categoria</th><th>Obra</th><th>Contraparte</th><th>Descrição</th><th>Competência</th><th>Vencimento</th><th>Data caixa</th><th>Líquido</th><th>Saldo aberto</th><th>Caixa proj.</th><th>Status</th><th>Situação</th>{verBancos && <th>Conc.</th>}</tr></thead>
-          <tbody>
-            {lista.map((l) => (
-              <tr key={l.id} className="clickable" onClick={() => navegar(`/lancamentos/${l.id}`)}>
+      <Tabela className="card" linhas={lista} chave={(l) => l.id} onLinha={(l) => navegar(`/lancamentos/${l.id}`)} vazio="Nenhum lançamento com esses filtros." colunas={colunas} linha={(l) => (
+              <>
                 <td><b>{l.id}</b>{l.registro === 'Exemplo' && <span className="badge muted" style={{ marginLeft: 4 }}>ex</span>}</td>
                 <td>{l.categoria}<div className="muted small">{l.grupoFluxo}</div></td>
                 <td>{l.codigoObra || <span className="muted">—</span>}</td>
@@ -128,12 +131,8 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
                 <td><StatusBadge s={l.status} /></td>
                 <td><StatusBadge s={l.situacao} /></td>
                 {verBancos && <td title={l.vinculoBancario ? 'Vinculado ao extrato' : ''}>{l.vinculoBancario ? '✓' : ''}</td>}
-              </tr>
-            ))}
-            {lista.length === 0 && <tr><td colSpan={14} className="empty">Nenhum lançamento com esses filtros.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+              </>
+            )} />
       {novo && <LancamentoForm inicial={novo} onClose={() => setNovo(null)} onErro={toast} onOk={toast} />}
       {el}
     </>

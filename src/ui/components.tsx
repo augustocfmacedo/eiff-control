@@ -73,6 +73,22 @@ export function ProgressRow({ label, valor, texto, tone }: { label: string; valo
   );
 }
 
+/** Bloco de carregamento com brilho, no formato do conteudo que vem depois. */
+export function Skeleton({ w = '100%', h = 14, r, style }: { w?: number | string; h?: number | string; r?: number; style?: React.CSSProperties }) {
+  return <span className="skel" style={{ width: w, height: h, borderRadius: r, ...style }} aria-hidden="true" />;
+}
+/** Esqueleto de uma tela padrao (cabecalho, dois heros, faixa e um cartao): fallback do carregamento sob demanda. */
+export function SkeletonTela() {
+  return (
+    <div className="skel-tela" aria-busy="true" aria-label="Carregando">
+      <div className="page-head"><div><Skeleton w={240} h={22} /><div style={{ marginTop: 8 }}><Skeleton w={420} h={12} /></div></div><Skeleton w={96} h={30} r={7} /></div>
+      <div className="hero-grid">{[0, 1].map((i) => <div key={i} className="kpi hero"><Skeleton w={220} h={10} /><div style={{ marginTop: 12 }}><Skeleton w={200} h={30} /></div><div style={{ marginTop: 10 }}><Skeleton w="70%" h={11} /></div><div style={{ marginTop: 18 }}><Skeleton h={56} r={8} /></div></div>)}</div>
+      <div className="strip">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i}><Skeleton w={90} h={9} /><div style={{ marginTop: 8 }}><Skeleton w={80} h={18} /></div></div>)}</div>
+      <div className="card" style={{ marginTop: 16 }}><Skeleton w={180} h={14} />{[0, 1, 2, 3, 4].map((i) => <div key={i} style={{ marginTop: 12 }}><Skeleton h={12} w={`${92 - i * 7}%`} /></div>)}</div>
+    </div>
+  );
+}
+
 /** Cabecalho de relatorio, visivel so na impressao. */
 export function PrintHead({ titulo, subtitulo }: { titulo: string; subtitulo?: string }) {
   return (

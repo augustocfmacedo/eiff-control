@@ -48,6 +48,12 @@ export function useRevelar(ref: React.RefObject<HTMLElement | null>, chave: stri
   }, [ref, chave]);
 }
 
+/** Envolve a tela (dentro do Suspense): a cascata roda quando a tela realmente monta, mesmo carregada sob demanda. */
+export function Revelar({ chave, children }: { chave: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null); useRevelar(ref, chave);
+  return <div ref={ref} className="tela" style={{ display: 'contents' }}>{children}</div>;
+}
+
 /** Numero formatado que "conta" ate o valor final (e do valor anterior ao novo quando o dado muda).
  *  `leve` (tabelas): conta so na montagem e so em tabelas curtas (<= 30 linhas); mudancas posteriores trocam direto. */
 export function NumeroVivo({ texto, className, duracao = 0.9, leve = false }: { texto: string; className?: string; duracao?: number; leve?: boolean }) {

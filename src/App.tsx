@@ -1,41 +1,46 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { CenaEstrutura, IndicadorNav, MicroInteracoes, useRevelar } from './ui/motion';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { CenaEstrutura, IndicadorNav, MicroInteracoes, Revelar } from './ui/motion';
 import { dashboard } from './core/engine';
 import { actions, inicializar, pode, useStore } from './data/store';
-import { Badge, StatusBadge, dataHora } from './ui/components';
+import { Badge, SkeletonTela, StatusBadge, dataHora } from './ui/components';
 import { href, useRota } from './ui/router';
 import Login from './screens/Login';
-import Aprovacoes from './screens/Aprovacoes';
-import Auditoria from './screens/Auditoria';
-import Cadastros from './screens/Cadastros';
-import CaixaEntrada from './screens/CaixaEntrada';
-import CentralObras from './screens/CentralObras';
-import Checks from './screens/Checks';
-import Conciliacao from './screens/Conciliacao';
-import Dashboard from './screens/Dashboard';
-import Dividas from './screens/Dividas';
-import Dre from './screens/Dre';
-import LancamentoDetalhe from './screens/LancamentoDetalhe';
-import Lancamentos from './screens/Lancamentos';
-import Obra360 from './screens/Obra360';
-import Obras from './screens/Obras';
-import { Fluxo13, Fluxo24, PosicaoDiaria } from './screens/Tesouraria';
-import Equipe from './screens/Equipe';
-import ApontamentoTela from './screens/Apontamento';
-import Campo from './screens/Campo';
-import Orcamentos from './screens/Orcamentos';
-import Compras from './screens/Compras';
-import Producao from './screens/Producao';
-import Estoque from './screens/Estoque';
-import Capacitacao from './screens/Capacitacao';
-import RadarCommandCenter from './screens/radar/CommandCenter';
-import RadarHoje from './screens/radar/Hoje';
-import RadarEmpresas from './screens/radar/Empresas';
-import RadarEmpresa from './screens/radar/Empresa';
 import { trilhaDe } from './core/capacitacao';
 import { Assistente } from './ui/Assistente';
 import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
 import { Icon, Logotipo, Marca, type IconName } from './ui/icons';
+import { Paleta, type AcaoPaleta } from './ui/Paleta';
+import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
+// telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
+const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
+const Auditoria = lazy(() => import('./screens/Auditoria'));
+const Cadastros = lazy(() => import('./screens/Cadastros'));
+const CaixaEntrada = lazy(() => import('./screens/CaixaEntrada'));
+const CentralObras = lazy(() => import('./screens/CentralObras'));
+const Checks = lazy(() => import('./screens/Checks'));
+const Conciliacao = lazy(() => import('./screens/Conciliacao'));
+const Dashboard = lazy(() => import('./screens/Dashboard'));
+const Dividas = lazy(() => import('./screens/Dividas'));
+const Dre = lazy(() => import('./screens/Dre'));
+const LancamentoDetalhe = lazy(() => import('./screens/LancamentoDetalhe'));
+const Lancamentos = lazy(() => import('./screens/Lancamentos'));
+const Obra360 = lazy(() => import('./screens/Obra360'));
+const Obras = lazy(() => import('./screens/Obras'));
+const Equipe = lazy(() => import('./screens/Equipe'));
+const ApontamentoTela = lazy(() => import('./screens/Apontamento'));
+const Campo = lazy(() => import('./screens/Campo'));
+const Orcamentos = lazy(() => import('./screens/Orcamentos'));
+const Compras = lazy(() => import('./screens/Compras'));
+const Producao = lazy(() => import('./screens/Producao'));
+const Estoque = lazy(() => import('./screens/Estoque'));
+const Capacitacao = lazy(() => import('./screens/Capacitacao'));
+const RadarCommandCenter = lazy(() => import('./screens/radar/CommandCenter'));
+const RadarHoje = lazy(() => import('./screens/radar/Hoje'));
+const RadarEmpresas = lazy(() => import('./screens/radar/Empresas'));
+const RadarEmpresa = lazy(() => import('./screens/radar/Empresa'));
+const Fluxo13 = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.Fluxo13 })));
+const Fluxo24 = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.Fluxo24 })));
+const PosicaoDiaria = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.PosicaoDiaria })));
 
 export default function App() {
   const rota = useRota();
@@ -45,9 +50,23 @@ export default function App() {
   const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
   const [tema, setTema] = useState<'dark' | 'light'>(() => { try { return localStorage.getItem('eiff-control:tema') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } });
   useEffect(() => { document.documentElement.dataset.theme = tema; try { localStorage.setItem('eiff-control:tema', tema); } catch { /* ignore */ } }, [tema]);
-  // movimento: cada tela entra em cascata; a chave muda a cada rota (as telas ja remontam por key)
-  const conteudo = useRef<HTMLElement>(null);
-  useRevelar(conteudo, `${rota.path}?${rota.query.toString()}`);
+  // paleta de comandos (Ctrl+K), densidade das tabelas
+  const [paleta, setPaleta] = useState(false);
+  const [densidade, setDensidade] = useState<Densidade>(() => lerDensidade());
+  useEffect(() => { aplicarDensidade(densidade); }, [densidade]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaleta((p) => !p); } };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const acoesPaleta = useMemo<AcaoPaleta[]>(() => [
+    { id: 'tema', rotulo: 'Alternar tema claro/escuro', icone: 'sol', executar: () => setTema((t) => (t === 'dark' ? 'light' : 'dark')) },
+    { id: 'menu', rotulo: 'Recolher ou expandir o menu', icone: 'menu', executar: () => setRecolhida((r) => { const v = !r; try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ } return v; }) },
+    { id: 'densidade', rotulo: 'Alternar densidade das tabelas', sub: 'normal ou compacta', icone: 'densidade', executar: () => setDensidade((d) => (d === 'compacta' ? 'normal' : 'compacta')) },
+    { id: 'imprimir', rotulo: 'Imprimir a tela atual', icone: 'dre', executar: () => setTimeout(() => window.print(), 150) },
+    { id: 'recarregar', rotulo: 'Recarregar dados', icone: 'fluxo', executar: () => { void actions.recarregar().catch(() => undefined); } },
+    { id: 'sair', rotulo: 'Sair', icone: 'sair', executar: () => { void actions.sair(); } },
+  ], []);
+  const chaveTela = `${rota.path}?${rota.query.toString()}`;
   if (modo === 'remoto' && carregando) return <div className="carregando"><CenaEstrutura variante="carregando" /><div className="carregando-txt">Carregando dados do Supabase…</div></div>;
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
@@ -130,7 +149,7 @@ export default function App() {
           {modo === 'remoto' && sync.status === 'erro' && <Badge tone="bad">não sincronizado</Badge>}
           {modo === 'remoto' && <button className="btn sm" onClick={() => void actions.sair()}>Sair</button>}
         </header>
-        <main className="content" ref={conteudo} style={{ padding: 14 }}>{tela}</main>
+        <main className="content" style={{ padding: 14 }}><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}>{tela}</Revelar></Suspense></main>
       </div>
     );
   }
@@ -190,6 +209,7 @@ export default function App() {
             {ds.params.incluirDemo && <span className="badge warn">demo</span>}
           </div>
           <div className="spacer" />
+          <button className="btn sm busca" onClick={() => setPaleta(true)} title="Buscar ou ir para (Ctrl+K)" aria-label="Buscar"><Icon name="buscar" size={15} /><span className="nav-label">Buscar</span><kbd>Ctrl K</kbd></button>
           <button className="btn sm" onClick={() => setTema(tema === 'dark' ? 'light' : 'dark')} title={tema === 'dark' ? 'Tema claro' : 'Tema escuro'} aria-label="Alternar tema"><Icon name={tema === 'dark' ? 'sol' : 'lua'} size={15} /></button>
           {modo === 'remoto' ? (
             <>
@@ -214,8 +234,9 @@ export default function App() {
             </label>
           )}
         </header>
-        <main className="content" ref={conteudo}>{tela}</main>
+        <main className="content"><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}>{tela}</Revelar></Suspense></main>
       </div>
+      <Paleta aberta={paleta} onFechar={() => setPaleta(false)} acoes={acoesPaleta} permite={(p) => pode(usuario, p as never)} />
       <MicroInteracoes />
       <Assistente tela={rota.path} />
     </div>
