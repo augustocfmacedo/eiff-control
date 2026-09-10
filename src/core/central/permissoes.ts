@@ -1,29 +1,19 @@
 // EIFF Central: ponte para a MATRIZ UNICA de permissoes do EIFF Control.
-// Nao existe segunda ACL: quem autoriza e `pode(usuario, acao, codigoObra)` de src/data/store.ts, com a acao vinda de
-// PERMISSAO_POR_INTENCAO (tipos.ts). Esta camada so traduz a decisao do orquestrador em autorizado/negado com motivo
-// legivel — nada aqui executa, grava ou envia.
+// Nao existe segunda ACL: quem autoriza e `pode(usuario, acao, codigoObra)` de src/data/store.ts.
+//
+// REGRA DEFINITIVA (ver tipos.ts, secao 3b): a INTENCAO escolhe o AGENTE; a ACAO PROPOSTA escolhe a PERMISSAO.
+// A decisao do orquestrador entra aqui so como sinal de desconfianca (`requiresHuman`), NUNCA como autoridade:
+// ela interpreta linguagem, e linguagem nao autoriza. A permissao sai do CATALOGO_ACOES pelo codigo da acao.
+//
+//   mensagem -> identidade -> intencao -> agente -> ACAO PROPOSTA -> permissao DA ACAO
+//            -> pode(usuario, permissao, escopo) -> motor -> confirmacao -> execucao -> auditoria
+//
+// Nada aqui executa, grava ou envia.
 import { pode, type Acao } from '../../data/store';
 import type { Usuario } from '../types';
 import { mascararTelefone } from '../radar/canais';
-import { INTENCOES_INTERNAS, type CommunicationContext, type IdentidadeResolvida, type InternalIntent, type OrchestratorDecision } from './tipos';
+import { INTENCOES_INTERNAS, autorizarAcao, definicaoDaAcao, type AcaoProposta, type CommunicationContext, type IdentidadeResolvida, type InternalIntent, type OrchestratorDecision } from './tipos';
 
-/**
- * Espelho TIPADO de PERMISSAO_POR_INTENCAO: aqui o compilador recusa qualquer acao que nao exista em `Acao`
- * (a tabela do contrato e Record<InternalIntent, string> por desenho, para tipos.ts nao depender do store).
- * O teste prende a igualdade entre as duas — nenhuma pode andar sozinha.
- */
-export const ACAO_POR_INTENCAO = {
-  FINANCE: 'editar_lancamento',
-  PURCHASE: 'comprar',
-  WORKSITE: 'editar_obra',
-  INVENTORY: 'editar_etc',
-  COMMERCIAL: 'radar',
-  HR_ADMIN: 'editar_cadastros',
-  EXECUTIVE: 'ver_bancos',
-  GENERAL: 'comentar',
-} as const satisfies Record<InternalIntent, Acao>;
-
-export const acaoDaIntencao = (intent: InternalIntent): Acao => ACAO_POR_INTENCAO[intent];
 /** Toda intencao do catalogo e INTERNA: nenhuma delas e atendida pelo numero externo (clientes, leads, parceiros). */
 export const ehIntencaoInterna = (intent: InternalIntent): boolean => (INTENCOES_INTERNAS as readonly string[]).includes(intent);
 
@@ -34,33 +24,41 @@ export type MotivoNegativa =
   | 'identidade_de_outra_pessoa'
   | 'contexto_externo'
   | 'revisao_humana'
+  | 'acao_recusada_pelo_catalogo'
   | 'papel_sem_acao';
 
 export interface Autorizacao {
   autorizado: boolean;
-  acao: Acao;
+  /** Permissao EXIGIDA pela acao, vinda do catalogo. `null` = ajuda, sem dado de negocio. */
+  acao: Acao | null;
   motivo: string;
   negativa?: MotivoNegativa;
   exigeConfirmacao: boolean;
   exigeHumano: boolean;
 }
 export interface PedidoAutorizacao {
-  decisao: OrchestratorDecision;
+  /** A acao que o agente PROPOS. E ela que define a permissao — nao a intencao. */
+  proposta: AcaoProposta;
+  /** Agente que propos: o catalogo confere que a acao pertence mesmo a ele. */
+  agente: Parameters<typeof autorizarAcao>[0]['agente'];
   identidade: IdentidadeResolvida;
   usuario?: Usuario;
   contexto?: CommunicationContext;
-  codigoObra?: string;
+  /** Sinal de desconfianca do roteador. Nunca autoriza; so pode APERTAR. */
+  decisao?: Pick<OrchestratorDecision, 'intent' | 'requiresHuman' | 'motivo'>;
 }
 
 /**
- * Autoriza (ou nao) a acao proposta. A ordem das recusas e a ordem da desconfianca: primeiro quem esta falando,
- * depois de onde, depois se a regra pediu humano e so por ultimo o papel na matriz.
+ * Autoriza (ou nao) a ACAO PROPOSTA. A ordem das recusas e a ordem da desconfianca: primeiro quem esta falando,
+ * depois de onde, depois se a regra pediu humano, e so por ultimo o catalogo e o papel na matriz.
  * Telefone nunca aparece inteiro no motivo.
  */
 export function autorizar(pedido: PedidoAutorizacao): Autorizacao {
-  const { decisao, identidade, usuario, contexto, codigoObra } = pedido;
-  const acao = acaoDaIntencao(decisao.intent);
-  const base = { acao, exigeConfirmacao: true, exigeHumano: decisao.requiresHuman };
+  const { proposta, agente, identidade, usuario, contexto, decisao } = pedido;
+  const def = definicaoDaAcao(proposta.codigo);
+  const exigida = def ? def.permissao : null;
+  const exigeHumano = decisao?.requiresHuman ?? false;
+  const base = { acao: exigida, exigeConfirmacao: def?.exigeConfirmacao ?? true, exigeHumano };
   const negar = (negativa: MotivoNegativa, motivo: string): Autorizacao => ({ ...base, autorizado: false, exigeHumano: true, negativa, motivo });
 
   if (!identidade.verificada) return negar('identidade_nao_verificada', `número não verificado: ${identidade.motivo}`);
@@ -69,12 +67,16 @@ export function autorizar(pedido: PedidoAutorizacao): Autorizacao {
   if (identidade.identidade?.usuarioId && identidade.identidade.usuarioId !== usuario.id) {
     return negar('identidade_de_outra_pessoa', `o número ${mascararTelefone(identidade.identidade.telefoneNormalizado)} pertence a outra pessoa`);
   }
-  if (contexto !== 'INTERNAL' && ehIntencaoInterna(decisao.intent)) {
+  if (contexto !== 'INTERNAL' && decisao && ehIntencaoInterna(decisao.intent)) {
     return negar('contexto_externo', `intenção ${decisao.intent} é interna e não é atendida pelo número ${contexto ?? 'desconhecido'}`);
   }
-  if (decisao.requiresHuman) return negar('revisao_humana', `a decisão exige revisão humana: ${decisao.motivo}`);
-  if (!pode(usuario, acao, codigoObra)) {
-    return negar('papel_sem_acao', `perfil ${usuario.papel} não tem a ação "${acao}"${codigoObra ? ` na obra ${codigoObra}` : ''}`);
+  if (exigeHumano) return negar('revisao_humana', `a decisão exige revisão humana: ${decisao?.motivo ?? 'confiança baixa'}`);
+
+  // autoridade unica: catalogo (codigo -> permissao, dono da acao, escopo) + matriz do Control
+  const veredicto = autorizarAcao({ usuario, agente, proposta, identidade }, (acao, obra) => pode(usuario, acao, obra));
+  if (!veredicto.autorizado) {
+    const doPapel = /não tem "/.test(veredicto.motivo);
+    return negar(doPapel ? 'papel_sem_acao' : 'acao_recusada_pelo_catalogo', veredicto.motivo);
   }
-  return { ...base, autorizado: true, motivo: `${usuario.papel} pode "${acao}"${codigoObra ? ` na obra ${codigoObra}` : ''}; a ação ainda exige confirmação` };
+  return { ...base, acao: veredicto.permissao, autorizado: true, motivo: `${usuario.papel}: ${veredicto.motivo}${base.exigeConfirmacao ? '; a ação ainda exige confirmação' : ''}` };
 }

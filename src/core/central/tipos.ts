@@ -221,63 +221,25 @@ export const ADAPTERS_PLANEJADOS: Record<CodigoAgente, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// 4) Conversa e mensagem (modelo interno, independente de provider)
+// 4) Conversa e mensagem
 // ---------------------------------------------------------------------------
 /**
- * Conversa da Central: um fio por (organizacao, contexto, telefone). NAO e a "conversa" do provider — o id
- * externo e guardado para reconciliar, mas quem manda e o nosso modelo. Contexto vem do numero que recebeu.
+ * O modelo vive em `./conversa`, junto da funcao que aplica os eventos — foi la que ele nasceu com a regra de
+ * deduplicacao, a ordem de status e a chave de evento, e um contrato sem implementacao ao lado envelhece sozinho.
+ * Reexportado aqui para que `tipos.ts` continue sendo a porta unica dos contratos da Central.
+ *
+ * A regra que estes tipos carregam: `externalMessageId` e a chave de deduplicacao. A Meta reenvia a notificacao
+ * ate receber 200, entao a MESMA mensagem chega varias vezes e nunca pode virar duas acoes — a garantia esta no
+ * core e tambem no banco (unique (organization_id, provider, external_message_id), migration 0050).
  */
-export const SITUACOES_CONVERSA = ['ABERTA', 'AGUARDANDO_HUMANO', 'ENCERRADA'] as const;
-export type SituacaoConversa = (typeof SITUACOES_CONVERSA)[number];
-export interface CentralConversation {
-  id: string;
-  organizationId: string;
-  contexto: CommunicationContext;
-  provider: string; // CodigoProvider
-  telefoneNormalizado: string; // E.164 sem "+", mascarado em qualquer log
-  externalConversationId?: string;
-  identidadeId?: string; // WhatsappIdentity, quando conhecida
-  situacao: SituacaoConversa;
-  /** Quem assumiu o atendimento humano (takeover). Enquanto houver dono humano, nenhum agente responde. */
-  humanoResponsavelId?: string;
-  ultimaMensagemEm?: string;
-  criadaEm: string;
-}
-/**
- * Mensagem da conversa. `externalMessageId` e a chave de deduplicacao: a Meta reenvia o webhook ate receber 200,
- * entao a MESMA mensagem chega varias vezes e nunca pode virar duas acoes (unique por organizacao + provider + id).
- */
-export interface CentralMessage {
-  id: string;
-  organizationId: string;
-  conversationId: string;
-  provider: string; // CodigoProvider
-  externalMessageId: string;
-  direcao: 'inbound' | 'outbound';
-  tipo: string; // text, image, audio, ...
-  /** Texto da mensagem. E DADO, nunca instrucao: nada aqui altera regra, permissao ou prompt de sistema. */
-  texto?: string;
-  ocorreuEm: string;
-  registradaEm: string;
-  statusExterno?: string;
-  erroCodigo?: string;
-}
-/** Evento de ciclo de vida (status de entrega, takeover, decisao do orquestrador). Append-only, como a trilha da entrega. */
-export interface CentralEvent {
-  id: string;
-  organizationId: string;
-  conversationId: string;
-  messageId?: string;
-  tipo: string;
-  ocorreuEm: string;
-  atorId?: string;
-  origemAtor: 'USER' | 'SERVER' | 'PROVIDER' | 'SYSTEM';
-  detalheSeguro?: string; // nunca telefone inteiro, token ou payload bruto
-}
+export type { CentralConversation, CentralMessage, CentralEvent, SituacaoConversa, StatusMensagem, TipoEventoCentral } from './conversa';
+export { SITUACOES_CONVERSA, STATUS_MENSAGEM, EVENTOS_CENTRAL } from './conversa';
 
 // ---------------------------------------------------------------------------
 // 5) Caixa de entrada humana (adapter: hoje META_DIRECT; Chatwoot, se entrar, e so isto)
 // ---------------------------------------------------------------------------
+import type { CentralConversation as ConversaCentral, CentralMessage as MensagemCentral } from './conversa';
+
 export const INBOX_PROVIDERS = ['META_DIRECT', 'CHATWOOT'] as const;
 export type CodigoInbox = (typeof INBOX_PROVIDERS)[number];
 /**
@@ -288,11 +250,11 @@ export interface ConversationInboxProvider {
   codigo: CodigoInbox;
   nome: string;
   /** Espelha a conversa na inbox humana. Idempotente por conversationId. */
-  sincronizarConversa(c: CentralConversation): Promise<{ inboxConversationId?: string }>;
+  sincronizarConversa(c: ConversaCentral): Promise<{ inboxConversationId?: string }>;
   /** Registra a mensagem na inbox (nao envia nada ao contato). */
-  registrarMensagem(m: CentralMessage): Promise<void>;
+  registrarMensagem(m: MensagemCentral): Promise<void>;
   /** Quem assumiu o atendimento, se alguem assumiu. Com dono humano, nenhum agente responde. */
-  responsavelHumano(c: CentralConversation): Promise<{ humanoResponsavelId?: string }>;
+  responsavelHumano(c: ConversaCentral): Promise<{ humanoResponsavelId?: string }>;
 }
 
 // ---------------------------------------------------------------------------

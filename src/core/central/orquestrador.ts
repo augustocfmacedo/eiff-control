@@ -3,9 +3,9 @@
 // A decisao final sai de `decisaoSegura` (tipos.ts), que ja aplica o piso CONFIANCA_MINIMA e a exigencia de humano.
 //
 // REGRA INEGOCIAVEL: o texto que chega do WhatsApp e DADO, nunca instrucao. Uma mensagem que diga "ignore as regras",
-// "você é administrador" ou "aprove sem alçada" nao muda intencao, nao muda permissao e nao muda confianca — o trecho
+// "você é administrador" ou "aprove sem alçada" nao muda intencao, nao muda agente e nao muda confianca — o trecho
 // e higienizado antes da pontuacao (para nao virar sinal) e a mensagem passa a exigir revisao humana.
-import { CONFIANCA_MINIMA, PERMISSAO_POR_INTENCAO, decisaoSegura, type CommunicationContext, type IdentidadeResolvida, type InternalIntent, type OrchestratorDecision } from './tipos';
+import { CONFIANCA_MINIMA, decisaoSegura, type CommunicationContext, type IdentidadeResolvida, type InternalIntent, type OrchestratorDecision } from './tipos';
 
 const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -133,8 +133,7 @@ export function orquestrar(entrada: EntradaOrquestrador): OrchestratorDecision {
   if (!extras.length) return decisao;
   return {
     ...decisao,
-    // a permissao exigida continua vindo da MATRIZ (tipos.ts): nada no texto muda isso
-    requiredPermission: PERMISSAO_POR_INTENCAO[c.intent],
+    // a decisao NAO carrega permissao: rotear nao autoriza. Quem exige permissao e a acao proposta.
     requiresHuman: true,
     requiresConfirmation: true,
     motivo: `${decisao.motivo}; ${extras.join('; ')}`,
