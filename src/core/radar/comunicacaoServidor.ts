@@ -33,9 +33,9 @@ const ehResp = (x: unknown): x is Resp => !!x && typeof x === 'object' && 'statu
 const mascarar = (s: string) => s.replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '***@***').slice(0, 300);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-interface Sessao { uid: string; perfil: { name?: string; role: string; organization_id: string }; cab: Record<string, string>; get: (caminho: string) => Promise<Row[] | null> }
+export interface Sessao { uid: string; perfil: { name?: string; role: string; organization_id: string }; cab: Record<string, string>; get: (caminho: string) => Promise<Row[] | null> }
 /** 1-2) usuario pelo Supabase Auth e papel SOMENTE do banco; sem perfil = negar; nada vindo do cliente. */
-async function autenticar(req: Req, d: DepsServidor): Promise<Resp | Sessao> {
+export async function autenticar(req: Req, d: DepsServidor): Promise<Resp | Sessao> {
   const token = (req.authorization ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return resp(401, { erro: 'nao_autenticado' });
   const cab = { apikey: d.anon, authorization: `Bearer ${token}`, 'content-type': 'application/json' };

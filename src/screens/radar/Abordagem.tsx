@@ -4,6 +4,7 @@ import type { ComunicacaoRadar } from '../../core/radar/types';
 import { actions, getState, pode, useStore } from '../../data/store';
 import { tokenSessao } from '../../data/supabase';
 import { Badge, Field, Select, tentar, useToast } from '../../ui/components';
+import { Entrega } from './Entrega';
 
 const CANAIS_GERACAO: Canal[] = ['WHATSAPP', 'EMAIL', 'PHONE'];
 const toneEstado = (e: ComunicacaoRadar['estado']) => (e === 'APPROVED' ? 'ok' : e === 'REJECTED' || e === 'CANCELLED' ? 'bad' : e === 'READY_FOR_REVIEW' ? 'warn' : 'muted');
@@ -112,6 +113,7 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
               </>
             )}
             {podeAgir && c.estado === 'SENT' && (() => { const ats = r.atividades.filter((a) => a.empresaId === empresaId && a.contatoId === c.contatoId && a.tipo !== 'NOTE' && !!a.resultado && a.id !== c.atividadeEnvioId && a.ocorreuEm >= (c.enviadaEm ?? c.criadoEm)).sort((a, b) => (a.ocorreuEm < b.ocorreuEm ? 1 : -1)); return ats.length ? <div className="row" style={{ gap: 8, marginTop: 8 }}><button className="btn sm" onClick={() => tentar(() => actions.transicionarComunicacaoRadar(c.id, 'REPLIED', { atividadeId: ats[0].id }), toast, () => toast('Marcada como respondida.'))}>Marcar respondida ({ats[0].resultado})</button></div> : <div className="small muted" style={{ marginTop: 8 }}>enviada: registre a atividade com o resultado para marcar como respondida</div>; })()}
+            {c.estado === 'APPROVED' && !compacto && editando?.id !== c.id && <Entrega c={c} />}
             {podeAgir && (c.estado === 'READY_FOR_REVIEW' || c.estado === 'REJECTED' || c.estado === 'APPROVED') && editando?.id !== c.id && (
               <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 {c.estado === 'READY_FOR_REVIEW' && <button className="btn sm primary" onClick={() => void aprovar(c)}>Aprovar</button>}
