@@ -5,6 +5,7 @@ import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Badge, Kpi, Money, PageHead, StatusBadge, money, useToast } from '../ui/components';
 import { navegar } from '../ui/router';
 import { Tabela, type Coluna } from '../ui/Tabela';
+import { VistasSalvas } from '../ui/vistas';
 import { LancamentoForm } from './LancamentoForm';
 
 export type ModoLista = 'todos' | 'pagar' | 'receber';
@@ -114,6 +115,7 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
         <label className="field"><span>até</span><input type="date" value={f.ate} onChange={(e) => setF({ ...f, ate: e.target.value })} /></label>
         <label className="field"><span>Excluídos</span><input type="checkbox" checked={f.excluidos} onChange={(e) => setF({ ...f, excluidos: e.target.checked })} title="mostrar lançamentos excluídos" /></label>
         <button className="btn sm" onClick={() => setF({ busca: '', obra: '', categoria: '', status: '', situacao: '', de: '', ate: '', contraparte: '', excluidos: false })}>Limpar</button>
+        <VistasSalvas tela={`lancamentos-${modo}`} filtros={f} aplicar={(v) => setF({ ...f, ...v })} ehPadrao={(v) => Object.values(v).every((x) => x === '' || x === false)} />
       </div>
       <Tabela className="card" linhas={lista} chave={(l) => l.id} onLinha={(l) => navegar(`/lancamentos/${l.id}`)} vazio="Nenhum lançamento com esses filtros." colunas={colunas} linha={(l) => (
               <>

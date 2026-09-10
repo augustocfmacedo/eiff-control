@@ -31,6 +31,8 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
   const [ofx, setOfx] = useState(false);
   const [lancar, setLancar] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<'todos' | 'Pendente' | 'Divergente' | 'Conciliado'>('todos');
+  const [arrastando, setArrastando] = useState<string | null>(null);
+  const [alvo, setAlvo] = useState<string | null>(null);
   const lancs = useMemo(() => calcLancamentos(ds), [ds]);
   const trans = useMemo(() => calcTransacoes(ds, lancs), [ds, lancs]);
   if (!pode(usuario, 'ver_bancos')) return <Empty>Extratos e conciliação são restritos a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
@@ -42,6 +44,24 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
   const somaMarcados = marcados.reduce((a, id) => a + (lancs.find((l) => l.id === id)?.valorCaixaProjetado ?? 0), 0);
   const dif = t ? t.movimento - somaMarcados : 0;
   const selecionar = (id: string) => { setSel(id); setMarcados(trans.find((x) => x.id === id)?.lancamentoIds ?? []); setJust(''); };
+  const tol = ds.params.alcadas.toleranciaConciliacao;
+  // pares sugeridos: melhor sugestao de cada pendente, dentro da tolerancia e com score alto; "seguro" = valor exato + data
+  const pares = trans.filter((x) => x.status === 'Pendente').map((x) => ({ t: x, s: sugerirConciliacao(ds, x, lancs)[0] })).filter((p): p is { t: typeof p.t; s: NonNullable<typeof p.s> } => !!p.s && p.s.score >= 75 && Math.abs(p.t.movimento - p.s.lancamento.valorCaixaProjetado) <= tol);
+  const seguros = pares.filter((p) => p.s.score >= 90);
+  const conciliarPares = (lista: typeof pares) => {
+    let ok = 0; const erros: string[] = []; const usados = new Set<string>();
+    for (const p of lista) { if (usados.has(p.s.lancamento.id)) continue; try { actions.conciliar(p.t.id, [p.s.lancamento.id]); ok++; usados.add(p.s.lancamento.id); } catch (e) { erros.push(`${p.t.id}: ${(e as Error).message}`); } }
+    toast(`${ok} par(es) conciliado(s)${erros.length ? `; ${erros.length} com erro: ${erros[0]}` : ''}.`);
+  };
+  // arrastar transacao pendente e soltar no lancamento: dentro da tolerancia concilia; fora, abre a selecao para justificar
+  const soltar = (lancId: string) => {
+    const tId = arrastando; setArrastando(null); setAlvo(null); if (!tId) return;
+    const x = trans.find((y) => y.id === tId); const l = lancs.find((y) => y.id === lancId); if (!x || !l) return;
+    if (Math.abs(x.movimento - l.valorCaixaProjetado) <= tol) tentar(() => actions.conciliar(x.id, [l.id]), toast, () => toast(`${x.id} conciliada com ${l.id}.`));
+    else { setSel(x.id); setMarcados([l.id]); setJust(''); toast('Diferença fora da tolerância: informe a justificativa e confirme.'); }
+  };
+  const arrastada = arrastando ? trans.find((x) => x.id === arrastando) : undefined;
+  const alvosSoltar = arrastada ? lancs.filter((l) => l.oficial && l.status !== 'Cancelado' && !l.conciliado && (arrastada.movimento >= 0 ? l.tipo === 'Entrada' : l.tipo === 'Saída')).map((l) => ({ l, dif: Math.abs(arrastada.movimento - l.valorCaixaProjetado) })).sort((a, b) => a.dif - b.dif).slice(0, 25) : [];
 
   return (
     <>
@@ -61,14 +81,25 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
           {ds.contas.map((c) => <tr key={c.id}><td>{c.id}</td><td>{c.instituicao}</td><td>{c.conta}</td><td><Badge tone="muted">manual</Badge> <span className="muted small">Pluggy/Open Finance somente leitura na fase 1</span></td><td className="num">{trans.filter((x) => x.conta === c.instituicao).length}</td><td className="muted small">{trans.filter((x) => x.conta === c.instituicao).map((x) => x.data).sort().pop()?.split('-').reverse().join('/') ?? '—'}</td></tr>)}
         </tbody></table>
       </div>
+      {podeConciliar && pares.length > 0 && (
+        <div className="card pares" style={{ marginBottom: 16 }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <h2 style={{ margin: 0 }}>Pares sugeridos <Badge tone="info">{pares.length}</Badge></h2>
+            {seguros.length > 0 && <button className="btn primary sm" onClick={() => { if (window.confirm(`Conciliar ${seguros.length} par(es) com valor exato e data compatível?`)) conciliarPares(seguros); }}>Conciliar {seguros.length} par(es) seguro(s)</button>}
+          </div>
+          <table style={{ marginTop: 8 }}><thead><tr><th>Transação</th><th>Histórico</th><th className="num">Movimento</th><th>Lançamento</th><th>Score</th><th></th></tr></thead><tbody>
+            {pares.map((p) => <tr key={p.t.id}><td>{p.t.id}<div className="muted small">{p.t.data.split('-').reverse().join('/')}</div></td><td className="small">{p.t.historico}</td><td className="num"><Money v={p.t.movimento} sign /></td><td><Link to={`/lancamentos/${p.s.lancamento.id}`}>{p.s.lancamento.id}</Link><div className="muted small">{p.s.lancamento.descricao}</div></td><td><Badge tone={p.s.score >= 90 ? 'ok' : 'warn'}>{p.s.score}</Badge><div className="muted small">{p.s.criterios.join(', ')}</div></td><td><button className="btn sm" onClick={() => conciliarPares([p])}>Conciliar</button></td></tr>)}
+          </tbody></table>
+        </div>
+      )}
       <div className="grid cols-2">
         <div className="card">
-          <div className="actions" style={{ marginBottom: 8 }}>{(['todos', 'Pendente', 'Divergente', 'Conciliado'] as const).map((f) => <button key={f} className={`btn sm ${filtro === f ? 'primary' : ''}`} onClick={() => setFiltro(f)}>{f}</button>)}</div>
+          <div className="actions" style={{ marginBottom: 8 }}>{(['todos', 'Pendente', 'Divergente', 'Conciliado'] as const).map((f) => <button key={f} className={`btn sm ${filtro === f ? 'primary' : ''}`} onClick={() => setFiltro(f)}>{f}</button>)}{podeConciliar && <span className="small muted">arraste uma pendente até o lançamento</span>}</div>
           {lista.length === 0 ? <Empty>Nenhuma transação. Importe um extrato (CSV: data;histórico;documento;débito;crédito).</Empty> : (
             <div className="table-wrap"><table>
               <thead><tr><th>ID</th><th>Data</th><th>Histórico</th><th>Movimento</th><th>Lançamento</th><th>Dif.</th><th>Status</th></tr></thead>
               <tbody>{lista.map((x) => (
-                <tr key={x.id} className="clickable" onClick={() => selecionar(x.id)} style={x.id === sel ? { outline: '2px solid var(--primary-2)' } : undefined}>
+                <tr key={x.id} className={`clickable ${podeConciliar && x.status === 'Pendente' ? 'arrastavel' : ''} ${arrastando === x.id ? 'arrastando' : ''}`} onClick={() => selecionar(x.id)} style={x.id === sel ? { outline: '2px solid var(--primary-2)' } : undefined} draggable={podeConciliar && x.status === 'Pendente'} onDragStart={(e) => { e.dataTransfer.setData('text/plain', x.id); e.dataTransfer.effectAllowed = 'link'; setArrastando(x.id); }} onDragEnd={() => { setArrastando(null); setAlvo(null); }}>
                   <td>{x.id}</td><td>{x.data.split('-').reverse().join('/')}</td><td>{x.historico}<div className="muted small">{x.documento}</div></td><td><Money v={x.movimento} sign /></td><td className="small">{x.lancamentoIds.join(', ') || '—'}</td><td><Money v={x.lancamentoIds.length ? x.diferenca : undefined} sign /></td><td><StatusBadge s={x.status} /></td>
                 </tr>
               ))}</tbody>
@@ -76,7 +107,17 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
           )}
         </div>
         <div className="card">
-          {!t ? <Empty>Selecione uma transação para ver sugestões.</Empty> : (
+          {arrastada ? (
+            <div className="zona-soltar">
+              <h2>Soltar {arrastada.id} (<Money v={arrastada.movimento} sign />) em…</h2>
+              {alvosSoltar.length === 0 ? <Empty>Nenhum lançamento em aberto do mesmo tipo.</Empty> : alvosSoltar.map(({ l, dif }) => (
+                <div key={l.id} className={`solta ${alvo === l.id ? 'ativo' : ''} ${dif <= tol ? 'exato' : ''}`} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'link'; if (alvo !== l.id) setAlvo(l.id); }} onDragLeave={() => setAlvo((a) => (a === l.id ? null : a))} onDrop={(e) => { e.preventDefault(); soltar(l.id); }}>
+                  <b>{l.id}</b> <span className="small">{l.descricao}</span> · <Money v={l.valorCaixaProjetado} sign />
+                  <div className="muted small">{l.contraparte} · venc. {l.vencimento.split('-').reverse().join('/')} · {dif <= tol ? 'valor exato' : `diferença ${money(dif)}`}</div>
+                </div>
+              ))}
+            </div>
+          ) : !t ? <Empty>Selecione uma transação para ver sugestões, ou arraste uma pendente até o lançamento.</Empty> : (
             <>
               <h2>{t.id} · {t.data.split('-').reverse().join('/')} · <Money v={t.movimento} sign /></h2>
               <p className="small muted">{t.historico} {t.documento && `· ${t.documento}`} · {t.conta} {t.justificativa && <> · justificativa: {t.justificativa}</>}</p>

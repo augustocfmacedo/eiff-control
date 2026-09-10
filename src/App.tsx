@@ -10,6 +10,7 @@ import { Assistente } from './ui/Assistente';
 import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
 import { Icon, Logotipo, Marca } from './ui/icons';
 import { Paleta, ROTAS_NAV, type AcaoPaleta } from './ui/Paleta';
+import { Tour, tourVisto } from './ui/Tour';
 import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
 // telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
@@ -68,11 +69,20 @@ export default function App() {
     { id: 'menu', rotulo: 'Recolher ou expandir o menu', icone: 'menu', executar: () => setRecolhida((r) => { const v = !r; try { localStorage.setItem('eiff-control:sidebar', v ? 'recolhida' : 'aberta'); } catch { /* ignore */ } return v; }) },
     { id: 'densidade', rotulo: 'Alternar densidade das tabelas', sub: 'normal ou compacta', icone: 'densidade', executar: () => setDensidade((d) => (d === 'compacta' ? 'normal' : 'compacta')) },
     { id: 'texto', rotulo: 'Alternar tamanho do texto', sub: 'normal ou grande', icone: 'livro', executar: () => setEscala((e) => (e === 'grande' ? 'normal' : 'grande')) },
+    { id: 'tour', rotulo: 'Tour desta tela', sub: 'o que cada bloco faz', icone: 'ajuda', executar: () => setTimeout(() => setTour(true), 200) },
     { id: 'imprimir', rotulo: 'Imprimir a tela atual', icone: 'dre', executar: () => setTimeout(() => window.print(), 150) },
     { id: 'recarregar', rotulo: 'Recarregar dados', icone: 'fluxo', executar: () => { void actions.recarregar().catch(() => undefined); } },
     { id: 'sair', rotulo: 'Sair', icone: 'sair', executar: () => { void actions.sair(); } },
   ], []);
   const chaveTela = `${rota.path}?${rota.query.toString()}`;
+  // tour guiado: abre sozinho na primeira visita a cada tela (depois que a tela montou), e pelo "?" da barra ou pela paleta
+  const [tour, setTour] = useState(false);
+  useEffect(() => {
+    if (modo === 'remoto' && (!sessao || carregando)) return;
+    if (rota.partes[0] === 'campo' || tourVisto(rota.path)) return;
+    const t = window.setTimeout(() => { if (document.querySelector('.content .page-head')) setTour(true); }, 1400);
+    return () => window.clearTimeout(t);
+  }, [rota.path, modo, sessao, carregando]);
   if (modo === 'remoto' && carregando) return <div className="carregando"><CenaEstrutura variante="carregando" /><div className="carregando-txt">Carregando dados do Supabase…</div></div>;
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
@@ -191,6 +201,7 @@ export default function App() {
             {ds.params.incluirDemo && <span className="badge warn">demo</span>}
           </div>
           <div className="spacer" />
+          <button className="btn sm" onClick={() => setTour(true)} title="Tour desta tela" aria-label="Tour desta tela"><Icon name="ajuda" size={15} /></button>
           <button className="btn sm busca" onClick={() => setPaleta(true)} title="Buscar ou ir para (Ctrl+K)" aria-label="Buscar"><Icon name="buscar" size={15} /><span className="nav-label">Buscar</span><kbd>Ctrl K</kbd></button>
           <button className="btn sm" onClick={() => setTema(tema === 'dark' ? 'light' : 'dark')} title={tema === 'dark' ? 'Tema claro' : 'Tema escuro'} aria-label="Alternar tema"><Icon name={tema === 'dark' ? 'sol' : 'lua'} size={15} /></button>
           {modo === 'remoto' ? (
@@ -226,6 +237,7 @@ export default function App() {
         <main className="content"><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}>{tela}</Revelar></Suspense></main>
       </div>
       <Paleta aberta={paleta} onFechar={() => setPaleta(false)} acoes={acoesPaleta} permite={(p) => pode(usuario, p as never)} />
+      <Tour rota={rota.path} aberto={tour} onFechar={() => setTour(false)} />
       <MicroInteracoes />
       <Assistente tela={rota.path} />
     </div>

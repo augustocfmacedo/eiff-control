@@ -4,6 +4,7 @@ import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, Input, KpiStrip, Link, PageHead, Select, useToast } from '../../ui/components';
 import { EmpresaForm, ImportarForm, ScoreModal, ScorePill, d } from './comum';
 import { Tabela } from '../../ui/Tabela';
+import { VistasSalvas } from '../../ui/vistas';
 
 export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
   const { ds, usuario } = useStore();
@@ -56,9 +57,10 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
           <Select value={situacao} onChange={setSituacao} options={[{ value: 'vencida', label: 'Próxima ação vencida' }, { value: 'sem-acao', label: 'Sem próxima ação' }, { value: 'sem-decisor', label: 'Sem decisor' }, { value: 'sinal-30', label: 'Sinal nos últimos 30 dias' }, { value: 'suprimida', label: 'Não contatar' }]} allowEmpty="Situação" />
           <Select value={ordem} onChange={(v) => setOrdem(v as 'prioridade')} options={[{ value: 'prioridade', label: 'Ordenar: prioridade' }, { value: 'nome', label: 'Ordenar: nome' }, { value: 'proxima', label: 'Ordenar: próxima ação' }, { value: 'sinal', label: 'Ordenar: último sinal' }]} />
           <span className="small muted">{lista.length} de {todas.length}</span>
+          <VistasSalvas tela="radar-empresas" filtros={{ busca, classe, uf, setor, situacao, ordem }} aplicar={(v) => { setBusca(v.busca); setClasse(v.classe); setUf(v.uf); setSetor(v.setor); setSituacao(v.situacao); setOrdem(v.ordem); }} ehPadrao={(v) => !v.busca && !v.classe && !v.uf && !v.setor && !v.situacao && v.ordem === 'prioridade'} />
         </div>
         {!lista.length ? <Empty icone="empresas" titulo={todas.length ? 'Nenhuma empresa com esses filtros' : 'Nenhuma empresa'}>{todas.length ? 'Ajuste os filtros.' : 'Importe uma base em CSV ou cadastre a primeira empresa.'}</Empty> : (
-          <Tabela linhas={lista.slice(0, limite)} chave={(e) => e.id} altura="calc(100vh - 300px)"
+          <Tabela linhas={lista.slice(0, limite)} chave={(e) => e.id} altura="calc(100vh - 300px)" csv={{ nome: 'radar-empresas', cabecalho: ['Empresa', 'Razão social', 'CNPJ', 'Cidade', 'UF', 'Setor', 'Classe', 'Prioridade', 'Fit', 'Timing', 'Intenção', 'Último contato', 'Próxima ação'], linha: (e) => [e.nomeFantasia ?? e.razaoSocial, e.razaoSocial, e.cnpj, e.cidade, e.uf, e.setor, e.priorityClass, e.priorityScore, e.fitScore, e.timingScore, e.intentScore, e.ultimoContatoEm, e.proximaAcaoEm] }}
             colunas={[{ titulo: 'Empresa', ordenar: (e) => e.nomeFantasia ?? e.razaoSocial }, { titulo: 'Local', ordenar: (e) => [e.cidade, e.uf].filter(Boolean).join('/') || undefined }, { titulo: 'Setor', ordenar: (e) => e.setor }, { titulo: 'Prioridade', num: true, ordenar: (e) => e.priorityScore }, { titulo: 'Fit', num: true, ordenar: (e) => e.fitScore }, { titulo: 'Timing', num: true, ordenar: (e) => e.timingScore }, { titulo: 'Intenção', num: true, ordenar: (e) => e.intentScore }, { titulo: 'Sinal principal' }, { titulo: 'Decisor' }, { titulo: 'Último contato', ordenar: (e) => e.ultimoContatoEm }, { titulo: 'Próxima ação', ordenar: (e) => e.proximaAcaoEm }]}
             linha={(e) => { const s = sinalPrincipal(e.id, r, hoje); const dec = decisorDe(e.id, r); const venc = e.proximaAcaoEm && e.proximaAcaoEm.slice(0, 10) < hoje; return (
               <>
