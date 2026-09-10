@@ -86,7 +86,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
           { id: 'timeline', label: 'Documentos e comunicação' },
         ]} />
         {aba === 'medicoes' && <MedicoesTab o={o} onErro={toast} onOk={toast} />}
-        {aba === 'cronograma' && <Gantt o={o} dataBase={ds.params.dataBase} />}
+        {aba === 'cronograma' && <Gantt o={o} dataBase={ds.params.dataBase} lancamentos={movimentos} />}
         {aba === 'servicos' && <ServicosTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'materiais' && <MateriaisTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'demandas' && <DemandasTab o={o} onErro={toast} />}

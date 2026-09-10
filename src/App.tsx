@@ -11,6 +11,8 @@ import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
 import { Icon, Logotipo, Marca } from './ui/icons';
 import { Paleta, ROTAS_NAV, type AcaoPaleta } from './ui/Paleta';
 import { Tour, tourVisto } from './ui/Tour';
+import { Sugestoes } from './ui/Sugestoes';
+import { registrarAcao, registrarVisita } from './data/telemetria';
 import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
 // telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
@@ -77,6 +79,8 @@ export default function App() {
   const chaveTela = `${rota.path}?${rota.query.toString()}`;
   // tour guiado: abre sozinho na primeira visita a cada tela (depois que a tela montou), e pelo "?" da barra ou pela paleta
   const [tour, setTour] = useState(false);
+  useEffect(() => { registrarVisita(rota.path); }, [rota.path]);
+  useEffect(() => { if (tour) registrarAcao('tour'); }, [tour]);
   useEffect(() => {
     if (modo === 'remoto' && (!sessao || carregando)) return;
     if (rota.partes[0] === 'campo' || tourVisto(rota.path)) return;
@@ -234,7 +238,7 @@ export default function App() {
             </label>
           )}
         </header>
-        <main className="content"><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}>{tela}</Revelar></Suspense></main>
+        <main className="content"><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}><Sugestoes rota={rota.path} />{tela}</Revelar></Suspense></main>
       </div>
       <Paleta aberta={paleta} onFechar={() => setPaleta(false)} acoes={acoesPaleta} permite={(p) => pode(usuario, p as never)} />
       <Tour rota={rota.path} aberto={tour} onFechar={() => setTour(false)} />

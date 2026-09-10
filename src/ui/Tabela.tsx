@@ -4,6 +4,7 @@
 import React, { useMemo, useState } from 'react';
 import { ordenarLinhas } from './busca';
 import { baixarCsv } from './exportar';
+import { registrarAcao } from '../data/telemetria';
 
 export interface Coluna<T> { titulo: React.ReactNode; num?: boolean; ordenar?: (l: T) => string | number | undefined; className?: string; oculta?: boolean; largura?: number | string; title?: string }
 export interface OrdemTabela { coluna: number; desc?: boolean }
@@ -21,7 +22,7 @@ export function Tabela<T>({ colunas, linhas, chave, linha, onLinha, vazio = 'Nad
     if (e.key === 'Enter' && onLinha) { e.preventDefault(); onLinha(l); }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const irmao = e.key === 'ArrowDown' ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling; (irmao as HTMLElement | null)?.focus(); }
   };
-  const exportar = () => csv && baixarCsv(csv.nome, csv.cabecalho ?? visiveis.map((c) => (typeof c.titulo === 'string' ? c.titulo : '')), ordenadas.map(csv.linha));
+  const exportar = () => { if (csv) registrarAcao(`exportar:${csv.nome}`); return csv && baixarCsv(csv.nome, csv.cabecalho ?? visiveis.map((c) => (typeof c.titulo === 'string' ? c.titulo : '')), ordenadas.map(csv.linha)); };
   return (
     <div className={`tabela ${className ?? ''}`} style={altura !== undefined ? { maxHeight: altura } : undefined} id={id}>
       {csv && <div className="tabela-barra no-print"><span className="small muted">{ordenadas.length.toLocaleString('pt-BR')} linha(s)</span><button className="btn sm" onClick={exportar} disabled={!ordenadas.length} title="Exporta as linhas como estão na tela (filtro e ordenação)">Exportar CSV</button></div>}

@@ -2,7 +2,7 @@
 // marcos de medicao na linha do tempo, "hoje" marcado e a curva S (previsto acumulado x faturado acumulado). SVG puro,
 // tokens do sistema; os numeros vem do motor (obra360) e nada e recalculado aqui.
 import React, { useMemo } from 'react';
-import type { Obra360 } from '../core/engine';
+import type { LancamentoCalc, Obra360 } from '../core/engine';
 import { LineChart } from './charts';
 import { money } from './components';
 
@@ -11,7 +11,7 @@ const dataN = (iso?: string) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`)
 const fmt = (iso?: string) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
-export function Gantt({ o, dataBase }: { o: Obra360; dataBase: string }) {
+export function Gantt({ o, dataBase, lancamentos = [] }: { o: Obra360; dataBase: string; lancamentos?: LancamentoCalc[] }) {
   const servicos = useMemo(() => o.servicos.filter((s) => s.ativo !== false).slice().sort((a, b) => ((a.inicioPrevisto ?? '9') < (b.inicioPrevisto ?? '9') ? -1 : 1)), [o.servicos]);
   const medicoes = o.medicoes.medicoes.filter((m) => m.dataPrevista);
   const hoje = dataN(dataBase)!;
@@ -29,6 +29,13 @@ export function Gantt({ o, dataBase }: { o: Obra360; dataBase: string }) {
   const porMes = o.medicoes.porMes; let accP = 0; let accF = 0;
   const curva = porMes.map((m) => { accP += m.liquido; accF += m.faturado; return { rotulo: m.dataPrevista ? `${MESES[Number(m.dataPrevista.slice(5, 7)) - 1]}/${m.dataPrevista.slice(2, 4)}` : `M${m.mes}`, previsto: accP, faturado: accF, passado: !!m.dataPrevista && m.dataPrevista <= dataBase }; });
   const marcadorHoje = curva.reduce((ult, c, i) => (c.passado ? i : ult), -1);
+  // curva S de custo: comprometido acumulado (por competencia) e pago acumulado (por data de caixa) das saidas oficiais da obra
+  const custos = lancamentos.filter((l) => l.oficial && l.tipo === 'Saída' && l.status !== 'Cancelado' && !l.direto);
+  const mesDe = (iso?: string) => (iso ? iso.slice(0, 7) : undefined);
+  const mesesCusto = [...new Set([...custos.map((l) => mesDe(l.competencia)), ...custos.filter((l) => l.status === 'Realizado').map((l) => mesDe(l.dataCaixa))].filter((m): m is string => !!m))].sort();
+  let accC = 0; let accPg = 0;
+  const curvaCusto = mesesCusto.map((m) => { accC += custos.filter((l) => mesDe(l.competencia) === m).reduce((a, l) => a + l.valorLiquidoPrevisto, 0); accPg += custos.filter((l) => l.status === 'Realizado' && mesDe(l.dataCaixa) === m).reduce((a, l) => a + l.valorRealizadoTotal, 0); return { rotulo: `${MESES[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`, comprometido: accC, pago: accPg, passado: m <= dataBase.slice(0, 7) }; });
+  const hojeCusto = curvaCusto.reduce((ult, c, i) => (c.passado ? i : ult), -1);
   return (
     <div className="gantt">
       <div className="viz-legend"><span><i className="viz-swatch" style={{ background: 'var(--border-strong)' }} />previsto</span><span><i className="viz-swatch" style={{ background: 'var(--brand)' }} />em andamento / real</span><span><i className="viz-swatch" style={{ background: 'var(--ok)' }} />concluído</span><span><i className="viz-swatch" style={{ background: 'var(--bad)' }} />atrasado</span><span><i className="viz-swatch losango" />marco de medição</span></div>
@@ -50,6 +57,7 @@ export function Gantt({ o, dataBase }: { o: Obra360; dataBase: string }) {
           <line x1={x(hoje)} x2={x(hoje)} y1={TOPO - 24} y2={H} className="viz-hoje" /><text x={x(hoje) + 4} y={H - 4} className="viz-axis">hoje</text>
         </svg>
       </div>
+      {curvaCusto.length > 1 && <div style={{ marginTop: 14 }}><LineChart titulo={`Curva S de custo: comprometido acumulado × pago acumulado (custo previsto ${money(o.servicos.reduce((a, s) => a + s.custoPrevisto, 0), true)})`} rotulos={curvaCusto.map((c) => c.rotulo)} series={[{ nome: 'Comprometido acumulado', valores: curvaCusto.map((c) => c.comprometido) }, { nome: 'Pago acumulado', valores: curvaCusto.map((c) => c.pago) }, { nome: 'Custo previsto', valores: curvaCusto.map(() => o.servicos.reduce((a, s) => a + s.custoPrevisto, 0)), tracejada: true }]} marcador={hojeCusto >= 0 ? hojeCusto : undefined} /></div>}
       {curva.length > 1 && <div style={{ marginTop: 14 }}><LineChart titulo="Curva S financeira: previsto acumulado × faturado acumulado (líquido da construtora)" rotulos={curva.map((c) => c.rotulo)} series={[{ nome: 'Previsto acumulado', valores: curva.map((c) => c.previsto), tracejada: true }, { nome: 'Faturado acumulado', valores: curva.map((c, i) => (i <= marcadorHoje || c.faturado > 0 ? c.faturado : undefined)) }]} marcador={marcadorHoje >= 0 ? marcadorHoje : undefined} /></div>}
     </div>
   );

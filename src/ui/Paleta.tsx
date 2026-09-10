@@ -5,6 +5,7 @@ import { useStore } from '../data/store';
 import { buscar } from './busca';
 import { Icon, type IconName } from './icons';
 import { navegar } from './router';
+import { registrarAcao } from '../data/telemetria';
 
 export interface AcaoPaleta { id: string; rotulo: string; sub?: string; icone?: IconName; executar: () => void }
 interface Item { id: string; grupo: string; rotulo: string; sub?: string; icone: IconName; rota?: string; chaveBusca: string; executar: () => void }
@@ -30,7 +31,7 @@ export function Paleta({ aberta, onFechar, acoes, permite }: { aberta: boolean; 
   const [q, setQ] = useState(''); const [idx, setIdx] = useState(0);
   const input = useRef<HTMLInputElement>(null); const lista = useRef<HTMLDivElement>(null);
   const fechar = () => { onFechar(); setQ(''); setIdx(0); };
-  const executar = (it: Item) => { gravarRecente(it.id); fechar(); it.executar(); };
+  const executar = (it: Item) => { gravarRecente(it.id); registrarAcao(`paleta:${it.grupo === 'Ações' ? it.id : it.grupo.toLowerCase()}`); fechar(); it.executar(); };
   const base = useMemo<Item[]>(() => {
     const nav: Item[] = ROTAS_NAV.filter((r) => !r.permissao || permite(r.permissao)).map((r) => ({ id: `nav:${r.to}`, grupo: 'Navegação', rotulo: r.rotulo, sub: r.grupo, icone: r.icone, rota: r.to, chaveBusca: `${r.rotulo} ${r.grupo}`, executar: () => navegar(r.to) }));
     const acs: Item[] = acoes.map((a) => ({ id: `acao:${a.id}`, grupo: 'Ações', rotulo: a.rotulo, sub: a.sub, icone: a.icone ?? 'checks', chaveBusca: `${a.rotulo} ${a.sub ?? ''}`, executar: a.executar }));

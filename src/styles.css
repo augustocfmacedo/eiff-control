@@ -643,3 +643,12 @@ tr.arrastando td { opacity: 0.55; }
 :root[data-theme="light"] .tour-foco { box-shadow: 0 0 0 9999px rgba(23, 25, 28, 0.45), 0 0 0 2px var(--brand); }
 @media (prefers-reduced-motion: reduce) { .tour-foco { transition: none; } .tour-cartao { animation: none; } }
 @media print { .tour, .vistas, .tabela-barra { display: none !important; } }
+
+/* bloco 6: assistente contextual */
+.sugestoes { display: grid; gap: 6px; margin-bottom: 14px; }
+.sugestao { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); border-left-width: 3px; font-size: var(--text-sm); }
+.sugestao.info { border-left-color: var(--info); } .sugestao.warn { border-left-color: var(--warn); } .sugestao.bad { border-left-color: var(--bad); }
+.sugestao-ico { display: grid; place-items: center; color: var(--muted); flex: 0 0 auto; }
+.sugestao.warn .sugestao-ico { color: var(--warn); } .sugestao.bad .sugestao-ico { color: var(--bad); } .sugestao.info .sugestao-ico { color: var(--info); }
+.sugestao-txt { flex: 1; min-width: 0; }
+.sugestao .fechar { padding: 2px 7px; color: var(--muted); }
