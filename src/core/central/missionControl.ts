@@ -284,8 +284,12 @@ export const GATES: Gate[] = [
     titulo: 'Migrations 0049, 0050 e 0051 aplicadas em produção',
     prova: 'As três aplicadas no projeto do Supabase, e a numeração registrada no CLAUDE.md.',
     situacao: 'bloqueado',
-    bloqueio: 'Falta o preflight contra o schema completo: o smoke recria só o que as migrations assumem do resto do banco, não o banco real.',
-    evidencias: [{ tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', nota: 'o harness existe; o preflight contra o schema completo é a Wave 02' }],
+    bloqueio: 'Preflight feito: a fila inteira 0001..0051 aplica em PGlite (51/51, 5 provas contra o schema real). O que falta é a DECISÃO de aplicar em produção — sem staging e sem backup automático no plano Free, é decisão da Diretoria, não do código.',
+    evidencias: [
+      { tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', nota: 'regras das três migrations, schema mínimo' },
+      { tipo: 'script', referencia: 'scripts/pg-preflight-central.mjs', nota: 'fila inteira + carga inicial, schema real' },
+      { tipo: 'documento', referencia: 'docs/central-db-release.md', simbolo: 'Recomendação' },
+    ],
   }),
   g({
     id: 'AUDITORIA_CENTRAL',
