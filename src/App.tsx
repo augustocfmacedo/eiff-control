@@ -21,6 +21,7 @@ const Cadastros = lazy(() => import('./screens/Cadastros'));
 const DiretorFinanceiro = lazy(() => import('./screens/DiretorFinanceiro'));
 const CaixaEntrada = lazy(() => import('./screens/CaixaEntrada'));
 const CentralObras = lazy(() => import('./screens/CentralObras'));
+const CentralIdentidades = lazy(() => import('./screens/CentralIdentidades'));
 const Checks = lazy(() => import('./screens/Checks'));
 const Conciliacao = lazy(() => import('./screens/Conciliacao'));
 const Dashboard = lazy(() => import('./screens/Dashboard'));
@@ -136,7 +137,11 @@ export default function App() {
     case undefined: tela = <Dashboard />; break;
     case 'inbox': tela = <CaixaEntrada />; break;
     case 'obras': tela = p1 ? <Obra360 codigo={p1} /> : <Obras />; break;
-    case 'central': tela = <CentralObras />; break;
+    // /central/identidades: autorizacao REAL da rota (nao so do menu) — sem ver_central a tela nem monta
+    case 'central': tela = p1 !== 'identidades' ? <CentralObras /> : pode(usuario, 'ver_central')
+      ? <CentralIdentidades />
+      : <EstadoErro titulo="Acesso restrito" causa={<>As identidades do WhatsApp da EIFF Central são visíveis apenas para <b>Administrador</b>, <b>Diretoria</b> e <b>Financeiro</b> nesta fase. Seu perfil (<b>{usuario.papel}</b>) não tem a permissão <code>ver_central</code>.</>}>Peça ao Administrador se precisar vincular ou revogar números da Central.</EstadoErro>;
+      break;
     case 'producao': tela = <Producao query={rota.query} key={rota.query.toString()} />; break;
     case 'estoque': tela = <Estoque query={rota.query} key={rota.query.toString()} />; break;
     case 'capacitacao': tela = <Capacitacao licao={p1} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
