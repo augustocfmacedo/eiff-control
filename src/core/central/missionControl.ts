@@ -337,7 +337,17 @@ export const GATES: Gate[] = [
     titulo: 'Mission Control em tempo real',
     prova: 'Endpoint server-side de development-status com adapter do GitHub: SHA de main ao vivo, status do CI, branches/workstreams, última atualização e polling controlado. Hoje o painel é um SNAPSHOT derivado do código no momento do build.',
     situacao: 'aberto',
-    evidencias: [{ tipo: 'documento', referencia: 'docs/eiff-central.md', simbolo: 'MISSION_CONTROL_LIVE' }],
+    // o codigo existe (F4, Wave 03): adapter read-only, /api/development-status e a regra LIVE x SNAPSHOT. O gate
+    // so fecha quando a fonte estiver acessivel, autorizada e fresca DE VERDADE (token D3 no ambiente + leitura
+    // LIVE demonstrada) — invariante 10: codigo no repositorio nao torna a interface ao vivo.
+    bloqueio: undefined,
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/githubAdapter.ts', simbolo: 'tratarDevelopmentStatus' },
+      { tipo: 'modulo', referencia: 'src/core/central/statusVivo.ts', simbolo: 'modoDoStatus' },
+      { tipo: 'funcao', referencia: 'netlify/functions/development-status.ts' },
+      { tipo: 'teste', referencia: 'src/core/central/statusVivo.test.ts' },
+      { tipo: 'documento', referencia: 'docs/eiff-central.md', simbolo: 'MISSION_CONTROL_LIVE', nota: 'falta: GITHUB_READ_TOKEN no Netlify e uma leitura LIVE comprovada' },
+    ],
   }),
   g({
     id: 'OBSERVABILIDADE',

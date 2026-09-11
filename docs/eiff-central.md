@@ -265,3 +265,15 @@ O gate `MISSION_CONTROL_LIVE` fica **aberto** e é prioridade da próxima wave. 
 
 Acesso ao painel: permissão própria `ver_mission_control` (Administrador e Diretoria), conferida na rota — não só
 no menu.
+
+### Wave 03 — F4 entregue: o código do "ao vivo" existe; o modo LIVE ainda não
+
+`/api/development-status` (`netlify/functions/development-status.ts`) → JWT → perfil real → `ver_mission_control` →
+adapter somente-leitura do GitHub (`src/core/central/githubAdapter.ts`: HEAD de `main`, último EIFF Quality Gate em
+`main`, branches `central/*` e `integracao-*`, só GET, timeout 8 s, estados nomeados). A regra LIVE × SNAPSHOT vive em
+`src/core/central/statusVivo.ts`: LIVE **só** com fonte ok, autorizada e `geradoEm` com menos de 10 min; qualquer
+falha → SNAPSHOT com motivo. Polling de 60 s, parado com a aba oculta, backoff após falha.
+
+Variável: `GITHUB_READ_TOKEN`, só no painel do Netlify (D3) — token fine-grained, somente o repositório EIFF Control,
+Contents: read-only e Actions: read-only. Sem ela o endpoint responde 200 `SNAPSHOT · sem fonte configurada`, sem erro
+para o usuário. O gate `MISSION_CONTROL_LIVE` fecha quando uma leitura LIVE for demonstrada com a fonte real.
