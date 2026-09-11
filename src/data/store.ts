@@ -342,6 +342,7 @@ export type Acao =
   | 'reabrir_periodo'
   | 'ver_auditoria'
   | 'ver_mission_control'
+  | 'ver_central'
   | 'administrar'
   | 'comentar'
   | 'exportar'
@@ -350,7 +351,7 @@ export type Acao =
   | 'radar'
   | 'radar_config';
 
-const MATRIZ: Record<Acao, Papel[]> = {
+export const MATRIZ: Record<Acao, Papel[]> = {
   ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
   editar_lancamento: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras'],
   liquidar: ['Administrador', 'Financeiro'],
@@ -366,6 +367,10 @@ const MATRIZ: Record<Acao, Papel[]> = {
   // Mission Control (painel executivo da EIFF Central): SO Administrador e Diretoria nesta fase. Permissao propria de
   // proposito — ver_auditoria alcanca Financeiro, Contabilidade e Auditoria, que nao entram aqui.
   ver_mission_control: ['Administrador', 'Diretoria'],
+  // EIFF Central (conversas e mensagens da Central, reprocessamento read-only do parecer e, adiante, a EIFF Inbox):
+  // os mesmos papeis que ja operam a Central do Diretor Financeiro. Permissao propria de proposito — e a que a RLS de
+  // central_conversation espelha para o contexto INTERNAL (Administrador, Diretoria, Financeiro). Wave 03, D6.
+  ver_central: ['Administrador', 'Diretoria', 'Financeiro'],
   administrar: ['Administrador'],
   comentar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
   exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],

@@ -3,13 +3,22 @@
 // Nada e calculado aqui: todo numero vem de src/core/central/missionControl.ts, sempre como contagem de
 // gates fechados sobre gates exigidos. A tela mostra a conta ao lado do numero justamente para que
 // ninguem precise acreditar na porcentagem.
-import React, { useMemo, useState } from 'react';
+//
+// Wave 03 (F4): o cabecalho tem UM de dois estados, inequivocos — "Ao vivo" ou "Snapshot do desenvolvimento
+// · <motivo>". Quem decide e `modoDoStatus` (src/core/central/statusVivo.ts): LIVE so com fonte acessivel,
+// autorizada e fresca; qualquer falha e SNAPSHOT com o motivo escrito. A curadoria dos gates continua vindo do
+// codigo; o que fica ao vivo e o bloco GitHub (main, Quality Gate, branches), lido por /api/development-status.
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BENEFICIOS, CAMADAS, DEGRAUS, GATES, MARCOS, ONDAS, WORKSTREAMS,
   beneficioDesbloqueado, gatePorId, gatesDoDegrau, pctGates, prontidao, prontidaoDaCamada, prontidaoDoDegrau,
   prontidaoDoMarco, prontidaoDoWorkstream, resumoMissionControl,
   type Gate, type Prontidao, type SituacaoGate,
 } from '../core/central/missionControl';
+import { ROTULO_MOTIVO, criarPolling, idadeMs, idadeTexto, modoDoStatus, resumoQualityGate, type LeituraStatus, type ModoPainel } from '../core/central/statusVivo';
+import type { RespostaDevelopmentStatus } from '../core/central/githubAdapter';
+import { useStore } from '../data/store';
+import { tokenSessao } from '../data/supabase';
 import { Badge, Empty, KpiHero, KpiStrip, PageHead, PrintHead, ProgressRow, type Tone } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { Tabela } from '../ui/Tabela';
@@ -25,10 +34,128 @@ function Conta({ p }: { p: Prontidao }) {
   return <span className="mc-conta" title="Prontidão é contagem de gates fechados sobre gates exigidos — nunca um número digitado">{p.conta}</span>;
 }
 
+// ------------------------------------------------------------------------------ status ao vivo (cliente)
+
+const URL_STATUS = '/api/development-status';
+const SNAPSHOT_LOCAL: ModoPainel = { modo: 'SNAPSHOT', motivo: 'sem_fonte', detalhe: 'modo local, sem servidor' };
+const fmtData = (iso?: string) => (iso && Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
+const urlCommit = (repo: string, sha: string) => `https://github.com/${repo}/commit/${sha}`;
+const urlBranch = (repo: string, nome: string) => `https://github.com/${repo}/tree/${encodeURIComponent(nome)}`;
+
+/** Le o endpoint com o JWT da sessao. Nunca lanca: toda falha vira uma LeituraStatus que `modoDoStatus` traduz. */
+async function lerStatusRemoto(): Promise<LeituraStatus> {
+  const token = await tokenSessao();
+  if (!token) return { ok: false, erro: 'sem_endpoint' };
+  try {
+    const r = await fetch(URL_STATUS, { method: 'GET', cache: 'no-store', headers: { 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', authorization: `Bearer ${token}` } });
+    if (!r.ok) return { ok: false, erro: 'http', http: r.status };
+    // sem a funcao publicada o servidor devolve o index.html do SPA: isso e "sem endpoint", nao "ao vivo"
+    if (!(r.headers.get('content-type') ?? '').includes('application/json')) return { ok: false, erro: 'sem_endpoint' };
+    const corpo = (await r.json().catch(() => null)) as RespostaDevelopmentStatus | null;
+    return { ok: true, http: r.status, corpo };
+  } catch {
+    return { ok: false, erro: 'rede' };
+  }
+}
+
+const ROTULO_QG = { passou: 'Quality Gate ✓', falhou: 'Quality Gate ✗', executando: 'Quality Gate em execução', sem_execucao: 'Quality Gate sem execução' } as const;
+const TONE_QG: Record<keyof typeof ROTULO_QG, Tone> = { passou: 'ok', falhou: 'bad', executando: 'warn', sem_execucao: 'muted' };
+
+/** O badge do cabecalho: exatamente um dos dois estados. */
+function EstadoPainel({ painel }: { painel: ModoPainel }) {
+  if (painel.modo === 'SNAPSHOT') {
+    return (
+      <Badge tone="muted" title={`Prontidão derivada do código no momento do build. O estado ao vivo do repositório não pôde ser usado: ${ROTULO_MOTIVO[painel.motivo]}${painel.detalhe ? ` (${painel.detalhe})` : ''}. LIVE exige fonte acessível, autorizada e fresca.`}>
+        Snapshot do desenvolvimento · {ROTULO_MOTIVO[painel.motivo]}
+      </Badge>
+    );
+  }
+  const qg = resumoQualityGate(painel.status);
+  return (
+    <span className="mc-vivo" title={`Lido do GitHub em ${fmtData(painel.geradoEm)} por /api/development-status; a curadoria dos gates continua vindo do código.`}>
+      <span className="mc-vivo-ponto" aria-hidden="true" />
+      <b>Ao vivo</b>
+      <span className="mc-vivo-sep">·</span>
+      <span>atualizado {idadeTexto(painel.idadeMs)}</span>
+      <span className="mc-vivo-sep">·</span>
+      <span>main <code className="mc-sha">{painel.status.main.sha7}</code></span>
+      <span className="mc-vivo-sep">·</span>
+      <Badge tone={TONE_QG[qg]}>{ROTULO_QG[qg]}</Badge>
+    </span>
+  );
+}
+
+/** Bloco GitHub: so existe em LIVE. Em SNAPSHOT a tela e identica a de antes, mais o motivo no cabecalho. */
+function BlocoGithub({ painel, agoraIso }: { painel: Extract<ModoPainel, { modo: 'LIVE' }>; agoraIso: string }) {
+  const st = painel.status;
+  const qg = resumoQualityGate(st);
+  const q = st.qualityGate;
+  return (
+    <div className="card mc-github" style={{ marginTop: 16 }}>
+      <h2>GitHub — estado do repositório</h2>
+      <p className="small muted">Lido ao vivo de <code>{st.repositorio}</code> por um adapter somente leitura (token só no servidor). Última atualização {fmtData(painel.geradoEm)} ({idadeTexto(painel.idadeMs)}); a leitura vira snapshot sozinha quando envelhece.</p>
+      <div className="mc-github-grid">
+        <div className="mc-github-item">
+          <div className="mc-conta">HEAD de main</div>
+          <div className="mc-github-valor"><a href={urlCommit(st.repositorio, st.main.sha)} target="_blank" rel="noreferrer"><code className="mc-sha">{st.main.sha7}</code></a></div>
+          <div className="small muted">{st.main.mensagem ?? '—'}</div>
+          <div className="mc-conta">{fmtData(st.main.data)}</div>
+        </div>
+        <div className="mc-github-item">
+          <div className="mc-conta">Último Quality Gate em main</div>
+          <div className="mc-github-valor">
+            <Badge tone={TONE_QG[qg]}>{ROTULO_QG[qg]}</Badge>
+            {q?.url && <a className="small" href={q.url} target="_blank" rel="noreferrer">ver execução{q.numero ? ` #${q.numero}` : ''}</a>}
+          </div>
+          <div className="small muted">{q ? `${q.nome} · ${q.status}${q.conclusao ? ` · ${q.conclusao}` : ''}${q.sha7 ? ` · ${q.sha7}` : ''}` : 'nenhuma execução encontrada'}</div>
+          <div className="mc-conta">{fmtData(q?.quando)}</div>
+        </div>
+        <div className="mc-github-item">
+          <div className="mc-conta">Branches ativas (central/*, integracao-*)</div>
+          <div className="mc-github-valor">{st.branchesTotal}{st.branchesTotal > st.branches.length ? <span className="small muted"> ({st.branches.length} detalhadas)</span> : null}</div>
+          {st.branches.length === 0
+            ? <div className="small muted">nenhuma branch de trabalho aberta</div>
+            : (
+              <ul className="mc-branch-lista">
+                {st.branches.map((b) => (
+                  <li key={b.nome}>
+                    <a href={urlBranch(st.repositorio, b.nome)} target="_blank" rel="noreferrer">{b.nome}</a>
+                    <code className="mc-sha">{b.sha7}</code>
+                    <span className="mc-conta">{b.data ? idadeTexto(idadeMs(b.data, agoraIso)) : 'sem data'}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+        </div>
+      </div>
+      {st.avisos.length > 0 && <div className="mc-conta" style={{ marginTop: 8 }}>Leituras secundárias com falha: {st.avisos.join(' · ')}</div>}
+    </div>
+  );
+}
+
 export default function MissionControl() {
+  const { modo } = useStore();
   const [situacao, setSituacao] = useState<SituacaoGate | 'todos'>('todos');
   const [frente, setFrente] = useState<string>('');
+  const [leitura, setLeitura] = useState<LeituraStatus | undefined>(undefined);
+  const [agoraIso, setAgoraIso] = useState(() => new Date().toISOString());
 
+  // polling controlado: intervalo fixo, para com a aba oculta, backoff apos falha (regra em statusVivo.ts)
+  useEffect(() => {
+    if (modo === 'local') return;
+    const polling = criarPolling({
+      executar: async () => { const l = await lerStatusRemoto(); setLeitura(l); setAgoraIso(new Date().toISOString()); return l.ok && !!l.corpo; },
+      oculta: () => typeof document !== 'undefined' && document.hidden,
+    });
+    const aoMudar = () => polling.visibilidadeMudou();
+    document.addEventListener('visibilitychange', aoMudar);
+    polling.iniciar();
+    return () => { document.removeEventListener('visibilitychange', aoMudar); polling.parar(); };
+  }, [modo]);
+  // o relogio da tela avanca sozinho: "atualizado ha N min" envelhece e a leitura vira snapshot sem nova chamada
+  useEffect(() => { const id = setInterval(() => setAgoraIso(new Date().toISOString()), 30_000); return () => clearInterval(id); }, []);
+
+  const painel = useMemo<ModoPainel>(() => (modo === 'local' ? SNAPSHOT_LOCAL : modoDoStatus(leitura, agoraIso)), [modo, leitura, agoraIso]);
   const r = useMemo(() => resumoMissionControl(), []);
   const gatesFiltrados = useMemo(
     () => GATES.filter((g) => (situacao === 'todos' || g.situacao === situacao) && (!frente || frenteDoGate(g.id)?.id === frente)),
@@ -45,10 +172,12 @@ export default function MissionControl() {
       <PrintHead titulo="Mission Control · EIFF Central" subtitulo="Prontidão derivada de gates com evidência verificável" />
       <PageHead
         title="Mission Control · EIFF Central"
-        subtitle={<>Quanto falta, o que já funciona, o que está bloqueado e quando cada degrau abre. Toda prontidão desta tela é <b>contagem de gates fechados sobre gates exigidos</b>: nenhum número é digitado à mão, e cada gate fechado aponta para um arquivo, um teste ou um commit que existe no repositório. É um <b>snapshot</b> derivado do código — não é tempo real.</>}
+        subtitle={<>Quanto falta, o que já funciona, o que está bloqueado e quando cada degrau abre. Toda prontidão desta tela é <b>contagem de gates fechados sobre gates exigidos</b>: nenhum número é digitado à mão, e cada gate fechado aponta para um arquivo, um teste ou um commit que existe no repositório. {painel.modo === 'LIVE'
+          ? <>A curadoria dos gates continua vindo do código; o bloco <b>GitHub</b> abaixo é lido <b>ao vivo</b> do repositório e volta a snapshot sozinho se a fonte falhar ou envelhecer.</>
+          : <>É um <b>snapshot</b> derivado do código — não é tempo real ({ROTULO_MOTIVO[painel.motivo]}).</>}</>}
       >
         <div className="actions no-print">
-          <Badge tone="muted" title="Prontidão derivada do código no momento do build. Não há endpoint de status, adapter do GitHub nem polling: o que está aqui é o retrato do repositório, não o estado ao vivo (gate MISSION_CONTROL_LIVE).">Snapshot do desenvolvimento</Badge>
+          <EstadoPainel painel={painel} />
           <button className="btn" onClick={() => window.print()}><Icon name="livro" size={15} /> Imprimir</button>
         </div>
       </PageHead>
@@ -106,6 +235,9 @@ export default function MissionControl() {
         { label: 'Benefícios destravados', value: `${r.beneficiosAtivos}/${r.beneficiosTotal}`, hint: 'o que a empresa já ganhou' },
         { label: 'Ondas concluídas', value: ONDAS.filter((o) => o.situacao === 'concluida').length, hint: `${ONDAS.filter((o) => o.situacao === 'em_andamento').length} em andamento` },
       ]} />
+
+      {/* ------------------------------------------------------------------- GitHub ao vivo */}
+      {painel.modo === 'LIVE' && <BlocoGithub painel={painel} agoraIso={agoraIso} />}
 
       {/* ---------------------------------------------------------- Milestones e Blockers */}
       <div className="grid cols-2" style={{ marginTop: 16 }}>

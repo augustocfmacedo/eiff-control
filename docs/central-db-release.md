@@ -353,3 +353,105 @@ Ou seja: aplicar **estas três** é seguro. Continuar aplicando **assim** não �
 - Guardar a saída da verificação da seção 6 junto do registro da aplicação.
 - Manter os dois harnesses no ciclo: qualquer migration nova da Central entra primeiro no
   `pg-preflight-central.mjs` e só depois no banco.
+
+## 11. Registro de aplicação — 11/09/2026 (F1 da Wave 03)
+
+Aplicadas em produção (`dduobppgomqyagjviwpx`), pelo Architect, sob autorização explícita "APLIQUE AGORA", uma por vez,
+cada uma em cópia temporária envelopada em `begin; … commit;` (originais intocados), via `supabase db query --linked
+--project-ref … -f`. Backups prévios (fora do repositório, `D:\Usuario\Documents\CLAUDE\backups\eiff-control\`):
+schema `…-schema-20260911-1652.sql` (348.748 bytes, SHA-256 `458bd144…1728520`) e dados `…-data-20260911-1652.sql`
+(7.887.699 bytes, SHA-256 `d3d08d0a…258044`), ambos reconfirmados imediatamente antes da primeira escrita.
+
+| Migration | Apply | POST-CHECK (read-only) |
+| --- | --- | --- |
+| 0049 | exit 0 | tabela + RLS; índices `pkey`, `pessoa_idx`, `telefone_idx`, `verificada_uk`; triggers `audit`, `coerencia`, `estado`, `touch`; policy `wi_select`; RPCs `request`/`verify`/`attempt`/`transition` com EXECUTE só para `service_role` (0 para `authenticated`/`anon`); grants `SELECT`; 0 linhas |
+| 0050 | exit 0 | 3 tabelas + RLS; policies `cc_select`/`cm_select`/`ce_select`, filhos herdando a visibilidade da conversa; 9 triggers; `UNIQUE (organization_id, provider, external_message_id)` e `UNIQUE (organization_id, context, phone_e164)`; grants `SELECT`; 0 linhas |
+| 0051 | exit 0 | `CHECK (provider IN ('MANUAL','OCTADESK','META_CLOUD'))`; `radar_delivery_create` preserva "Octadesk só entrega WhatsApp" e inclui "Meta Cloud só entrega WhatsApp"; EXECUTE só `service_role`; ledger com 0 linhas antes e depois |
+
+Validação global (seção 6): tabelas 4/4 · policies de SELECT 4/4 · triggers 13/13 · RPCs por `authenticated` 0/0 ·
+RPCs por `service_role` 6/6 · privilégios de `authenticated` = SELECT · RLS ligada 4/4 · CHECK inclui META_CLOUD.
+Posição final: 0044–0051 `aplicada`. Contagens: `whatsapp_identity` 0, `central_conversation` 0, `central_message` 0,
+`central_event` 0, `radar_communication_delivery` 0. Nenhuma identidade, conversa, mensagem ou entrega criada; nenhum
+envio; nenhuma mutação financeira. Nota para a restauração: o `pg_dump` alertou FKs circulares em
+`measurement`↔`financial_entry`, `stock_movement` e `radar_company` — restaurar o dump de dados exige
+`session_replication_role = replica` (já no cabeçalho) ou `--disable-triggers`.
+
+## 12. Próxima migration: 0052 — preparada, NÃO aplicada (Wave 03 F2, decisão D2/B+)
+
+`0052_central_inbound_content.sql` cria `central_message_content` (conteúdo inbound normalizado) e
+`central_message_processing` (trilha tipada de processamento). É **estritamente aditiva** (nenhum ALTER em 0049–0051),
+idempotente, e foi provada: smoke K–U em `scripts/pg-smoke-central.mjs` (exit 1 em qualquer FALHOU) e preflight
+`scripts/pg-preflight-central.mjs --ordem-corrigida` 0001..0052 com prova P6 e reaplicação 0049..0052 sem erro. **Só será
+aplicada em produção com autorização separada e explícita do proprietário** ("APLIQUE AGORA" para a 0052), e o
+Mission Control mantém `CENTRAL_INBOUND_PERSISTENCE` aberto até lá.
+
+Pré-condições, no dia: `main`/`integracao-wave03` no SHA aprovado; Quality Gate verde; posição real do banco = 0044–0051
+`aplicada` e **nenhum** objeto `central_message_content`/`central_message_processing` presente; preflight 0001..0052
+verde no mesmo SHA; backup novo (schema + dados) fora do repositório com SHA-256 registrado; `CENTRAL_ALPHA_MODE` ausente
+ou `off` no Netlify (o webhook continua descartando o payload até a F2 estar integrada e o Alpha liberado).
+
+Aplicação: cópia temporária envelopada em `begin; … commit;`, `supabase db query --linked --project-ref
+dduobppgomqyagjviwpx -f <cópia>`; original intocado; sem `db push`.
+
+POST-CHECK (read-only), tudo em `select`:
+
+```sql
+select tablename, rowsecurity from pg_tables where tablename in ('central_message_content','central_message_processing');
+select policyname, tablename from pg_policies where tablename in ('central_message_content','central_message_processing');
+select tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid where not t.tgisinternal
+  and c.relname in ('central_message_content','central_message_processing') order by 1;           -- 5 triggers
+select conname from pg_constraint where conrelid = 'central_message_processing'::regclass and contype = 'c' order by 1;
+select indexname from pg_indexes where tablename = 'central_message_processing' order by 1;       -- inclui _webhook_uk
+select table_name, string_agg(privilege_type, ',') from information_schema.role_table_grants
+  where grantee = 'authenticated' and table_name in ('central_message_content','central_message_processing') group by 1;  -- SELECT
+select (select count(*) from central_message_content) conteudos, (select count(*) from central_message_processing) processamentos;  -- 0, 0
+```
+
+Rollback: forward-fix (D1). Sem `down` automático; `drop table` das duas tabelas só com nova autorização, e só enquanto
+estiverem vazias.
+
+## 13. Registro de aplicação — 0052 (D1.2, 11/09/2026)
+
+Aplicada em produção (`dduobppgomqyagjviwpx`), pelo Architect, sob autorização explícita "D1.2 — BACKUP PRE-0052 + APPLY
+0052 AGORA", sobre o RC1 `bc705ffcd33867859026647bf7f7beb61684fe90` (PR #2 aberto e **não** mergeado; Quality Gate #5,
+run `34653152924`, SUCCESS). Artefato conferido antes de tocar produção: blob git `6cdd48341a03866e7449d68cc8ffc9b63cb6f3d4`,
+SHA-256 `f08996ba26c711862fa64201ce22713becf76d2b801b7782a744a5618d424476`, original intocado.
+
+**Precheck (read-only):** 0044–0051 `aplicada`; `central_message_content` e `central_message_processing` `FALTA`;
+contagens `whatsapp_identity` 0, `central_conversation` 0, `central_message` 0, `central_event` 0,
+`radar_communication_delivery` 0. Reconfirmado idêntico depois dos dumps e imediatamente antes da escrita.
+
+**Backup pré-0052** (fora do repositório, `D:\Usuario\Documents\CLAUDE\backups\eiff-control\`, Supabase CLI gerenciando a
+autenticação; nenhuma senha temporária observada, capturada ou registrada):
+
+| Dump | Arquivo | Bytes | SHA-256 | Validação |
+| --- | --- | --- | --- | --- |
+| schema | `backup-eiff-pre-0052-schema-20260911-1925.sql` | 388.309 | `6301e4ae8d2f3918403cc6790733f72c45b9613895488004836e60d8f6488943` | exit 0; `CREATE TABLE` de `whatsapp_identity`, `central_conversation`, `central_message`, `central_event` presentes (1 cada); `central_message_content`/`central_message_processing` ausentes (0); 5 policies 0049/0050 |
+| data-only | `backup-eiff-pre-0052-data-20260911-1925.sql` | 7.888.544 | `75cce0e90e43b091a5d72b9d60a7c3d7c481dfd2ecce78add9eba5312d78a7f5` | exit 0; termina em "PostgreSQL database dump complete"; 25.440 linhas; conteúdo não impresso |
+
+**Aplicação:** cópia temporária `begin; <0052 exato> commit;` (159 linhas = 156 + envelope) via
+`supabase db query --linked --project-ref dduobppgomqyagjviwpx -f <cópia>`; **exit 0**; sem `db push`; nenhuma outra migration.
+
+**Post-check (read-only, valor real):** tabelas 2/2 com RLS ligada; policies `cmc_select` e `cmp_select` (SELECT, `public`,
+herdando mensagem → conversa); privilégios de `authenticated` = SELECT apenas (INSERT/UPDATE/DELETE = false) nas duas;
+triggers 5/5 (`central_message_content_coerencia`, `central_message_content_no_update`, `central_message_processing_coerencia`,
+`central_message_processing_no_update`, `central_message_processing_no_delete`), funções 4/4; constraints do conteúdo:
+PK `message_id`, FK `central_message(id) on delete cascade`, FK organização, `body_text` 1..1000, `body_sha256` 64 hex,
+`normalization_version >= 1`; constraints do processamento: PK `id`, FKs organização/conversa/mensagem/identidade/ator,
+`origin` ∈ {WEBHOOK, REPROCESSAMENTO}, `status` ∈ {CONCLUIDO, ERRO}, `can_execute = false`, `sent = false`, `engine_sha`
+7..64 hex, `concluido_chk` (saída + situação obrigatórias, erro nulo), `erro_chk` (código obrigatório), `input_chk` (só
+`sem_texto` conclui sem hash), `ator_chk`/`webhook_chk`; índice parcial único `central_message_processing_webhook_uk`
+(`message_id` where origin = WEBHOOK and status = CONCLUIDO) + índices de conversa e mensagem; contagens depois:
+`central_message_content` 0, `central_message_processing` 0, demais cinco tabelas 0 (inalteradas). Coerência de hash de
+entrada, vínculo da identidade à conversa e ERRO repetível são regras de trigger/índice provadas no smoke K–U (PGlite e
+Quality Gate remoto), não exercitadas com dados em produção — nenhuma linha sintética foi inserida.
+
+**Observação (dívida `ANON_GRANTS_CENTRAL`):** o papel `anon` tem privilégios de INSERT/UPDATE/DELETE em
+`central_message_content`, `central_message_processing` e também em `whatsapp_identity`, `central_conversation`,
+`central_message`, `central_event` (padrão do schema `public` no Supabase; as migrations revogaram só de `authenticated`).
+Com RLS ligada e nenhuma policy de escrita, `anon` não consegue inserir, alterar, apagar nem ler linhas — mas o grant
+existe. `financial_entry` já tem `anon` revogado. Correção = migration aditiva de `revoke all ... from anon` (candidata a
+`0053`), só com autorização própria.
+
+Nenhuma identidade, conversa, mensagem, processamento ou entrega criada; nenhum envio; nenhuma mutação financeira.
+`CENTRAL_ALPHA_MODE` segue não configurado. Rollback: forward-fix (D1); `drop` só com nova autorização e tabelas vazias.
