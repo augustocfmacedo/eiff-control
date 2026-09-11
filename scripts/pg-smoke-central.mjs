@@ -7,9 +7,8 @@
 // Como rodar:
 //   node scripts/pg-smoke-central.mjs
 //
-// O @electric-sql/pglite NAO e dependencia declarada do projeto: hoje ele resolve porque ja vem como
-// dependencia TRANSITIVA (esta no package-lock.json). Se um dia deixar de resolver, instale sob demanda
-// sem gravar no package.json:  npm i --no-save @electric-sql/pglite
+// O @electric-sql/pglite e devDependency FIXADA (0.3.16) desde a Wave 02: antes chegava so como transitiva de
+// netlify-cli, o que deixaria o gate cair num npm update sem ninguem ter tocado em SQL. npm ci basta.
 //
 // O harness recria SO o que as migrations assumem do resto do schema (organization, profile, worker,
 // audit_log, auth.uid(), current_org(), has_role(), touch_updated_at(), os papeis do Supabase e o minimo do

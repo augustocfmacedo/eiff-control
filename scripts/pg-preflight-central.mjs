@@ -27,8 +27,8 @@
 //   * a fila tambem nao e replayavel em ordem de arquivo: 0015 (que cria project_service.version) e a CORRECAO de
 //     0014, e vem depois dela. Com --ordem-corrigida o harness adianta 0015 e a fila inteira fica verde.
 //
-// O @electric-sql/pglite NAO e dependencia declarada do projeto: resolve por vir como dependencia TRANSITIVA
-// (esta no package-lock.json). Se um dia deixar de resolver:  npm i --no-save @electric-sql/pglite
+// O @electric-sql/pglite e devDependency FIXADA (0.3.16) desde a Wave 02; npm ci basta. O contrib pgcrypto vem
+// do proprio pacote.
 //
 // ---------------------------------------------------------------------------------------------------------
 // O QUE ESTE HARNESS *NAO* PROVA

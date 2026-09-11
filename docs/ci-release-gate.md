@@ -66,36 +66,23 @@ faz `tee pg-smoke-central.json` e um validador Node inline reprova (exit 1) se:
 O resumo (migrations, A–J, rollback) vai ao Job Summary do run. Provado localmente: exit 0 com a saída real e
 exit 1 com JSON adulterado (migration com ERRO, smoke FALHOU, sufixo ATENCAO, rollback ausente, `erroFatal`).
 
-## Situação do `@electric-sql/pglite` (atenção do Architect)
+## Situação do `@electric-sql/pglite` — decidida
 
-`@electric-sql/pglite` **não é dependência direta** do projeto. Ele resolve porque está no `package-lock.json`
-como dependência **transitiva obrigatória** (não opcional) por esta cadeia:
+Desde a Wave 02, `@electric-sql/pglite` é **devDependency fixada** (`"0.3.16"`, sem `^`). `npm ci` o instala
+diretamente; o step "Verify PGlite resolves" continua como prova a cada run.
 
-```
-netlify-cli@27.4.2 (devDependency)
-└─ @netlify/dev@5.0.5
-   └─ @netlify/database-dev@1.0.1
-      └─ @electric-sql/pglite@0.3.16   (dev: true, optional: false)
-```
+**Por que foi preciso decidir.** Antes ele resolvia só por acidente: chegava como dependência transitiva obrigatória
+de `netlify-cli` (`→ @netlify/dev → @netlify/database-dev → @electric-sql/pglite`). Era garantia frágil por dois
+motivos, ambos provados pelo CI & Release Guard num checkout limpo:
 
-Prova num checkout limpo (worktree sem `node_modules`, `npm ci`, Node 24 local): `npm ls @electric-sql/pglite`
-mostra a cadeia acima e `import('@electric-sql/pglite')` devolve `PGlite`. O step "Verify PGlite resolves" repete
-essa prova em cada run, com Node 20, e falha antes dos testes se ela deixar de valer.
+- `@netlify/database-dev` declara `engines.node >= 22.12.0` — com Node 20 o npm só avisa (`EBADENGINE`) porque não
+  há `engine-strict`; o próprio PGlite 0.3.16 não declara `engines` e roda no Node 20;
+- um `npm update netlify-cli` (ou o Netlify trocar de motor de banco local) tiraria o PGlite do lockfile e derrubaria
+  o smoke **sem que nenhuma linha de SQL tivesse mudado**.
 
-Portanto hoje **é garantido** enquanto `netlify-cli` continuar devDependency e o lockfile não for regenerado com
-uma versão do `netlify-cli` que abandone `@netlify/database-dev`. É uma garantia frágil (acidental):
-
-- `@netlify/database-dev` declara `engines.node >= 22.12.0` — com Node 20 o npm só avisa (`EBADENGINE`) porque
-  não há `engine-strict`; o próprio PGlite 0.3.16 não declara `engines` e roda no Node 20;
-- um `npm update netlify-cli` (ou o Netlify trocar de motor de banco local) tira o PGlite do lockfile e quebra o
-  smoke sem que nenhuma linha do projeto tenha mudado.
-
-**Proposta ao Architect (menor correção reproduzível, não aplicada por este worker):** promover a devDependency
-fixada, `"@electric-sql/pglite": "0.3.16"` em `devDependencies` (sem `^`, a mesma versão já resolvida no
-lockfile, para o `npm install` só acrescentar a aresta direta sem trocar bytes) e atualizar o comentário de
-cabeçalho de `scripts/pg-smoke-central.mjs`. `package.json`/`package-lock.json` não foram tocados aqui porque
-o DB RELEASE pode estar mexendo neles.
-
+A correção foi a menor reproduzível: fixar a mesma versão já resolvida no lockfile, para o diff ser uma linha em
+`package.json` e uma em `package-lock.json`, sem trocar nenhuma versão instalada. Aplicada pelo Architect na
+integração da Wave 02 (o worker não tocou em `package.json` por desenho, para não colidir com o DB Release).
 ## Rodar o mesmo gate localmente
 
 ```
