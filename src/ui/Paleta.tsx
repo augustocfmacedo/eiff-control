@@ -20,6 +20,7 @@ export const ROTAS_NAV: { to: string; rotulo: string; grupo: string; icone: Icon
   { to: '/posicao', rotulo: 'Posição diária', grupo: 'Tesouraria', icone: 'banco', permissao: 'ver_bancos' }, { to: '/fluxo13', rotulo: 'Fluxo 13 semanas', grupo: 'Tesouraria', icone: 'fluxo' }, { to: '/fluxo24', rotulo: 'Fluxo 24 meses', grupo: 'Tesouraria', icone: 'calendario' }, { to: '/conciliacao', rotulo: 'Bancos e conciliação', grupo: 'Tesouraria', icone: 'conciliacao', permissao: 'ver_bancos' }, { to: '/dividas', rotulo: 'Dívidas', grupo: 'Tesouraria', icone: 'dividas', permissao: 'ver_bancos' },
   { to: '/dre', rotulo: 'DRE gerencial', grupo: 'Controladoria', icone: 'dre' }, { to: '/checks', rotulo: 'Checks e fechamento', grupo: 'Controladoria', icone: 'checks' },
   { to: '/cadastros', rotulo: 'Cadastros e parâmetros', grupo: 'Administração', icone: 'cadastros' }, { to: '/auditoria', rotulo: 'Auditoria', grupo: 'Administração', icone: 'auditoria', permissao: 'ver_auditoria' },
+  { to: '/mission-control', rotulo: 'Mission Control · EIFF Central', grupo: 'Administração', icone: 'checks', permissao: 'ver_mission_control' },
 ];
 
 const RECENTES = 'eiff-control:paleta-recentes';

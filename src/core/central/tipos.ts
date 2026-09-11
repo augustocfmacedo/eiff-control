@@ -115,7 +115,7 @@ export interface AcaoProposta {
    * Permissao que o agente DECLARA precisar. E declaracao, nao autoridade: `autorizarAcao` confere contra o
    * catalogo e recusa quando divergem. Agente com defeito nao consegue pedir menos permissao do que a acao exige.
    */
-  permissao: Acao; exigeConfirmacao: boolean; reversivel: boolean;
+  permissao: Acao | null; exigeConfirmacao: boolean; reversivel: boolean;
   /** Obra sobre a qual a acao age, quando houver: e o escopo passado a `pode(usuario, acao, codigoObra)`. */
   escopoObra?: string;
   parametros: Record<string, unknown>;
@@ -174,6 +174,16 @@ export const CATALOGO_ACOES: DefinicaoAcao[] = [
 ];
 const POR_CODIGO = new Map(CATALOGO_ACOES.map((a) => [a.codigo, a]));
 export const definicaoDaAcao = (codigo: string): DefinicaoAcao | undefined => POR_CODIGO.get(codigo);
+/**
+ * Permissao de uma acao que EXIGE permissao (escrita). Para acao de ajuda (permissao null) isto estoura de
+ * proposito: ninguem monta uma acao de escrita em cima de um codigo sem permissao — e nenhum cast esconde isso.
+ */
+export function permissaoExigida(codigo: string): Acao {
+  const def = definicaoDaAcao(codigo);
+  if (!def) throw new Error(`ação "${codigo}" não está no catálogo`);
+  if (def.permissao === null) throw new Error(`ação "${codigo}" não exige permissão: não serve para escrita`);
+  return def.permissao;
+}
 
 export interface AutorizacaoAcao { autorizado: boolean; permissao: Acao | null; motivo: string }
 /**

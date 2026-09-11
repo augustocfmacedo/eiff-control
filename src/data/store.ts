@@ -341,6 +341,7 @@ export type Acao =
   | 'fechar_periodo'
   | 'reabrir_periodo'
   | 'ver_auditoria'
+  | 'ver_mission_control'
   | 'administrar'
   | 'comentar'
   | 'exportar'
@@ -362,6 +363,9 @@ const MATRIZ: Record<Acao, Papel[]> = {
   fechar_periodo: ['Administrador', 'Financeiro'],
   reabrir_periodo: ['Administrador', 'Diretoria'],
   ver_auditoria: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
+  // Mission Control (painel executivo da EIFF Central): SO Administrador e Diretoria nesta fase. Permissao propria de
+  // proposito — ver_auditoria alcanca Financeiro, Contabilidade e Auditoria, que nao entram aqui.
+  ver_mission_control: ['Administrador', 'Diretoria'],
   administrar: ['Administrador'],
   comentar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
   exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],

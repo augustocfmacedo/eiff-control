@@ -1,9 +1,10 @@
+import fs from 'node:fs';
 // Ponte de permissoes da Central: a autorizacao e a MATRIZ do EIFF Control, nunca uma segunda ACL.
 // REGRA DEFINITIVA: a INTENCAO escolhe o AGENTE; a ACAO PROPOSTA escolhe a PERMISSAO. A decisao do
 // orquestrador entra so como sinal de desconfianca — ela interpreta linguagem, e linguagem nao autoriza.
 import { describe, expect, it } from 'vitest';
 import { autorizar } from './permissoes';
-import { CATALOGO_ACOES, decisaoSegura, definicaoDaAcao, type AcaoProposta, type CodigoAgente, type IdentidadeResolvida, type InternalIntent, type OrchestratorDecision, type WhatsappIdentity } from './tipos';
+import { CATALOGO_ACOES, autorizarAcao, decisaoSegura, definicaoDaAcao, permissaoExigida, type AcaoProposta, type CodigoAgente, type IdentidadeResolvida, type InternalIntent, type OrchestratorDecision, type WhatsappIdentity } from './tipos';
 import { getState, pode } from '../../data/store';
 import type { Papel, Usuario } from '../types';
 
@@ -24,7 +25,7 @@ function propor(codigo: string, escopoObra?: string): { proposta: AcaoProposta; 
   return {
     agente: def.agente,
     proposta: {
-      codigo, titulo: def.titulo, descricao: def.titulo, permissao: def.permissao!,
+      codigo, titulo: def.titulo, descricao: def.titulo, permissao: def.permissao,
       exigeConfirmacao: def.exigeConfirmacao, reversivel: true,
       escopoObra: def.exigeObra ? (escopoObra ?? 'OB-SF-CL-01') : escopoObra,
       parametros: {},
@@ -140,6 +141,41 @@ describe('escalada de privilégio', () => {
     const a = autorizar({ proposta, agente, ...ctx, decisao: decisao('FINANCE', 0.99) });
     expect(a).toMatchObject({ autorizado: false, negativa: 'papel_sem_acao' });
     expect(a.acao).toBe('liquidar');
+  });
+});
+
+describe('permissão null é contrato, nunca permissão artificial', () => {
+  const ctx = { identidade: resolvida, usuario: usuario('Contabilidade'), contexto: 'INTERNAL' as const };
+
+  it('ação de ajuda (permissão null) não ganha permissão por declaração na proposta', () => {
+    const { proposta, agente } = propor('GENERAL_AJUDA');
+    // a proposta MENTE que exige administrar: o catálogo diz null, e é o catálogo que manda
+    const a = autorizar({ proposta: { ...proposta, permissao: 'administrar' }, agente, ...ctx });
+    expect(a.autorizado).toBe(true);
+    expect(a.acao).toBeNull(); // nada de permissão artificial devolvida
+    // e a matriz nem é consultada para ação sem permissão: um pode() que estoura não é chamado
+    const veredicto = autorizarAcao({ usuario: ctx.usuario, agente, proposta: { ...proposta, permissao: 'administrar' }, identidade: resolvida }, () => { throw new Error('pode() não deveria ser consultado'); });
+    expect(veredicto).toMatchObject({ autorizado: true, permissao: null });
+  });
+
+  it('declarar null para uma ação que EXIGE permissão é recusado, e a exigência devolvida é a do catálogo', () => {
+    const { proposta, agente } = propor('FINANCE_LIQUIDAR');
+    const a = autorizar({ proposta: { ...proposta, permissao: null }, agente, ...ctx, usuario: usuario('Administrador') });
+    expect(a).toMatchObject({ autorizado: false, negativa: 'acao_recusada_pelo_catalogo', acao: 'liquidar' });
+  });
+
+  it('FINANCE_MEUS_PEDIDOS e GENERAL_AJUDA seguem sem permissão no catálogo, e permissaoExigida recusa usá-las como escrita', () => {
+    expect(definicaoDaAcao('FINANCE_MEUS_PEDIDOS')?.permissao).toBeNull();
+    expect(definicaoDaAcao('GENERAL_AJUDA')?.permissao).toBeNull();
+    expect(() => permissaoExigida('GENERAL_AJUDA')).toThrow(/não exige permissão/);
+    expect(() => permissaoExigida('INVENTADA')).toThrow(/não está no catálogo/);
+    expect(permissaoExigida('FINANCE_REGISTRAR_PREVISAO')).toBe('editar_lancamento');
+  });
+
+  it('nenhum cast "as Acao" sobrou no código de produção da Central', () => {
+    for (const arq of fs.readdirSync('src/core/central').filter((x) => x.endsWith('.ts') && !x.endsWith('.test.ts'))) {
+      expect(fs.readFileSync(`src/core/central/${arq}`, 'utf8'), arq).not.toMatch(/\bas Acao\b/);
+    }
   });
 });
 

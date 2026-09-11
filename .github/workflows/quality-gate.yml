@@ -1,0 +1,127 @@
+# EIFF Quality Gate — gate automático e reproduzível de qualidade (Wave 02, CI & Release Guard).
+#
+# O que este workflow FAZ: instala as dependências com `npm ci` (lockfile como fonte de verdade), roda
+# `npm test`, `npm run lint`, `npm run build`, o smoke das migrations da EIFF Central e o preflight da fila
+# inteira de migrations, ambos num PostgreSQL descartável em memória (PGlite, Postgres em WASM; o smoke termina em
+# ROLLBACK e o preflight morre com o processo). Qualquer falha derruba o run.
+#
+# O que este workflow NUNCA FAZ (somente validação; violar isto reprova a mudança em revisão):
+#   - não usa nem imprime segredo algum (nenhuma referência ao contexto de segredos do GitHub; nenhuma chave de
+#     produção do Supabase, da Meta, da Anthropic, do Vibe ou do Octadesk entra aqui);
+#   - não usa o Supabase CLI no modo linked, não aplica migration, não acessa o projeto Supabase;
+#   - não faz deploy, não chama a API do Netlify, da Meta, do Octadesk nem da Anthropic;
+#   - não envia mensagem nem executa mutação externa de nenhum tipo.
+#   A única operação de rede é a instalação normal de dependências pelo registro do npm.
+#
+# Paridade com o build de produção: Node 20 (NODE_VERSION = "20" em netlify.toml).
+# Recomendação (docs/ci-release-gate.md): após provar estabilidade, tornar "EIFF Quality Gate" required check de `main`.
+
+name: EIFF Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Um commit novo na mesma ref/PR cancela o run anterior ainda em andamento.
+concurrency:
+  group: eiff-quality-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Privilégio mínimo: só leitura do repositório. Nada é escrito no GitHub.
+permissions:
+  contents: read
+
+env:
+  # Sem variáveis VITE_*: o build é estático e o app compila em modo local (sem Supabase), como o Netlify faz sem .env.
+  CI: true
+  NPM_CONFIG_AUDIT: "false"
+  NPM_CONFIG_FUND: "false"
+
+jobs:
+  quality-gate:
+    name: EIFF Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # fetch-depth: 0 — historico completo. O checkout padrao e raso (depth 1) e o Mission Control prova
+      # evidencia por commit com git cat-file: num clone raso o commit citado nao existe e o teste falha.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node 20 (paridade com o Netlify)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # Cache só do diretório de download do npm (tarballs verificados por integridade do lockfile).
+          # Não altera resultado de teste: `npm ci` continua instalando exatamente o package-lock.json.
+          cache: npm
+
+      - name: Install (npm ci)
+        run: npm ci
+
+      # @electric-sql/pglite é devDependency FIXADA (0.3.16) desde a Wave 02 — antes chegava só como transitiva de
+      # netlify-cli. Este step prova que `npm ci` a instalou neste checkout limpo e que o módulo carrega. Falha se não.
+      - name: Verify PGlite resolves
+        run: |
+          npm ls @electric-sql/pglite --depth=10
+          node -e "import('@electric-sql/pglite').then(m => console.log('pglite ok:', typeof m.PGlite))"
+
+      - name: Tests
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      # scripts/pg-smoke-central.mjs aplica 0049/0050/0051 num PGlite em memória e termina em ROLLBACK.
+      # O script imprime JSON e sai com código 0 mesmo em falha, então o veredito é dado aqui: o step FALHA
+      # se qualquer migration não estiver "APLICADA sem erro", se qualquer smoke A–J não for PASS limpo
+      # (um sufixo "ATENCAO" também reprova) ou se o rollback não for confirmado.
+      - name: PostgreSQL Smoke
+        run: |
+          SMOKE_JSON="${RUNNER_TEMP:-.}/pg-smoke-central.json"
+          node scripts/pg-smoke-central.mjs | tee "$SMOKE_JSON"
+          SMOKE_JSON="$SMOKE_JSON" node --input-type=module - <<'EOF'
+          import fs from 'node:fs';
+          const res = JSON.parse(fs.readFileSync(process.env.SMOKE_JSON, 'utf8'));
+          const falhas = [];
+          if (res.erroFatal) falhas.push(`erro fatal: ${res.erroFatal}`);
+          for (const m of ['0049', '0050', '0051']) {
+            if (res.migrations?.[m] !== 'APLICADA sem erro') falhas.push(`migration ${m}: ${res.migrations?.[m] ?? 'não executada'}`);
+          }
+          for (const t of 'ABCDEFGHIJ') {
+            const v = res.smoke?.[t];
+            if (typeof v !== 'string' || !v.startsWith('PASS')) falhas.push(`smoke ${t}: ${v ?? 'não executado'}`);
+            else if (v.includes('ATENCAO')) falhas.push(`smoke ${t} com ressalva: ${v}`);
+          }
+          if (typeof res.rollback !== 'string' || !res.rollback.startsWith('ROLLBACK ok')) falhas.push(`rollback: ${res.rollback ?? 'não confirmado'}`);
+          const resumo = [
+            '### PostgreSQL Smoke (PGlite em memória, ROLLBACK ao final)',
+            '',
+            ...['0049', '0050', '0051'].map((m) => `- migration ${m}: ${res.migrations?.[m] ?? '—'}`),
+            ...'ABCDEFGHIJ'.split('').map((t) => `- smoke ${t}: ${res.smoke?.[t] ?? '—'}`),
+            `- ${res.rollback ?? 'rollback não confirmado'}`,
+            '',
+          ].join('\n');
+          if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, resumo);
+          if (falhas.length) {
+            console.error('PostgreSQL Smoke REPROVADO:\n - ' + falhas.join('\n - '));
+            process.exit(1);
+          }
+          console.log('PostgreSQL Smoke aprovado: 3 migrations aplicadas, 10 smoke tests PASS, rollback ok.');
+          EOF
+
+      # scripts/pg-preflight-central.mjs aplica a fila INTEIRA 0001..0051 + a carga inicial num PGlite descartável:
+      # o schema completo reconstruído do repositório (com shims do Supabase e a ordem histórica corrigida), não a
+      # produção. Sai com código 1 se qualquer migration, prova ou reaplicação falhar — e é o código de saída que
+      # decide o step. Não toca em banco externo, não usa --linked, não usa segredo.
+      - name: Full Migration Preflight
+        run: node scripts/pg-preflight-central.mjs --ordem-corrigida

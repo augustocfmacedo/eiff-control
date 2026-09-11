@@ -38,6 +38,7 @@ const Compras = lazy(() => import('./screens/Compras'));
 const Producao = lazy(() => import('./screens/Producao'));
 const Estoque = lazy(() => import('./screens/Estoque'));
 const Capacitacao = lazy(() => import('./screens/Capacitacao'));
+const MissionControl = lazy(() => import('./screens/MissionControl'));
 const RadarCommandCenter = lazy(() => import('./screens/radar/CommandCenter'));
 const RadarHoje = lazy(() => import('./screens/radar/Hoje'));
 const RadarEmpresas = lazy(() => import('./screens/radar/Empresas'));
@@ -139,6 +140,11 @@ export default function App() {
     case 'producao': tela = <Producao query={rota.query} key={rota.query.toString()} />; break;
     case 'estoque': tela = <Estoque query={rota.query} key={rota.query.toString()} />; break;
     case 'capacitacao': tela = <Capacitacao licao={p1} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
+    // autorizacao REAL da rota (nao so do menu): sem ver_mission_control a tela nem monta
+    case 'mission-control': tela = pode(usuario, 'ver_mission_control')
+      ? <MissionControl />
+      : <EstadoErro titulo="Acesso restrito" causa={<>O Mission Control da EIFF Central é visível apenas para <b>Administrador</b> e <b>Diretoria</b> nesta fase. Seu perfil (<b>{usuario.papel}</b>) não tem a permissão <code>ver_mission_control</code>.</>}>Peça ao Administrador se precisar acompanhar o estado da construção.</EstadoErro>;
+      break;
     case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
     case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
     case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;

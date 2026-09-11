@@ -7,13 +7,20 @@
 // Como rodar:
 //   node scripts/pg-smoke-central.mjs
 //
-// O @electric-sql/pglite NAO e dependencia declarada do projeto: hoje ele resolve porque ja vem como
-// dependencia TRANSITIVA (esta no package-lock.json). Se um dia deixar de resolver, instale sob demanda
-// sem gravar no package.json:  npm i --no-save @electric-sql/pglite
+// O @electric-sql/pglite e devDependency FIXADA (0.3.16) desde a Wave 02: antes chegava so como transitiva de
+// netlify-cli, o que deixaria o gate cair num npm update sem ninguem ter tocado em SQL. npm ci basta.
 //
 // O harness recria SO o que as migrations assumem do resto do schema (organization, profile, worker,
 // audit_log, auth.uid(), current_org(), has_role(), touch_updated_at(), os papeis do Supabase e o minimo do
 // ledger de entrega). NAO e o banco real: e o suficiente para provar sintaxe, objetos criados e as regras.
+//
+// Divisao de trabalho com o outro harness (scripts/pg-preflight-central.mjs):
+//   * ESTE arquivo prova as REGRAS das tres migrations, rapido (segundos) e contra um schema minimo montado a mao;
+//   * o pg-preflight-central.mjs aplica a FILA INTEIRA (0001..0051 + a carga inicial) e prova a INTERACAO com o
+//     schema completo reconstruido do repositorio (nao a producao) — role_kind como enum de verdade, has_role(variadic role_kind[]), current_org(), profile/worker
+//     reais e o ledger de entrega vindo de 0045..0048. Antes de aplicar em producao, rode os dois.
+// Este `has_role` do preludio recebe role_kind[] igual ao de producao (0003_rls.sql): se um dia divergir, o
+// preflight pega, porque la a funcao e a real.
 //
 // Os dez smoke tests: A) identidade cross-org recusada  B) worker de outra org recusado  C) identidade com
 // telefone/contexto divergente da conversa recusada  D) usuario comum nao le filhos de conversa INTERNAL
