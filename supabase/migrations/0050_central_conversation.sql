@@ -120,37 +120,47 @@ begin
   select organization_id into v_org from central_conversation where id = new.conversation_id;
   if v_org is null then raise exception 'conversa % não encontrada', new.conversation_id; end if;
   if v_org <> new.organization_id then raise exception 'linha de outra organização'; end if;
-  if tg_table_name = 'central_event' and new.message_id is not null then
-    select conversation_id into v_conversa from central_message where id = new.message_id;
-    if v_conversa is distinct from new.conversation_id then raise exception 'evento com mensagem de outra conversa'; end if;
+  -- o IF aninhado e obrigatorio: esta funcao serve as DUAS tabelas, e central_message nao tem a coluna
+  -- message_id. Num unico "and", o SQL pode avaliar o lado direito mesmo com o esquerdo falso e estourar
+  -- 'record "new" has no field "message_id"'.
+  if tg_table_name = 'central_event' then
+    if new.message_id is not null then
+      select conversation_id into v_conversa from central_message where id = new.message_id;
+      if v_conversa is distinct from new.conversation_id then raise exception 'evento com mensagem de outra conversa'; end if;
+    end if;
   end if;
   return new;
 end $$;
 -- a conversa nao referencia identidade nem dono de OUTRA organizacao, mesmo via service_role com parametro errado
-create or replace function central_conversation_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $
+create or replace function central_conversation_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  -- a identidade tem de ser A DESTA conversa: mesma organizacao, mesmo contexto e MESMO telefone. So organizacao
+  -- deixaria associar uma identidade VERIFIED valida a conversa de OUTRA pessoa dentro da mesma empresa.
   if new.identity_id is not null and not exists (
-    select 1 from whatsapp_identity i where i.id = new.identity_id and i.organization_id = new.organization_id) then
-    raise exception 'identidade % não pertence à organização da conversa', new.identity_id;
+    select 1 from whatsapp_identity i where i.id = new.identity_id
+      and i.organization_id = new.organization_id
+      and i.context = new.context
+      and i.phone_e164 = new.phone_e164) then
+    raise exception 'identidade % não corresponde a esta conversa (organização, contexto e telefone têm de bater)', new.identity_id;
   end if;
   if new.human_owner_id is not null and not exists (
     select 1 from profile p where p.id = new.human_owner_id and p.organization_id = new.organization_id) then
     raise exception 'responsável % não pertence à organização da conversa', new.human_owner_id;
   end if;
   return new;
-end $;
+end $$;
 drop trigger if exists central_conversation_coerencia on central_conversation;
 create trigger central_conversation_coerencia before insert or update on central_conversation for each row execute function central_conversation_coerencia();
 
 -- o ator do evento tambem e da organizacao da linha
-create or replace function central_event_ator_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $
+create or replace function central_event_ator_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if new.actor_id is not null and not exists (
     select 1 from profile p where p.id = new.actor_id and p.organization_id = new.organization_id) then
     raise exception 'ator % não pertence à organização do evento', new.actor_id;
   end if;
   return new;
-end $;
+end $$;
 drop trigger if exists central_event_ator on central_event;
 create trigger central_event_ator before insert on central_event for each row execute function central_event_ator_coerencia();
 

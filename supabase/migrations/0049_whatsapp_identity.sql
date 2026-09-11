@@ -92,7 +92,7 @@ create trigger whatsapp_identity_estado before update on whatsapp_identity for e
 
 -- 6) COERENCIA CROSS-TENANT: a pessoa vinculada tem de ser da MESMA organizacao da identidade. Vale no banco, e nao
 --    so na RPC: service_role chamado com parametro errado tambem esbarra aqui.
-create or replace function whatsapp_identity_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $
+create or replace function whatsapp_identity_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if new.profile_id is not null and not exists (
     select 1 from profile p where p.id = new.profile_id and p.organization_id = new.organization_id) then
@@ -106,8 +106,12 @@ begin
     select 1 from profile p where p.id = new.requested_by and p.organization_id = new.organization_id) then
     raise exception 'solicitante % não pertence à organização da identidade', new.requested_by;
   end if;
+  if new.last_actor_id is not null and not exists (
+    select 1 from profile p where p.id = new.last_actor_id and p.organization_id = new.organization_id) then
+    raise exception 'ator % não pertence à organização da identidade', new.last_actor_id;
+  end if;
   return new;
-end $;
+end $$;
 drop trigger if exists whatsapp_identity_coerencia on whatsapp_identity;
 create trigger whatsapp_identity_coerencia before insert or update on whatsapp_identity for each row execute function whatsapp_identity_coerencia();
 
@@ -187,7 +191,8 @@ begin
   if v_org is null then return jsonb_build_object('ok', false, 'erro', 'sem_perfil'); end if;
   select * into v_i from whatsapp_identity where id = p_identity_id for update;
   if v_i.id is null or v_i.organization_id <> v_org then return jsonb_build_object('ok', false, 'erro', 'identidade_nao_encontrada'); end if;
-  if v_i.verification_attempts >= p_max then return jsonb_build_object('ok', false, 'erro', 'tentativas_excedidas', 'tentativas', v_i.verification_attempts); end if;
+  -- o mesmo teto duro: o chamador pode apertar, nunca afrouxar
+  if v_i.verification_attempts >= least(greatest(coalesce(p_max, 5), 1), 5) then return jsonb_build_object('ok', false, 'erro', 'tentativas_excedidas', 'tentativas', v_i.verification_attempts); end if;
   update whatsapp_identity set verification_attempts = verification_attempts + 1,
     last_actor_id = p_user_id, last_actor_kind = 'SERVER' where id = p_identity_id;
   return jsonb_build_object('ok', true, 'tentativas', v_i.verification_attempts + 1);
@@ -235,6 +240,8 @@ create or replace function whatsapp_identity_verify(
 declare
   v_caller text := nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role';
   v_org uuid; v_role text; v_i whatsapp_identity; v_agora timestamptz := now(); v_confere boolean;
+  -- limite DURO de tentativas, fixado no banco (espelha MAX_TENTATIVAS_CODIGO de src/core/central/identidade.ts)
+  WHATSAPP_MAX constant integer := 5;
 begin
   if v_caller is not null and v_caller <> 'service_role' then return jsonb_build_object('ok', false, 'erro', 'somente_servidor'); end if;
   if p_user_id is null then return jsonb_build_object('ok', false, 'erro', 'nao_autenticado'); end if;
@@ -255,8 +262,9 @@ begin
   if v_i.verification_expires_at is null or v_i.verification_expires_at < v_agora then
     return jsonb_build_object('ok', false, 'erro', 'codigo_expirado');
   end if;
-  if v_i.verification_attempts >= greatest(p_max_attempts, 1) then
-    return jsonb_build_object('ok', false, 'erro', 'tentativas_excedidas', 'tentativas', v_i.verification_attempts);
+  -- o teto e do BANCO: p_max_attempts pode APERTAR, nunca afrouxar (p_max_attempts = 999 continua sendo 5)
+  if v_i.verification_attempts >= least(greatest(coalesce(p_max_attempts, WHATSAPP_MAX), 1), WHATSAPP_MAX) then
+    return jsonb_build_object('ok', false, 'erro', 'tentativas_excedidas', 'tentativas', v_i.verification_attempts, 'limite', WHATSAPP_MAX);
   end if;
 
   v_confere := (v_i.verification_code_hash = p_code_hash);
