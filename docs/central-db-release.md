@@ -375,3 +375,37 @@ Posição final: 0044–0051 `aplicada`. Contagens: `whatsapp_identity` 0, `cent
 envio; nenhuma mutação financeira. Nota para a restauração: o `pg_dump` alertou FKs circulares em
 `measurement`↔`financial_entry`, `stock_movement` e `radar_company` — restaurar o dump de dados exige
 `session_replication_role = replica` (já no cabeçalho) ou `--disable-triggers`.
+
+## 12. Próxima migration: 0052 — preparada, NÃO aplicada (Wave 03 F2, decisão D2/B+)
+
+`0052_central_inbound_content.sql` cria `central_message_content` (conteúdo inbound normalizado) e
+`central_message_processing` (trilha tipada de processamento). É **estritamente aditiva** (nenhum ALTER em 0049–0051),
+idempotente, e foi provada: smoke K–U em `scripts/pg-smoke-central.mjs` (exit 1 em qualquer FALHOU) e preflight
+`scripts/pg-preflight-central.mjs --ordem-corrigida` 0001..0052 com prova P6 e reaplicação 0049..0052 sem erro. **Só será
+aplicada em produção com autorização separada e explícita do proprietário** ("APLIQUE AGORA" para a 0052), e o
+Mission Control mantém `CENTRAL_INBOUND_PERSISTENCE` aberto até lá.
+
+Pré-condições, no dia: `main`/`integracao-wave03` no SHA aprovado; Quality Gate verde; posição real do banco = 0044–0051
+`aplicada` e **nenhum** objeto `central_message_content`/`central_message_processing` presente; preflight 0001..0052
+verde no mesmo SHA; backup novo (schema + dados) fora do repositório com SHA-256 registrado; `CENTRAL_ALPHA_MODE` ausente
+ou `off` no Netlify (o webhook continua descartando o payload até a F2 estar integrada e o Alpha liberado).
+
+Aplicação: cópia temporária envelopada em `begin; … commit;`, `supabase db query --linked --project-ref
+dduobppgomqyagjviwpx -f <cópia>`; original intocado; sem `db push`.
+
+POST-CHECK (read-only), tudo em `select`:
+
+```sql
+select tablename, rowsecurity from pg_tables where tablename in ('central_message_content','central_message_processing');
+select policyname, tablename from pg_policies where tablename in ('central_message_content','central_message_processing');
+select tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid where not t.tgisinternal
+  and c.relname in ('central_message_content','central_message_processing') order by 1;           -- 5 triggers
+select conname from pg_constraint where conrelid = 'central_message_processing'::regclass and contype = 'c' order by 1;
+select indexname from pg_indexes where tablename = 'central_message_processing' order by 1;       -- inclui _webhook_uk
+select table_name, string_agg(privilege_type, ',') from information_schema.role_table_grants
+  where grantee = 'authenticated' and table_name in ('central_message_content','central_message_processing') group by 1;  -- SELECT
+select (select count(*) from central_message_content) conteudos, (select count(*) from central_message_processing) processamentos;  -- 0, 0
+```
+
+Rollback: forward-fix (D1). Sem `down` automático; `drop table` das duas tabelas só com nova autorização, e só enquanto
+estiverem vazias.
