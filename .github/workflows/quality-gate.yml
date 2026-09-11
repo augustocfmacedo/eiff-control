@@ -1,8 +1,9 @@
 # EIFF Quality Gate — gate automático e reproduzível de qualidade (Wave 02, CI & Release Guard).
 #
 # O que este workflow FAZ: instala as dependências com `npm ci` (lockfile como fonte de verdade), roda
-# `npm test`, `npm run lint`, `npm run build` e o smoke das migrations da EIFF Central num PostgreSQL
-# descartável em memória (PGlite, Postgres em WASM, terminando em ROLLBACK). Qualquer falha derruba o run.
+# `npm test`, `npm run lint`, `npm run build`, o smoke das migrations da EIFF Central e o preflight da fila
+# inteira de migrations, ambos num PostgreSQL descartável em memória (PGlite, Postgres em WASM; o smoke termina em
+# ROLLBACK e o preflight morre com o processo). Qualquer falha derruba o run.
 #
 # O que este workflow NUNCA FAZ (somente validação; violar isto reprova a mudança em revisão):
 #   - não usa nem imprime segredo algum (nenhuma referência ao contexto de segredos do GitHub; nenhuma chave de
@@ -60,8 +61,8 @@ jobs:
       - name: Install (npm ci)
         run: npm ci
 
-      # Prova de que a dependência TRANSITIVA usada pelo smoke resolveu neste checkout limpo
-      # (netlify-cli -> @netlify/dev -> @netlify/database-dev -> @electric-sql/pglite). Falha se não resolver.
+      # @electric-sql/pglite é devDependency FIXADA (0.3.16) desde a Wave 02 — antes chegava só como transitiva de
+      # netlify-cli. Este step prova que `npm ci` a instalou neste checkout limpo e que o módulo carrega. Falha se não.
       - name: Verify PGlite resolves
         run: |
           npm ls @electric-sql/pglite --depth=10
@@ -113,3 +114,10 @@ jobs:
           }
           console.log('PostgreSQL Smoke aprovado: 3 migrations aplicadas, 10 smoke tests PASS, rollback ok.');
           EOF
+
+      # scripts/pg-preflight-central.mjs aplica a fila INTEIRA 0001..0051 + a carga inicial num PGlite descartável:
+      # o schema completo reconstruído do repositório (com shims do Supabase e a ordem histórica corrigida), não a
+      # produção. Sai com código 1 se qualquer migration, prova ou reaplicação falhar — e é o código de saída que
+      # decide o step. Não toca em banco externo, não usa --linked, não usa segredo.
+      - name: Full Migration Preflight
+        run: node scripts/pg-preflight-central.mjs --ordem-corrigida

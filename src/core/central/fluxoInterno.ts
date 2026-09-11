@@ -181,7 +181,8 @@ const textoForaDeEscopo = (intent: InternalIntent): string =>
  * acao e de ajuda (`permissao: null`), ignora o campo declarado. O contrato congelado tipa o campo como `Acao`,
  * entao a conversao fica aqui, em uma linha — melhor do que inventar uma permissao que a acao nao exige.
  */
-const permissaoDeclarada = (def: DefinicaoAcao): Acao => def.permissao as Acao;
+// sem cast: a proposta declara exatamente o que o catalogo diz, inclusive null (acao de ajuda)
+const permissaoDeclarada = (def: DefinicaoAcao): Acao | null => def.permissao;
 
 /** Monta a proposta de uma acao de LEITURA do catalogo. Nenhum parametro de negocio: a acao so le. */
 export function propostaDeLeitura(codigo: string): AcaoProposta | undefined {

@@ -248,3 +248,20 @@ O teto de 512 KB corta corpo grande, mas **não** limita a TAXA de requisições
 um contador em memória seria inútil (cada instância teria o seu) e daria falsa sensação de proteção — por isso
 **não foi implementado**. Limite de taxa é trabalho de borda (regra do provedor/CDN/WAF na frente da função) e tem de
 ser resolvido **antes do primeiro número real em produção**, não em código de aplicação.
+
+## Mission Control é um snapshot (gate `MISSION_CONTROL_LIVE`)
+
+O painel `#/mission-control` deriva toda prontidão de gates com evidência, mas a **situação** de cada gate é curadoria
+declarada no código (`src/core/central/missionControl.ts`) e o painel só muda quando o código muda. Ele **não** é
+tempo real: nesta fase não existe `/api/development-status`, adapter do GitHub, polling, nem status ao vivo de branch,
+commit ou CI. A tela diz isso ("Snapshot do desenvolvimento").
+
+O gate `MISSION_CONTROL_LIVE` fica **aberto** e é prioridade da próxima wave. Prova futura:
+
+- endpoint server-side `development-status` (JWT → perfil → `ver_mission_control`);
+- adapter do GitHub (somente leitura, token só no painel do Netlify);
+- SHA de `main` ao vivo, status do CI, branches/workstreams, última atualização;
+- polling controlado (intervalo fixo, sem pressionar a API).
+
+Acesso ao painel: permissão própria `ver_mission_control` (Administrador e Diretoria), conferida na rota — não só
+no menu.

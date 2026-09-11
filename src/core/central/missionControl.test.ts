@@ -7,6 +7,8 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { pode } from '../../data/store';
+import type { Papel, Usuario } from '../types';
 import {
   BENEFICIOS, CAMADAS, DEGRAUS, GATES, MARCOS, ONDAS, SITUACOES_GATE, SITUACOES_ONDA, TIPOS_EVIDENCIA, WORKSTREAMS,
   beneficioDesbloqueado, bloqueios, degrauAtual, gatePorId, gatesDoDegrau, pctGates, prontidao, prontidaoDaCamada,
@@ -404,5 +406,47 @@ describe('resumo', () => {
   it('a frase de dez segundos nomeia os gates que faltam para o proximo degrau', () => {
     const r = resumoMissionControl();
     for (const f of r.prontidaoProximoDegrau!.faltando) expect(r.faltaPara).toContain(f.titulo);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Acesso ao Mission Control: permissao propria, conferida na ROTA (esconder do menu nao basta)
+// ---------------------------------------------------------------------------
+describe('acesso ao Mission Control', () => {
+  const usuario = (papel: Papel): Usuario => ({ id: 'u-t', nome: 'Teste', email: 't@eiff.com.br', papel, obras: '*', ativo: true });
+
+  it('só Administrador e Diretoria têm ver_mission_control; Financeiro, Contabilidade e Auditoria não', () => {
+    expect(pode(usuario('Administrador'), 'ver_mission_control')).toBe(true);
+    expect(pode(usuario('Diretoria'), 'ver_mission_control')).toBe(true);
+    for (const p of ['Financeiro', 'Contabilidade', 'Auditoria', 'Gestor de obra', 'Engenharia', 'Compras'] as Papel[]) {
+      expect(pode(usuario(p), 'ver_mission_control'), p).toBe(false);
+    }
+    // ver_auditoria alcança mais gente — por isso NAO serve para esta tela
+    expect(pode(usuario('Financeiro'), 'ver_auditoria')).toBe(true);
+    expect(pode(usuario('Auditoria'), 'ver_auditoria')).toBe(true);
+  });
+
+  it('a mesma permissão vale no menu/paleta e na rota: quem digita a URL também esbarra nela', () => {
+    const paleta = fs.readFileSync('src/ui/Paleta.tsx', 'utf8');
+    const app = fs.readFileSync('src/App.tsx', 'utf8');
+    // menu e paleta (ROTAS_NAV)
+    expect(paleta).toMatch(/to: '\/mission-control'[^\n]*permissao: 'ver_mission_control'/);
+    expect(paleta).not.toMatch(/to: '\/mission-control'[^\n]*permissao: 'ver_auditoria'/);
+    // rota: a tela so monta com a permissao; sem ela, estado de acesso restrito no padrao da casa
+    const caso = app.slice(app.indexOf("case 'mission-control':"), app.indexOf('break;', app.indexOf("case 'mission-control':")));
+    expect(caso).toMatch(/pode\(usuario, 'ver_mission_control'\)/);
+    expect(caso).toMatch(/<MissionControl \/>/);
+    expect(caso).toMatch(/<EstadoErro titulo="Acesso restrito"/);
+    // e nao existe mais renderizacao incondicional
+    expect(app).not.toMatch(/case 'mission-control': tela = <MissionControl \/>; break;/);
+  });
+
+  it('o gate MISSION_CONTROL_LIVE existe, está aberto e a tela se declara snapshot', () => {
+    const live = gatePorId('MISSION_CONTROL_LIVE');
+    expect(live?.situacao).toBe('aberto');
+    expect(fs.readFileSync('src/screens/MissionControl.tsx', 'utf8')).toMatch(/Snapshot do desenvolvimento/);
+    // pertence a exatamente uma frente e uma camada (particao)
+    expect(WORKSTREAMS.filter((w) => w.gates.includes('MISSION_CONTROL_LIVE'))).toHaveLength(1);
+    expect(CAMADAS.filter((c) => c.gates.includes('MISSION_CONTROL_LIVE'))).toHaveLength(1);
   });
 });

@@ -352,4 +352,7 @@ const aplicadas = res.migrations.filter((m) => m.estado === 'APLICADA').length;
 const erros = res.migrations.filter((m) => m.estado === 'ERRO');
 res.resumo = `${aplicadas} migrations aplicadas, ${erros.length} com erro` + (res.parou_em ? `; primeira falha em ${res.parou_em.migration}` : '');
 console.log(JSON.stringify(res, null, 2));
-process.exitCode = erros.length || res.erroFatal ? 1 : 0;
+// codigo de saida e o veredito do CI: migration com erro, erro fatal, prova FALHOU ou reaplicacao FALHOU reprovam
+const provasFalhas = Object.values(res.provas ?? {}).filter((v) => typeof v === 'string' && v.startsWith('FALHOU'));
+const idemFalhou = typeof res.verificacao?.idempotencia === 'string' && res.verificacao.idempotencia.startsWith('FALHOU');
+process.exitCode = erros.length || res.erroFatal || provasFalhas.length || idemFalhou ? 1 : 0;

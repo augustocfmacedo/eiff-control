@@ -45,9 +45,12 @@ export default function MissionControl() {
       <PrintHead titulo="Mission Control · EIFF Central" subtitulo="Prontidão derivada de gates com evidência verificável" />
       <PageHead
         title="Mission Control · EIFF Central"
-        subtitle={<>Quanto falta, o que já funciona, o que está bloqueado e quando cada degrau abre. Toda prontidão desta tela é <b>contagem de gates fechados sobre gates exigidos</b>: nenhum número é digitado à mão, e cada gate fechado aponta para um arquivo, um teste ou um commit que existe no repositório.</>}
+        subtitle={<>Quanto falta, o que já funciona, o que está bloqueado e quando cada degrau abre. Toda prontidão desta tela é <b>contagem de gates fechados sobre gates exigidos</b>: nenhum número é digitado à mão, e cada gate fechado aponta para um arquivo, um teste ou um commit que existe no repositório. É um <b>snapshot</b> derivado do código — não é tempo real.</>}
       >
-        <div className="actions no-print"><button className="btn" onClick={() => window.print()}><Icon name="livro" size={15} /> Imprimir</button></div>
+        <div className="actions no-print">
+          <Badge tone="muted" title="Prontidão derivada do código no momento do build. Não há endpoint de status, adapter do GitHub nem polling: o que está aqui é o retrato do repositório, não o estado ao vivo (gate MISSION_CONTROL_LIVE).">Snapshot do desenvolvimento</Badge>
+          <button className="btn" onClick={() => window.print()}><Icon name="livro" size={15} /> Imprimir</button>
+        </div>
       </PageHead>
 
       <div className={`alert ${r.bloqueiosReais.length ? 'warn' : 'info'}`}>

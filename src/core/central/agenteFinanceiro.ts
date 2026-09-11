@@ -15,7 +15,7 @@ import {
 } from '../cfo';
 import { RegraDeNegocioError, actions, getState, pode, type Acao } from '../../data/store';
 import {
-  definicaoDaAcao,
+  permissaoExigida,
   type AcaoProposta, type CodigoAgente, type ContextoAgente, type EnterpriseAgent, type InternalIntent,
   type LeituraAgente, type ResultadoAcao,
 } from './tipos';
@@ -28,7 +28,7 @@ export const ACAO_REGISTRAR_PREVISAO = 'FINANCE_REGISTRAR_PREVISAO';
  * A permissao vem da ACAO, no catalogo congelado — nunca da intencao FINANCE, que cobre desde consultar o caixa
  * (`ver_bancos`) ate liquidar (`liquidar`). Registrar previsao e escrita de rascunho: `editar_lancamento`.
  */
-export const PERMISSAO_FINANCEIRA = definicaoDaAcao(ACAO_REGISTRAR_PREVISAO)!.permissao as Acao;
+export const PERMISSAO_FINANCEIRA: Acao = permissaoExigida(ACAO_REGISTRAR_PREVISAO);
 
 // ---------------------------------------------------------------------------
 // Portas (o que vem de fora: dataset, usuario da identidade e a escrita no store)

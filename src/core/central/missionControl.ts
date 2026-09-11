@@ -284,10 +284,10 @@ export const GATES: Gate[] = [
     titulo: 'Migrations 0049, 0050 e 0051 aplicadas em produção',
     prova: 'As três aplicadas no projeto do Supabase, e a numeração registrada no CLAUDE.md.',
     situacao: 'bloqueado',
-    bloqueio: 'Preflight feito: a fila inteira 0001..0051 aplica em PGlite (51/51, 5 provas contra o schema real). O que falta é a DECISÃO de aplicar em produção — sem staging e sem backup automático no plano Free, é decisão da Diretoria, não do código.',
+    bloqueio: 'Preflight feito no PGlite contra o schema completo reconstruído do repositório (51 migrations + seed + shims do Supabase + ordem histórica corrigida; 5 provas). O Supabase de produção continua NÃO testado nem migrado: o que falta é a DECISÃO de aplicar — sem staging e sem backup automático no plano Free, é decisão da Diretoria, não do código.',
     evidencias: [
       { tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', nota: 'regras das três migrations, schema mínimo' },
-      { tipo: 'script', referencia: 'scripts/pg-preflight-central.mjs', nota: 'fila inteira + carga inicial, schema real' },
+      { tipo: 'script', referencia: 'scripts/pg-preflight-central.mjs', nota: 'fila inteira + seed + shims do Supabase, em PGlite (schema completo reconstruído do repositório, não a produção)' },
       { tipo: 'documento', referencia: 'docs/central-db-release.md', simbolo: 'Recomendação' },
     ],
   }),
@@ -331,6 +331,13 @@ export const GATES: Gate[] = [
       { tipo: 'teste', referencia: 'src/core/central/fluxoInterno.test.ts' },
       { tipo: 'commit', referencia: '146e5bd' },
     ],
+  }),
+  g({
+    id: 'MISSION_CONTROL_LIVE',
+    titulo: 'Mission Control em tempo real',
+    prova: 'Endpoint server-side de development-status com adapter do GitHub: SHA de main ao vivo, status do CI, branches/workstreams, última atualização e polling controlado. Hoje o painel é um SNAPSHOT derivado do código no momento do build.',
+    situacao: 'aberto',
+    evidencias: [{ tipo: 'documento', referencia: 'docs/eiff-central.md', simbolo: 'MISSION_CONTROL_LIVE' }],
   }),
   g({
     id: 'OBSERVABILIDADE',
@@ -417,7 +424,7 @@ export const WORKSTREAMS: Workstream[] = [
   { id: 'SEGURANCA', titulo: 'Segurança e operação', responsavel: 'Agent QA', onda: 'Onda 01', foco: 'Ameaças presas por teste, segredo no servidor, borda protegida.', gates: ['THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'RATE_LIMIT_EDGE', 'OPERACAO_MONITORADA'] },
   { id: 'BANCO', titulo: 'Banco da Central', responsavel: 'Agent DB Release', onda: 'Wave 02', foco: 'Levar 0049, 0050 e 0051 ao banco real, com preflight.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'AUDITORIA_CENTRAL'] },
   { id: 'ALPHA', titulo: 'Alpha ponta a ponta', responsavel: 'Agent Alpha E2E', onda: 'Wave 02', foco: 'Uma mensagem atravessando todas as fronteiras num teste só.', gates: ['E2E_ALPHA', 'CONTEXTO_EXTERNO'] },
-  { id: 'OBSERVABILIDADE', titulo: 'Mission Control', responsavel: 'Agent Observability', onda: 'Wave 02', foco: 'O estado da construção legível em dez segundos.', gates: ['OBSERVABILIDADE'] },
+  { id: 'OBSERVABILIDADE', titulo: 'Mission Control', responsavel: 'Agent Observability', onda: 'Wave 02', foco: 'O estado da construção legível em dez segundos.', gates: ['OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
 ];
 
 export const prontidaoDoWorkstream = (w: Workstream): Prontidao => prontidao(w.gates);
@@ -467,7 +474,8 @@ export const DEGRAUS: Degrau[] = [
     titulo: 'Piloto',
     publico: 'Duas ou três pessoas escolhidas',
     oQueMuda: 'A resposta volta pelo WhatsApp, só para números da allowlist.',
-    novos: ['META_NUMERO_PRODUCAO', 'ENVIO_CANARY_LIBERADO', 'RATE_LIMIT_EDGE', 'IDENTIDADE_ONBOARDING'],
+    // MISSION_CONTROL_LIVE entra aqui, nao no Alpha: o painel ao vivo importa quando mais de uma pessoa acompanha
+    novos: ['META_NUMERO_PRODUCAO', 'ENVIO_CANARY_LIBERADO', 'RATE_LIMIT_EDGE', 'IDENTIDADE_ONBOARDING', 'MISSION_CONTROL_LIVE'],
   },
   {
     id: 'TEAM_BETA',
@@ -529,7 +537,7 @@ export const CAMADAS: CamadaArquitetura[] = [
   { id: 'ORQUESTRADOR', titulo: 'Orquestrador', papel: 'Intenção, agente alvo e a permissão exigida pela ação.', gates: ['ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'AUTORIDADE_SERVIDOR'] },
   { id: 'AGENTES', titulo: 'Agentes de domínio', papel: 'Interpretam e PROPÕEM; quem decide é o motor.', gates: ['FINANCE_ADAPTER', 'AGENTES_DEMAIS', 'CONTEXTO_EXTERNO'] },
   { id: 'CONTROL', titulo: 'EIFF Control', papel: 'Motor determinístico, matriz de permissões e execução.', gates: ['ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR'] },
-  { id: 'AUDITORIA', titulo: 'Auditoria e operação', papel: 'Registra, vigia e mostra o estado.', gates: ['AUDITORIA_CENTRAL', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'OPERACAO_MONITORADA', 'E2E_ALPHA', 'OBSERVABILIDADE'] },
+  { id: 'AUDITORIA', titulo: 'Auditoria e operação', papel: 'Registra, vigia e mostra o estado.', gates: ['AUDITORIA_CENTRAL', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'OPERACAO_MONITORADA', 'E2E_ALPHA', 'OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
 ];
 
 export const prontidaoDaCamada = (c: CamadaArquitetura): Prontidao => prontidao(c.gates);

@@ -35,7 +35,7 @@ A pergunta era se há onde ensaiar antes de produção. A resposta honesta, depo
 **Conclusão: não existe ambiente seguro.** O único Postgres descartável disponível é o PGlite (Postgres compilado
 para WASM, em memória, sem rede) — e é exatamente nele que os dois harnesses deste repositório rodam.
 
-Isso muda o peso do ensaio, não o cancela: as três migrations foram exercitadas contra o **schema real** completo,
+Isso muda o peso do ensaio, não o cancela: as três migrations foram exercitadas contra o **schema completo reconstruído do repositório** — 51 migrations + seed + shims do Supabase (`auth`, papéis, `storage`) + ordem histórica corrigida. **Não é o Supabase de produção**, que continua não testado nem migrado. As três foram exercitadas contra esse schema completo,
 e não só contra um esqueleto. É o que a seção 2 mostra.
 
 ---
@@ -47,7 +47,7 @@ Dois harnesses, com divisão de trabalho explícita:
 | Harness | Pergunta que responde | Resultado |
 | --- | --- | --- |
 | `node scripts/pg-smoke-central.mjs` | as **regras** de 0049/0050/0051 valem? (schema mínimo montado à mão) | 10/10 smoke tests A–J PASS |
-| `node scripts/pg-preflight-central.mjs --ordem-corrigida` | a **fila inteira** roda, e as três convivem com o schema real? | 51/51 migrations aplicadas, 0 erros; 5 provas PASS; idempotência PASS |
+| `node scripts/pg-preflight-central.mjs --ordem-corrigida` | a **fila inteira** roda, e as três convivem com o schema completo reconstruído do repositório? | 51/51 migrations aplicadas, 0 erros; 5 provas PASS; idempotência PASS |
 
 O preflight aplica `0001..0051` mais a carga inicial (`supabase/seed.sql`) num PGlite descartável, e então roda
 provas contra os objetos **de verdade** — `role_kind` como enum, `has_role(variadic role_kind[])`, `current_org()`,
@@ -201,7 +201,7 @@ outras duas, mas depende de 0045–0048.
 
 ## 6. Verificação pós-aplicação
 
-Rodar depois das três. Cada linha tem o valor esperado ao lado — foram conferidos contra o schema real no
+Rodar depois das três. Cada linha tem o valor esperado ao lado — foram conferidos contra o schema completo reconstruído do repositório no
 preflight:
 
 ```sql
@@ -299,7 +299,7 @@ estar é motivo para parar e comparar o schema, não para reaplicar por cima.
 
 ---
 
-## 9. Lacunas e riscos que só aparecem contra o schema real
+## 9. Lacunas e riscos que só aparecem contra o schema completo reconstruído do repositório
 
 | Risco levantado | Veredito | Evidência |
 | --- | --- | --- |
@@ -320,7 +320,7 @@ estar é motivo para parar e comparar o schema, não para reaplicar por cima.
 
 O que sustenta isso:
 
-- as três aplicam limpas sobre o schema real, não sobre um esqueleto: a fila `0001..0051` inteira roda verde num
+- as três aplicam limpas sobre o schema completo reconstruído do repositório, não sobre um esqueleto: a fila `0001..0051` inteira roda verde num
   Postgres de verdade, e as cinco provas funcionais passam contra `role_kind`, `has_role`, `current_org`,
   `profile`, `worker` e o ledger de 0045–0048 reais;
 - 0049 e 0050 só criam objetos novos. Não alteram nenhuma tabela existente, não migram dado nenhum, e a única

@@ -17,7 +17,7 @@
 // Divisao de trabalho com o outro harness (scripts/pg-preflight-central.mjs):
 //   * ESTE arquivo prova as REGRAS das tres migrations, rapido (segundos) e contra um schema minimo montado a mao;
 //   * o pg-preflight-central.mjs aplica a FILA INTEIRA (0001..0051 + a carga inicial) e prova a INTERACAO com o
-//     schema real — role_kind como enum de verdade, has_role(variadic role_kind[]), current_org(), profile/worker
+//     schema completo reconstruido do repositorio (nao a producao) — role_kind como enum de verdade, has_role(variadic role_kind[]), current_org(), profile/worker
 //     reais e o ledger de entrega vindo de 0045..0048. Antes de aplicar em producao, rode os dois.
 // Este `has_role` do preludio recebe role_kind[] igual ao de producao (0003_rls.sql): se um dia divergir, o
 // preflight pega, porque la a funcao e a real.
