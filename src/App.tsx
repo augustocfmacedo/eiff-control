@@ -38,6 +38,7 @@ const Compras = lazy(() => import('./screens/Compras'));
 const Producao = lazy(() => import('./screens/Producao'));
 const Estoque = lazy(() => import('./screens/Estoque'));
 const Capacitacao = lazy(() => import('./screens/Capacitacao'));
+const MissionControl = lazy(() => import('./screens/MissionControl'));
 const RadarCommandCenter = lazy(() => import('./screens/radar/CommandCenter'));
 const RadarHoje = lazy(() => import('./screens/radar/Hoje'));
 const RadarEmpresas = lazy(() => import('./screens/radar/Empresas'));
@@ -139,6 +140,7 @@ export default function App() {
     case 'producao': tela = <Producao query={rota.query} key={rota.query.toString()} />; break;
     case 'estoque': tela = <Estoque query={rota.query} key={rota.query.toString()} />; break;
     case 'capacitacao': tela = <Capacitacao licao={p1} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
+    case 'mission-control': tela = <MissionControl />; break;
     case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
     case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
     case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;
