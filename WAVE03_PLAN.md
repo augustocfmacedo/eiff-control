@@ -59,3 +59,37 @@ a MATRIZ em `store.ts`, `metaServidor.ts`, `metaEnvio.ts`, `tipos.ts`. **Nenhuma
 Conforme o plano aprovado (objetivo, escopo, riscos R1–R7, aceite por frente, estratégia de testes) — registrado na
 conversa de aprovação e reproduzido em `docs/central-alpha-runbook.md` pela F5. Rollback: código por revert do merge;
 funcionalidade por `CENTRAL_ALPHA_MODE=off`; banco só forward-fix (D1); segredos por remoção no Netlify.
+
+## D5 — EIFF Inbox é a interface móvel nativa da EIFF Central (decisão definitiva do proprietário, 11/09/2026)
+
+A EIFF terá um aplicativo web instalável (PWA) chamado **EIFF Inbox**: experiência de mensagens semelhante a um
+mensageiro corporativo, instalada na tela inicial do celular, **sem exigir o número particular do colaborador**.
+
+**Arquitetura de produto aprovada**
+
+| Peça | Papel |
+| --- | --- |
+| EIFF Control | sistema operacional / *system of record* |
+| EIFF Central | inteligência, interpretação, roteamento e orquestração |
+| EIFF Inbox | interface humana de mensagens e atendimento |
+| Meta WhatsApp Cloud API | transporte das conversas **externas** pelo número oficial da EIFF |
+| Mission Control | observabilidade executiva |
+| Chatwoot | **adiado / opcional** — fora do caminho crítico; só volta a ser considerado se a Inbox nativa não atender ao volume ou à complexidade futura |
+
+**D5.1 — Comunicação interna.** Colaborador → login EIFF → identidade autenticada → `organization_id` → papel →
+permissões → Central. **Não**: telefone pessoal → identidade. Mensagens internas trafegam pela infraestrutura da EIFF,
+não pelo WhatsApp pessoal; o telefone particular não é necessário para comunicação interna.
+
+**D5.2 — Comunicação externa.** Cliente/fornecedor/parceiro → WhatsApp → número oficial da EIFF → Meta Cloud → Central
+→ EIFF Inbox do responsável. Resposta: EIFF Inbox → Central → Meta Cloud → número oficial → interlocutor. **O interlocutor
+nunca vê o número particular do colaborador.**
+
+**D5.3 — Experience.** PWA dedicada, mobile-first: instalável, standalone, foco só em mensagens, push quando suportado,
+conversas, filas, responsáveis, departamentos, não lidas, menções, anexos (futuro), takeover humano, IA contextual dentro
+da conversa. **Mesmo usuário, autenticação, organização e matriz de permissões do EIFF Control** — sem segunda ACL, sem
+segundo banco mestre.
+
+**D5.4 — Roadmap.** **Não** implementar nesta Wave 03. Prioridade da próxima macro-wave, após estabilização do Alpha da
+Central. Começa por um Blueprint — **EIFF INBOX PWA — FOUNDATION**: shell PWA dedicado, arquitetura mobile, modelo de
+inbox/conversa, push, autenticação, ACL, INTERNAL/EXTERNAL, integração com a Central, Meta outbound externo, fila e
+atribuição, offline/degraded, installability, segurança, observabilidade. Nenhum Chatwoot antes dessa avaliação nativa.

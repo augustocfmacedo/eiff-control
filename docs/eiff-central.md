@@ -277,3 +277,12 @@ falha → SNAPSHOT com motivo. Polling de 60 s, parado com a aba oculta, backoff
 Variável: `GITHUB_READ_TOKEN`, só no painel do Netlify (D3) — token fine-grained, somente o repositório EIFF Control,
 Contents: read-only e Actions: read-only. Sem ela o endpoint responde 200 `SNAPSHOT · sem fonte configurada`, sem erro
 para o usuário. O gate `MISSION_CONTROL_LIVE` fecha quando uma leitura LIVE for demonstrada com a fonte real.
+
+## D5 — EIFF Inbox: a interface móvel nativa (decisão definitiva, 11/09/2026)
+
+A interface humana da Central será o **EIFF Inbox**, PWA dedicada e mobile-first, com o mesmo login, organização e
+matriz de permissões do EIFF Control. Interno: colaborador autenticado → Central, sem telefone pessoal. Externo:
+cliente/parceiro → número oficial da EIFF → Meta Cloud → Central → Inbox do responsável, e a resposta faz o caminho
+inverso — o interlocutor nunca vê o número particular de ninguém. O Chatwoot passa a **adiado/opcional**, fora do caminho
+crítico. Não se implementa nesta Wave 03: é a prioridade da próxima macro-wave, a partir do blueprint **EIFF INBOX PWA —
+FOUNDATION**. Texto integral em `WAVE03_PLAN.md`.
