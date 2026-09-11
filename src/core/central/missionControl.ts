@@ -336,6 +336,16 @@ export const GATES: Gate[] = [
     ],
   }),
   g({
+    id: 'CENTRAL_WIRING',
+    titulo: 'Webhook ligado ao caminho contínuo (CENTRAL_ALPHA_MODE)',
+    prova: 'channel-meta-webhook.ts chama fluxoInterno atrás do interruptor CENTRAL_ALPHA_MODE (off por padrão), com contexto de servidor real: organização pelo número que recebeu, identidades e Dataset carregados server-side, inbound persistido em central_*. Hoje o webhook valida a assinatura, conta os eventos e descarta o payload.',
+    situacao: 'aberto',
+    evidencias: [
+      { tipo: 'funcao', referencia: 'netlify/functions/channel-meta-webhook.ts' },
+      { tipo: 'modulo', referencia: 'src/core/central/fluxoInterno.ts', simbolo: 'fluxoInterno' },
+    ],
+  }),
+  g({
     id: 'MISSION_CONTROL_LIVE',
     titulo: 'Mission Control em tempo real',
     prova: 'Endpoint server-side de development-status com adapter do GitHub: SHA de main ao vivo, status do CI, branches/workstreams, última atualização e polling controlado. Hoje o painel é um SNAPSHOT derivado do código no momento do build.',
@@ -436,7 +446,7 @@ export const WORKSTREAMS: Workstream[] = [
   { id: 'AGENTES', titulo: 'Agentes de domínio', responsavel: 'Agent Finance', onda: 'Onda 01', foco: 'Adapter sobre o motor que já existe; propor não é executar.', gates: ['FINANCE_ADAPTER', 'ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR', 'AGENTES_DEMAIS'] },
   { id: 'SEGURANCA', titulo: 'Segurança e operação', responsavel: 'Agent QA', onda: 'Onda 01', foco: 'Ameaças presas por teste, segredo no servidor, borda protegida.', gates: ['THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'RATE_LIMIT_EDGE', 'OPERACAO_MONITORADA'] },
   { id: 'BANCO', titulo: 'Banco da Central', responsavel: 'Agent DB Release', onda: 'Wave 02', foco: 'Levar 0049, 0050 e 0051 ao banco real, com preflight.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'AUDITORIA_CENTRAL'] },
-  { id: 'ALPHA', titulo: 'Alpha ponta a ponta', responsavel: 'Agent Alpha E2E', onda: 'Wave 02', foco: 'Uma mensagem atravessando todas as fronteiras num teste só.', gates: ['E2E_ALPHA', 'CONTEXTO_EXTERNO'] },
+  { id: 'ALPHA', titulo: 'Alpha ponta a ponta', responsavel: 'Agent Alpha E2E', onda: 'Wave 02', foco: 'Uma mensagem atravessando todas as fronteiras num teste só.', gates: ['E2E_ALPHA', 'CONTEXTO_EXTERNO', 'CENTRAL_WIRING'] },
   { id: 'OBSERVABILIDADE', titulo: 'Mission Control', responsavel: 'Agent Observability', onda: 'Wave 02', foco: 'O estado da construção legível em dez segundos.', gates: ['OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
 ];
 
@@ -455,7 +465,7 @@ export const MARCOS: Marco[] = [
   { id: 'M1_CANAL', titulo: 'Canal confiável', objetivo: 'A EIFF recebe mensagem do WhatsApp oficial sem confiar em nada que o remetente diga.', gates: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO'] },
   { id: 'M2_NUCLEO', titulo: 'Núcleo da Central', objetivo: 'Identidade, conversa, intenção e permissão resolvidos por regra determinística.', gates: ['IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'FINANCE_ADAPTER'] },
   { id: 'M3_BANCO', titulo: 'Central com banco', objetivo: 'A conversa e a identidade passam a existir no banco da EIFF.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS'] },
-  { id: 'M4_ALPHA', titulo: 'Alpha interno em pé', objetivo: 'Uma pessoa conversa com a Central e recebe o parecer do motor, sem a Central gravar nada.', gates: ['MIGRATIONS_APLICADAS', 'E2E_ALPHA', 'OBSERVABILIDADE', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'ESCRITA_FAIL_CLOSED'] },
+  { id: 'M4_ALPHA', titulo: 'Alpha interno em pé', objetivo: 'Uma pessoa conversa com a Central e recebe o parecer do motor, sem a Central gravar nada.', gates: ['MIGRATIONS_APLICADAS', 'E2E_ALPHA', 'OBSERVABILIDADE', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'ESCRITA_FAIL_CLOSED', 'CENTRAL_WIRING'] },
   { id: 'M5_RESPOSTA', titulo: 'A Central responde', objetivo: 'A resposta volta pelo WhatsApp, atrás de modo, allowlist e borda protegida.', gates: ['ENVIO_FAIL_CLOSED', 'ENVIO_CANARY_LIBERADO', 'META_NUMERO_PRODUCAO', 'RATE_LIMIT_EDGE', 'IDENTIDADE_ONBOARDING'] },
   { id: 'M6_ACAO', titulo: 'A Central age', objetivo: 'A previsão entra no sistema pelo servidor, com ator real e auditoria.', gates: ['ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR', 'AUDITORIA_CENTRAL', 'AGENTES_DEMAIS'] },
 ];
@@ -480,7 +490,7 @@ export const DEGRAUS: Degrau[] = [
     titulo: 'Alpha interno',
     publico: 'Uma pessoa (Diretoria), um número',
     oQueMuda: 'A Central lê, entende e responde pelo painel. Nada é enviado e nada é gravado.',
-    novos: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO', 'ENVIO_FAIL_CLOSED', 'IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'FINANCE_ADAPTER', 'ESCRITA_FAIL_CLOSED', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'E2E_ALPHA', 'OBSERVABILIDADE'],
+    novos: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO', 'ENVIO_FAIL_CLOSED', 'IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'FINANCE_ADAPTER', 'ESCRITA_FAIL_CLOSED', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'E2E_ALPHA', 'OBSERVABILIDADE', 'CENTRAL_WIRING'],
   },
   {
     id: 'PILOT',
@@ -544,7 +554,7 @@ export interface CamadaArquitetura {
 
 export const CAMADAS: CamadaArquitetura[] = [
   { id: 'META', titulo: 'Meta WhatsApp Cloud', papel: 'Provider oficial do canal. Server-only, sem chave no navegador.', gates: ['META_PROVIDER_READONLY', 'META_NUMERO_PRODUCAO', 'ENVIO_FAIL_CLOSED', 'ENVIO_CANARY_LIBERADO'] },
-  { id: 'WEBHOOK', titulo: 'Webhook assinado', papel: 'Valida a assinatura antes de ler, normaliza e descarta o bruto.', gates: ['META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'RATE_LIMIT_EDGE'] },
+  { id: 'WEBHOOK', titulo: 'Webhook assinado', papel: 'Valida a assinatura antes de ler, normaliza e descarta o bruto.', gates: ['META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'RATE_LIMIT_EDGE', 'CENTRAL_WIRING'] },
   { id: 'IDENTIDADE', titulo: 'Contexto e identidade', papel: 'De quem é este número, e em qual contexto ele fala.', gates: ['META_CONTEXTO_NUMERO', 'IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'IDENTIDADE_ONBOARDING'] },
   { id: 'CONVERSA', titulo: 'Conversa', papel: 'Uma conversa por pessoa e contexto, sem duplicar mensagem.', gates: ['CONVERSA_IDEMPOTENTE', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS'] },
   { id: 'ORQUESTRADOR', titulo: 'Orquestrador', papel: 'Intenção, agente alvo e a permissão exigida pela ação.', gates: ['ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'AUTORIDADE_SERVIDOR'] },

@@ -167,9 +167,9 @@ describe('prontidao derivada', () => {
 
   it('pctGates e a unica formatacao de porcentagem e vem da fracao', () => {
     expect(pctGates(prontidao(['THREAT_MODEL']))).toBe('100%');
-    // um gate fechado e um aberto de verdade hoje (as migrations nao foram aplicadas em producao)
-    expect(pctGates(prontidao(['THREAT_MODEL', 'MIGRATIONS_APLICADAS']))).toBe('50%');
-    expect(pctGates(prontidao(['MIGRATIONS_APLICADAS']))).toBe('0%');
+    // um gate fechado e um bloqueado de verdade hoje (a divida de borda do webhook)
+    expect(pctGates(prontidao(['THREAT_MODEL', 'RATE_LIMIT_EDGE']))).toBe('50%');
+    expect(pctGates(prontidao(['RATE_LIMIT_EDGE']))).toBe('0%');
   });
 
   it('nenhum marco, degrau, workstream ou camada declara numero de prontidao a mao', () => {
@@ -253,11 +253,13 @@ describe('release ladder', () => {
     for (const d of anteriores) expect(prontidaoDoDegrau(d).pronto, `${d.id} deveria estar liberado`).toBe(true);
   });
 
-  it('hoje o Alpha interno ainda nao esta liberado, e o que falta e nomeado', () => {
+  it('hoje o Alpha interno ainda nao esta liberado, e o que falta e nomeado: o fio do webhook', () => {
     const alpha = DEGRAUS.find((d) => d.id === 'ALPHA')!;
     const p = prontidaoDoDegrau(alpha);
     expect(p.pronto).toBe(false);
-    expect(p.faltando.map((f) => f.id).sort()).toEqual(['MIGRATIONS_APLICADAS']);
+    // F1 aplicada em producao (11/09/2026): as migrations sairam da lista; o que falta e o webhook chamar o fluxo
+    expect(p.faltando.map((f) => f.id).sort()).toEqual(['CENTRAL_WIRING']);
+    expect(gatePorId('MIGRATIONS_APLICADAS')!.situacao).toBe('fechado');
   });
 
   it('gatesDoDegrau devolve vazio para degrau desconhecido', () => {
@@ -283,12 +285,14 @@ describe('marcos', () => {
     expect(prontidaoDoMarco(m!).pronto).toBe(false);
   });
 
-  it('canal e nucleo estao fechados; banco depende da aplicacao em producao', () => {
+  it('canal, nucleo e banco estao fechados; o Alpha em pe depende do fio do webhook', () => {
     expect(prontidaoDoMarco(MARCOS.find((m) => m.id === 'M1_CANAL')!).pronto).toBe(true);
     expect(prontidaoDoMarco(MARCOS.find((m) => m.id === 'M2_NUCLEO')!).pronto).toBe(true);
-    const banco = prontidaoDoMarco(MARCOS.find((m) => m.id === 'M3_BANCO')!);
-    expect(banco.pronto).toBe(false);
-    expect(banco.faltando.map((f) => f.id)).toEqual(['MIGRATIONS_APLICADAS']);
+    // 0049/0050/0051 aplicadas em producao em 11/09/2026 (docs/central-db-release.md, secao 11)
+    expect(prontidaoDoMarco(MARCOS.find((m) => m.id === 'M3_BANCO')!).pronto).toBe(true);
+    const alpha = prontidaoDoMarco(MARCOS.find((m) => m.id === 'M4_ALPHA')!);
+    expect(alpha.pronto).toBe(false);
+    expect(alpha.faltando.map((f) => f.id)).toEqual(['CENTRAL_WIRING']);
   });
 });
 
@@ -308,10 +312,10 @@ describe('bloqueios', () => {
     expect(del).toContain('ESCRITA_SERVIDOR');
   });
 
-  it('a divida de borda e a aplicacao das migrations sao bloqueios reais, nao porDesenho', () => {
+  it('a divida de borda e o unico bloqueio real; as migrations deixaram de ser bloqueio ao serem aplicadas', () => {
     const reais = bloqueios().reais.map((g) => g.id);
     expect(reais).toContain('RATE_LIMIT_EDGE');
-    expect(reais).toContain('MIGRATIONS_APLICADAS');
+    expect(reais).not.toContain('MIGRATIONS_APLICADAS');
   });
 
   it('os gates que provam que nada e enviado e nada e gravado estao FECHADOS', () => {
