@@ -320,9 +320,13 @@ export const GATES: Gate[] = [
   g({
     id: 'E2E_ALPHA',
     titulo: 'Caminho ponta a ponta do Alpha interno provado',
-    prova: 'Uma mensagem entra pelo webhook e sai como resposta do motor, com identidade, conversa, orquestrador, agente e permissão encadeados num teste só.',
-    situacao: 'aberto',
-    evidencias: [],
+    prova: 'Uma mensagem entra pelo webhook e sai como resposta do motor, com identidade, conversa, orquestrador, agente e permissão encadeados num teste só. Resposta gerada, não enviada; nada gravado (portasSemEscrita).',
+    situacao: 'fechado',
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/fluxoInterno.ts', simbolo: 'fluxoInterno' },
+      { tipo: 'teste', referencia: 'src/core/central/fluxoInterno.test.ts' },
+      { tipo: 'commit', referencia: '146e5bd' },
+    ],
   }),
   g({
     id: 'OBSERVABILIDADE',

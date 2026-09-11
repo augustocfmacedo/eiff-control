@@ -163,8 +163,9 @@ describe('prontidao derivada', () => {
 
   it('pctGates e a unica formatacao de porcentagem e vem da fracao', () => {
     expect(pctGates(prontidao(['THREAT_MODEL']))).toBe('100%');
-    expect(pctGates(prontidao(['THREAT_MODEL', 'E2E_ALPHA']))).toBe('50%');
-    expect(pctGates(prontidao(['E2E_ALPHA']))).toBe('0%');
+    // um gate fechado e um aberto de verdade hoje (as migrations nao foram aplicadas em producao)
+    expect(pctGates(prontidao(['THREAT_MODEL', 'MIGRATIONS_APLICADAS']))).toBe('50%');
+    expect(pctGates(prontidao(['MIGRATIONS_APLICADAS']))).toBe('0%');
   });
 
   it('nenhum marco, degrau, workstream ou camada declara numero de prontidao a mao', () => {
@@ -252,7 +253,7 @@ describe('release ladder', () => {
     const alpha = DEGRAUS.find((d) => d.id === 'ALPHA')!;
     const p = prontidaoDoDegrau(alpha);
     expect(p.pronto).toBe(false);
-    expect(p.faltando.map((f) => f.id).sort()).toEqual(['E2E_ALPHA', 'MIGRATIONS_APLICADAS']);
+    expect(p.faltando.map((f) => f.id).sort()).toEqual(['MIGRATIONS_APLICADAS']);
   });
 
   it('gatesDoDegrau devolve vazio para degrau desconhecido', () => {
