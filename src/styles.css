@@ -739,3 +739,64 @@ tr.arrastando td { opacity: 0.55; }
 .toast-area { position: fixed; bottom: 0; right: 0; pointer-events: none; }
 .toast { pointer-events: auto; }
 .miniatura-vazia { display: grid; place-items: center; width: 100%; height: 100%; color: var(--muted); font-size: 18px; }
+
+/* Mission Control da EIFF Central: prontidao por gates. So classes novas (prefixo mc-); nenhum token existente muda. */
+.mc-conta { font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.mc-prova { font-size: var(--text-sm); color: var(--muted); margin-top: 4px; line-height: 1.45; }
+.mc-sub { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin: var(--space-4) 0 var(--space-2); }
+.mc-marco-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mc-ico { display: grid; place-items: center; color: var(--muted); flex: 0 0 auto; }
+
+.mc-falta { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.mc-falta li { font-size: var(--text-sm); line-height: 1.45; }
+.mc-falta b { margin-left: 4px; }
+.mc-lista { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 5px; }
+.mc-lista li { font-size: var(--text-sm); color: var(--text-2); line-height: 1.45; }
+
+.mc-marco { padding: 10px 0; border-top: 1px solid var(--border); }
+.mc-marco:first-of-type { border-top: none; padding-top: 2px; }
+.mc-marco .progress-row, .mc-degrau .progress-row, .mc-tabela .progress-row { grid-template-columns: 1fr auto; margin-top: 6px; }
+.mc-marco .progress-row .label, .mc-degrau .progress-row .label, .mc-tabela .progress-row .label { display: none; }
+
+.mc-bloqueio { padding: 9px 12px; border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius-sm); background: var(--surface-2); margin-bottom: 8px; }
+.mc-bloqueio.bad { border-left-color: var(--bad); }
+.mc-bloqueio.info { border-left-color: var(--info); }
+
+.mc-escada { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.mc-degrau { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--surface-2); display: flex; flex-direction: column; gap: 4px; }
+.mc-degrau.liberado { border-color: var(--ok); background: var(--ok-bg); }
+.mc-degrau.proximo { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand-soft); }
+.mc-degrau-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mc-passo { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-3); color: var(--muted); font-size: var(--text-xs); font-weight: 700; flex: 0 0 auto; }
+.mc-degrau.proximo .mc-passo { background: var(--brand); color: var(--brand-ink); }
+.mc-degrau .mc-conta { margin-top: auto; padding-top: 8px; }
+
+.mc-camadas { display: grid; gap: 2px; }
+.mc-camada { border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius-sm); padding: 10px 14px; background: var(--surface-2); }
+.mc-camada.ok { border-left-color: var(--ok); }
+.mc-camada.warn { border-left-color: var(--warn); }
+.mc-camada.bad { border-left-color: var(--bad); }
+.mc-camada-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mc-seta { display: grid; place-items: center; color: var(--muted); height: 16px; }
+.mc-lista-gates { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.mc-pill { font-size: var(--text-xs); padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); white-space: nowrap; }
+.mc-pill.ok { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.mc-pill.bad { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+.mc-pill.info { color: var(--info); border-color: var(--info); background: var(--info-bg); }
+.mc-pill.ev { font-family: var(--mono); font-size: 10px; }
+
+.mc-beneficio { border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 14px; background: var(--surface-2); }
+.mc-beneficio.ok { border-color: var(--ok); }
+.mc-beneficio.ok .mc-ico { color: var(--ok); }
+
+.mc-ondas { list-style: none; padding: 0; margin: 0; }
+.mc-ondas li { padding: 10px 0 12px 20px; border-left: 2px solid var(--border); position: relative; }
+.mc-ondas li:last-child { border-left-color: transparent; }
+.mc-ondas li::before { content: ""; position: absolute; left: -6px; top: 15px; width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); border: 2px solid var(--surface); }
+.mc-ondas li.concluida::before { background: var(--ok); }
+.mc-ondas li.em_andamento::before { background: var(--brand); }
+.mc-onda-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+@media (max-width: 1100px) { .mc-escada { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .mc-escada { grid-template-columns: 1fr; } }
+@media print { .mc-degrau, .mc-camada, .mc-beneficio, .mc-bloqueio { break-inside: avoid; } }
