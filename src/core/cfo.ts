@@ -331,19 +331,27 @@ export function redigirMeusPedidos(ds: Dataset, usuario: Usuario): string {
   return ['Seus pedidos:', ...meus.map((l) => { const s = statusPedidoDF(l); const motivo = s === 'recusado' ? l.motivoCancelamento?.replace(/^Recusada no alinhamento diário: /, '') : undefined; return `- ${l.descricao} · ${fmt(l.valorBruto)} · ${br(l.vencimento)} · **${ROTULO_STATUS_DF[s]}**${motivo ? ` (${motivo})` : ''}`; })].join('\n');
 }
 /** Resposta completa a partir de uma interpretacao (local ou da IA). veCaixa = quem pode ver saldo e parecer (Diretoria/Financeiro). */
-export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpretado, veCaixa = true): RespostaDF {
+/**
+ * Resposta do Diretor Financeiro. `veCaixa` e OBRIGATORIO e fail-closed: a autorizacao para ver valores vem do
+ * usuario autenticado (pode(usuario, 'ver_bancos')), decidida por quem chama — nunca de um default. Qualquer
+ * coisa que nao seja exatamente `true` (inclusive undefined vindo de chamada nao tipada) fecha o caixa.
+ * Quem nao ve caixa tambem NAO recebe o `parecer` no retorno: saldo e reserva nao viajam no objeto.
+ */
+export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpretado, veCaixa: boolean): RespostaDF {
+  const mostrar = veCaixa === true;
   const sugestoesEquipe = ['Preciso pagar um frete de R$ 500 amanhã', 'Meus pedidos'];
-  if (pedido.intencao === 'ajuda' || pedido.intencao === 'outro') return { texto: (pedido.intencao === 'outro' ? 'Não entendi como um pedido de pagamento. ' : '') + (veCaixa ? AJUDA_DF : AJUDA_EQUIPE), sugestoes: veCaixa ? ['Como está o caixa?', 'O que vence essa semana?', 'Preciso pagar um frete de R$ 500 amanhã'] : sugestoesEquipe };
-  if (!veCaixa && (pedido.intencao === 'consulta_caixa' || pedido.intencao === 'vencimentos')) return { texto: 'Saldo e vencimentos ficam com a Diretoria; não repasso esses dados. Posso anotar um pedido de pagamento ou mostrar o andamento dos seus.', pedido, sugestoes: sugestoesEquipe };
+  if (pedido.intencao === 'ajuda' || pedido.intencao === 'outro') return { texto: (pedido.intencao === 'outro' ? 'Não entendi como um pedido de pagamento. ' : '') + (mostrar ? AJUDA_DF : AJUDA_EQUIPE), sugestoes: mostrar ? ['Como está o caixa?', 'O que vence essa semana?', 'Preciso pagar um frete de R$ 500 amanhã'] : sugestoesEquipe };
+  if (!mostrar && (pedido.intencao === 'consulta_caixa' || pedido.intencao === 'vencimentos')) return { texto: 'Saldo e vencimentos ficam com a Diretoria; não repasso esses dados. Posso anotar um pedido de pagamento ou mostrar o andamento dos seus.', pedido, sugestoes: sugestoesEquipe };
   if (pedido.intencao === 'consulta_caixa') return { texto: redigirCaixa(ds), pedido };
   if (pedido.intencao === 'vencimentos') return { texto: redigirVencimentos(ds), pedido };
-  if (pedido.intencao === 'previsoes') return { texto: veCaixa ? redigirPrevisoes(ds, usuario) : redigirMeusPedidos(ds, usuario), pedido };
+  if (pedido.intencao === 'previsoes') return { texto: mostrar ? redigirPrevisoes(ds, usuario) : redigirMeusPedidos(ds, usuario), pedido };
   if (pedido.faltando.length) {
     const perguntas = pedido.faltando.map((f) => (f === 'valor' ? 'qual o valor' : 'para que dia')).join(' e ');
     return { texto: `Entendi o pedido${pedido.categoria ? ` de **${pedido.categoria}**` : ''}${pedido.codigoObra ? ` na obra **${pedido.codigoObra}**` : ''}. Só me diga ${perguntas}.`, pedido };
   }
   const parecer = analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria });
-  return { texto: veCaixa ? redigirParecer(parecer, pedido, usuario) : redigirParecerEquipe(pedido, usuario), pedido, parecer };
+  // o parecer carrega saldo, reserva e menor saldo: nao vai no retorno de quem nao ve caixa
+  return mostrar ? { texto: redigirParecer(parecer, pedido, usuario), pedido, parecer } : { texto: redigirParecerEquipe(pedido, usuario), pedido };
 }
 
 // ---------------------------------------------------------------------------

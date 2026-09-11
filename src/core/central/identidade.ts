@@ -42,7 +42,7 @@ export function resolverIdentidadeCentral(telefoneBruto: string | undefined, ide
   const tel = telefoneCentral(telefoneBruto);
   if (!tel.ok) return { conhecida: false, verificada: false, motivo: tel.motivo };
   const daOrganizacao = identidades.filter((i) => i.organizationId === chave.organizationId);
-  return resolverIdentidade(tel.telefone, daOrganizacao, chave.contexto);
+  return resolverIdentidade(tel.telefone, daOrganizacao, chave.contexto, chave.organizationId);
 }
 
 /** Numeros vinculados a uma pessoa (uma pessoa pode ter varios aparelhos). Sempre mascarados na saida. */

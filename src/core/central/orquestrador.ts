@@ -24,6 +24,10 @@ export const PADROES_INJECAO: RegExp[] = [
   /\b(?:sem|dispens\w*|pul\w*|ignorando|independente\s+de|fora\s+d\w+)\s+(?:a\s+|as\s+|o\s+|os\s+)?(?:aprova\w*|confirma\w*|permiss\w*|al[çc]ad\w*|valida\w*)\b[^.!?\n]*/i,
   /\b(?:libere|liberar|conceda|conceder|d[êe]|dar)\s+(?:me\s+|nos\s+)?(?:acesso|permiss\w*|privil[ée]gi\w*|poder\w*)\b[^.!?\n]*/i,
   /\b(?:system|assistant|prompt|instru\w*)\s*(?:prompt|message|do\s+sistema)\b[^.!?\n]*/i,
+  // cabecalho falso de papel ("SYSTEM:", "ADMIN >"): a mensagem tenta se passar por instrucao de sistema
+  /(?:^|[\n.!?])\s*(?:system|sistema|admin|administrador|assistant|developer|root)\s*[:>|-][^.!?\n]*/i,
+  // afirmacao sobre o proprio nivel de acesso: quem decide isso e a MATRIZ do Control, nunca o texto
+  /\b(?:usu[\u00e1a]rio|eu|ele|ela)\s+(?:j[\u00e1a]\s+)?(?:tem|tenho|possui|possuo|est[\u00e1a]\s+com)\s+[^.!?\n]*?(?:permiss\w*|acesso\b|al[\u00e7c]ad\w*|papel\b|perfil\b|autoriza\w*)[^.!?\n]*/i,
 ];
 export interface Higiene { texto: string; tentativas: string[] }
 /** Remove do texto os trechos que tentam instruir o sistema e devolve o que foi tentado (para auditoria). */

@@ -172,15 +172,15 @@ describe('normalização de eventos e contexto', () => {
 describe('identidade interna', () => {
   const base: WhatsappIdentity = { id: 'i1', organizationId: 'org', usuarioId: 'u-augusto', telefoneNormalizado: TELEFONE, contexto: 'INTERNAL', situacao: 'VERIFIED', criadoEm: '2026-09-01' };
   it('só identidade VERIFIED do mesmo contexto é confiável', () => {
-    expect(resolverIdentidade(TELEFONE, [base], 'INTERNAL')).toMatchObject({ conhecida: true, verificada: true });
-    expect(resolverIdentidade(TELEFONE, [base], 'EXTERNAL').conhecida).toBe(false); // contexto diferente não vale
-    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL')).toMatchObject({ conhecida: true, verificada: false });
-    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'REVOKED' }], 'INTERNAL')).toMatchObject({ conhecida: true, verificada: false });
-    expect(resolverIdentidade('5562911112222', [base], 'INTERNAL')).toMatchObject({ conhecida: false, verificada: false });
-    expect(resolverIdentidade(undefined, [base], 'INTERNAL').verificada).toBe(false);
+    expect(resolverIdentidade(TELEFONE, [base], 'INTERNAL', 'org')).toMatchObject({ conhecida: true, verificada: true });
+    expect(resolverIdentidade(TELEFONE, [base], 'EXTERNAL', 'org').conhecida).toBe(false); // contexto diferente não vale
+    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL', 'org')).toMatchObject({ conhecida: true, verificada: false });
+    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'REVOKED' }], 'INTERNAL', 'org')).toMatchObject({ conhecida: true, verificada: false });
+    expect(resolverIdentidade('5562911112222', [base], 'INTERNAL', 'org')).toMatchObject({ conhecida: false, verificada: false });
+    expect(resolverIdentidade(undefined, [base], 'INTERNAL', 'org').verificada).toBe(false);
   });
   it('identidade desconhecida ou não verificada nunca libera ação sensível', () => {
-    for (const id of [resolverIdentidade(undefined, [], 'INTERNAL'), resolverIdentidade('5562911112222', [base], 'INTERNAL'), resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL')]) {
+    for (const id of [resolverIdentidade(undefined, [], 'INTERNAL', 'org'), resolverIdentidade('5562911112222', [base], 'INTERNAL', 'org'), resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL', 'org')]) {
       const d = decisaoSegura({ intent: 'FINANCE', confidence: 0.99, motivo: 'pedido de pagamento' }, id);
       expect(d.requiresHuman).toBe(true);
       expect(d.requiresConfirmation).toBe(true);

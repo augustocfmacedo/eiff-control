@@ -18,7 +18,7 @@ const identidadeDe = (usuarioId: string, situacao: WhatsappIdentity['situacao'] 
   id: `wid-${usuarioId}`, organizationId: 'org-1', usuarioId, telefoneNormalizado: TELEFONE, contexto: 'INTERNAL', situacao, criadoEm: AGORA,
 });
 function ctxDe(texto: string, usuarioId: string, situacao: WhatsappIdentity['situacao'] = 'VERIFIED'): ContextoAgente {
-  return { contexto: 'INTERNAL', identidade: resolverIdentidade(TELEFONE, [identidadeDe(usuarioId, situacao)], 'INTERNAL'), texto, agoraIso: AGORA };
+  return { contexto: 'INTERNAL', identidade: resolverIdentidade(TELEFONE, [identidadeDe(usuarioId, situacao)], 'INTERNAL', 'org-1'), texto, agoraIso: AGORA };
 }
 const ds = () => getState().ds;
 const rascunhosDF = () => ds().lancamentos.filter((l) => l.origem === ORIGEM_DF).length;
@@ -146,7 +146,7 @@ describe('FINANCE_AGENT: propor não é executar', () => {
     const revogada = await a.execute(proposta, ctxDe('x', 'u-obra', 'REVOKED'));
     expect(revogada.ok).toBe(false);
 
-    const desconhecida = await a.execute(proposta, { ...ctx, identidade: resolverIdentidade(undefined, [], 'INTERNAL') });
+    const desconhecida = await a.execute(proposta, { ...ctx, identidade: resolverIdentidade(undefined, [], 'INTERNAL', 'org-1') });
     expect(desconhecida.ok).toBe(false);
 
     const outraAcao = await a.execute({ ...proposta, codigo: 'QUALQUER_OUTRA' }, ctx);

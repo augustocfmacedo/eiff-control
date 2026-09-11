@@ -3,6 +3,18 @@
 // Contrato conferido na documentacao oficial (ver docs/eiff-central.md).
 import { normalizarTelefone, type ChannelInboundEvent, type CommunicationContext, type TipoEventoInbound } from '../radar/canais';
 
+/**
+ * Comparacao de tempo constante para segredo curto (token do webhook). Tamanho diferente recusa de imediato:
+ * o comprimento do token configurado nao e segredo, mas o conteudo e. Vive neste modulo puro de proposito:
+ * o provider depende daqui, e nunca o contrario (a fronteira e prendida por teste).
+ */
+export function comparacaoConstante(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 /** Numeros configurados por contexto. O contexto vem do numero que RECEBEU, nunca do texto da mensagem. */
 export interface NumerosCentral { interno?: string; externo?: string }
 /**
@@ -19,10 +31,6 @@ export function contextoDoNumero(phoneNumberId: string | undefined, numeros: Num
 /** status do webhook da Meta -> evento interno. "failed" chega com `errors`; status novo/desconhecido nao vira nada. */
 const EVENTO_POR_STATUS: Record<string, TipoEventoInbound> = { sent: 'MESSAGE_SENT', delivered: 'MESSAGE_DELIVERED', read: 'MESSAGE_READ', failed: 'MESSAGE_FAILED' };
 
-const iso = (unix: unknown): string => {
-  const n = Number(unix);
-  return Number.isFinite(n) && n > 0 ? new Date(n * 1000).toISOString() : new Date(0).toISOString();
-};
 /** Como `iso`, mas sem inventar data: campo ausente ou invalido fica indefinido. */
 const isoOpcional = (unix: unknown): string | undefined => {
   const n = Number(unix);
@@ -76,9 +84,12 @@ export function normalizarEventosMeta(payload: unknown, opts: OpcoesNormalizacao
         if (!id) continue;
         eventos.push({
           provider: 'META_CLOUD', phoneNumberId, contexto,
-          externalConversationId: normalizarTelefone(txt(m.from)) ?? txt(m.from) ?? '',
+          // telefone que nao normaliza nao vira chave de conversa: id vazio, e quem consome trata como nao confiavel
+          externalConversationId: normalizarTelefone(txt(m.from)) ?? '',
           externalMessageId: id, direction: 'inbound', eventType: 'MESSAGE_RECEIVED',
-          occurredAt: iso(m.timestamp), contactPhone: normalizarTelefone(txt(m.from)), messageType: txt(m.type) ?? 'desconhecido',
+          // sem timestamp valido, usa a hora da recepcao — nunca 1970, que passaria por filtro de idade
+          occurredAt: isoOpcional(m.timestamp) ?? opts.agoraIso ?? new Date().toISOString(),
+          contactPhone: normalizarTelefone(txt(m.from)), messageType: txt(m.type) ?? 'desconhecido',
           // mensagem recebida tambem pode vir com erro (tipo nao suportado, midia expirada)
           ...erroDe(arr(m.errors)[0]),
         });
@@ -94,7 +105,7 @@ export function normalizarEventosMeta(payload: unknown, opts: OpcoesNormalizacao
           provider: 'META_CLOUD', phoneNumberId, contexto,
           externalConversationId: txt(conversa.id) ?? normalizarTelefone(txt(s.recipient_id)) ?? '',
           externalMessageId: id, direction: 'outbound', eventType: tipo,
-          occurredAt: iso(s.timestamp), externalStatus: status,
+          occurredAt: isoOpcional(s.timestamp) ?? opts.agoraIso ?? new Date().toISOString(), externalStatus: status,
           contactPhone: normalizarTelefone(txt(s.recipient_id)),
           ...erroDe(arr(s.errors)[0]),
           janelaExpiraEm: isoOpcional(conversa.expiration_timestamp),
@@ -116,7 +127,7 @@ export function verificarDesafioMeta(params: URLSearchParams, verifyToken: strin
   const token = params.get('hub.verify_token');
   const challenge = params.get('hub.challenge');
   if (modo !== 'subscribe') return { ok: false, motivo: 'hub.mode diferente de subscribe' };
-  if (!token || token !== verifyToken) return { ok: false, motivo: 'hub.verify_token não confere' };
+  if (!token || !comparacaoConstante(token, verifyToken)) return { ok: false, motivo: 'hub.verify_token não confere' };
   if (!challenge) return { ok: false, motivo: 'hub.challenge ausente' };
   return { ok: true, challenge, motivo: 'verificação aceita' };
 }

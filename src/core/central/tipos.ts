@@ -32,10 +32,15 @@ export interface WhatsappIdentity {
   criadoEm: string;
 }
 export interface IdentidadeResolvida { identidade?: WhatsappIdentity; conhecida: boolean; verificada: boolean; motivo: string }
-/** Resolve o telefone para uma identidade. Desconhecida ou nao verificada = nenhuma acao sensivel, sempre. */
-export function resolverIdentidade(telefone: string | undefined, identidades: WhatsappIdentity[], contexto: CommunicationContext): IdentidadeResolvida {
+/**
+ * Resolve o telefone para uma identidade. Desconhecida ou nao verificada = nenhuma acao sensivel, sempre.
+ * A chave e o TRIO (organizacao, contexto, telefone): `organizationId` e obrigatorio de proposito — sem ele a
+ * assinatura convidava a resolver identidade de outra organizacao, que e justamente a ameaca.
+ */
+export function resolverIdentidade(telefone: string | undefined, identidades: WhatsappIdentity[], contexto: CommunicationContext, organizationId: string): IdentidadeResolvida {
   if (!telefone) return { conhecida: false, verificada: false, motivo: 'evento sem telefone normalizado' };
-  const candidatas = identidades.filter((i) => i.telefoneNormalizado === telefone && i.contexto === contexto);
+  if (!organizationId) return { conhecida: false, verificada: false, motivo: 'organização não informada: identidade não resolve' };
+  const candidatas = identidades.filter((i) => i.telefoneNormalizado === telefone && i.contexto === contexto && i.organizationId === organizationId);
   const viva = candidatas.find((i) => i.situacao === 'VERIFIED');
   if (viva) return { identidade: viva, conhecida: true, verificada: true, motivo: 'identidade verificada' };
   const pendente = candidatas.find((i) => i.situacao === 'PENDING');
