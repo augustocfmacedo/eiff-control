@@ -353,3 +353,25 @@ Ou seja: aplicar **estas três** é seguro. Continuar aplicando **assim** não �
 - Guardar a saída da verificação da seção 6 junto do registro da aplicação.
 - Manter os dois harnesses no ciclo: qualquer migration nova da Central entra primeiro no
   `pg-preflight-central.mjs` e só depois no banco.
+
+## 11. Registro de aplicação — 11/09/2026 (F1 da Wave 03)
+
+Aplicadas em produção (`dduobppgomqyagjviwpx`), pelo Architect, sob autorização explícita "APLIQUE AGORA", uma por vez,
+cada uma em cópia temporária envelopada em `begin; … commit;` (originais intocados), via `supabase db query --linked
+--project-ref … -f`. Backups prévios (fora do repositório, `D:\Usuario\Documents\CLAUDE\backups\eiff-control\`):
+schema `…-schema-20260911-1652.sql` (348.748 bytes, SHA-256 `458bd144…1728520`) e dados `…-data-20260911-1652.sql`
+(7.887.699 bytes, SHA-256 `d3d08d0a…258044`), ambos reconfirmados imediatamente antes da primeira escrita.
+
+| Migration | Apply | POST-CHECK (read-only) |
+| --- | --- | --- |
+| 0049 | exit 0 | tabela + RLS; índices `pkey`, `pessoa_idx`, `telefone_idx`, `verificada_uk`; triggers `audit`, `coerencia`, `estado`, `touch`; policy `wi_select`; RPCs `request`/`verify`/`attempt`/`transition` com EXECUTE só para `service_role` (0 para `authenticated`/`anon`); grants `SELECT`; 0 linhas |
+| 0050 | exit 0 | 3 tabelas + RLS; policies `cc_select`/`cm_select`/`ce_select`, filhos herdando a visibilidade da conversa; 9 triggers; `UNIQUE (organization_id, provider, external_message_id)` e `UNIQUE (organization_id, context, phone_e164)`; grants `SELECT`; 0 linhas |
+| 0051 | exit 0 | `CHECK (provider IN ('MANUAL','OCTADESK','META_CLOUD'))`; `radar_delivery_create` preserva "Octadesk só entrega WhatsApp" e inclui "Meta Cloud só entrega WhatsApp"; EXECUTE só `service_role`; ledger com 0 linhas antes e depois |
+
+Validação global (seção 6): tabelas 4/4 · policies de SELECT 4/4 · triggers 13/13 · RPCs por `authenticated` 0/0 ·
+RPCs por `service_role` 6/6 · privilégios de `authenticated` = SELECT · RLS ligada 4/4 · CHECK inclui META_CLOUD.
+Posição final: 0044–0051 `aplicada`. Contagens: `whatsapp_identity` 0, `central_conversation` 0, `central_message` 0,
+`central_event` 0, `radar_communication_delivery` 0. Nenhuma identidade, conversa, mensagem ou entrega criada; nenhum
+envio; nenhuma mutação financeira. Nota para a restauração: o `pg_dump` alertou FKs circulares em
+`measurement`↔`financial_entry`, `stock_movement` e `radar_company` — restaurar o dump de dados exige
+`session_replication_role = replica` (já no cabeçalho) ou `--disable-triggers`.

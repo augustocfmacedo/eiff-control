@@ -282,13 +282,16 @@ export const GATES: Gate[] = [
   g({
     id: 'MIGRATIONS_APLICADAS',
     titulo: 'Migrations 0049, 0050 e 0051 aplicadas em produção',
-    prova: 'As três aplicadas no projeto do Supabase, e a numeração registrada no CLAUDE.md.',
-    situacao: 'bloqueado',
-    bloqueio: 'Preflight feito no PGlite contra o schema completo reconstruído do repositório (51 migrations + seed + shims do Supabase + ordem histórica corrigida; 5 provas). O Supabase de produção continua NÃO testado nem migrado: o que falta é a DECISÃO de aplicar — sem staging e sem backup automático no plano Free, é decisão da Diretoria, não do código.',
+    prova: 'As três aplicadas no projeto do Supabase, com backup prévio verificado, envelope transacional, POST-CHECK de cada uma e validação global batendo em todos os valores esperados; numeração registrada no CLAUDE.md.',
+    situacao: 'fechado',
+    // Fechado com evidencia REAL (11/09/2026): o registro da aplicacao em producao, com os valores do POST-CHECK e da
+    // validacao global, esta na secao 11 do runbook. Codigo e preflight sozinhos nunca fechariam este gate.
     evidencias: [
-      { tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', nota: 'regras das três migrations, schema mínimo' },
-      { tipo: 'script', referencia: 'scripts/pg-preflight-central.mjs', nota: 'fila inteira + seed + shims do Supabase, em PGlite (schema completo reconstruído do repositório, não a produção)' },
-      { tipo: 'documento', referencia: 'docs/central-db-release.md', simbolo: 'Recomendação' },
+      { tipo: 'documento', referencia: 'docs/central-db-release.md', simbolo: 'Registro de aplicação', nota: 'aplicação em produção em 11/09/2026: apply exit 0 nas três, POST-CHECK e validação global da seção 6 verdes' },
+      { tipo: 'migration', referencia: 'supabase/migrations/0049_whatsapp_identity.sql' },
+      { tipo: 'migration', referencia: 'supabase/migrations/0050_central_conversation.sql' },
+      { tipo: 'migration', referencia: 'supabase/migrations/0051_central_meta_delivery.sql' },
+      { tipo: 'script', referencia: 'scripts/pg-preflight-central.mjs', nota: 'preflight 51/51 antes da aplicação' },
     ],
   }),
   g({
