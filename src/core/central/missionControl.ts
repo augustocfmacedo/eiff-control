@@ -360,10 +360,11 @@ export const GATES: Gate[] = [
     id: 'CENTRAL_INBOUND_PERSISTENCE',
     titulo: 'Conteúdo inbound e trilha de processamento no banco (migration 0052)',
     prova: 'central_message_content (texto normalizado, só inbound, imutável, uma linha por mensagem) e central_message_processing (linha tipada por rodada, can_execute e sent presos em false, um CONCLUIDO de webhook por mensagem) APLICADAS em produção, com o registro no runbook. Migration escrita e provada num Postgres descartável não é migration aplicada.',
-    situacao: 'aberto',
+    situacao: 'fechado',
     evidencias: [
-      { tipo: 'migration', referencia: 'supabase/migrations/0052_central_inbound_content.sql', nota: 'só em código: NÃO aplicada em produção' },
-      { tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', simbolo: '0052_central_inbound_content.sql', nota: 'smoke K–U e preflight 0001..0052' },
+      { tipo: 'documento', referencia: 'docs/central-db-release.md', simbolo: 'Registro de aplicação — 0052', nota: 'aplicada em produção em 11/09/2026 (D1.2): backup pré-0052, envelope transacional, post-check estrutural verde' },
+      { tipo: 'migration', referencia: 'supabase/migrations/0052_central_inbound_content.sql' },
+      { tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', simbolo: '0052_central_inbound_content.sql', nota: 'smoke K–U e preflight 0001..0052, também no Quality Gate remoto #5' },
     ],
   }),
   g({

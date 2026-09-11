@@ -258,8 +258,9 @@ describe('release ladder', () => {
     const p = prontidaoDoDegrau(alpha);
     expect(p.pronto).toBe(false);
     // F1 aplicada em producao (11/09/2026): as migrations sairam da lista; o que falta e o webhook chamar o fluxo
-    // ... e, desde a decisao D2/B+, a 0052 aplicada (conteudo inbound + trilha de processamento); hoje so em codigo
-    expect(p.faltando.map((f) => f.id).sort()).toEqual(['CENTRAL_INBOUND_PERSISTENCE', 'CENTRAL_WIRING']);
+    // 0052 aplicada em producao em 11/09/2026 (D1.2): CENTRAL_INBOUND_PERSISTENCE fechou; o que falta e o fio ligado de verdade
+    expect(p.faltando.map((f) => f.id).sort()).toEqual(['CENTRAL_WIRING']);
+    expect(gatePorId('CENTRAL_INBOUND_PERSISTENCE')!.situacao).toBe('fechado');
     expect(gatePorId('MIGRATIONS_APLICADAS')!.situacao).toBe('fechado');
   });
 
@@ -293,7 +294,7 @@ describe('marcos', () => {
     expect(prontidaoDoMarco(MARCOS.find((m) => m.id === 'M3_BANCO')!).pronto).toBe(true);
     const alpha = prontidaoDoMarco(MARCOS.find((m) => m.id === 'M4_ALPHA')!);
     expect(alpha.pronto).toBe(false);
-    expect(alpha.faltando.map((f) => f.id).sort()).toEqual(['CENTRAL_INBOUND_PERSISTENCE', 'CENTRAL_WIRING']);
+    expect(alpha.faltando.map((f) => f.id).sort()).toEqual(['CENTRAL_WIRING']);
   });
 });
 

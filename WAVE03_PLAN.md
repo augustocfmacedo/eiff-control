@@ -101,6 +101,30 @@ próprio, com contrato, retenção e visibilidade separáveis. **Estado: 0052 es
 - **Contratos congelados** em `src/core/central/servidorContratos.ts` (Architect): variáveis e contexto do servidor,
   allowlist, portas de persistência, registro de processamento, classes de erro e resumo do webhook.
 
+### RC1 e D1.2 (11/09/2026)
+
+- **RC1** = `integracao-wave03 @ bc705ffcd33867859026647bf7f7beb61684fe90`, PR #2 → `main` aberto **só para o Quality
+  Gate remoto** (não mergeado; sem squash, sem rebase): EIFF Quality Gate #5, run `34653152924`, job `103439666478`,
+  SUCCESS (83 arquivos / 878 testes + 8 todo, lint, build, smoke A–U, preflight 0001..0052 com P1–P6 e idempotência).
+- **D1.2 — 0052 aplicada em produção** com backup pré-0052 e envelope transacional; registro completo em
+  `docs/central-db-release.md` §13. `CENTRAL_INBOUND_PERSISTENCE` **fechado** com essa evidência. `CENTRAL_WIRING`,
+  `IDENTIDADE_ONBOARDING`, `CENTRAL_CONTENT_RETENTION_POLICY` e `MISSION_CONTROL_LIVE` seguem abertos.
+- **Dívidas registradas:** `QUALITY_GATE_SMOKE_SUMMARY_0052` — o validador inline do step PostgreSQL Smoke ainda enumera
+  só 0049–0051 e A–J ("3 migrations / 10 smoke tests"); a cobertura real de 0052 e K–U vem do exit code do script com
+  `pipefail`. Corrigir no próximo SHA (não bloqueante). `ANON_GRANTS_CENTRAL` — `anon` mantém grants de escrita em
+  `whatsapp_identity` e nas cinco `central_*` (padrão do `public`); inócuo sob RLS sem policy de escrita; `revoke ... from
+  anon` aditivo é candidato a `0053`, só com autorização própria.
+
+### F3W — IDENTITY WEBHOOK WIRING (decisão registrada em 11/09/2026; NÃO implementada)
+
+Sem migration SYSTEM e sem alterar `whatsapp_identity_verify`. A ligação futura do webhook chamará **exclusivamente** a RPC
+existente `whatsapp_identity_verify`, por **adapter dedicado** — exceção específica ao guarda "webhook não chama RPC", não
+autorização genérica. Regra obrigatória, quando a mensagem for candidata a código de verificação de uma identidade PENDING:
+assinatura validada → contexto resolvido → localizar PENDING → `conferirCodigoRecebido` (`onboarding.ts`) →
+`whatsapp_identity_verify` → responder → **STOP**. O código de verificação **não** entra em `fluxoInterno`, no Finance
+Agent nem no CFO; **não** é persistido em `central_message_content`; **não** aparece em logs. Sem PENDING ou sem código
+candidato, segue o fluxo normal da Central. Implementação só com autorização própria.
+
 ### F2R — CENTRAL REPROCESS READ-ONLY (subfrente desta wave)
 
 Começa depois de os contratos da F2 estarem integrados. Escopo: ler a mensagem inbound persistida; respeitar
