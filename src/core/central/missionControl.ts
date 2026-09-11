@@ -165,7 +165,13 @@ export const GATES: Gate[] = [
     titulo: 'Fluxo de cadastro do número para a equipe',
     prova: 'Tela e rotina para pedir, enviar e conferir o código de cada colaborador, com revogação pelo gestor.',
     situacao: 'aberto',
-    evidencias: [{ tipo: 'modulo', referencia: 'src/core/central/identidade.ts', simbolo: 'abrirDesafioVerificacao', nota: 'a regra existe; falta o caminho de uso' }],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/identidade.ts', simbolo: 'abrirDesafioVerificacao' },
+      { tipo: 'modulo', referencia: 'src/core/central/onboarding.ts', simbolo: 'conferirCodigoRecebido', nota: 'F3 integrada em código (11/09/2026): pedir, renovar (invalida o anterior), revogar e conferir o código' },
+      { tipo: 'funcao', referencia: 'netlify/functions/central-identidade.ts' },
+      { tipo: 'modulo', referencia: 'src/screens/CentralIdentidades.tsx', simbolo: 'ver_central' },
+      { tipo: 'teste', referencia: 'src/core/central/onboarding.test.ts', nota: 'segue ABERTO: a conferência do código ainda não está ligada ao webhook (decisão pendente: o webhook chamaria whatsapp_identity_verify) e nenhuma verificação real aconteceu' },
+    ],
   }),
   g({
     id: 'AUTORIDADE_SERVIDOR',
@@ -341,8 +347,13 @@ export const GATES: Gate[] = [
     prova: 'channel-meta-webhook.ts chama fluxoInterno atrás do interruptor CENTRAL_ALPHA_MODE (off por padrão), com contexto de servidor real: organização pelo número que recebeu, identidades e Dataset carregados server-side, inbound persistido em central_*. Hoje o webhook valida a assinatura, conta os eventos e descarta o payload.',
     situacao: 'aberto',
     evidencias: [
-      { tipo: 'funcao', referencia: 'netlify/functions/channel-meta-webhook.ts' },
+      { tipo: 'funcao', referencia: 'netlify/functions/channel-meta-webhook.ts', simbolo: 'processarWebhookCentral', nota: 'F2 integrada em código (11/09/2026): a função só liga o caminho com CENTRAL_ALPHA_MODE=on' },
+      { tipo: 'modulo', referencia: 'src/core/central/webhookCentral.ts', simbolo: 'processarWebhookCentral' },
+      { tipo: 'modulo', referencia: 'src/core/central/contextoServidor.ts', simbolo: 'resolverContextoCentral' },
+      { tipo: 'modulo', referencia: 'src/core/central/persistenciaCentral.ts', simbolo: 'criarPersistenciaCentral' },
+      { tipo: 'modulo', referencia: 'src/data/datasetServidor.ts', simbolo: 'criarCarregadorDataset' },
       { tipo: 'modulo', referencia: 'src/core/central/fluxoInterno.ts', simbolo: 'fluxoInterno' },
+      { tipo: 'teste', referencia: 'src/core/central/webhookCentral.test.ts', nota: 'segue ABERTO: código integrado não é produção funcionando — fecha com a 0052 aplicada e o ensaio inbound controlado (número da allowlist, modo on) registrado' },
     ],
   }),
   g({
