@@ -3,13 +3,22 @@
 // Segredos so no painel do Netlify (META_WHATSAPP_*), nunca VITE_, nunca no navegador, nunca em log.
 // Contratos da Graph API conferidos na documentacao oficial: ver docs/eiff-central.md.
 import { ErroCanal, NOME_PROVIDER, autorizarDestino, mascararTelefone, normalizarTelefone, recusarEnvio, type CommunicationChannelProvider, type ModoEnvio, type PedidoEnvio, type RemetenteCanal, type ResultadoEnvio, type SaudeProvider, type TemplateCanal } from '../radar/canais';
-import { normalizarEventosMeta, verificarDesafioMeta, type NumerosCentral, type OpcoesNormalizacao } from './metaEventos';
+import { comparacaoConstante, normalizarEventosMeta, verificarDesafioMeta, type NumerosCentral, type OpcoesNormalizacao } from './metaEventos';
+import { validarCoerenciaCanalMeta, type PedidoEnvioMeta } from './metaEnvio';
 
 type Row = Record<string, unknown>;
 const txt = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 const arr = (v: unknown): Row[] => (Array.isArray(v) ? (v as Row[]) : []);
 /** Nada de token, telefone ou e-mail em mensagem que sobe para resposta ou log. */
-export const seguroMeta = (s: string) => s.replace(/EAA[A-Za-z0-9_-]+/g, 'EAA***').replace(/[A-Za-z0-9_-]{24,}/g, '***').replace(/\b\d{8,}\b/g, '***').slice(0, 200);
+/**
+ * Higieniza qualquer texto que suba para resposta ou log. Telefone entra formatado ("+55 62 98888-7777"),
+ * entao a mascara conta digitos ignorando espacos, pontos, tracos e parenteses — nao so digitos contiguos.
+ */
+export const seguroMeta = (s: string) => s
+  .replace(/EAA[A-Za-z0-9_-]+/g, 'EAA***')
+  .replace(/[A-Za-z0-9_-]{24,}/g, '***')
+  .replace(/\+?\d[\d\s().-]{6,}\d/g, (m) => ((m.match(/\d/g) ?? []).length >= 8 ? '***' : m))
+  .slice(0, 200);
 
 export const VARIAVEIS_META = ['META_WHATSAPP_ACCESS_TOKEN', 'META_WHATSAPP_PHONE_NUMBER_ID', 'META_WHATSAPP_WABA_ID', 'META_WHATSAPP_VERIFY_TOKEN', 'META_WHATSAPP_APP_SECRET'] as const;
 export const VERSAO_GRAPH_PADRAO = 'v21.0';
@@ -55,13 +64,8 @@ export function normalizarTemplatesMeta(bruto: unknown): TemplateCanal[] {
 // Assinatura do webhook (X-Hub-Signature-256)
 // ---------------------------------------------------------------------------
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
-/** Comparacao de tempo constante: nao vaza onde a assinatura difere. */
-export function comparacaoConstante(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
+/** Comparacao de tempo constante: reexportada do modulo puro, para existir UMA implementacao so. */
+export { comparacaoConstante };
 /**
  * Valida X-Hub-Signature-256 = "sha256=<hmac hex>" sobre o CORPO BRUTO, com o App Secret.
  * Sem cabecalho, sem segredo ou com formato estranho: recusa. Payload nao validado nunca e processado.
@@ -121,13 +125,22 @@ export function metaCloudProvider(cfg: ConfigMeta | undefined, d: DepsMeta): Com
     // a Cloud API nao tem "conversa" consultavel como o Octadesk: o estado da janela vem do webhook (fase futura)
     findConversation: async () => undefined, getConversation: async () => undefined, getMessages: vazio,
     /**
-     * Fronteira do efeito externo: fail-closed. Nesta fase a Central e READ-ONLY, entao alem da guarda de
-     * modo/allowlist o envio termina recusado. Nenhum POST na Graph API existe neste arquivo.
+     * Fronteira do efeito externo: fail-closed, em SEGUNDA camada (a primeira e o handler, antes de criar a
+     * entrega). Repete as tres guardas com o que o pedido carrega — modo de envio, allowlist do canario e
+     * entregabilidade (canal coerente, janela comprovada no modo livre) — e ainda assim RECUSA: nesta onda a
+     * Central nao envia. A montagem da requisicao e o rito completo do canario vivem em metaEnvio.ts
+     * (executarEnvioMeta), ja implementados e testados; o POST entra na onda de liberacao do envio.
+     * Nenhum POST na Graph API existe neste arquivo.
      */
     sendApproved: async (p: PedidoEnvio): Promise<ResultadoEnvio> => {
-      const autorizacao = autorizarDestino(p.telefone, d.modoEnvio ?? 'disabled', d.canaryNumeros ?? []);
+      const pm = p as PedidoEnvioMeta;
+      const autorizacao = autorizarDestino(pm.telefone, d.modoEnvio ?? 'disabled', d.canaryNumeros ?? []);
       if (!autorizacao.permitido) throw new ErroCanal(autorizacao.codigo ?? 'destino_nao_autorizado', autorizacao.motivo, 403);
-      return recusarEnvio(); // EIFF Central 01: envio entra em fase propria, depois da prova de webhook e identidade
+      const coerencia = validarCoerenciaCanalMeta({ canalComunicacao: pm.canal, canalEntrega: pm.canal });
+      if (!coerencia.ok) throw new ErroCanal('canal_incoerente', coerencia.motivo, 409);
+      if (pm.entregabilidade && !pm.entregabilidade.apto) throw new ErroCanal('nao_entregavel', pm.entregabilidade.motivo, 409);
+      if (pm.modo === 'FREEFORM' && !pm.janela?.janelaComprovada) throw new ErroCanal('janela_nao_comprovada', 'mensagem livre exige janela de 24 h comprovada por mensagem do contato (webhook MESSAGE_RECEIVED)', 409);
+      return recusarEnvio(); // EIFF Central: envio entra em fase propria, depois da prova de webhook e identidade
     },
     reconcileDelivery: async () => ({ resultado: 'NOT_FOUND', candidatos: 0, motivo: 'Meta Cloud: reconciliação entra com o envio, na fase seguinte.' }),
     numeroInfo,
@@ -138,6 +151,11 @@ export function metaCloudProvider(cfg: ConfigMeta | undefined, d: DepsMeta): Com
 // Webhook
 // ---------------------------------------------------------------------------
 export interface EntradaWebhook { metodo: string; query: URLSearchParams; corpoBruto: string; assinatura?: string | null }
+/**
+ * Teto do corpo do webhook. A notificacao da Meta e pequena (metadados, sem midia); um corpo acima disto e
+ * erro ou abuso, e nao pode custar um HMAC. Conferido ANTES de qualquer leitura ou verificacao.
+ */
+export const LIMITE_CORPO_WEBHOOK = 512 * 1024;
 export interface SaidaWebhook { status: number; corpo: string; tipo: 'text/plain' | 'application/json'; eventos?: ReturnType<typeof normalizarEventosMeta> }
 /**
  * Trata o webhook da Meta: GET verifica o desafio; POST valida a assinatura ANTES de olhar o conteudo e devolve
@@ -152,6 +170,11 @@ export async function tratarWebhookMeta(e: EntradaWebhook, d: DepsMeta & { subtl
     return v.ok ? { status: 200, corpo: v.challenge!, tipo: 'text/plain' } : { status: 403, corpo: JSON.stringify({ erro: 'verificacao_recusada', mensagem: v.motivo }), tipo: 'application/json' };
   }
   if (e.metodo !== 'POST') return { status: 405, corpo: JSON.stringify({ erro: 'metodo' }), tipo: 'application/json' };
+  // teto antes do HMAC: corpo grande nao compra tempo de CPU
+  if (e.corpoBruto.length > LIMITE_CORPO_WEBHOOK) {
+    d.log?.({ evento: 'central_webhook', provider: 'META_CLOUD', operation: 'receive', outcome: 'corpo_grande', bytes: e.corpoBruto.length });
+    return { status: 413, corpo: JSON.stringify({ erro: 'corpo_grande' }), tipo: 'application/json' };
+  }
   const valida = await verificarAssinaturaMeta(e.corpoBruto, e.assinatura, cfg?.appSecret, d.subtle);
   if (!valida) {
     d.log?.({ evento: 'central_webhook', provider: 'META_CLOUD', operation: 'receive', outcome: 'assinatura_invalida' });

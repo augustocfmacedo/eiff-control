@@ -212,3 +212,39 @@ direto com a Meta Cloud. O adapter existe para que a escolha seja reversível.
 - <https://developers.facebook.com/docs/graph-api/reference/whats-app-business-account/message_templates/>
 - <https://developers.facebook.com/docs/whatsapp/cloud-api/reference/phone-numbers>
 - <https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates>
+
+## Pre-Merge Gate 02 (review externo do SHA f4c142f)
+
+Quatro pontos levantados na revisão externa da branch de integração, antes do merge em `main`.
+
+| Ponto | Situação |
+| --- | --- |
+| RLS dos filhos de `central_conversation` | **fechado** — `central_message` e `central_event` herdam a visibilidade da conversa |
+| Coerência cross-tenant das FKs (0049 e 0050) | **fechado** — triggers no banco, além da validação nas RPCs |
+| Verificação atômica do código | **fechado** — `whatsapp_identity_verify`; `..._transition` só revoga |
+| Teto do corpo do webhook | **fechado** — `Content-Length` antes de `req.text()`, e o teto real no handler |
+| `RATE_LIMIT_EDGE` | **dívida pré-live** (abaixo) |
+
+### Herança de visibilidade
+
+A política do filho faz `exists (select 1 from central_conversation c where c.id = …)`. O `EXISTS` roda como o
+usuário que consulta, então passa pela própria RLS de `central_conversation`: a regra é escrita **uma vez só** e o
+filho não pode divergir do pai. Não há recursão porque a política da conversa não olha para mensagem nem para evento.
+
+### Verificação da identidade
+
+`whatsapp_identity_verify(p_user_id, p_identity_id, p_code_hash, p_max_attempts)` é a **única** porta para
+`VERIFIED`. Tudo na mesma transação, sob `for update`: identidade existe → mesma organização → `PENDING` → desafio
+existe → não expirou → tentativas abaixo do limite → o hash confere. Código errado gasta tentativa e devolve sempre
+a mesma resposta (`codigo_nao_confere`), sem pista de quanto bateu; código certo promove e zera o desafio.
+
+O **plaintext do código nunca chega ao banco**: existe na memória da requisição que o gerou e na mensagem enviada ao
+dono do número. O servidor manda só o SHA-256 (`hashCodigoVerificacao` / `codigoParaVerificacao` em `identidade.ts`).
+`whatsapp_identity_transition` não promove mais para `VERIFIED` — só revoga.
+
+### RATE_LIMIT_EDGE — dívida pré-live
+
+O teto de 512 KB corta corpo grande, mas **não** limita a TAXA de requisições. O Netlify é distribuído e serverless:
+um contador em memória seria inútil (cada instância teria o seu) e daria falsa sensação de proteção — por isso
+**não foi implementado**. Limite de taxa é trabalho de borda (regra do provedor/CDN/WAF na frente da função) e tem de
+ser resolvido **antes do primeiro número real em produção**, não em código de aplicação.

@@ -371,6 +371,13 @@ const MATRIZ: Record<Acao, Papel[]> = {
   radar_config: ['Administrador', 'Diretoria'],
 };
 
+/**
+ * Papeis que decidem o alinhamento diario do Diretor Financeiro. NAO e uma segunda ACL: a permissao exigida
+ * continua sendo "aprovar" da MATRIZ. Isto e a segregacao do WORKFLOW, mais estreita de proposito, porque
+ * "aprovar" inclui Gestor de obra — justamente quem mais abre pedido no Diretor Financeiro.
+ */
+export const PAPEIS_DECISAO_DF: readonly Papel[] = ['Administrador', 'Diretoria', 'Financeiro'];
+
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {
   if (!usuario.ativo) return false;
   if (!MATRIZ[acao].includes(usuario.papel)) return false;
@@ -597,8 +604,18 @@ export const actions = {
   /** Alinhamento diario (Diretoria/Financeiro): programar (vira lancamento oficial, alcadas normais), reagendar (segue rascunho) ou recusar (cancela com motivo). */
   decidirPrevisaoDF(id: string, decisao: 'programar' | 'reagendar' | 'recusar', dados: { vencimento?: string; motivo?: string } = {}) {
     exigir('aprovar');
+    // Segregacao do workflow do DF: "aprovar" sozinho nao basta, porque a MATRIZ global inclui Gestor de obra
+    // — que e quem mais abre pedido. Quem decide o alinhamento diario e a Diretoria.
+    if (!PAPEIS_DECISAO_DF.includes(state.usuario.papel)) {
+      throw new RegraDeNegocioError(`Decisão do alinhamento diário é da Diretoria: o perfil ${state.usuario.papel} não decide previsões do Diretor Financeiro.`);
+    }
     const l = state.ds.lancamentos.find((x) => x.id === id);
     if (!l || l.origem !== ORIGEM_DF) throw new RegraDeNegocioError('Previsão do Diretor Financeiro não encontrada.');
+    // quem pediu nao e a autoridade final do proprio pedido (mesma regra de decidirAprovacao; Administrador e a
+    // excecao da fase de validacao com um unico operador, e a decisao fica marcada na auditoria)
+    if (l.criadoPor === state.usuario.nome && state.usuario.papel !== 'Administrador') {
+      throw new RegraDeNegocioError('Segregação de funções: quem pediu não decide o próprio pedido.');
+    }
     if (l.status !== 'Rascunho') throw new RegraDeNegocioError(`Previsão já decidida (${l.status}).`);
     if (decisao === 'recusar') { this.cancelarLancamento(id, `Recusada no alinhamento diário: ${dados.motivo?.trim() || 'sem motivo informado'}`); return; }
     if (decisao === 'reagendar') {

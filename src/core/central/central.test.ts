@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { metaCloudProvider, normalizarNumeroMeta, normalizarTemplatesMeta, tratarWebhookMeta, verificarAssinaturaMeta, VARIAVEIS_META, type ConfigMeta, type DepsMeta } from './metaServidor';
 import { contextoDoNumero, normalizarEventosMeta, verificarDesafioMeta } from './metaEventos';
-import { AGENTE_POR_INTENCAO, CONFIANCA_MINIMA, INTENCOES_INTERNAS, PERMISSAO_POR_INTENCAO, decisaoSegura, resolverIdentidade, type WhatsappIdentity } from './tipos';
+import { AGENTE_POR_INTENCAO, AGENTES, CATALOGO_ACOES, CONFIANCA_MINIMA, INTENCOES_INTERNAS, autorizarAcao, decisaoSegura, definicaoDaAcao, resolverIdentidade, type AcaoProposta, type WhatsappIdentity } from './tipos';
 import { PROVIDERS } from '../radar/canais';
 import { getState, pode } from '../../data/store';
 
@@ -172,15 +172,15 @@ describe('normalização de eventos e contexto', () => {
 describe('identidade interna', () => {
   const base: WhatsappIdentity = { id: 'i1', organizationId: 'org', usuarioId: 'u-augusto', telefoneNormalizado: TELEFONE, contexto: 'INTERNAL', situacao: 'VERIFIED', criadoEm: '2026-09-01' };
   it('só identidade VERIFIED do mesmo contexto é confiável', () => {
-    expect(resolverIdentidade(TELEFONE, [base], 'INTERNAL')).toMatchObject({ conhecida: true, verificada: true });
-    expect(resolverIdentidade(TELEFONE, [base], 'EXTERNAL').conhecida).toBe(false); // contexto diferente não vale
-    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL')).toMatchObject({ conhecida: true, verificada: false });
-    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'REVOKED' }], 'INTERNAL')).toMatchObject({ conhecida: true, verificada: false });
-    expect(resolverIdentidade('5562911112222', [base], 'INTERNAL')).toMatchObject({ conhecida: false, verificada: false });
-    expect(resolverIdentidade(undefined, [base], 'INTERNAL').verificada).toBe(false);
+    expect(resolverIdentidade(TELEFONE, [base], 'INTERNAL', 'org')).toMatchObject({ conhecida: true, verificada: true });
+    expect(resolverIdentidade(TELEFONE, [base], 'EXTERNAL', 'org').conhecida).toBe(false); // contexto diferente não vale
+    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL', 'org')).toMatchObject({ conhecida: true, verificada: false });
+    expect(resolverIdentidade(TELEFONE, [{ ...base, situacao: 'REVOKED' }], 'INTERNAL', 'org')).toMatchObject({ conhecida: true, verificada: false });
+    expect(resolverIdentidade('5562911112222', [base], 'INTERNAL', 'org')).toMatchObject({ conhecida: false, verificada: false });
+    expect(resolverIdentidade(undefined, [base], 'INTERNAL', 'org').verificada).toBe(false);
   });
   it('identidade desconhecida ou não verificada nunca libera ação sensível', () => {
-    for (const id of [resolverIdentidade(undefined, [], 'INTERNAL'), resolverIdentidade('5562911112222', [base], 'INTERNAL'), resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL')]) {
+    for (const id of [resolverIdentidade(undefined, [], 'INTERNAL', 'org'), resolverIdentidade('5562911112222', [base], 'INTERNAL', 'org'), resolverIdentidade(TELEFONE, [{ ...base, situacao: 'PENDING' }], 'INTERNAL', 'org')]) {
       const d = decisaoSegura({ intent: 'FINANCE', confidence: 0.99, motivo: 'pedido de pagamento' }, id);
       expect(d.requiresHuman).toBe(true);
       expect(d.requiresConfirmation).toBe(true);
@@ -189,26 +189,58 @@ describe('identidade interna', () => {
 });
 
 describe('contratos do orquestrador e dos agentes', () => {
-  it('toda intenção tem agente e permissão, e a permissão existe na matriz do EIFF Control', () => {
+  it('a intenção escolhe SÓ o agente: nenhuma permissão sai do roteamento', () => {
+    for (const i of INTENCOES_INTERNAS) expect(AGENTES).toContain(AGENTE_POR_INTENCAO[i]);
+    // o contrato nao pode voltar a expor um mapa intencao -> permissao
+    const fonte = fs.readFileSync(new URL('./tipos.ts', import.meta.url), 'utf8');
+    expect(fonte).not.toMatch(/PERMISSAO_POR_INTENCAO/);
+  });
+  it('a AÇÃO escolhe a permissão, e toda permissão do catálogo existe na matriz do Control', () => {
     const usuario = getState().usuario;
-    for (const i of INTENCOES_INTERNAS) {
-      expect(AGENTE_POR_INTENCAO[i]).toBeTruthy();
-      const permissao = PERMISSAO_POR_INTENCAO[i];
-      expect(permissao).toBeTruthy();
-      // pode() estoura se a ação não existir na MATRIZ: isto prende o reuso da ACL única
-      expect(() => pode(usuario, permissao as never)).not.toThrow();
+    const fonteStore = fs.readFileSync(new URL('../../data/store.ts', import.meta.url), 'utf8');
+    for (const a of CATALOGO_ACOES) {
+      expect(AGENTES).toContain(a.agente);
+      if (a.permissao === null) continue;
+      expect(() => pode(usuario, a.permissao!)).not.toThrow();
+      // a acao existe mesmo na MATRIZ: prende o reuso da ACL unica, sem segunda lista
+      expect(fonteStore, `${a.codigo} → ${a.permissao}`).toMatch(new RegExp(`^\\s{2}${a.permissao}: \\[`, 'm'));
     }
+    // a mesma intencao cobre permissoes diferentes: e por isso que a intencao nao autoriza
+    expect(definicaoDaAcao('FINANCE_CONSULTA_CAIXA')?.permissao).toBe('ver_bancos');
+    expect(definicaoDaAcao('FINANCE_REGISTRAR_PREVISAO')?.permissao).toBe('editar_lancamento');
+    expect(definicaoDaAcao('FINANCE_LIQUIDAR')?.permissao).toBe('liquidar');
+  });
+  it('a ponte de permissão recusa escalada: código fora do catálogo, agente errado e permissão declarada a menos', () => {
+    const verificada = { conhecida: true, verificada: true, motivo: 'ok' };
+    const usuario = { ativo: true, papel: 'Gestor de obra' };
+    const base: AcaoProposta = { codigo: 'FINANCE_LIQUIDAR', titulo: 'x', descricao: 'x', permissao: 'liquidar', exigeConfirmacao: true, reversivel: false, parametros: {} };
+    const tudoLiberado = () => true; // matriz permissiva de proposito: a recusa tem de vir da estrutura
+    expect(autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: { ...base, codigo: 'INVENTADA' }, identidade: verificada }, tudoLiberado).autorizado).toBe(false);
+    expect(autorizarAcao({ usuario, agente: 'GENERAL_AGENT', proposta: base, identidade: verificada }, tudoLiberado).autorizado).toBe(false);
+    // declarar uma permissao mais fraca do que a acao exige nao rebaixa a exigencia
+    const mentirosa = autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: { ...base, permissao: 'comentar' }, identidade: verificada }, tudoLiberado);
+    expect(mentirosa.autorizado).toBe(false);
+    expect(mentirosa.permissao).toBe('liquidar');
+    // identidade nao verificada nunca age, mesmo com a matriz liberando
+    expect(autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: base, identidade: { conhecida: true, verificada: false, motivo: 'pendente' } }, tudoLiberado).autorizado).toBe(false);
+    // acao de obra sem escopo nao autoriza
+    const obra: AcaoProposta = { codigo: 'WORKSITE_APONTAR_DIARIO', titulo: 'x', descricao: 'x', permissao: 'editar_obra', exigeConfirmacao: true, reversivel: true, parametros: {} };
+    expect(autorizarAcao({ usuario, agente: 'WORKSITE_AGENT', proposta: obra, identidade: verificada }, tudoLiberado).autorizado).toBe(false);
+    expect(autorizarAcao({ usuario, agente: 'WORKSITE_AGENT', proposta: { ...obra, escopoObra: 'OB-SF-CL-01' }, identidade: verificada }, tudoLiberado).autorizado).toBe(true);
+    // e o caminho feliz continua passando pela matriz real
+    expect(autorizarAcao({ usuario, agente: 'FINANCE_AGENT', proposta: base, identidade: verificada }, () => false).autorizado).toBe(false);
   });
   it('a decisão sempre exige confirmação e cai para humano com confiança baixa', () => {
     const verificada = { conhecida: true, verificada: true, motivo: 'ok' };
     const alta = decisaoSegura({ intent: 'PURCHASE', confidence: 0.95, motivo: 'compra' }, verificada);
-    expect(alta).toMatchObject({ targetAgent: 'PURCHASE_AGENT', requiresHuman: false, requiresConfirmation: true, requiredPermission: 'comprar' });
+    expect(alta).toMatchObject({ targetAgent: 'PURCHASE_AGENT', requiresHuman: false, requiresConfirmation: true });
     const baixa = decisaoSegura({ intent: 'PURCHASE', confidence: CONFIANCA_MINIMA - 0.01, motivo: 'compra' }, verificada);
     expect(baixa.requiresHuman).toBe(true);
   });
   it('o contrato não executa nada: decisaoSegura é pura e devolve só a decisão', () => {
     const d = decisaoSegura({ intent: 'FINANCE', confidence: 0.9, motivo: 'x' }, { conhecida: true, verificada: true, motivo: 'ok' });
-    expect(Object.keys(d).sort()).toEqual(['confidence', 'intent', 'motivo', 'requiredPermission', 'requiresConfirmation', 'requiresHuman', 'targetAgent']);
+    // sem requiredPermission: rotear nao autoriza
+    expect(Object.keys(d).sort()).toEqual(['confidence', 'intent', 'motivo', 'requiresConfirmation', 'requiresHuman', 'targetAgent']);
     expect(typeof (d as unknown as Record<string, unknown>).execute).toBe('undefined');
   });
 });

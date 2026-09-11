@@ -2,7 +2,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { addDays, calcLancamentos, posicaoBancaria } from './engine';
 import { alinhamentoDoDia, analisarPagamento, catalogoDe, centralDF, defasagemExtrato, recebiveisVencidos, saldoBancarioHoje, completarPedido, extrairData, extrairValor, interpretacaoDaIa, interpretarPedido, montarPrevisao, orientacaoDF, previsoesDF, projecaoDiaria, responderDF, statusPedidoDF } from './cfo';
-import { RegraDeNegocioError, actions, getState } from '../data/store';
+import { RegraDeNegocioError, actions, getState, pode } from '../data/store';
 
 const HOJE = '2026-09-01';
 describe('Diretor Financeiro: interpretação do pedido', () => {
@@ -116,10 +116,10 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
   it('responderDF pede o que falta, e registra a previsão como rascunho de origem diretor-financeiro que entra no alinhamento', () => {
     const ds = getState().ds; const cat = catalogoDe(ds); const hoje = ds.params.dataBase;
     const u = getState().usuario;
-    const semData = responderDF(ds, u, interpretarPedido('preciso pagar um frete de 300', cat));
+    const semData = responderDF(ds, u, interpretarPedido('preciso pagar um frete de 300', cat), pode(u, 'ver_bancos'));
     expect(semData.parecer).toBeUndefined(); expect(semData.texto).toMatch(/para que dia/);
     const pedido = interpretarPedido(`frete de R$ 300 amanhã para Transportadora Teste, obra ${ds.obras[0].codigo}`, cat);
-    const r = responderDF(ds, u, pedido);
+    const r = responderDF(ds, u, pedido, pode(u, 'ver_bancos'));
     expect(r.parecer).toBeDefined(); expect(r.texto).toMatch(/R\$ 300,00/);
     const prev = montarPrevisao(ds, pedido, r.parecer!, r.parecer!.dataSugerida ?? r.parecer!.vencimento);
     expect(prev.categoria).toBe('Transporte e mobilização');
@@ -152,11 +152,14 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     const ds = getState().ds; const cat = catalogoDe(ds); const u = getState().usuario;
     const pedido = interpretarPedido('preciso pagar um frete de R$ 450 amanhã para Fretes Silva', cat);
     const equipe = responderDF(ds, u, pedido, false);
-    expect(equipe.parecer).toBeDefined();
+    // fail-closed: sem ver_bancos o parecer nao viaja no retorno (saldo e reserva ficam fora do objeto)
+    expect(equipe.parecer).toBeUndefined();
     expect(equipe.texto).toMatch(/R\$ 450,00/); expect(equipe.texto).not.toMatch(/saldo|reserva|caixa hoje|R\$ (?!450,00)/i);
     expect(responderDF(ds, u, interpretarPedido('como está o caixa?', cat), false).texto).toMatch(/ficam com a Diretoria/);
     expect(responderDF(ds, u, interpretarPedido('o que vence essa semana?', cat), false).texto).not.toMatch(/R\$/);
-    const l = actions.registrarPrevisaoDF(montarPrevisao(ds, pedido, equipe.parecer!, equipe.parecer!.vencimento));
+    // o parecer existe no servidor, mas nao acompanha a resposta da equipe: quem monta a previsao e o motor
+    const parecerServidor = analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria });
+    const l = actions.registrarPrevisaoDF(montarPrevisao(ds, pedido, parecerServidor, parecerServidor.vencimento));
     expect(statusPedidoDF(l)).toBe('aguardando');
     const meus = responderDF(getState().ds, u, interpretarPedido('meus pedidos', cat), false).texto;
     expect(meus).toMatch(/aguardando a Diretoria/); expect(meus).not.toMatch(/saldo|reserva/i);
@@ -165,8 +168,8 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     expect(['programar', 'reagendar', 'avaliar', 'recusar']).toContain(o.acaoSugerida);
     expect(o.titulo.length).toBeGreaterThan(5); expect(o.detalhe).toMatch(/R\$/);
     expect(c.briefing).toMatch(/aguardam sua decisão/); expect(c.briefing).toMatch(/Minha orientação/);
-    expect(orientacaoDF({ ...equipe.parecer!, decisao: 'reagendar', dataSugerida: '2026-09-10' }).acaoSugerida).toBe('reagendar');
-    expect(orientacaoDF({ ...equipe.parecer!, decisao: 'nao_recomendado' }).acaoSugerida).toBe('recusar');
+    expect(orientacaoDF({ ...parecerServidor, decisao: 'reagendar', dataSugerida: '2026-09-10' }).acaoSugerida).toBe('reagendar');
+    expect(orientacaoDF({ ...parecerServidor, decisao: 'nao_recomendado' }).acaoSugerida).toBe('recusar');
     actions.decidirPrevisaoDF(l.id, 'reagendar', { vencimento: '2026-09-10' });
     expect(statusPedidoDF(getState().ds.lancamentos.find((x) => x.id === l.id)!)).toBe('reagendado');
     actions.decidirPrevisaoDF(l.id, 'recusar', { motivo: 'fornecedor sem nota' });

@@ -4,7 +4,9 @@
 // qualquer leitura do conteudo; payload nao validado nunca e processado nem guardado. O bruto nao e persistido.
 // Nesta fase (EIFF Central 01) os eventos sao normalizados e contados; nenhuma acao de negocio acontece, nenhuma
 // mensagem e enviada. Segredos so no painel do Netlify: META_WHATSAPP_* (nunca VITE_, nunca em log).
-import { tratarWebhookMeta, VARIAVEIS_META, type ConfigMeta, type DepsMeta } from '../../src/core/central/metaServidor';
+import { LIMITE_CORPO_WEBHOOK, tratarWebhookMeta, VARIAVEIS_META, type ConfigMeta, type DepsMeta } from '../../src/core/central/metaServidor';
+
+const json = (corpo: unknown, status: number) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 
 export default async (req: Request): Promise<Response> => {
   const env = Object.fromEntries(VARIAVEIS_META.map((v) => [v, (process.env[v] ?? '').trim()])) as Record<(typeof VARIAVEIS_META)[number], string>;
@@ -22,6 +24,13 @@ export default async (req: Request): Promise<Response> => {
   };
 
   const url = new URL(req.url);
+  // Teto ANTES de ler o corpo: com Content-Length declarado acima do limite, recusa sem materializar o body nem
+  // gastar HMAC. O header e do cliente, entao NAO e protecao completa — a conferencia sobre o corpo real continua
+  // dentro de tratarWebhookMeta. Limite de TAXA e dívida de borda (RATE_LIMIT_EDGE), fora do alcance da função.
+  const declarado = Number(req.headers.get('content-length') ?? '');
+  if (Number.isFinite(declarado) && declarado > LIMITE_CORPO_WEBHOOK) {
+    return json({ erro: 'corpo_grande' }, 413);
+  }
   const corpoBruto = req.method === 'POST' ? await req.text() : '';
   const r = await tratarWebhookMeta({ metodo: req.method, query: url.searchParams, corpoBruto, assinatura: req.headers.get('x-hub-signature-256') }, deps);
   // os eventos normalizados ainda nao viram acao: a Central so passa a agir depois de identidade e orquestrador

@@ -439,7 +439,8 @@ export interface AutorizacaoDestino { permitido: boolean; codigo?: 'envio_deslig
  */
 export function autorizarDestino(telefone: string | undefined, modo: ModoEnvio, allowlist: string[]): AutorizacaoDestino {
   if (!telefone) return { permitido: false, codigo: 'sem_telefone', motivo: 'contato sem WhatsApp válido' };
-  if (modo === 'disabled') return { permitido: false, codigo: 'envio_desligado', motivo: 'envio desligado (OCTADESK_SEND_MODE=disabled)' };
+  // a variavel depende do provider (OCTADESK_SEND_MODE / META_WHATSAPP_SEND_MODE): a mensagem nao cita a errada
+  if (modo === 'disabled') return { permitido: false, codigo: 'envio_desligado', motivo: 'envio desligado (modo de envio = disabled)' };
   if (modo === 'pilot') return { permitido: false, codigo: 'modo_pilot_nao_liberado', motivo: 'modo pilot ainda não liberado: só canary nesta fase' };
   if (!allowlist.includes(telefone)) return { permitido: false, codigo: 'canary_destination_not_allowed', motivo: 'destino fora da lista de números autorizados do canário' };
   return { permitido: true, motivo: 'destino autorizado no canário' };
@@ -449,6 +450,7 @@ export function autorizarDestino(telefone: string | undefined, modo: ModoEnvio, 
 export function validarCoerenciaCanal(p: { canalComunicacao: Canal; canalEntrega: Canal; provider: CodigoProvider }): { ok: boolean; motivo: string } {
   if (p.canalComunicacao !== p.canalEntrega) return { ok: false, motivo: `canal da entrega (${p.canalEntrega}) diferente do canal da comunicação (${p.canalComunicacao})` };
   if (p.provider === 'OCTADESK' && p.canalComunicacao !== 'WHATSAPP') return { ok: false, motivo: `Octadesk só entrega WhatsApp; esta comunicação é ${p.canalComunicacao}` };
+  if (p.provider === 'META_CLOUD' && p.canalComunicacao !== 'WHATSAPP') return { ok: false, motivo: `Meta Cloud só entrega WhatsApp; esta comunicação é ${p.canalComunicacao}` };
   return { ok: true, motivo: 'canal coerente' };
 }
 
