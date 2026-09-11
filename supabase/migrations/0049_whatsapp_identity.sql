@@ -90,6 +90,27 @@ end $$;
 drop trigger if exists whatsapp_identity_estado on whatsapp_identity;
 create trigger whatsapp_identity_estado before update on whatsapp_identity for each row execute function whatsapp_identity_estado();
 
+-- 6) COERENCIA CROSS-TENANT: a pessoa vinculada tem de ser da MESMA organizacao da identidade. Vale no banco, e nao
+--    so na RPC: service_role chamado com parametro errado tambem esbarra aqui.
+create or replace function whatsapp_identity_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $
+begin
+  if new.profile_id is not null and not exists (
+    select 1 from profile p where p.id = new.profile_id and p.organization_id = new.organization_id) then
+    raise exception 'perfil % não pertence à organização da identidade', new.profile_id;
+  end if;
+  if new.worker_id is not null and not exists (
+    select 1 from worker w where w.id = new.worker_id and w.organization_id = new.organization_id) then
+    raise exception 'colaborador % não pertence à organização da identidade', new.worker_id;
+  end if;
+  if new.requested_by is not null and not exists (
+    select 1 from profile p where p.id = new.requested_by and p.organization_id = new.organization_id) then
+    raise exception 'solicitante % não pertence à organização da identidade', new.requested_by;
+  end if;
+  return new;
+end $;
+drop trigger if exists whatsapp_identity_coerencia on whatsapp_identity;
+create trigger whatsapp_identity_coerencia before insert or update on whatsapp_identity for each row execute function whatsapp_identity_coerencia();
+
 -- 5) RLS: leitura por organizacao (coluna da PROPRIA linha; nunca funcao STABLE que consulte esta tabela, senao
 --    INSERT ... RETURNING quebra - ver CLAUDE.md). Escrita: nenhuma para `authenticated`.
 alter table whatsapp_identity enable row level security;
@@ -122,8 +143,12 @@ begin
      and v_role not in ('Administrador', 'Diretoria', 'Financeiro') then
     return jsonb_build_object('ok', false, 'erro', 'sem_permissao');
   end if;
-  if v_alvo is not null and exists (select 1 from profile where id = v_alvo and organization_id <> v_org) then
+  if v_alvo is not null and not exists (select 1 from profile where id = v_alvo and organization_id = v_org) then
     return jsonb_build_object('ok', false, 'erro', 'pessoa_de_outra_organizacao');
+  end if;
+  -- colaborador tambem e cross-tenant: existir NAO basta, tem de ser da mesma organizacao (fail closed)
+  if p_worker_id is not null and not exists (select 1 from worker where id = p_worker_id and organization_id = v_org) then
+    return jsonb_build_object('ok', false, 'erro', 'colaborador_de_outra_organizacao');
   end if;
   -- ja verificado para outra pessoa neste contexto: nao ha o que pedir
   select * into v_ex from whatsapp_identity
@@ -179,7 +204,8 @@ declare
 begin
   if v_caller is not null and v_caller <> 'service_role' then return jsonb_build_object('ok', false, 'erro', 'somente_servidor'); end if;
   if p_user_id is null then return jsonb_build_object('ok', false, 'erro', 'nao_autenticado'); end if;
-  if p_to_status not in ('VERIFIED', 'REVOKED') then return jsonb_build_object('ok', false, 'erro', 'situacao_invalida'); end if;
+  -- VERIFIED NAO passa por aqui: promover exige prova do codigo, e isso e whatsapp_identity_verify().
+  if p_to_status <> 'REVOKED' then return jsonb_build_object('ok', false, 'erro', 'situacao_invalida'); end if;
   select organization_id, role::text into v_org, v_role from profile where id = p_user_id and active;
   if v_org is null then return jsonb_build_object('ok', false, 'erro', 'sem_perfil'); end if;
   select * into v_i from whatsapp_identity where id = p_identity_id for update;
@@ -188,26 +214,68 @@ begin
   if v_i.profile_id is distinct from p_user_id and v_role not in ('Administrador', 'Diretoria', 'Financeiro') then
     return jsonb_build_object('ok', false, 'erro', 'sem_permissao');
   end if;
-  if p_to_status = 'VERIFIED' then
-    if v_i.status <> 'PENDING' then return jsonb_build_object('ok', false, 'erro', 'transicao_invalida', 'de', v_i.status); end if;
-    -- so verifica quem tem desafio VIVO: o codigo tem vida curta, e a validade e conferida tambem aqui
-    if v_i.verification_expires_at is null or v_i.verification_expires_at < v_agora then
-      return jsonb_build_object('ok', false, 'erro', 'codigo_expirado');
-    end if;
-    if exists (select 1 from whatsapp_identity o where o.organization_id = v_i.organization_id and o.context = v_i.context
-                 and o.phone_e164 = v_i.phone_e164 and o.status = 'VERIFIED' and o.id <> v_i.id) then
-      return jsonb_build_object('ok', false, 'erro', 'numero_ja_verificado_para_outra_pessoa');
-    end if;
-    update whatsapp_identity set status = 'VERIFIED', verified_at = v_agora,
-      verification_code_hash = null, verification_expires_at = null, verification_attempts = 0,
-      last_actor_id = p_user_id, last_actor_kind = 'SERVER' where id = p_identity_id;
-  else
-    if v_i.status = 'REVOKED' then return jsonb_build_object('ok', false, 'erro', 'transicao_invalida', 'de', v_i.status); end if;
-    update whatsapp_identity set status = 'REVOKED', revoked_at = v_agora, revoke_reason = left(p_reason, 500),
-      verification_code_hash = null, verification_expires_at = null,
-      last_actor_id = p_user_id, last_actor_kind = 'SERVER' where id = p_identity_id;
-  end if;
-  return jsonb_build_object('ok', true, 'identity_id', p_identity_id, 'de', v_i.status, 'status', p_to_status);
+  if v_i.status = 'REVOKED' then return jsonb_build_object('ok', false, 'erro', 'transicao_invalida', 'de', v_i.status); end if;
+  update whatsapp_identity set status = 'REVOKED', revoked_at = v_agora, revoke_reason = left(p_reason, 500),
+    verification_code_hash = null, verification_expires_at = null,
+    last_actor_id = p_user_id, last_actor_kind = 'SERVER' where id = p_identity_id;
+  return jsonb_build_object('ok', true, 'identity_id', p_identity_id, 'de', v_i.status, 'status', 'REVOKED');
 end $$;
 revoke execute on function whatsapp_identity_transition(uuid, uuid, text, text) from public, anon, authenticated;
 grant execute on function whatsapp_identity_transition(uuid, uuid, text, text) to service_role;
+
+-- 7) VERIFICACAO ATOMICA. Unica porta para VERIFIED: comparar o hash do codigo informado com o guardado, contar a
+--    tentativa e promover, tudo na MESMA transacao e sob row lock. O plaintext do codigo nunca chega ao banco: o
+--    servidor manda so o SHA-256 do que a pessoa digitou.
+--
+--    Nao revela nada alem de "confere / nao confere": nenhum prefixo, nenhuma pista de quanto do codigo bateu.
+--    Codigo errado GASTA tentativa; codigo certo zera o desafio.
+create or replace function whatsapp_identity_verify(
+  p_user_id uuid, p_identity_id uuid, p_code_hash text, p_max_attempts integer default 5
+) returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_caller text := nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role';
+  v_org uuid; v_role text; v_i whatsapp_identity; v_agora timestamptz := now(); v_confere boolean;
+begin
+  if v_caller is not null and v_caller <> 'service_role' then return jsonb_build_object('ok', false, 'erro', 'somente_servidor'); end if;
+  if p_user_id is null then return jsonb_build_object('ok', false, 'erro', 'nao_autenticado'); end if;
+  -- o hash tem formato fixo: qualquer outra coisa e chamada malformada, e nao gasta tentativa
+  if p_code_hash is null or p_code_hash !~ '^[0-9a-f]{64}$' then return jsonb_build_object('ok', false, 'erro', 'hash_invalido'); end if;
+  select organization_id, role::text into v_org, v_role from profile where id = p_user_id and active;
+  if v_org is null then return jsonb_build_object('ok', false, 'erro', 'sem_perfil'); end if;
+
+  -- row lock: duas instancias da funcao Netlify tentando ao mesmo tempo nao passam duas vezes pela contagem
+  select * into v_i from whatsapp_identity where id = p_identity_id for update;
+  if v_i.id is null then return jsonb_build_object('ok', false, 'erro', 'identidade_nao_encontrada'); end if;
+  if v_i.organization_id <> v_org then return jsonb_build_object('ok', false, 'erro', 'identidade_de_outra_organizacao'); end if;
+  if v_i.profile_id is distinct from p_user_id and v_role not in ('Administrador', 'Diretoria', 'Financeiro') then
+    return jsonb_build_object('ok', false, 'erro', 'sem_permissao');
+  end if;
+  if v_i.status <> 'PENDING' then return jsonb_build_object('ok', false, 'erro', 'transicao_invalida', 'de', v_i.status); end if;
+  if v_i.verification_code_hash is null then return jsonb_build_object('ok', false, 'erro', 'sem_desafio'); end if;
+  if v_i.verification_expires_at is null or v_i.verification_expires_at < v_agora then
+    return jsonb_build_object('ok', false, 'erro', 'codigo_expirado');
+  end if;
+  if v_i.verification_attempts >= greatest(p_max_attempts, 1) then
+    return jsonb_build_object('ok', false, 'erro', 'tentativas_excedidas', 'tentativas', v_i.verification_attempts);
+  end if;
+
+  v_confere := (v_i.verification_code_hash = p_code_hash);
+  if not v_confere then
+    update whatsapp_identity set verification_attempts = verification_attempts + 1,
+      last_actor_id = p_user_id, last_actor_kind = 'SERVER' where id = p_identity_id;
+    -- mesma resposta para qualquer codigo errado: nada sobre o quanto bateu
+    return jsonb_build_object('ok', false, 'erro', 'codigo_nao_confere', 'tentativas', v_i.verification_attempts + 1);
+  end if;
+
+  -- o mesmo numero nao pode ficar verificado para duas pessoas no mesmo contexto (o indice unico parcial tambem barra)
+  if exists (select 1 from whatsapp_identity o where o.organization_id = v_i.organization_id and o.context = v_i.context
+               and o.phone_e164 = v_i.phone_e164 and o.status = 'VERIFIED' and o.id <> v_i.id) then
+    return jsonb_build_object('ok', false, 'erro', 'numero_ja_verificado_para_outra_pessoa');
+  end if;
+  update whatsapp_identity set status = 'VERIFIED', verified_at = v_agora,
+    verification_code_hash = null, verification_expires_at = null, verification_attempts = 0,
+    last_actor_id = p_user_id, last_actor_kind = 'SERVER' where id = p_identity_id;
+  return jsonb_build_object('ok', true, 'identity_id', p_identity_id, 'status', 'VERIFIED');
+end $$;
+revoke execute on function whatsapp_identity_verify(uuid, uuid, text, integer) from public, anon, authenticated;
+grant execute on function whatsapp_identity_verify(uuid, uuid, text, integer) to service_role;

@@ -126,6 +126,34 @@ begin
   end if;
   return new;
 end $$;
+-- a conversa nao referencia identidade nem dono de OUTRA organizacao, mesmo via service_role com parametro errado
+create or replace function central_conversation_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $
+begin
+  if new.identity_id is not null and not exists (
+    select 1 from whatsapp_identity i where i.id = new.identity_id and i.organization_id = new.organization_id) then
+    raise exception 'identidade % não pertence à organização da conversa', new.identity_id;
+  end if;
+  if new.human_owner_id is not null and not exists (
+    select 1 from profile p where p.id = new.human_owner_id and p.organization_id = new.organization_id) then
+    raise exception 'responsável % não pertence à organização da conversa', new.human_owner_id;
+  end if;
+  return new;
+end $;
+drop trigger if exists central_conversation_coerencia on central_conversation;
+create trigger central_conversation_coerencia before insert or update on central_conversation for each row execute function central_conversation_coerencia();
+
+-- o ator do evento tambem e da organizacao da linha
+create or replace function central_event_ator_coerencia() returns trigger language plpgsql security definer set search_path = public, pg_temp as $
+begin
+  if new.actor_id is not null and not exists (
+    select 1 from profile p where p.id = new.actor_id and p.organization_id = new.organization_id) then
+    raise exception 'ator % não pertence à organização do evento', new.actor_id;
+  end if;
+  return new;
+end $;
+drop trigger if exists central_event_ator on central_event;
+create trigger central_event_ator before insert on central_event for each row execute function central_event_ator_coerencia();
+
 drop trigger if exists central_message_coerencia on central_message;
 create trigger central_message_coerencia before insert or update on central_message for each row execute function central_coerencia();
 drop trigger if exists central_event_coerencia on central_event;
@@ -144,10 +172,19 @@ create policy cc_select on central_conversation for select using (
   organization_id = current_org()
   and (context = 'EXTERNAL' or has_role('Administrador', 'Diretoria', 'Financeiro') or human_owner_id = auth.uid())
 );
+-- mensagem e evento HERDAM a visibilidade da conversa: o EXISTS abaixo passa pela propria RLS de
+-- central_conversation (a politica roda como o usuario que consulta), entao a regra e exatamente a mesma, escrita
+-- uma vez so. Sem recursao: a politica da conversa nao olha para mensagem nem para evento.
 drop policy if exists cm_select on central_message;
-create policy cm_select on central_message for select using (organization_id = current_org());
+create policy cm_select on central_message for select using (
+  organization_id = current_org()
+  and exists (select 1 from central_conversation c where c.id = central_message.conversation_id)
+);
 drop policy if exists ce_select on central_event;
-create policy ce_select on central_event for select using (organization_id = current_org());
+create policy ce_select on central_event for select using (
+  organization_id = current_org()
+  and exists (select 1 from central_conversation c where c.id = central_event.conversation_id)
+);
 revoke all on central_conversation from authenticated;
 revoke all on central_message from authenticated;
 revoke all on central_event from authenticated;

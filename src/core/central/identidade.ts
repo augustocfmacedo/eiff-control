@@ -8,6 +8,7 @@
 // - uma pessoa pode ter varios numeros; o mesmo numero nao pode estar VERIFIED para duas pessoas no mesmo contexto;
 // - o codigo de verificacao tem vida curta, e conferido em tempo constante e NUNCA aparece em log ou mensagem.
 import { mascararTelefone, normalizarTelefone, type CommunicationContext } from '../radar/canais';
+import { sha256Hex } from '../radar/hash';
 import { resolverIdentidade, type IdentidadeResolvida, type SituacaoIdentidade, type WhatsappIdentity } from './tipos';
 
 export { resolverIdentidade };
@@ -213,6 +214,31 @@ export function concluirVerificacao(identidade: WhatsappIdentity, desafio: Desaf
     ? { ...conferido, identidade: t.identidade, motivo: t.motivo }
     : { ...conferido, ok: false, motivo: t.motivo };
 }
+
+// ---------------------------------------------------------------------------
+// Contrato de PRODUCAO (serverless): o plaintext nunca chega ao banco
+// ---------------------------------------------------------------------------
+/**
+ * Em producao a conferencia NAO acontece em memoria: a Central e serverless, entao nao ha desafio guardado entre
+ * duas requisicoes. O banco guarda `verification_code_hash` e a promocao para VERIFIED e atomica, dentro da RPC
+ * server-only `whatsapp_identity_verify` (migration 0049) — que compara o hash, conta a tentativa e promove na
+ * MESMA transacao, sob row lock.
+ *
+ * O servidor manda SOMENTE o SHA-256 do que a pessoa digitou. O codigo em claro existe em dois lugares e em mais
+ * nenhum: na memoria da requisicao que o gerou, e na mensagem enviada ao dono do numero.
+ *
+ * `whatsapp_identity_transition` NAO promove para VERIFIED (so revoga): nao existe caminho generico para
+ * verificado sem prova do codigo.
+ */
+export const hashCodigoVerificacao = (codigo: string): string => sha256Hex((codigo ?? '').replace(/\D+/g, ''));
+
+/** O que vai para o banco quando o desafio e aberto: hash e validade, nunca o codigo. */
+export interface DesafioPersistivel { identidadeId: string; codeHash: string; expiraEm: string }
+export function desafioPersistivel(d: DesafioVerificacao): DesafioPersistivel {
+  return { identidadeId: d.identidadeId, codeHash: hashCodigoVerificacao(d.codigo), expiraEm: d.expiraEm };
+}
+/** O que vai para `whatsapp_identity_verify` quando a pessoa responde: o hash do que ela digitou. */
+export const codigoParaVerificacao = (informado: string): string => hashCodigoVerificacao(informado);
 
 /** Revogacao: sempre permitida a partir de PENDING ou VERIFIED, com motivo registrado pelo chamador. */
 export const revogarIdentidade = (identidade: WhatsappIdentity, agoraIso: string): ResultadoTransicao =>
