@@ -115,6 +115,12 @@ export const FORA_DO_DATASET_SERVIDOR = ['audit_log', 'comment', 'task', 'worker
 
 /** Carga SELECT-only. Recebe um leitor ja construido (o cliente service_role vive na funcao Netlify e nunca sai dela). */
 export type CarregarDatasetServidor = (organizationId: string) => Promise<Dataset>;
+/**
+ * Fabricas FIXAS (a funcao Netlify importa exatamente estes nomes destes caminhos; ate a F2-DATA entregar, existem
+ * como stubs que lancam ErroCentralServidor('nao_implementado', 'deterministico')):
+ *   src/data/datasetServidor.ts            -> export function criarCarregadorDataset(cliente: SupabaseClient): CarregarDatasetServidor
+ *   src/core/central/persistenciaCentral.ts -> export function criarPersistenciaCentral(cliente: SupabaseClient): PortasPersistenciaCentral
+ */
 
 // ---------------------------------------------------------------------------
 // 3) Persistencia da Central (F2-DATA: persistenciaCentral.ts) — o UNICO escritor da F2
@@ -131,7 +137,11 @@ export interface EstadoPersistido {
    * e processar. `aplicarEventos` as veria como duplicadas; o orquestrador as reprocessa (o texto vem do reenvio da Meta).
    */
   pendentesDeProcessamento: string[];
+  /** externalMessageId -> quantidade de linhas WEBHOOK com status ERRO. Alimenta o teto de retries transitorios. */
+  errosPorMensagem: ReadonlyMap<string, number>;
 }
+/** Acima disto, falha transitoria repetida deixa de pedir retry a Meta (200 + codigo `tentativas_esgotadas`); a F2R reprocessa. */
+export const LIMITE_TENTATIVAS_TRANSITORIAS = 3;
 
 export interface LotePersistencia {
   organizationId: string;
