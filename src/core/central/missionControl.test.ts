@@ -75,6 +75,8 @@ describe('evidencia', () => {
     for (const sha of shas) expect(sha, `sha mal formado: ${sha}`).toMatch(/^[0-9a-f]{7,40}$/);
     let git = true;
     try { execFileSync('git', ['rev-parse', '--git-dir'], { stdio: 'ignore' }); } catch { git = false; }
+    // clone raso (depth 1, padrao do actions/checkout) nao tem os commits antigos: sem historico, so o formato vale
+    try { if (git && execFileSync('git', ['rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).trim() === 'true') git = false; } catch { /* git antigo: segue */ }
     if (!git) return; // sem git (tarball, sandbox): o formato ja foi conferido acima
     for (const sha of shas) {
       const tipo = execFileSync('git', ['cat-file', '-t', sha], { encoding: 'utf8' }).trim();
@@ -345,6 +347,8 @@ describe('linha do tempo', () => {
   it('onda concluida cita um commit que existe entre as evidencias ou no repositorio', () => {
     let git = true;
     try { execFileSync('git', ['rev-parse', '--git-dir'], { stdio: 'ignore' }); } catch { git = false; }
+    // clone raso (depth 1, padrao do actions/checkout) nao tem os commits antigos: sem historico, so o formato vale
+    try { if (git && execFileSync('git', ['rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).trim() === 'true') git = false; } catch { /* git antigo: segue */ }
     for (const o of ONDAS.filter((x) => x.situacao === 'concluida')) {
       expect(o.commit, `onda ${o.id} concluida sem commit`).toBeDefined();
       expect(o.commit!).toMatch(/^[0-9a-f]{7,40}$/);
