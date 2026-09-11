@@ -15,6 +15,14 @@
 // audit_log, auth.uid(), current_org(), has_role(), touch_updated_at(), os papeis do Supabase e o minimo do
 // ledger de entrega). NAO e o banco real: e o suficiente para provar sintaxe, objetos criados e as regras.
 //
+// Divisao de trabalho com o outro harness (scripts/pg-preflight-central.mjs):
+//   * ESTE arquivo prova as REGRAS das tres migrations, rapido (segundos) e contra um schema minimo montado a mao;
+//   * o pg-preflight-central.mjs aplica a FILA INTEIRA (0001..0051 + a carga inicial) e prova a INTERACAO com o
+//     schema real — role_kind como enum de verdade, has_role(variadic role_kind[]), current_org(), profile/worker
+//     reais e o ledger de entrega vindo de 0045..0048. Antes de aplicar em producao, rode os dois.
+// Este `has_role` do preludio recebe role_kind[] igual ao de producao (0003_rls.sql): se um dia divergir, o
+// preflight pega, porque la a funcao e a real.
+//
 // Os dez smoke tests: A) identidade cross-org recusada  B) worker de outra org recusado  C) identidade com
 // telefone/contexto divergente da conversa recusada  D) usuario comum nao le filhos de conversa INTERNAL
 // E) human_owner le a conversa assumida e os filhos  F) codigo errado incrementa tentativa  G) 6a tentativa
