@@ -1,4 +1,4 @@
-// Preflight das migrations da EIFF Central: aplica a SEQUENCIA COMPLETA (0001..0051) num Postgres descartavel
+// Preflight das migrations da EIFF Central: aplica a SEQUENCIA COMPLETA (0001..0052) num Postgres descartavel
 // (PGlite, o Postgres compilado para WASM) e diz exatamente ate onde ela vai.
 //
 // Por que existe: o pg-smoke-central.mjs prova 0049/0050/0051 contra um schema MINIMO montado a mao. Isso pega
@@ -9,7 +9,7 @@
 // NADA TOCA PRODUCAO. O banco e criado em memoria e morre com o processo. Nao ha conexao de rede.
 //
 // Como rodar:
-//   node scripts/pg-preflight-central.mjs                 # 0001..0051, para no primeiro erro
+//   node scripts/pg-preflight-central.mjs                 # 0001..0052, para no primeiro erro
 //   node scripts/pg-preflight-central.mjs --continuar     # nao para: marca a falha, faz rollback e segue
 //   node scripts/pg-preflight-central.mjs --ate 0048      # so ate a migration indicada
 //   node scripts/pg-preflight-central.mjs --pular 0019    # pula migrations (0019 tem 2,7 MB de catalogo SINAPI)
@@ -40,6 +40,7 @@
 //     exercitada contra tabela vazia; o risco de linha que viola o novo CHECK tem de ser conferido no banco.
 // ---------------------------------------------------------------------------------------------------------
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
@@ -194,33 +195,34 @@ try {
   }
 
   // ------------------------------------------------------------------ verificacao pos-aplicacao (so se chegou la)
-  const chegou = res.migrations.some((m) => m.migration === '0051' && m.estado === 'APLICADA');
+  const chegou = res.migrations.some((m) => m.migration === '0052' && m.estado === 'APLICADA');
   if (chegou) {
     const q = async (sql, p = []) => (await db.query(sql, p)).rows;
     const lista = (rows) => rows.map((r) => Object.values(r)[0]).sort();
     res.verificacao = {
       tabelas: lista(await q(
         `select tablename from pg_tables where schemaname = 'public'
-           and tablename in ('whatsapp_identity','central_conversation','central_message','central_event')`)),
+           and tablename in ('whatsapp_identity','central_conversation','central_message','central_event','central_message_content','central_message_processing')`)),
       funcoes: lista(await q(
         `select proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'
            and proname in ('whatsapp_identity_request','whatsapp_identity_verify','whatsapp_identity_attempt',
              'whatsapp_identity_transition','whatsapp_identity_coerencia','whatsapp_identity_audit','whatsapp_identity_estado',
              'central_conversation_coerencia','central_event_ator_coerencia','central_coerencia','central_message_estado',
-             'central_message_ordem','central_event_imutavel','radar_delivery_create')`)),
+             'central_message_ordem','central_event_imutavel','radar_delivery_create',
+             'central_message_content_coerencia','central_message_content_imutavel','central_message_processing_coerencia','central_message_processing_imutavel')`)),
       triggers: lista(await q(
         `select tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid where not t.tgisinternal
-           and c.relname in ('whatsapp_identity','central_conversation','central_message','central_event')`)),
+           and c.relname in ('whatsapp_identity','central_conversation','central_message','central_event','central_message_content','central_message_processing')`)),
       policies: lista(await q(
         `select policyname from pg_policies
-           where tablename in ('whatsapp_identity','central_conversation','central_message','central_event')`)),
+           where tablename in ('whatsapp_identity','central_conversation','central_message','central_event','central_message_content','central_message_processing')`)),
       provider_check: (await q(
         `select pg_get_constraintdef(oid) d from pg_constraint where conname = 'radar_communication_delivery_provider_check'`))[0]?.d ?? null,
       // GRANTs: authenticated so pode SELECT nas tabelas novas, e nenhuma das RPCs server-only e executavel por ele
       grants_authenticated: await q(
         `select table_name, string_agg(privilege_type, ',' order by privilege_type) privs
            from information_schema.role_table_grants where grantee = 'authenticated'
-            and table_name in ('whatsapp_identity','central_conversation','central_message','central_event')
+            and table_name in ('whatsapp_identity','central_conversation','central_message','central_event','central_message_content','central_message_processing')
           group by table_name order by table_name`),
       execute_rpcs: await q(
         `select p.proname,
@@ -324,6 +326,34 @@ try {
         `select count(*)::int n from radar_communication_delivery where provider not in ('MANUAL','OCTADESK','META_CLOUD')`)).rows[0].n;
       prova('P5 nenhuma entrega com provider fora do novo CHECK', fora === 0, `${fora} linha(s) fora do catalogo`);
 
+      // P6) 0052 sobre o schema real: conteudo so inbound, RLS do conteudo herdada (comum ve so o EXTERNAL), trilha com
+      //     can_execute/sent presos em false e um so CONCLUIDO de webhook por mensagem
+      const sha = (t) => createHash('sha256').update(t).digest('hex');
+      const msgDe = async (ext) => (await db.query(`select id from central_message where external_message_id = $1`, [ext])).rows[0].id;
+      const mInt = await msgDe('wamid.int');
+      const mExt = await msgDe('wamid.ext');
+      await db.query(`insert into central_message_content (message_id, organization_id, body_text, body_sha256) values ($1, $2, 'preciso pagar um frete', $3)`, [mInt, org, sha('preciso pagar um frete')]);
+      await db.query(`insert into central_message_content (message_id, organization_id, body_text, body_sha256) values ($1, $2, 'olá', $3)`, [mExt, org, sha('olá')]);
+      await db.query(`insert into central_message (organization_id, conversation_id, provider, external_message_id, direction, occurred_at) values ($1, $2, 'META_CLOUD', 'wamid.out', 'outbound', now())`, [org, cInt]);
+      const mOut = await msgDe('wamid.out');
+      let outboundRecusado = false;
+      try { await db.exec('savepoint p6a'); await db.query(`insert into central_message_content (message_id, organization_id, body_text, body_sha256) values ($1, $2, 'resposta', $3)`, [mOut, org, sha('resposta')]); await db.exec('release savepoint p6a'); }
+      catch (e) { outboundRecusado = /inbound/i.test(String(e.message ?? e)); await db.exec('rollback to savepoint p6a'); }
+      const cComum = await comoUsuario(COMUM, 'select count(*)::int n from central_message_content');
+      const cAdmin = await comoUsuario(ADMIN, 'select count(*)::int n from central_message_content');
+      const procSql = `insert into central_message_processing (organization_id, conversation_id, message_id, origin, flow_version, input_sha256, output_sha256, intent, situation, status, can_execute, sent, duration_ms)
+        values ($1, $2, $3, 'WEBHOOK', 'central-alpha-1', $4, $5, 'FINANCE', 'respondido', 'CONCLUIDO', $6, false, 5) returning id`;
+      let executavelRecusado = false;
+      try { await db.exec('savepoint p6b'); await db.query(procSql, [org, cInt, mInt, sha('preciso pagar um frete'), sha('r'), true]); await db.exec('release savepoint p6b'); }
+      catch (e) { executavelRecusado = /can_execute|check/i.test(String(e.message ?? e)); await db.exec('rollback to savepoint p6b'); }
+      await db.query(procSql, [org, cInt, mInt, sha('preciso pagar um frete'), sha('r'), false]);
+      let segundoRecusado = false;
+      try { await db.exec('savepoint p6c'); await db.query(procSql, [org, cInt, mInt, sha('preciso pagar um frete'), sha('r'), false]); await db.exec('release savepoint p6c'); }
+      catch (e) { segundoRecusado = /webhook_uk|duplicate/i.test(String(e.message ?? e)); await db.exec('rollback to savepoint p6c'); }
+      prova('P6 0052: conteudo so inbound, RLS herdada, can_execute preso e um CONCLUIDO por mensagem',
+        outboundRecusado && cComum === 1 && cAdmin === 2 && executavelRecusado && segundoRecusado,
+        `outbound ${outboundRecusado ? 'recusado' : 'PASSOU'}; comum ve ${cComum}, admin ${cAdmin}; can_execute=true ${executavelRecusado ? 'recusado' : 'PASSOU'}; 2o CONCLUIDO ${segundoRecusado ? 'recusado' : 'PASSOU'}`);
+
       await db.exec('rollback;');
       res.provas.limpeza = 'ROLLBACK — as provas nao deixaram linha nenhuma';
     } catch (e) {
@@ -334,11 +364,11 @@ try {
     // reaplicar 0049..0051 sobre o schema ja migrado: a idempotencia prometida no cabecalho das tres
     try {
       await db.exec('begin;');
-      for (const arq of ['0049_whatsapp_identity.sql', '0050_central_conversation.sql', '0051_central_meta_delivery.sql']) {
+      for (const arq of ['0049_whatsapp_identity.sql', '0050_central_conversation.sql', '0051_central_meta_delivery.sql', '0052_central_inbound_content.sql']) {
         await db.exec(fs.readFileSync(path.join(RAIZ, arq), 'utf8'));
       }
       await db.exec('commit;');
-      res.verificacao.idempotencia = 'PASS — 0049/0050/0051 reaplicadas sobre o schema migrado sem erro';
+      res.verificacao.idempotencia = 'PASS — 0049/0050/0051/0052 reaplicadas sobre o schema migrado sem erro';
     } catch (e) {
       try { await db.exec('rollback;'); } catch { /* ja abortada */ }
       res.verificacao.idempotencia = `FALHOU — reaplicar quebra: ${so(e)}`;

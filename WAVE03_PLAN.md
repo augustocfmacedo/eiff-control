@@ -60,6 +60,75 @@ Conforme o plano aprovado (objetivo, escopo, riscos R1–R7, aceite por frente, 
 conversa de aprovação e reproduzido em `docs/central-alpha-runbook.md` pela F5. Rollback: código por revert do merge;
 funcionalidade por `CENTRAL_ALPHA_MODE=off`; banco só forward-fix (D1); segredos por remoção no Netlify.
 
+## F2 — decisões do checkpoint de desenho (aprovadas com ajustes em 11/09/2026)
+
+**Conflito D2 × 0050, confirmado.** A 0050 (aplicada) declara que `central_message` não guarda conteúdo, e D2 exige
+reprocessar a partir da mensagem inbound persistida. Resolução: **Alternativa B** — objetos separados, migration
+**aditiva** `0052_central_inbound_content.sql` (`central_message_content` e `central_message_processing`). A 0050
+**não é editada**: continua verdadeira para as tabelas dela; o conteúdo inbound normalizado passa a existir em objeto
+próprio, com contrato, retenção e visibilidade separáveis. **Estado: 0052 escrita e provada em PostgreSQL descartável
+(smoke K–U, preflight 0001..0052 com idempotência), NÃO aplicada em produção.** A aplicação exige autorização separada.
+
+- **D6 — permissão `ver_central`** (Administrador, Diretoria, Financeiro): Central, mensagens da Central,
+  reprocessamento e, adiante, a EIFF Inbox. Introduzida sem alterar nenhuma outra ação da MATRIZ (snapshot em
+  `src/data/permissaoCentral.test.ts`). É a mesma fronteira da RLS de `central_conversation` para INTERNAL.
+- **D7 — hardening da 0052** (obrigatório antes de congelar, aplicado): `input_sha256` = `body_sha256` do conteúdo
+  (trigger; mensagem sem conteúdo só conclui como `sem_texto`, sem hash); `CONCLUIDO` ⇒ `output_sha256` e `situation`
+  presentes, `error_code` nulo; `ERRO` ⇒ `error_code`; `can_execute = false` e `sent = false` por CHECK; um só
+  `CONCLUIDO` de webhook por mensagem (índice parcial), `ERRO` repetível; `engine_sha` 7..64 hex; `identity_id` só a
+  identidade **vinculada à conversa** e VERIFIED, senão nulo; reprocessamento exige `actor_id`, webhook o proíbe;
+  conteúdo só inbound, ≤ 1000, normalizado, sem telefone, imutável por UPDATE, uma linha por `message_id`.
+- **Retenção — dívida explícita `CENTRAL_CONTENT_RETENTION_POLICY`** (gate aberto no Mission Control): nenhuma purga
+  automática nesta wave; DELETE do conteúdo só server-side; a política tem de estar resolvida **antes do rollout amplo da
+  equipe**; o Alpha controlado prossegue sem ela.
+- **Wave 03 é INTERNAL only**: o caminho de negócio novo exige `context = INTERNAL` **e** número na allowlist
+  `CENTRAL_ALPHA_NUMBERS`. EXTERNAL não entra no Finance Agent, não executa negócio e não persiste conteúdo operacional
+  fora de ensaio explicitamente controlado.
+- **Erro × HTTP (sem fila durável)**: CONCLUIDO → 200; duplicado já CONCLUIDO → 200 sem rodar o motor; entrada
+  tratada deterministicamente (sem texto, contexto externo, identidade recusada…) → 200; falha **transitória** de
+  persistência/processamento → linha `ERRO` best-effort + **5xx** (a Meta reenvia); no retry, mensagem existente sem
+  `CONCLUIDO` é reprocessada. Erros determinísticos (validação permanente) nunca viram retry infinito.
+- **Crash recovery** (escritas não são uma transação só): testes obrigatórios de convergência — crash após conversa,
+  após mensagem, após conteúdo, antes do processamento; ERRO + retry ⇒ exatamente um CONCLUIDO; CONCLUIDO + webhook
+  repetido ⇒ motor não roda; duas invocações concorrentes ⇒ no máximo um CONCLUIDO; conteúdo nunca sobrescrito.
+- **Escritor único**: `persistenciaCentral.ts` escreve **somente** em `central_conversation`, `central_message`,
+  `central_event`, `central_message_content`, `central_message_processing` (`TABELAS_ESCRITA_CENTRAL`); nenhuma RPC de
+  negócio; `service_role` só nos adapters server-side, nunca em `fluxoInterno`, CFO, engine ou agentes.
+- **Dataset server-side**: SELECT-only com allowlist explícita (`ALLOWLIST_DATASET`), `organization_id` obrigatório em
+  toda raiz, filhas sem organização consultadas só por ids dos pais; insert/upsert/update/delete/rpc proibidos e provados
+  por cliente-espião; usa o mapeamento puro `src/data/mapeamentoDataset.ts` (extraído pelo Architect com snapshot de
+  paridade); **não importa `supabase.ts`** no servidor.
+- **Contratos congelados** em `src/core/central/servidorContratos.ts` (Architect): variáveis e contexto do servidor,
+  allowlist, portas de persistência, registro de processamento, classes de erro e resumo do webhook.
+
+### F2R — CENTRAL REPROCESS READ-ONLY (subfrente desta wave)
+
+Começa depois de os contratos da F2 estarem integrados. Escopo: ler a mensagem inbound persistida; respeitar
+`ver_central`; reexecutar o mesmo caminho de interpretação (`fluxoInterno`, mesma versão declarada ou a atual); **não**
+enviar WhatsApp; **não** executar ação; **não** alterar negócio; pode registrar **somente** `central_message_processing`
+com `origin = REPROCESSAMENTO` e `actor_id` obrigatório; exibir exatamente `Parecer reprocessado — nenhuma mensagem foi
+enviada ao WhatsApp.` (`TEXTO_REPROCESSADO`). A leitura do conteúdo respeita a autorização do usuário: **cliente
+user-scoped (JWT + RLS) para ler**, autoridade do servidor **apenas para o append** da trilha. Nunca bypass de RLS com
+`service_role` para leitura.
+
+### Paralelização (alteração explícita da ordem anterior, 11/09/2026)
+
+Depois do prework do Architect (0052 em código, `mapeamentoDataset`, contratos congelados, `ver_central`, gates):
+**F2-DATA** (`src/data/datasetServidor.ts`, `src/core/central/persistenciaCentral.ts`, testes) e **F2-WEBHOOK**
+(`src/core/central/contextoServidor.ts`, `src/core/central/webhookCentral.ts`, `netlify/functions/channel-meta-webhook.ts`,
+testes) em worktrees separados, sem sobreposição; **F3** em paralelo (0049 já aplicada, ownership distinto). **F5** aguarda a
+integração F2 + F3. **F2R** após a integração do contrato central da F2, ainda nesta wave.
+
+| Frente | Escreve APENAS em |
+| --- | --- |
+| **F2-DATA** | `src/data/datasetServidor.ts`(+test), `src/core/central/persistenciaCentral.ts`(+test) |
+| **F2-WEBHOOK** | `src/core/central/contextoServidor.ts`(+test), `src/core/central/webhookCentral.ts`(+test), `netlify/functions/channel-meta-webhook.ts` |
+| **F2R** | `netlify/functions/central-reprocessar.ts`, `src/core/central/reprocessamento.ts`(+test), tela em `src/screens/` (rota atrás de `ver_central`) |
+| **Architect (prework F2)** | `supabase/migrations/0052_central_inbound_content.sql`, `src/data/mapeamentoDataset.ts`(+test), `src/core/central/servidorContratos.ts`, `store.ts` (só `ver_central`), `seguranca.test.ts` (estreitamento), `scripts/pg-*.mjs`, `missionControl.ts` |
+
+**Quality Gate**: `npm test`, `tsc`, `lint`, `build`, `pg-smoke` (exit 1 em qualquer FALHOU) e `pg-preflight` 0001..0052
+com ordem histórica corrigida e idempotência da 0052 — **por exit code real; grep textual não é PASS**.
+
 ## D5 — EIFF Inbox é a interface móvel nativa da EIFF Central (decisão definitiva do proprietário, 11/09/2026)
 
 A EIFF terá um aplicativo web instalável (PWA) chamado **EIFF Inbox**: experiência de mensagens semelhante a um

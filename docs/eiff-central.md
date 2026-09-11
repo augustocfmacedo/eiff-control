@@ -160,6 +160,25 @@ Antes de qualquer migration, avaliar o que já é representável:
 O que **não** cabe hoje é a conversa interna com colaborador (contexto INTERNAL), que não é atividade
 de CRM. Decisão: criar só o que sobrar depois desse mapeamento, para não duplicar dado.
 
+### Conteúdo da mensagem: 0050 × 0052 (Wave 03, decisão D2/B+)
+
+- **0050** (aplicada em produção em 11/09/2026): `central_conversation`, `central_message` e `central_event`
+  guardam **metadados**. `central_message` **não guarda conteúdo** — e isso continua verdadeiro; a 0050 não foi
+  editada para mudar o passado.
+- **0052** (`0052_central_inbound_content.sql`, escrita e provada em PostgreSQL descartável, **não aplicada**): o
+  conteúdo **inbound normalizado** passa a existir em objeto separado, `central_message_content` (uma linha por
+  `message_id`, só inbound nesta wave, texto de `limparTexto` com até 1000 caracteres, hash SHA-256, sem telefone, sem
+  payload bruto, imutável por UPDATE, purga só por DELETE server-side), e a trilha tipada `central_message_processing`
+  registra cada rodada (timestamp, organização, identidade vinculada à conversa, SHA do deploy e versão do caminho,
+  hash do input igual ao do conteúdo, fingerprint da resposta, intenção, situação, duração, status, `can_execute`
+  e `sent` presos em `false`). O texto da **resposta** não é persistido. Leitura herda a RLS mensagem → conversa.
+- Por que objeto separado e não coluna: retenção e visibilidade do conteúdo ficam separáveis do metadado, e a EIFF
+  Inbox ganha o outbound no mesmo objeto por decisão futura (migration que relaxe "só inbound").
+- **Retenção**: dívida explícita `CENTRAL_CONTENT_RETENTION_POLICY` (gate aberto no Mission Control). Sem purga
+  automática nesta wave; obrigatória antes do rollout amplo da equipe.
+- O texto persistido continua **dado**, nunca instrução: quem o relê (reprocessamento, F2R) passa pelo mesmo
+  `higienizarTexto` do orquestrador. Nenhum conteúdo de mensagem entra em log técnico.
+
 ## Variáveis (somente painel do Netlify)
 
 | Variável | Uso |
@@ -174,6 +193,10 @@ de CRM. Decisão: criar só o que sobrar depois desse mapeamento, para não dupl
 | `EIFF_CENTRAL_PHONE_NUMBER_ID` | número do contexto INTERNAL |
 | `EIFF_COMMERCIAL_PHONE_NUMBER_ID` | número do contexto EXTERNAL |
 | `META_GRAPH_VERSION` | opcional; padrão `v21.0` |
+| `CENTRAL_ALPHA_MODE` | `off` (padrão: o webhook valida, conta e descarta) ou `on` (Wave 03 F2: persiste o inbound e roda o caminho contínuo, sem enviar) |
+| `EIFF_CENTRAL_ORGANIZATION_ID` | organização dona dos números; ausente ⇒ fail-closed, nada persiste |
+| `CENTRAL_ALPHA_NUMBERS` | allowlist E.164 (sem `+`) do número controlado do Alpha (D4); fora dela: contado e descartado |
+| `SUPABASE_SERVICE_ROLE_KEY` | só no webhook, só para os adapters server-side (`datasetServidor`, `persistenciaCentral`); nunca chega a `fluxoInterno`, CFO, engine ou agentes |
 
 Nunca com prefixo `VITE_`: isso as colocaria no bundle do navegador. Nenhum token aparece em resposta
 ou log — o sanitizador corta padrões de token e sequências longas antes de qualquer saída.

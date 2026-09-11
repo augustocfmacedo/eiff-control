@@ -9,6 +9,7 @@ import { contextoDoNumero, normalizarEventosMeta, verificarDesafioMeta } from '.
 import { ExecucaoBloqueadaError, portasSemEscrita, prepararAcaoDaCentral, resolverUsuarioDaCentral, veCaixaNaCentral } from './autoridade';
 import { aplicarEventos, chaveMensagem, estadoVazio } from './conversa';
 import { orquestrar } from './orquestrador';
+import { TABELAS_ESCRITA_CENTRAL } from './servidorContratos';
 import { ACAO_REGISTRAR_PREVISAO as ACAO_CATALOGO_PREVISAO, criarAgenteFinanceiro } from './agenteFinanceiro';
 import { AGENTE_POR_INTENCAO, CATALOGO_ACOES, CONFIANCA_MINIMA, INTENCOES_INTERNAS, autorizarAcao, decisaoSegura, definicaoDaAcao, resolverIdentidade, type AcaoProposta, type WhatsappIdentity } from './tipos';
 import { PROVIDERS_ENTREGA, autorizarDestino, validarCoerenciaCanal } from '../radar/canais';
@@ -532,8 +533,11 @@ describe('ameaça 8: mutação direta por LLM', () => {
     const pedido = { valor: 500, vencimento: ds.params.dataBase, codigoObra: 'OB-SF-CL-01', categoria: 'Outros custos diretos' };
     return { ...pedido, contraparte: 'Transportadora X', descricao, parecer: analisarPagamento(ds, pedido) };
   };
-  it('nenhum módulo da Central escreve no banco: sem cliente Supabase, sem insert/update/rpc', () => {
-    for (const f of fontesTs('src/core/central').filter((x) => !x.endsWith('.test.ts'))) {
+  // Wave 03 (F2): o guarda "a Central nunca escreve" virou "SOMENTE persistenciaCentral.ts escreve, e so nas tabelas
+  // central_* da allowlist". Estreitado, nao enfraquecido: todo outro modulo continua sem cliente, sem insert/update/rpc.
+  const ESCRITOR_UNICO = 'src/core/central/persistenciaCentral.ts';
+  it('nenhum módulo da Central escreve no banco, exceto o escritor único: sem cliente Supabase, sem insert/update/rpc', () => {
+    for (const f of fontesTs('src/core/central').filter((x) => !x.endsWith('.test.ts') && x.replace(/\\/g, '/') !== ESCRITOR_UNICO)) {
       const t = ler(f);
       expect(t, f).not.toMatch(/from\s+['"](@supabase|\.\.\/\.\.\/data\/supabase)/);
       // `delete` fora: e metodo de Map/Set (memoria), nao de banco. `insert`/`upsert`/`update` nao existem em Map.
@@ -543,14 +547,32 @@ describe('ameaça 8: mutação direta por LLM', () => {
       expect(t, f).not.toMatch(/api\.anthropic\.com/);
     }
   });
-  it('as funções Netlify da Central são leitura: não gravam no PostgREST nem chamam a Anthropic', () => {
-    for (const f of ['netlify/functions/channel-meta.ts', 'netlify/functions/channel-meta-webhook.ts']) {
-      const t = ler(f);
-      expect(t, f).not.toMatch(/api\.anthropic\.com/);
-      expect(t, f).not.toMatch(/SERVICE_ROLE/);
-      expect(t, f).not.toMatch(/method:\s*'(POST|PATCH|PUT|DELETE)'/);
-      expect(t, f).not.toMatch(/radar_delivery_create|radar_delivery_transition/);
-    }
+  it('o escritor único só toca as cinco tabelas central_* da allowlist: nenhuma RPC, nenhum domínio financeiro/operacional', () => {
+    if (!fs.existsSync(ESCRITOR_UNICO)) return; // ate a F2 integrar, o guarda anterior (nenhum escritor) vale integralmente
+    const t = ler(ESCRITOR_UNICO);
+    const tabelas = [...t.matchAll(/\bfrom\(\s*['"`]([a-z_]+)['"`]\s*\)/g)].map((m) => m[1]);
+    expect(tabelas.length, 'o escritor precisa nomear as tabelas literalmente (nada de nome dinâmico)').toBeGreaterThan(0);
+    for (const tb of tabelas) expect(TABELAS_ESCRITA_CENTRAL as readonly string[], `tabela fora da allowlist: ${tb}`).toContain(tb);
+    expect(t).not.toMatch(/\brpc\(/);
+    expect(t).not.toMatch(/\bfrom\(['"`][a-z_]+['"`]\)\s*\.delete\(/); // purga de retencao e decisao futura, fora deste modulo
+    expect(t).not.toMatch(/financial_entry|settlement|bank_transaction|debt|approval_|project|purchase_|stock_|radar_|whatsapp_identity/);
+    expect(t).not.toMatch(/api\.anthropic\.com|graph\.facebook\.com/);
+    expect(t).not.toMatch(/console\.(log|info|warn|error)\(/); // nenhum conteudo de mensagem em log tecnico
+  });
+  it('a função Netlify de leitura da Meta continua só leitura; o webhook pode persistir pela porta única, mas não envia, não executa RPC de negócio nem toca domínio', () => {
+    const leitura = ler('netlify/functions/channel-meta.ts');
+    expect(leitura).not.toMatch(/api\.anthropic\.com/);
+    expect(leitura).not.toMatch(/SERVICE_ROLE/);
+    expect(leitura).not.toMatch(/method:\s*'(POST|PATCH|PUT|DELETE)'/);
+    expect(leitura).not.toMatch(/radar_delivery_create|radar_delivery_transition/);
+    const webhook = ler('netlify/functions/channel-meta-webhook.ts');
+    expect(webhook).not.toMatch(/api\.anthropic\.com/);
+    expect(webhook).not.toMatch(/graph\.facebook\.com/);
+    expect(webhook).not.toMatch(/method:\s*'(POST|PATCH|PUT|DELETE)'/); // nenhum POST na Graph API (invariante 7)
+    expect(webhook).not.toMatch(/\brpc\(/); // nenhuma RPC de negocio (radar_delivery_*, whatsapp_identity_*, vibe)
+    expect(webhook).not.toMatch(/\.(insert|upsert|update|delete)\(/); // escrita so pela porta unica (persistenciaCentral)
+    expect(webhook).not.toMatch(/\bfrom\(['"`][a-z_]+['"`]\)/); // nem leitura direta de tabela: Dataset vem de datasetServidor
+    expect(webhook).not.toMatch(/registrarPrevisaoDF|persistirRemoto|decidirPrevisaoDF/); // nenhum caminho de execucao
   });
   it('a única escrita prevista para o FINANCE passa pelo store, exige permissão e nasce Rascunho', () => {
     actions.trocarUsuario('u-admin'); actions.restaurarPlanilha();

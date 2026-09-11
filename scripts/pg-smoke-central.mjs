@@ -1,4 +1,4 @@
-// Smoke test das migrations da EIFF Central (0049, 0050, 0051) contra um PostgreSQL DE VERDADE.
+// Smoke test das migrations da EIFF Central (0049, 0050, 0051, 0052) contra um PostgreSQL DE VERDADE.
 //
 // Por que existe: teste estatico sobre o texto do SQL nao pega erro de sintaxe, delimitador quebrado nem
 // curto-circuito de PL/pgSQL. Este harness aplica as tres migrations num Postgres descartavel (PGlite, o
@@ -155,7 +155,7 @@ try {
 
   // ---------------------------------------------------------------- migrations, dentro da transacao
   await db.exec('BEGIN;');
-  for (const arq of ['0049_whatsapp_identity.sql', '0050_central_conversation.sql', '0051_central_meta_delivery.sql']) {
+  for (const arq of ['0049_whatsapp_identity.sql', '0050_central_conversation.sql', '0051_central_meta_delivery.sql', '0052_central_inbound_content.sql']) {
     try {
       await db.exec(ler(arq));
       res.migrations[arq.slice(0, 4)] = 'APLICADA sem erro';
@@ -170,10 +170,10 @@ try {
     const r = await db.query(sql);
     res.estrutura.push(`${rotulo}: ${r.rows.map((x) => Object.values(x)[0]).join(', ') || '(nenhum)'}`);
   };
-  await conta('tabelas', `select tablename from pg_tables where tablename in ('whatsapp_identity','central_conversation','central_message','central_event') order by 1`);
-  await conta('funcoes', `select proname from pg_proc where proname in ('whatsapp_identity_request','whatsapp_identity_verify','whatsapp_identity_transition','whatsapp_identity_attempt','whatsapp_identity_coerencia','central_conversation_coerencia','central_event_ator_coerencia','central_coerencia','radar_delivery_create') order by 1`);
+  await conta('tabelas', `select tablename from pg_tables where tablename in ('whatsapp_identity','central_conversation','central_message','central_event','central_message_content','central_message_processing') order by 1`);
+  await conta('funcoes', `select proname from pg_proc where proname in ('whatsapp_identity_request','whatsapp_identity_verify','whatsapp_identity_transition','whatsapp_identity_attempt','whatsapp_identity_coerencia','central_conversation_coerencia','central_event_ator_coerencia','central_coerencia','radar_delivery_create','central_message_content_coerencia','central_message_content_imutavel','central_message_processing_coerencia','central_message_processing_imutavel') order by 1`);
   await conta('triggers', `select tgname from pg_trigger where not tgisinternal and tgname like '%coerencia%' or tgname in ('central_event_ator','whatsapp_identity_estado','central_message_estado') order by 1`);
-  await conta('policies', `select policyname from pg_policies where tablename in ('whatsapp_identity','central_conversation','central_message','central_event') order by 1`);
+  await conta('policies', `select policyname from pg_policies where tablename in ('whatsapp_identity','central_conversation','central_message','central_event','central_message_content','central_message_processing') order by 1`);
   const assinatura = await db.query(`select pg_get_function_arguments(oid) a from pg_proc where proname = 'whatsapp_identity_verify'`);
   res.estrutura.push(`assinatura whatsapp_identity_verify(${assinatura.rows[0].a})`);
   const provider = await db.query(`select pg_get_constraintdef(oid) d from pg_constraint where conname = 'radar_communication_delivery_provider_check'`);
@@ -297,6 +297,102 @@ try {
      values ($1, $2, 'META_CLOUD', 'wamid.interna', 'inbound', now())`, [ORG_A, CONV_INT]);
   ok('J', !!eJ && /central_message_externo_uk|duplicate key/i.test(eJ), eJ ? eJ.split('\n')[0] : 'PASSOU indevidamente');
 
+  // ================================================================ 0052: conteudo inbound e trilha de processamento
+  const MSG_INT = (await db.query(`select id from central_message where external_message_id = 'wamid.interna'`)).rows[0].id;
+  const MSG_EXT = (await db.query(`select id from central_message where external_message_id = 'wamid.externa'`)).rows[0].id;
+  const TXT = 'preciso pagar um frete de R$ 5.000 amanhã';
+  const H_TXT = sha(TXT);
+  const conteudo = (msg, org, texto) => [`insert into central_message_content (message_id, organization_id, body_text, body_sha256) values ($1, $2, $3, $4)`, [msg, org, texto, sha(texto)]];
+
+  // K) conteudo inbound entra; reinsercao com on conflict do nothing nao duplica nem sobrescreve
+  await db.query(...conteudo(MSG_INT, ORG_A, TXT));
+  const rK = await db.query(`insert into central_message_content (message_id, organization_id, body_text, body_sha256) values ($1, $2, 'outro texto', $3) on conflict (message_id) do nothing returning message_id`, [MSG_INT, ORG_A, sha('outro texto')]);
+  const lidoK = (await db.query(`select body_text from central_message_content where message_id = $1`, [MSG_INT])).rows[0].body_text;
+  ok('K', rK.rows.length === 0 && lidoK === TXT, 'uma linha por mensagem; reenvio nao sobrescreve');
+
+  // L) outbound sem conteudo nesta wave; texto > 1000 recusado; organizacao divergente recusada
+  await db.query(`insert into central_message (organization_id, conversation_id, provider, external_message_id, direction, occurred_at) values ($1, $2, 'META_CLOUD', 'wamid.saida', 'outbound', now())`, [ORG_A, CONV_INT]);
+  const MSG_OUT = (await db.query(`select id from central_message where external_message_id = 'wamid.saida'`)).rows[0].id;
+  const eL1 = await deveFalhar(...conteudo(MSG_OUT, ORG_A, 'resposta gerada'));
+  const eL2 = await deveFalhar(...conteudo(MSG_EXT, ORG_A, 'x'.repeat(1001)));
+  const eL3 = await deveFalhar(...conteudo(MSG_EXT, ORG_B, 'texto'));
+  ok('L', !!eL1 && /inbound/i.test(eL1) && !!eL2 && /check|between|length/i.test(eL2) && !!eL3 && /organização/i.test(eL3),
+    `outbound: ${eL1?.split('\n')[0]} | 1001 chars: ${eL2 ? 'recusado' : 'PASSOU'} | org: ${eL3 ? 'recusada' : 'PASSOU'}`);
+
+  // M) conteudo imutavel por UPDATE
+  const eM = await deveFalhar(`update central_message_content set body_text = 'editado' where message_id = $1`, [MSG_INT]);
+  ok('M', !!eM && /imutável/i.test(eM), eM ? eM.split('\n')[0] : 'PASSOU indevidamente');
+
+  // processamento: helper com defaults validos (CONCLUIDO do webhook sobre MSG_INT, sem identidade)
+  const COLS = ['organization_id','conversation_id','message_id','identity_id','origin','actor_id','engine_sha','flow_version','input_sha256','output_sha256','intent','situation','status','error_code','can_execute','sent','duration_ms'];
+  const proc = (v = {}) => {
+    const row = { organization_id: ORG_A, conversation_id: CONV_INT, message_id: MSG_INT, identity_id: null, origin: 'WEBHOOK', actor_id: null, engine_sha: 'abc1234', flow_version: 'central-alpha-1', input_sha256: H_TXT, output_sha256: sha('resposta'), intent: 'FINANCE', situation: 'respondido', status: 'CONCLUIDO', error_code: null, can_execute: false, sent: false, duration_ms: 12, ...v };
+    return [`insert into central_message_processing (${COLS.join(',')}) values (${COLS.map((_, i) => '$' + (i + 1)).join(',')}) returning id`, COLS.map((c) => row[c])];
+  };
+
+  // N) invariantes 7 e 8 no banco: can_execute e sent nunca true
+  const eN1 = await deveFalhar(...proc({ can_execute: true }));
+  const eN2 = await deveFalhar(...proc({ sent: true }));
+  ok('N', !!eN1 && !!eN2, `can_execute=true: ${eN1 ? 'recusado' : 'PASSOU'} | sent=true: ${eN2 ? 'recusado' : 'PASSOU'}`);
+
+  // O) status: CONCLUIDO exige saida e sem erro; ERRO exige codigo
+  const eO1 = await deveFalhar(...proc({ output_sha256: null }));
+  const eO2 = await deveFalhar(...proc({ error_code: 'x' }));
+  const eO3 = await deveFalhar(...proc({ status: 'ERRO', output_sha256: null, situation: null }));
+  ok('O', !!eO1 && !!eO2 && !!eO3, `sem output: ${eO1 ? 'recusado' : 'PASSOU'} | CONCLUIDO com erro: ${eO2 ? 'recusado' : 'PASSOU'} | ERRO sem codigo: ${eO3 ? 'recusado' : 'PASSOU'}`);
+
+  // P) input hash = hash do conteudo persistido
+  const eP = await deveFalhar(...proc({ input_sha256: sha('outro') }));
+  ok('P', !!eP && /não corresponde/i.test(eP), eP ? eP.split('\n')[0] : 'PASSOU indevidamente');
+
+  // Q) ERRO nao bloqueia retry; exatamente UM CONCLUIDO de webhook por mensagem
+  await db.query(...proc({ status: 'ERRO', error_code: 'dataset_timeout', output_sha256: null, situation: null }));
+  await db.query(...proc({ status: 'ERRO', error_code: 'dataset_timeout', output_sha256: null, situation: null }));
+  const rQ = await db.query(...proc());
+  const eQ = await deveFalhar(...proc());
+  const nQ = (await db.query(`select count(*)::int n from central_message_processing where message_id = $1 and status = 'CONCLUIDO'`, [MSG_INT])).rows[0].n;
+  ok('Q', rQ.rows.length === 1 && !!eQ && /central_message_processing_webhook_uk|duplicate key/i.test(eQ) && nQ === 1, `2 ERRO + 1 CONCLUIDO aceitos; segundo CONCLUIDO: ${eQ ? 'recusado' : 'PASSOU'}; concluidos=${nQ}`);
+
+  // R) identidade do processamento = identidade VINCULADA a conversa e VERIFIED
+  const eR1 = await deveFalhar(...proc({ identity_id: ID_OK, origin: 'REPROCESSAMENTO', actor_id: ADMIN_A })); // ID_OK esta PENDING (tentativas esgotadas)
+  const cVer = await db.query(`insert into central_conversation (organization_id, context, provider, phone_e164, identity_id) values ($1, 'EXTERNAL', 'META_CLOUD', $2, $3) returning id`, [ORG_A, TEL, ID_H]); // ID_H: VERIFIED em EXTERNAL/TEL
+  const CONV_VER = cVer.rows[0].id;
+  await db.query(`insert into central_message (organization_id, conversation_id, provider, external_message_id, direction, occurred_at) values ($1, $2, 'META_CLOUD', 'wamid.verificada', 'inbound', now())`, [ORG_A, CONV_VER]);
+  const MSG_VER = (await db.query(`select id from central_message where external_message_id = 'wamid.verificada'`)).rows[0].id;
+  await db.query(...conteudo(MSG_VER, ORG_A, TXT));
+  const rR = await db.query(...proc({ conversation_id: CONV_VER, message_id: MSG_VER, identity_id: ID_H }));
+  const eR2 = await deveFalhar(...proc({ conversation_id: CONV_VER, message_id: MSG_VER, identity_id: ID_OK, origin: 'REPROCESSAMENTO', actor_id: ADMIN_A }));
+  ok('R', !!eR1 && rR.rows.length === 1 && !!eR2, `PENDING vinculada: ${eR1 ? 'recusada' : 'PASSOU'} | VERIFIED vinculada: aceita | outra identidade: ${eR2 ? 'recusada' : 'PASSOU'}`);
+
+  // S) mensagem sem conteudo (audio): so sem_texto conclui, e sem hash
+  await db.query(`insert into central_message (organization_id, conversation_id, provider, external_message_id, direction, message_type, occurred_at) values ($1, $2, 'META_CLOUD', 'wamid.audio', 'inbound', 'audio', now())`, [ORG_A, CONV_INT]);
+  const MSG_AUDIO = (await db.query(`select id from central_message where external_message_id = 'wamid.audio'`)).rows[0].id;
+  const eS1 = await deveFalhar(...proc({ message_id: MSG_AUDIO, input_sha256: null, situation: 'respondido' }));
+  const eS2 = await deveFalhar(...proc({ message_id: MSG_AUDIO, input_sha256: H_TXT, situation: 'sem_texto' }));
+  const rS = await db.query(...proc({ message_id: MSG_AUDIO, input_sha256: null, situation: 'sem_texto', intent: null }));
+  ok('S', !!eS1 && !!eS2 && rS.rows.length === 1, `respondido sem conteudo: ${eS1 ? 'recusado' : 'PASSOU'} | hash sem conteudo: ${eS2 ? 'recusado' : 'PASSOU'} | sem_texto sem hash: aceito`);
+
+  // T) reprocessamento exige ator; webhook nunca tem ator; engine_sha aceita 7..64 hex
+  const eT1 = await deveFalhar(...proc({ origin: 'REPROCESSAMENTO', actor_id: null }));
+  const rT = await db.query(...proc({ origin: 'REPROCESSAMENTO', actor_id: ADMIN_A, engine_sha: 'a'.repeat(64) }));
+  const eT2 = await deveFalhar(...proc({ message_id: MSG_VER, conversation_id: CONV_VER, actor_id: ADMIN_A }));
+  const eT3 = await deveFalhar(...proc({ origin: 'REPROCESSAMENTO', actor_id: PERFIL_B }));
+  ok('T', !!eT1 && rT.rows.length === 1 && !!eT2 && !!eT3, `sem ator: ${eT1 ? 'recusado' : 'PASSOU'} | com ator (sha 64): aceito | webhook com ator: ${eT2 ? 'recusado' : 'PASSOU'} | ator de outra org: ${eT3 ? 'recusado' : 'PASSOU'}`);
+
+  // U) trilha append-only e RLS herdada do conteudo (comum nao le INTERNAL; le EXTERNAL; admin le tudo)
+  const eU1 = await deveFalhar(`update central_message_processing set duration_ms = 1 where id = $1`, [rT.rows[0].id]);
+  const eU2 = await deveFalhar(`delete from central_message_processing where id = $1`, [rT.rows[0].id]);
+  await db.query(...conteudo(MSG_EXT, ORG_A, 'olá, sou cliente'));
+  const uComum = await comoUsuario(COMUM_A, `select count(*)::int n from central_message_content`);
+  const uAdmin = await comoUsuario(ADMIN_A, `select count(*)::int n from central_message_content`);
+  const uProcComum = await comoUsuario(COMUM_A, `select count(*)::int n from central_message_processing`);
+  // comum (Engenharia) ve so as conversas EXTERNAL: os conteudos de MSG_EXT e MSG_VER (ambas EXTERNAL) e o processamento de CONV_VER;
+  // o conteudo INTERNAL (MSG_INT) e os processamentos de CONV_INT ficam invisiveis. Admin ve os 3 conteudos.
+  const uIntComum = await comoUsuario(COMUM_A, `select count(*)::int n from central_message_content where message_id = '${MSG_INT}'`);
+  const uProcIntComum = await comoUsuario(COMUM_A, `select count(*)::int n from central_message_processing where conversation_id = '${CONV_INT}'`);
+  ok('U', !!eU1 && !!eU2 && uComum.rows[0].n === 2 && uIntComum.rows[0].n === 0 && uAdmin.rows[0].n === 3 && uProcComum.rows[0].n === 1 && uProcIntComum.rows[0].n === 0,
+    `update: ${eU1 ? 'recusado' : 'PASSOU'} | delete: ${eU2 ? 'recusado' : 'PASSOU'} | comum ve ${uComum.rows[0].n} conteudos (EXTERNAL) e ${uIntComum.rows[0].n} INTERNAL, ${uProcComum.rows[0].n} processamento (EXTERNAL) e ${uProcIntComum.rows[0].n} INTERNAL; admin ve ${uAdmin.rows[0].n}`);
+
   await db.exec('ROLLBACK;');
   const sobrou = await db.query(`select count(*)::int n from pg_tables where tablename = 'whatsapp_identity'`);
   res.rollback = sobrou.rows[0].n === 0 ? 'ROLLBACK ok — nada persistiu' : 'ATENCAO: tabela sobreviveu ao rollback';
@@ -306,3 +402,6 @@ try {
 }
 
 console.log(JSON.stringify(res, null, 2));
+// gate estrito: qualquer FALHOU, erro fatal ou migration com ERRO derruba o processo (exit 1), nunca so o texto
+const falhou = Object.values(res.smoke).some((v) => String(v).startsWith('FALHOU')) || !!res.erroFatal || Object.values(res.migrations).some((v) => String(v).startsWith('ERRO')) || !String(res.rollback ?? '').startsWith('ROLLBACK ok');
+process.exit(falhou ? 1 : 0);

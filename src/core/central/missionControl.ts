@@ -346,6 +346,23 @@ export const GATES: Gate[] = [
     ],
   }),
   g({
+    id: 'CENTRAL_INBOUND_PERSISTENCE',
+    titulo: 'Conteúdo inbound e trilha de processamento no banco (migration 0052)',
+    prova: 'central_message_content (texto normalizado, só inbound, imutável, uma linha por mensagem) e central_message_processing (linha tipada por rodada, can_execute e sent presos em false, um CONCLUIDO de webhook por mensagem) APLICADAS em produção, com o registro no runbook. Migration escrita e provada num Postgres descartável não é migration aplicada.',
+    situacao: 'aberto',
+    evidencias: [
+      { tipo: 'migration', referencia: 'supabase/migrations/0052_central_inbound_content.sql', nota: 'só em código: NÃO aplicada em produção' },
+      { tipo: 'script', referencia: 'scripts/pg-smoke-central.mjs', simbolo: '0052_central_inbound_content.sql', nota: 'smoke K–U e preflight 0001..0052' },
+    ],
+  }),
+  g({
+    id: 'CENTRAL_CONTENT_RETENTION_POLICY',
+    titulo: 'Política de retenção do conteúdo inbound',
+    prova: 'Prazo e critério de purga do texto em central_message_content decididos pelo proprietário e executados server-side por DELETE (mensagem e trilha ficam). Dívida explícita da Wave 03: o Alpha controlado anda sem ela; o rollout amplo da equipe, não.',
+    situacao: 'aberto',
+    evidencias: [{ tipo: 'documento', referencia: 'WAVE03_PLAN.md', simbolo: 'CENTRAL_CONTENT_RETENTION_POLICY' }],
+  }),
+  g({
     id: 'MISSION_CONTROL_LIVE',
     titulo: 'Mission Control em tempo real',
     prova: 'Endpoint server-side de development-status com adapter do GitHub: SHA de main ao vivo, status do CI, branches/workstreams, última atualização e polling controlado. Hoje o painel é um SNAPSHOT derivado do código no momento do build.',
@@ -444,8 +461,8 @@ export const WORKSTREAMS: Workstream[] = [
   { id: 'CANAL', titulo: 'Canal Meta Cloud', responsavel: 'Agent Meta', onda: 'Onda 01', foco: 'Entrada e saída pelo WhatsApp oficial, com o envio fechado.', gates: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO', 'ENVIO_FAIL_CLOSED', 'ENVIO_CANARY_LIBERADO', 'META_NUMERO_PRODUCAO'] },
   { id: 'NUCLEO', titulo: 'Núcleo da Central', responsavel: 'Agent Central Core', onda: 'Onda 01', foco: 'Quem está falando, o que está pedindo e quem autoriza.', gates: ['IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'IDENTIDADE_ONBOARDING', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO'] },
   { id: 'AGENTES', titulo: 'Agentes de domínio', responsavel: 'Agent Finance', onda: 'Onda 01', foco: 'Adapter sobre o motor que já existe; propor não é executar.', gates: ['FINANCE_ADAPTER', 'ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR', 'AGENTES_DEMAIS'] },
-  { id: 'SEGURANCA', titulo: 'Segurança e operação', responsavel: 'Agent QA', onda: 'Onda 01', foco: 'Ameaças presas por teste, segredo no servidor, borda protegida.', gates: ['THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'RATE_LIMIT_EDGE', 'OPERACAO_MONITORADA'] },
-  { id: 'BANCO', titulo: 'Banco da Central', responsavel: 'Agent DB Release', onda: 'Wave 02', foco: 'Levar 0049, 0050 e 0051 ao banco real, com preflight.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'AUDITORIA_CENTRAL'] },
+  { id: 'SEGURANCA', titulo: 'Segurança e operação', responsavel: 'Agent QA', onda: 'Onda 01', foco: 'Ameaças presas por teste, segredo no servidor, borda protegida.', gates: ['THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'RATE_LIMIT_EDGE', 'OPERACAO_MONITORADA', 'CENTRAL_CONTENT_RETENTION_POLICY'] },
+  { id: 'BANCO', titulo: 'Banco da Central', responsavel: 'Agent DB Release', onda: 'Wave 02', foco: 'Levar 0049, 0050 e 0051 ao banco real, com preflight; depois a 0052.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'AUDITORIA_CENTRAL', 'CENTRAL_INBOUND_PERSISTENCE'] },
   { id: 'ALPHA', titulo: 'Alpha ponta a ponta', responsavel: 'Agent Alpha E2E', onda: 'Wave 02', foco: 'Uma mensagem atravessando todas as fronteiras num teste só.', gates: ['E2E_ALPHA', 'CONTEXTO_EXTERNO', 'CENTRAL_WIRING'] },
   { id: 'OBSERVABILIDADE', titulo: 'Mission Control', responsavel: 'Agent Observability', onda: 'Wave 02', foco: 'O estado da construção legível em dez segundos.', gates: ['OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
 ];
@@ -465,7 +482,7 @@ export const MARCOS: Marco[] = [
   { id: 'M1_CANAL', titulo: 'Canal confiável', objetivo: 'A EIFF recebe mensagem do WhatsApp oficial sem confiar em nada que o remetente diga.', gates: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO'] },
   { id: 'M2_NUCLEO', titulo: 'Núcleo da Central', objetivo: 'Identidade, conversa, intenção e permissão resolvidos por regra determinística.', gates: ['IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'FINANCE_ADAPTER'] },
   { id: 'M3_BANCO', titulo: 'Central com banco', objetivo: 'A conversa e a identidade passam a existir no banco da EIFF.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS'] },
-  { id: 'M4_ALPHA', titulo: 'Alpha interno em pé', objetivo: 'Uma pessoa conversa com a Central e recebe o parecer do motor, sem a Central gravar nada.', gates: ['MIGRATIONS_APLICADAS', 'E2E_ALPHA', 'OBSERVABILIDADE', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'ESCRITA_FAIL_CLOSED', 'CENTRAL_WIRING'] },
+  { id: 'M4_ALPHA', titulo: 'Alpha interno em pé', objetivo: 'Uma pessoa conversa com a Central e recebe o parecer do motor, sem a Central gravar nada de negócio.', gates: ['MIGRATIONS_APLICADAS', 'E2E_ALPHA', 'OBSERVABILIDADE', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'ESCRITA_FAIL_CLOSED', 'CENTRAL_INBOUND_PERSISTENCE', 'CENTRAL_WIRING'] },
   { id: 'M5_RESPOSTA', titulo: 'A Central responde', objetivo: 'A resposta volta pelo WhatsApp, atrás de modo, allowlist e borda protegida.', gates: ['ENVIO_FAIL_CLOSED', 'ENVIO_CANARY_LIBERADO', 'META_NUMERO_PRODUCAO', 'RATE_LIMIT_EDGE', 'IDENTIDADE_ONBOARDING'] },
   { id: 'M6_ACAO', titulo: 'A Central age', objetivo: 'A previsão entra no sistema pelo servidor, com ator real e auditoria.', gates: ['ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR', 'AUDITORIA_CENTRAL', 'AGENTES_DEMAIS'] },
 ];
@@ -490,7 +507,7 @@ export const DEGRAUS: Degrau[] = [
     titulo: 'Alpha interno',
     publico: 'Uma pessoa (Diretoria), um número',
     oQueMuda: 'A Central lê, entende e responde pelo painel. Nada é enviado e nada é gravado.',
-    novos: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO', 'ENVIO_FAIL_CLOSED', 'IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'FINANCE_ADAPTER', 'ESCRITA_FAIL_CLOSED', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'E2E_ALPHA', 'OBSERVABILIDADE', 'CENTRAL_WIRING'],
+    novos: ['META_PROVIDER_READONLY', 'META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'META_CONTEXTO_NUMERO', 'ENVIO_FAIL_CLOSED', 'IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'AUTORIDADE_SERVIDOR', 'CONVERSA_IDEMPOTENTE', 'ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'FINANCE_ADAPTER', 'ESCRITA_FAIL_CLOSED', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'E2E_ALPHA', 'OBSERVABILIDADE', 'CENTRAL_INBOUND_PERSISTENCE', 'CENTRAL_WIRING'],
   },
   {
     id: 'PILOT',
@@ -505,7 +522,7 @@ export const DEGRAUS: Degrau[] = [
     titulo: 'Beta da equipe',
     publico: 'Equipe interna inteira',
     oQueMuda: 'A Central registra a previsão pelo servidor, e os demais domínios entram.',
-    novos: ['ESCRITA_SERVIDOR', 'AUDITORIA_CENTRAL', 'AGENTES_DEMAIS'],
+    novos: ['ESCRITA_SERVIDOR', 'AUDITORIA_CENTRAL', 'AGENTES_DEMAIS', 'CENTRAL_CONTENT_RETENTION_POLICY'],
   },
   {
     id: 'PRODUCTION',
@@ -556,11 +573,11 @@ export const CAMADAS: CamadaArquitetura[] = [
   { id: 'META', titulo: 'Meta WhatsApp Cloud', papel: 'Provider oficial do canal. Server-only, sem chave no navegador.', gates: ['META_PROVIDER_READONLY', 'META_NUMERO_PRODUCAO', 'ENVIO_FAIL_CLOSED', 'ENVIO_CANARY_LIBERADO'] },
   { id: 'WEBHOOK', titulo: 'Webhook assinado', papel: 'Valida a assinatura antes de ler, normaliza e descarta o bruto.', gates: ['META_WEBHOOK_ASSINADO', 'META_EVENTO_NORMALIZADO', 'RATE_LIMIT_EDGE', 'CENTRAL_WIRING'] },
   { id: 'IDENTIDADE', titulo: 'Contexto e identidade', papel: 'De quem é este número, e em qual contexto ele fala.', gates: ['META_CONTEXTO_NUMERO', 'IDENTIDADE_MODELO', 'IDENTIDADE_VERIFICACAO', 'IDENTIDADE_ONBOARDING'] },
-  { id: 'CONVERSA', titulo: 'Conversa', papel: 'Uma conversa por pessoa e contexto, sem duplicar mensagem.', gates: ['CONVERSA_IDEMPOTENTE', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS'] },
+  { id: 'CONVERSA', titulo: 'Conversa', papel: 'Uma conversa por pessoa e contexto, sem duplicar mensagem.', gates: ['CONVERSA_IDEMPOTENTE', 'MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'CENTRAL_INBOUND_PERSISTENCE'] },
   { id: 'ORQUESTRADOR', titulo: 'Orquestrador', papel: 'Intenção, agente alvo e a permissão exigida pela ação.', gates: ['ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'AUTORIDADE_SERVIDOR'] },
   { id: 'AGENTES', titulo: 'Agentes de domínio', papel: 'Interpretam e PROPÕEM; quem decide é o motor.', gates: ['FINANCE_ADAPTER', 'AGENTES_DEMAIS', 'CONTEXTO_EXTERNO'] },
   { id: 'CONTROL', titulo: 'EIFF Control', papel: 'Motor determinístico, matriz de permissões e execução.', gates: ['ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR'] },
-  { id: 'AUDITORIA', titulo: 'Auditoria e operação', papel: 'Registra, vigia e mostra o estado.', gates: ['AUDITORIA_CENTRAL', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'OPERACAO_MONITORADA', 'E2E_ALPHA', 'OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
+  { id: 'AUDITORIA', titulo: 'Auditoria e operação', papel: 'Registra, vigia e mostra o estado.', gates: ['AUDITORIA_CENTRAL', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'OPERACAO_MONITORADA', 'E2E_ALPHA', 'OBSERVABILIDADE', 'MISSION_CONTROL_LIVE', 'CENTRAL_CONTENT_RETENTION_POLICY'] },
 ];
 
 export const prontidaoDaCamada = (c: CamadaArquitetura): Prontidao => prontidao(c.gates);
@@ -605,8 +622,12 @@ export const ONDAS: Onda[] = [
     entregas: ['Código da Central integrado em main. Nenhuma migration aplicada em produção, nada enviado.'],
   },
   {
-    id: 'WAVE_02', titulo: 'Wave 02 — em andamento', quando: '2026-09-11', situacao: 'em_andamento',
-    entregas: ['Mission Control: prontidão derivada de gates com evidência verificável.', 'Alpha E2E: uma mensagem atravessando todas as fronteiras num teste só.', 'DB Release preflight: levar 0049, 0050 e 0051 ao banco real.'],
+    id: 'WAVE_02', titulo: 'Wave 02 — Mission Control, Alpha E2E, DB Release e Quality Gate', quando: '2026-09-11', situacao: 'concluida', commit: 'ab642be',
+    entregas: ['Mission Control: prontidão derivada de gates com evidência verificável, atrás de ver_mission_control.', 'Alpha E2E: uma mensagem atravessando todas as fronteiras num teste só, sem escrita.', 'DB Release preflight: a fila inteira de migrations num Postgres descartável.', 'Quality Gate no GitHub Actions: testes, lint, build, smoke e preflight por exit code.'],
+  },
+  {
+    id: 'WAVE_03', titulo: 'Wave 03 — em andamento', quando: '2026-09-11', situacao: 'em_andamento',
+    entregas: ['F1: 0049, 0050 e 0051 aplicadas em produção com backup e envelope transacional.', 'F4: Mission Control ao vivo (adapter GitHub read-only), gate LIVE ainda aberto.', 'F2: webhook ligado ao caminho contínuo atrás de CENTRAL_ALPHA_MODE (off), inbound persistido (0052 só em código).', 'F3: cadastro e verificação do número da equipe. F2R: reprocessar parecer, read-only. F5: QA da wave.'],
   },
   {
     id: 'ALPHA_ONDA', titulo: 'Alpha interno', quando: 'a seguir', situacao: 'planejada',
