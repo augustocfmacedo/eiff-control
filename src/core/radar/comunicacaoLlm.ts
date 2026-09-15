@@ -5,6 +5,7 @@ import { CANAIS, type Canal } from './types';
 import { NOME_PERSONA } from './contatos';
 import { OBJETIVOS, OBJETIVOS_COMUNICACAO, PLAYBOOKS, PLAYBOOKS_CODIGOS, contextHashDe, type Claim, type ContentSpec, escopoDoClaim } from './comunicacao';
 import { aberturaNeutra, validarGeracao, type ResultadoGeracao, type ValidacaoGeracao } from './comunicacaoGeracao';
+import { validarFormatoIntencaoCM, type IntencaoComunicacaoCM } from './comunicacaoIntencaoCM';
 
 export const PROMPT_LLM_VERSION = 'COMMUNICATION_LLM_PROMPT_V1';
 export const PROVEDOR_ANTHROPIC = 'ANTHROPIC';
@@ -64,8 +65,8 @@ export const SCHEMA_JUIZ = { type: 'object', additionalProperties: false, proper
 // ---------------------------------------------------------------------------------------------------------------------
 export interface RequisicaoGeracao { empresaId: string; contatoId: string; sinalId?: string; estrategiaId?: string; spec: ContentSpec }
 /** Contrato publico da funcao: so ids, canal e preferencias. O ContentSpec e SEMPRE reconstruido no servidor a partir do banco. */
-export interface PedidoGeracao { empresaId: string; contatoId: string; sinalId?: string; estrategiaId?: string; canal: Canal; citarIndicacao?: boolean; horaLocal?: number }
-export const CAMPOS_PEDIDO = ['empresaId', 'contatoId', 'sinalId', 'estrategiaId', 'canal', 'citarIndicacao', 'horaLocal'] as const;
+export interface PedidoGeracao { empresaId: string; contatoId: string; sinalId?: string; estrategiaId?: string; canal: Canal; citarIndicacao?: boolean; horaLocal?: number; intencaoComercial?: IntencaoComunicacaoCM }
+export const CAMPOS_PEDIDO = ['empresaId', 'contatoId', 'sinalId', 'estrategiaId', 'canal', 'citarIndicacao', 'horaLocal', 'intencaoComercial'] as const;
 export function validarPedidoGeracao(corpo: unknown): { ok: true; pedido: PedidoGeracao } | { ok: false; erros: string[] } {
   const erros: string[] = [];
   if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) return { ok: false, erros: ['corpo inválido'] };
@@ -79,8 +80,19 @@ export function validarPedidoGeracao(corpo: unknown): { ok: true; pedido: Pedido
   if (!CANAIS_GERACAO_LLM.includes(b.canal as Canal)) erros.push('canal inválido para geração');
   if (b.citarIndicacao !== undefined && typeof b.citarIndicacao !== 'boolean') erros.push('citarIndicacao inválido');
   if (b.horaLocal !== undefined && !(typeof b.horaLocal === 'number' && b.horaLocal >= 0 && b.horaLocal < 24)) erros.push('horaLocal inválida');
+  // intencao da Maquina Comercial (CM1-D2): so formato aqui; o servidor recalcula fila e plano e exige que batam
+  let intencaoComercial: IntencaoComunicacaoCM | undefined;
+  if (b.intencaoComercial !== undefined) {
+    const vi = validarFormatoIntencaoCM(b.intencaoComercial);
+    if (!vi.ok) erros.push(...vi.erros);
+    else {
+      intencaoComercial = vi.intencao;
+      if (vi.intencao.empresaId !== b.empresaId || vi.intencao.contatoId !== b.contatoId) erros.push('intenção comercial de outra empresa ou contato');
+      if (b.sinalId !== undefined || b.estrategiaId !== undefined) erros.push('com intenção comercial, sinal e estratégia vêm do plano recalculado no servidor');
+    }
+  }
   if (erros.length) return { ok: false, erros };
-  return { ok: true, pedido: { empresaId: String(b.empresaId), contatoId: String(b.contatoId), sinalId: b.sinalId ? String(b.sinalId) : undefined, estrategiaId: b.estrategiaId ? String(b.estrategiaId) : undefined, canal: b.canal as Canal, citarIndicacao: b.citarIndicacao === true, horaLocal: typeof b.horaLocal === 'number' ? Math.floor(b.horaLocal) : undefined } };
+  return { ok: true, pedido: { empresaId: String(b.empresaId), contatoId: String(b.contatoId), sinalId: b.sinalId ? String(b.sinalId) : undefined, estrategiaId: b.estrategiaId ? String(b.estrategiaId) : undefined, canal: b.canal as Canal, citarIndicacao: b.citarIndicacao === true, horaLocal: typeof b.horaLocal === 'number' ? Math.floor(b.horaLocal) : undefined, intencaoComercial } };
 }
 /** Sanitizacao tecnica (anti-injecao) do texto que vai ao modelo: sem controle, sem tags, tamanho limitado; o fato em si nao muda. */
 export const LIMITE_CLAIM_CHARS = 400;

@@ -76,6 +76,8 @@ export interface ComunicacaoPlanoCM {
   motivoSelecao: string;
   motivoCanal: string;
   canaisDescartados: CanalDescartadoCM[];
+  /** Estrategia considerada na selecao (a do artefato, quando aprovado). Exposta para a geracao nao recalcular a escolha (CM1-D2). */
+  estrategiaId?: string;
 }
 
 export interface HistoricoPlanoCM {
@@ -361,7 +363,7 @@ export function planoDeAcaoCM(ds: RadarDataset, item: CommercialQueueItem): Comm
     comunicacao: {
       origem: intencao.artefato ? 'ARTEFATO_APROVADO' : 'SELECAO_ATUAL', comunicacaoId: intencao.artefato?.id,
       objetivo, playbook, canal: candidatos[0], canaisAlternativos: candidatos.slice(1), cta: OBJETIVOS[objetivo].cta, estagio,
-      motivoSelecao, motivoCanal, canaisDescartados,
+      motivoSelecao, motivoCanal, canaisDescartados, estrategiaId: intencao.artefato ? intencao.artefato.estrategiaId : estrategia?.id,
     },
     historico: { ...historico, doContato: { tentativas: historicoContato.tentativas, ultimoResultado: historicoContato.ultimoResultado, ultimoCanal: historicoContato.ultimoCanal, ultimaEm: historicoContato.ultimaEm, semRespostaSeguidas: historicoContato.semRespostaSeguidas } },
   });

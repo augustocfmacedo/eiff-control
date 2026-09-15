@@ -14,6 +14,7 @@ import { normalizar } from '../../ui/busca';
 import { Tabela } from '../../ui/Tabela';
 import { Badge, Empty, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, useToast, type Tone } from '../../ui/components';
 import { Abordagem } from './Abordagem';
+import { intencaoDoPlanoCM, type IntencaoComunicacaoCM } from '../../core/radar/comunicacaoIntencaoCM';
 import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaForm, d, nomeUsuario } from './comum';
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -33,7 +34,7 @@ const dias = (n: number) => `${n} dia${n === 1 ? '' : 's'}`;
 
 type FiltroCategoria = 'TODAS' | CategoriaCommercialQueue;
 interface Linha { item: CommercialQueueItem; plano: CommercialActionPlan; empresa?: Empresa; id: string }
-type AbrirAbordagem = { empresaId: string; contatoId?: string; titulo: string };
+type AbrirAbordagem = { empresaId: string; contatoId?: string; titulo: string; intencao?: IntencaoComunicacaoCM; semGeracao?: string };
 type AbrirAtividade = { empresaId: string; contatoId?: string; oportunidadeId?: string };
 
 export default function RadarHoje() {
@@ -135,7 +136,7 @@ export default function RadarHoje() {
 
       {score && <ScoreModal e={score} onClose={() => setScore(null)} />}
       {/* key por alvo: trocar de conta ou contato remonta o componente (o estado interno nunca carrega o alvo anterior) */}
-      {abordagem && <Modal key={`abordagem:${abordagem.empresaId}:${abordagem.contatoId ?? ''}`} title={abordagem.titulo} onClose={() => setAbordagem(null)} wide><Abordagem key={`${abordagem.empresaId}:${abordagem.contatoId ?? ''}`} empresaId={abordagem.empresaId} contatoId={abordagem.contatoId} /></Modal>}
+      {abordagem && <Modal key={`abordagem:${abordagem.empresaId}:${abordagem.contatoId ?? ''}`} title={abordagem.titulo} onClose={() => setAbordagem(null)} wide><Abordagem key={`${abordagem.empresaId}:${abordagem.contatoId ?? ''}:${abordagem.intencao?.itemId ?? ''}`} empresaId={abordagem.empresaId} contatoId={abordagem.contatoId} commercialIntent={abordagem.intencao} semGeracao={abordagem.semGeracao} /></Modal>}
       {atividade && <AtividadeForm key={`atividade:${atividade.empresaId}:${atividade.contatoId ?? ''}:${atividade.oportunidadeId ?? ''}`} empresaId={atividade.empresaId} contatoId={atividade.contatoId} oportunidadeId={atividade.oportunidadeId} onClose={() => setAtividade(null)} onErro={toast} onOk={toast} />}
       {concluir && <ConcluirTarefaForm key={concluir.id} tarefa={concluir} onClose={() => setConcluir(null)} onErro={toast} onOk={toast} />}
       {tarefa && <TarefaForm key={tarefa.id} inicial={tarefa} onClose={() => setTarefa(null)} onErro={toast} onOk={toast} />}
@@ -281,7 +282,7 @@ export default function RadarHoje() {
       case 'CONTATO': {
         const contatoId = plano.contato!.id;
         return <>
-          {botao(plano.comunicacao?.origem === 'ARTEFATO_APROVADO' ? 'Abrir abordagem aprovada' : 'Preparar abordagem', () => setAbordagem({ empresaId, contatoId, titulo: titulo('Abordagem') }), true)}
+          {botao(plano.comunicacao?.origem === 'ARTEFATO_APROVADO' ? 'Abrir abordagem aprovada' : 'Preparar abordagem', () => setAbordagem({ empresaId, contatoId, titulo: titulo('Abordagem'), intencao: intencaoDoPlanoCM(plano) }), true)}
           {botao('Registrar atividade', () => setAtividade({ empresaId, contatoId, oportunidadeId: item.oportunidadeId }))}
           {tarefaDaAcao ? botao('Concluir esta tarefa', () => setConcluir(tarefaDaAcao)) : botao('Agendar tarefa', () => novaTarefa({ tipo: plano.tipoTarefa, contatoId, oportunidadeId: item.oportunidadeId, descricao: plano.explicacao.acao }))}
         </>;
@@ -296,7 +297,7 @@ export default function RadarHoje() {
         const comunicacao = rv?.referencia?.tipo === 'comunicacao' ? r.comunicacoes.find((c) => c.id === rv.referencia!.id) : undefined;
         const tarefaRevisar = tarefaPorRef(rv?.referencia) ?? tarefaDaAcao;
         const revisarTarefa = tarefaRevisar ? botao('Revisar tarefa', () => setTarefa(tarefaRevisar)) : null;
-        if (comunicacao) return <>{botao('Revisar abordagem', () => setAbordagem({ empresaId, contatoId: comunicacao.contatoId, titulo: titulo('Revisar abordagem') }), true)}{abrirEmpresa()}</>;
+        if (comunicacao) return <>{botao('Revisar abordagem', () => setAbordagem({ empresaId, contatoId: comunicacao.contatoId, titulo: titulo('Revisar abordagem'), semGeracao: 'A Máquina Comercial pede revisar a abordagem existente: nenhuma nova é gerada daqui.' }), true)}{abrirEmpresa()}</>;
         if (rv?.trava === 'DUPLICATA_PENDENTE') return <>{link('/radar?aba=duplicatas', 'Resolver duplicata', true)}{abrirEmpresa()}</>;
         if (plano.bloqueios.some((b) => b.codigo === 'EMPRESA_SUPRIMIDA')) return <>{link('/radar?aba=supressoes', 'Ver lista de não contatar', true)}{abrirEmpresa()}</>;
         if (rv?.trava === 'OPORTUNIDADE_SEM_RESPONSAVEL') return <>{abrirEmpresa('oportunidades', 'Definir responsável da oportunidade', true)}{revisarTarefa}</>;
