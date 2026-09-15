@@ -113,11 +113,39 @@ Motor de contexto de comunicação, reutilizável para qualquer conta, contato, 
 - **Command Center** (`#/radar`): pipeline ponderado, leads A+/A, novos sinais, follow-ups vencidos, oportunidades sem
   próxima ação, atividades, respostas, reuniões, projetos recebidos, propostas; abas Alertas, Regras de score,
   Estratégias, Importações, Duplicatas, Não contatar.
-- **Hoje** (`#/radar/hoje`): fila por prioridade (vencidas primeiro), com motivo, sinal principal, decisor, última
-  interação, próxima ação e ação recomendada; registrar atividade, concluir tarefa ou agendar direto da fila.
+- **Hoje** (`#/radar/hoje`, Hoje 2.0 — Máquina Comercial CM1-C): apresenta a Commercial Queue e o Commercial Action Plan,
+  sem decidir nada na tela. Resumo por categoria, filtros (só as minhas pelo responsável do item, classe, categoria, busca),
+  bloco "Próxima ação" (conta, por que agora, chave que decide a ordem, ação por modo, pessoa, plano de contato com
+  motivo do objetivo e do canal, histórico, travas) e a fila na ordem da máquina. Os botões seguem o modo do plano e a
+  tarefa referenciada pelo item. Ver "Máquina Comercial" abaixo.
 - **Empresas** (`#/radar/empresas`): tabela com filtros (classe, UF, setor, situação) e ordenação.
 - **Empresa** (`#/radar/empresas/:id`): Overview, Contatos, Projetos, Sinais, Atividades (com tarefas),
   Oportunidades (com histórico), Inteligência (explicação do score, estratégia sugerida, linhagem).
+
+## Máquina Comercial (CM1)
+
+Arquitetura completa, invariantes, hipóteses, dívidas e contrato do CM2 em `docs/commercial-machine.md`. Resumo:
+
+- **Não é um segundo CRM.** É uma projeção/orquestração pura sobre `radar_company`, `radar_contact`, `radar_signal`,
+  `radar_opportunity` (+ histórico), `radar_activity`, `radar_task`, `radar_strategy`, `radar_experiment`,
+  `radar_communication`, duplicatas e supressões. Nenhuma entidade, tabela ou migration nova.
+- **CM1-A — Commercial Queue** (`commercialMachine.ts`): *o que precisa acontecer agora?* Uma entrada por conta com ação
+  principal explicável, pendências secundárias, travas e `foraDaFila`. Categorias em escada: AGIR_AGORA,
+  AVANCAR_OPORTUNIDADE, FOLLOW_UP, REVISAR, PROSPECTAR, ENRIQUECER, NURTURE, AGENDADO. Sem score próprio e sem soma de
+  pesos: ordem por degrau → tier → urgência (dias de fato) → classe → `priorityScore` (só desempate) → valor ponderado →
+  prazo → id. Dado faltante nunca melhora a posição.
+- **CM1-B — Commercial Action Plan** (`commercialActionPlan.ts`): *como executar?* Modo CONTATO, ACAO_INTERNA, REVISAR,
+  ENRIQUECER ou AGUARDAR, derivado da ação concreta (não da categoria). Só CONTATO tem objetivo, playbook e canal, e só
+  quando empresa, contato, canal, histórico e travas permitem. Canal = política existente ∩ canais acionáveis (supressões
+  `invalid_phone`/`email_bounced` valem).
+- **CM1-C — Hoje 2.0**: apresenta fila + plano; `filaHoje` não é mais autoridade da Hoje. A faixa de sugestões do Radar
+  (CM1-D1) também resume a fila.
+- **CM1-D — Intenção de comunicação** (`comunicacaoIntencaoCM.ts`): a Abordagem aberta pela Hoje gera (IA ou versão
+  padrão) com a intenção do plano. A Máquina Comercial decide a intenção; o Server Truth decide se ela continua válida:
+  `/api/comunicacao` recalcula fila e plano no banco e responde `409 context_changed` se algo mudou, sem fallback.
+  Abordagem aprovada nunca gera outra. Sem a intenção, a Abordagem mantém o comportamento anterior.
+- **Nada é enviado nem automatizado**: sem envio, sem tarefa automática, sem movimentar oportunidade, sem Vibe automático.
+  Hipóteses (`VERSAO_REGRAS_CM = CM1-A.1`, `VERSAO_REGRAS_PLANO_CM = CM1-B.1`) são iniciais e serão calibradas por dados.
 
 ## Importação CSV
 

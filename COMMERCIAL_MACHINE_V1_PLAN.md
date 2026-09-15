@@ -4,6 +4,28 @@ Baseline: `main @ ab642be3c6cfb918241b6c8b637d485a05ce810e`
 
 Branch exclusiva: `feature/commercial-machine-v1`
 
+## Estado (atualizado no CM1-E)
+
+**CM1 fechado.** Arquitetura, invariantes, matriz de autoridade, hipóteses, dívidas e contrato do CM2: `docs/commercial-machine.md`.
+
+| Bloco | Estado | Commit |
+|---|---|---|
+| CM0 — contrato operacional e baseline | SUPERADO (substituído pelo CM1-A; commits `57abb88`, `c2cdfe4`) | — |
+| CM1-A — Commercial Queue (motor corrigido) | DONE | `38ae3b6283e6818ef1d782037f1bc40b4a233c73` |
+| CM1-B — Commercial Action Plan | DONE | `c9bae078f2f5a4bc220a2b3d923a9782a0bfbcc8` |
+| CM1-C — Hoje 2.0 | DONE | `4db77587829469c9811a7b3dfea028587f0aa901` |
+| CM1-D1 — sugestões do Radar pela fila | DONE | `c503199cf7d8bff08c5b76139321432921a79cac` |
+| CM1-D2 — intenção comercial até o Server Truth | DONE | `2cef7059599324203d28c1f67837241c45c27459` |
+| CM1-E — consolidação e fechamento formal | DONE (commit desta consolidação) | este commit |
+| CM2 — Cadence Engine v1 | NOT STARTED | — |
+| CM3 — Opportunity Control | NOT STARTED | — |
+| CM4 — Measurement & Learning | NOT STARTED | — |
+| CM5 — Assisted Execution | NOT STARTED | — |
+
+Hipóteses em vigor: `VERSAO_REGRAS_CM = CM1-A.1` e `VERSAO_REGRAS_PLANO_CM = CM1-B.1` — hipóteses operacionais iniciais,
+sujeitas a calibração por CM4. A regra temporária de migrations (§2) continua valendo: a Wave 03 da Central ainda não está
+em `main`.
+
 Objetivo: transformar o Radar de uma base forte de inteligencia comercial + CRM + comunicacao em uma maquina operacional de vendas, com fila priorizada, cadencias, disciplina de proxima acao, governanca de abordagem, medicao de conversao e ciclo de aprendizado — sem criar um segundo CRM e sem tocar na EIFF Central.
 
 ## 1. Fronteira de ownership
@@ -106,7 +128,10 @@ Ao abrir o Comercial, um vendedor ou gestor deve conseguir responder imediatamen
 
 ## 7. Blocos de execucao
 
-### CM0 — Contrato operacional e baseline
+### CM0 — Contrato operacional e baseline — SUPERADO
+
+> Substituído pelo CM1-A: a auditoria do CM0 encontrou bloqueadores (supressão de empresa ignorada, elegibilidade de
+> contato reimplementada, ordenação por soma de pesos) e o motor foi reescrito sobre as regras existentes do Radar.
 
 Objetivo: congelar o modelo da maquina antes de mexer na interface.
 
@@ -120,7 +145,16 @@ Entregas:
 
 Aceite: nenhuma UI, nenhum envio, nenhuma migration; apenas dominio puro + testes.
 
-### CM1 — Work Queue / Hoje 2.0
+### CM1 — Work Queue / Hoje 2.0 — DONE
+
+> Entregue em seis blocos (tabela de estado acima):
+> - CM1-A: `construirCommercialQueue` com 8 categorias (acrescentado `AGENDADO`), `foraDaFila`, travas separadas,
+>   pendências secundárias e ordenação por chaves em sequência, sem score próprio;
+> - CM1-B: `planoDeAcaoCM` com modos CONTATO / ACAO_INTERNA / REVISAR / ENRIQUECER / AGUARDAR;
+> - CM1-C: Hoje 2.0 apresentando fila + plano;
+> - CM1-D1: sugestões do Radar pela fila; CM1-D2: `IntencaoComunicacaoCM` validada pelo Server Truth (`409 context_changed`);
+> - CM1-E: documentação consolidada em `docs/commercial-machine.md`.
+> O desenho abaixo é o plano original, mantido como histórico.
 
 Objetivo: transformar `Hoje` em cockpit operacional.
 
@@ -136,7 +170,11 @@ Filas minimas:
 
 Cada item deve mostrar `por que agora`, proxima acao, prazo, conta, decisor, score, sinal principal e CTA operacional.
 
-### CM2 — Cadence Engine v1
+### CM2 — Cadence Engine v1 — NOT STARTED
+
+> Contrato de entrada obrigatório: `docs/commercial-machine.md` §11. O CM2 não substitui o CM1-A (fila) nem o CM1-B
+> (plano), não envia, não ignora supressão nem resultado negativo, não cria sequência, histórico ou tarefa paralela ou
+> duplicada, não age sobre conta AGENDADO antes do prazo e não contorna o Server Truth.
 
 Objetivo: dar disciplina temporal sem robotizar o vendedor.
 
@@ -154,7 +192,7 @@ Capacidades:
 
 Sempre reutilizar `radar_task`, `radar_activity`, `radar_strategy`, `radar_communication` e `radar_experiment` antes de propor entidade nova.
 
-### CM3 — Opportunity Control
+### CM3 — Opportunity Control — NOT STARTED
 
 Objetivo: impedir que oportunidade real se perca por falta de disciplina operacional.
 
@@ -169,7 +207,7 @@ Capacidades:
 - recomendacao de proximo movimento;
 - forecast operacional separado de desejo comercial.
 
-### CM4 — Measurement & Learning
+### CM4 — Measurement & Learning — NOT STARTED
 
 Objetivo: fechar o loop da maquina.
 
@@ -191,7 +229,7 @@ Indicadores minimos:
 
 Metricas devem ser derivadas de fatos registrados no Radar; nada de percentual digitado manualmente.
 
-### CM5 — Assisted Execution
+### CM5 — Assisted Execution — NOT STARTED
 
 Objetivo: reduzir friccao para o vendedor mantendo controle humano.
 
@@ -218,7 +256,7 @@ O canary de envio existente pode ser reutilizado; a v1 nao amplia allowlist nem 
 - scoring por modelo opaco sem explicacao;
 - migration antes da integracao da Wave 03.
 
-## 9. Primeiro corte implementavel
+## 9. Primeiro corte implementavel (historico: cumprido pelo CM0 e superado pelo CM1-A)
 
 A primeira entrega de codigo deve ser CM0 + nucleo de CM1:
 
