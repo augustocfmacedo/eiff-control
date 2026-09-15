@@ -251,6 +251,9 @@ function canonico(r: RadarDataset): RadarDataset {
   };
 }
 
+/** Mesma canonicalizacao da fila, para camadas derivadas (plano de acao) lerem o dataset na mesma ordem. */
+export const canonicalizarDatasetCM = (r: RadarDataset): RadarDataset => canonico(r);
+
 function agrupar<T>(xs: readonly T[], chave: (x: T) => string | undefined): Map<string, T[]> {
   const m = new Map<string, T[]>();
   for (const x of xs) { const k = chave(x); if (k === undefined) continue; const l = m.get(k); if (l) l.push(x); else m.set(k, [x]); }
