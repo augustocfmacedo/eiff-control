@@ -246,7 +246,9 @@ export function recomendarCanal(x: { contato?: Contato; persona: Persona; histor
 // ---------------------------------------------------------------------------------------------------------------------
 // Contexto de comunicacao
 // ---------------------------------------------------------------------------------------------------------------------
-export interface EntradaContexto { empresa: Empresa; contato?: Contato; persona?: Persona; decisionFit?: number; sinal?: Sinal; estagioOportunidade?: Estagio; estrategia?: Estrategia; atividades: Atividade[]; contatos: Contato[]; fontes: Fonte[]; fitIdeal: number; proximaAcaoAtual: EstadoAcao; hoje: string; canalPreferido?: Canal; citarIndicacao?: boolean }
+export interface EntradaContexto { empresa: Empresa; contato?: Contato; persona?: Persona; decisionFit?: number; sinal?: Sinal; estagioOportunidade?: Estagio; estrategia?: Estrategia; atividades: Atividade[]; contatos: Contato[]; fontes: Fonte[]; fitIdeal: number; proximaAcaoAtual?: EstadoAcao; hoje: string; canalPreferido?: Canal; citarIndicacao?: boolean;
+  /** Intencao comercial ja decidida pela Maquina Comercial (CM1-D2): objetivo e playbook vem dela, sem selecionarPlaybook. Quem a fornece e responsavel por te-la validado (Server Truth). */
+  intencao?: { objetivo: ObjetivoComunicacao; playbook: PlaybookCodigo; motivo: string } }
 export interface WhyNow { fato?: string; interpretacao?: string; raciocinioInterno: string; referencia?: string }
 export interface ContextoComunicacao {
   empresa: { id: string; nome: string; local?: string; setor?: string; priority?: number; classe?: string };
@@ -262,7 +264,7 @@ export interface ContextoComunicacao {
   alegacoesPermitidas: string[]; alegacoesProibidas: string[];
   canal: RecomendacaoCanal;
   historico: HistoricoComunicacao; indicacao?: Indicacao;
-  proximaAcaoAtual: EstadoAcao;
+  proximaAcaoAtual?: EstadoAcao;
 }
 export const ALEGACOES_PROIBIDAS_BASE = ['que a estrutura metálica está em contratação', 'que existe licitação aberta', 'que a EIFF conhece um projeto em aberto', 'preço, prazo ou proposta sem projeto', 'que o sinal foi confirmado com a empresa quando não foi'];
 const primeiroNome = (n: string) => n.trim().split(/\s+/)[0] ?? n;
@@ -276,7 +278,7 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
   const historico = historicoDe(x.atividades, x.empresa.id, c?.id);
   const ind0 = indicacaoDe(c, x.atividades, x.contatos); const indicacao = ind0 ? { ...ind0, divulgacao: (x.citarIndicacao ? 'ALLOWED' : 'INTERNAL_ONLY') as DivulgacaoFonte } : undefined;
   const estagio = estagioEfetivo({ estagioOportunidade: x.estagioOportunidade, decisionFit, fitIdeal: x.fitIdeal, historico, temSinal: !!x.sinal });
-  const sel = selecionarPlaybook({ persona, decisionFit, fitIdeal: x.fitIdeal, historico, indicacao, estrategia: x.estrategia?.codigo, estagio, temContato: !!c });
+  const sel: SelecaoPlaybook = x.intencao && c ? { comunicar: true, objetivo: x.intencao.objetivo, playbook: x.intencao.playbook, motivo: x.intencao.motivo } : selecionarPlaybook({ persona, decisionFit, fitIdeal: x.fitIdeal, historico, indicacao, estrategia: x.estrategia?.codigo, estagio, temContato: !!c });
   const pb = sel.playbook ? PLAYBOOKS[sel.playbook] : undefined; const ob = sel.objetivo ? OBJETIVOS[sel.objetivo] : undefined;
   const canal = recomendarCanal({ contato: c, persona, historico, indicacao, estagio, playbook: sel.playbook });
   if (x.canalPreferido && canal.disponiveis.includes(x.canalPreferido)) { canal.secundario = canal.primario === x.canalPreferido ? canal.secundario : canal.primario; canal.primario = x.canalPreferido; canal.motivo = `canal escolhido pelo usuário (${x.canalPreferido})`; }
@@ -286,7 +288,7 @@ export function buildCommunicationContext(x: EntradaContexto): ContextoComunicac
   const whyNowDetalhe: WhyNow = {
     fato: whyNowFato ? `${whyNowFato.texto} (${x.sinal!.eventoEm.slice(0, 10)})` : undefined,
     interpretacao: l.porQueImporta,
-    raciocinioInterno: x.sinal ? `sinal ${NOME_SINAL[x.sinal.tipo]} de ${x.sinal.eventoEm.slice(0, 10)}, fonte ${fonteSinal ?? '?'}, confiança ${Math.round(x.sinal.confianca * 100)}%, ${x.sinal.verificado ? 'verificado' : 'NÃO verificado: não usar como fato'}${sinalAcionavel(x.sinal) ? ', acionável' : ''}; próxima ação ${x.proximaAcaoAtual}` : 'sem sinal: abordagem sem fato de gatilho',
+    raciocinioInterno: x.sinal ? `sinal ${NOME_SINAL[x.sinal.tipo]} de ${x.sinal.eventoEm.slice(0, 10)}, fonte ${fonteSinal ?? '?'}, confiança ${Math.round(x.sinal.confianca * 100)}%, ${x.sinal.verificado ? 'verificado' : 'NÃO verificado: não usar como fato'}${sinalAcionavel(x.sinal) ? ', acionável' : ''}${x.proximaAcaoAtual ? `; próxima ação ${x.proximaAcaoAtual}` : x.intencao ? '; ação definida pela Máquina Comercial' : ''}` : 'sem sinal: abordagem sem fato de gatilho',
     // com o claim completo (oQueAconteceu) a referencia nomeia so a fonte e o fato entra como frase natural; sem ele, a referencia leva o titulo
     referencia: x.sinal && whyNowFato ? referenciaAoSinal(fonteSinal, x.sinal.tipo, whyNowFato.chave === 'sinal.oQueAconteceu' ? '' : referenciaPublicaDoSinal(x.sinal.tipo, x.sinal.titulo)) : undefined,
   };

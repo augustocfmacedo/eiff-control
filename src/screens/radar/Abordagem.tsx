@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { NOME_CANAL, NOME_PERSONA, NOME_TOM, OBJETIVOS, PLAYBOOKS, contextoComunicacaoDe, type Canal, type VeredictoEdicao } from '../../core/radar';
+import { NOME_CANAL, NOME_PERSONA, NOME_TOM, OBJETIVOS, PLAYBOOKS, TEXTO_RAZAO_CM, contextoComunicacaoDe, type Canal, type VeredictoEdicao } from '../../core/radar';
+import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../../core/radar/comunicacaoIntencaoCM';
 import type { ComunicacaoRadar } from '../../core/radar/types';
 import { actions, getState, pode, useStore } from '../../data/store';
 import { tokenSessao } from '../../data/supabase';
@@ -9,8 +10,13 @@ import { Entrega } from './Entrega';
 const CANAIS_GERACAO: Canal[] = ['WHATSAPP', 'EMAIL', 'PHONE'];
 const toneEstado = (e: ComunicacaoRadar['estado']) => (e === 'APPROVED' ? 'ok' : e === 'REJECTED' || e === 'CANCELLED' ? 'bad' : e === 'READY_FOR_REVIEW' ? 'warn' : 'muted');
 
-/** Painel de abordagem: WHY NOW, quem, objetivo, playbook, canais e CTA; gera rascunhos para revisao humana (nunca envia). */
-export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: string; contatoId?: string; compacto?: boolean }) {
+/**
+ * Painel de abordagem: WHY NOW, quem, objetivo, playbook, canais e CTA; gera rascunhos para revisao humana (nunca envia).
+ * `commercialIntent` (CM1-D2): aberto a partir da Maquina Comercial, a exibicao E a geracao (IA e versao padrao) usam a
+ * intencao do plano, resolvida contra a fila atual; se o contexto mudou, mostra o conflito e nao gera. Sem a intencao,
+ * o comportamento anterior (contexto de comunicacao do Radar) permanece. `semGeracao`: so revisar o que ja existe.
+ */
+export function Abordagem({ empresaId, contatoId, compacto, commercialIntent, semGeracao }: { empresaId: string; contatoId?: string; compacto?: boolean; commercialIntent?: IntencaoComunicacaoCM; semGeracao?: string }) {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
   const r = ds.radar;
@@ -21,16 +27,24 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
   const [citarIndicacao, setCitarIndicacao] = useState(false);
   const [gerandoIa, setGerandoIa] = useState(false);
   const [iaIndisponivel, setIaIndisponivel] = useState<string | null>(null);
-  const ctx = useMemo(() => contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: contatoSel, canal: canalSel || undefined, citarIndicacao }), [r, empresaId, ds.params.dataBase, contatoSel, canalSel, citarIndicacao]);
+  const resolucaoCM = useMemo(() => (commercialIntent ? resolverIntencaoCM(r, ds.params.dataBase, commercialIntent, { canal: canalSel || undefined, paraGeracao: false }) : undefined), [r, ds.params.dataBase, commercialIntent, canalSel]);
+  const ctx = useMemo(() => {
+    if (!commercialIntent) return contextoComunicacaoDe(r, empresaId, ds.params.dataBase, { contatoId: contatoSel, canal: canalSel || undefined, citarIndicacao });
+    return resolucaoCM?.ok ? contextoComunicacaoCM(r, resolucaoCM.item, resolucaoCM.plano, ds.params.dataBase, { canal: resolucaoCM.canal, citarIndicacao }) : undefined;
+  }, [r, empresaId, ds.params.dataBase, contatoSel, canalSel, citarIndicacao, commercialIntent, resolucaoCM]);
   const contatos = r.contatos.filter((c) => c.empresaId === empresaId && c.ativo);
   const comunicacoes = r.comunicacoes.filter((c) => c.empresaId === empresaId).sort((a, b) => (a.criadoEm < b.criadoEm ? 1 : -1));
   const podeAgir = pode(usuario, 'radar');
-  if (!ctx) return null;
+  const conflitoCM = resolucaoCM && !resolucaoCM.ok ? resolucaoCM.conflito : undefined;
+  const aprovadaCM = commercialIntent?.origem === 'ARTEFATO_APROVADO';
+  // conflito causado pelo proprio rascunho gerado agora (a fila passou a pedir revisao): informar, nao alarmar
+  const rascunhoDoPlano = !!conflitoCM && !!commercialIntent && comunicacoes.some((c) => c.contatoId === commercialIntent.contatoId && c.objetivo === commercialIntent.objetivo && c.playbook === commercialIntent.playbook && (c.estado === 'DRAFT' || c.estado === 'READY_FOR_REVIEW'));
+  if (!ctx && !conflitoCM) return null;
   const gerarComIa = async (canal: Canal) => {
-    if (!ctx.contato) return;
+    if (!ctx?.contato) return;
     setGerandoIa(true);
     try {
-      const spec = actions.prepararSpecComunicacaoRadar(empresaId, { contatoId: ctx.contato.id, canal, citarIndicacao, horaLocal: new Date().getHours() });
+      const spec = actions.prepararSpecComunicacaoRadar(empresaId, { contatoId: ctx.contato.id, canal, citarIndicacao, horaLocal: new Date().getHours(), intencao: commercialIntent });
       const token = await tokenSessao();
       if (!token) throw new Error('Sessão não encontrada: a geração com IA só funciona em produção, com login.');
       const resp = await fetch('/api/comunicacao', { method: 'POST', headers: { 'content-type': 'application/json', 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', authorization: `Bearer ${token}` }, body: JSON.stringify(spec) });
@@ -62,18 +76,23 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
       toast('Aprovado. O envio é manual: registre o contato como atividade.');
     } catch (e) { toast(mensagemHumana(e)); }
   };
-  const gerar = (canal: Canal) => tentar(() => actions.gerarComunicacaoRadar(empresaId, { contatoId: ctx.contato?.id, canal, citarIndicacao, horaLocal: new Date().getHours() }), toast, () => toast(`Rascunho ${NOME_CANAL[canal]} pronto para revisão.`));
-  const ob = ctx.objetivo ? OBJETIVOS[ctx.objetivo] : undefined; const pb = ctx.playbook ? PLAYBOOKS[ctx.playbook] : undefined;
+  const gerar = (canal: Canal) => tentar(() => actions.gerarComunicacaoRadar(empresaId, { contatoId: ctx?.contato?.id, canal, citarIndicacao, horaLocal: new Date().getHours(), intencao: commercialIntent }), toast, () => toast(`Rascunho ${NOME_CANAL[canal]} pronto para revisão.`));
+  const ob = ctx?.objetivo ? OBJETIVOS[ctx.objetivo] : undefined; const pb = ctx?.playbook ? PLAYBOOKS[ctx.playbook] : undefined;
+  const podeGerar = podeAgir && !!ctx && ctx.comunicar && !!ctx.contato && !semGeracao && !aprovadaCM;
   return (
     <div className="card" id="abordagem">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0 }}>Abordagem</h2>
-        <div className="row small" style={{ gap: 8 }}>
-          {contatos.length > 1 && <Select value={contatoSel ?? ctx.contato?.id ?? ''} onChange={(v) => setContatoSel(v || undefined)} options={contatos.map((c) => ({ value: c.id, label: c.nome }))} />}
-          <Select value={canalSel} onChange={(v) => setCanalSel(v as Canal | '')} allowEmpty="canal recomendado" options={ctx.canal.disponiveis.map((c) => ({ value: c, label: NOME_CANAL[c] }))} />
-        </div>
+        {ctx && <div className="row small" style={{ gap: 8 }}>
+          {!commercialIntent && contatos.length > 1 && <Select value={contatoSel ?? ctx.contato?.id ?? ''} onChange={(v) => setContatoSel(v || undefined)} options={contatos.map((c) => ({ value: c.id, label: c.nome }))} />}
+          <Select value={canalSel} onChange={(v) => setCanalSel(v as Canal | '')} allowEmpty={commercialIntent ? 'canal do plano' : 'canal recomendado'} options={ctx.canal.disponiveis.map((c) => ({ value: c, label: NOME_CANAL[c] }))} />
+        </div>}
       </div>
-      <table className="small" style={{ marginTop: 8 }}><tbody>
+      {commercialIntent && <p className="small" style={{ margin: '6px 0 0' }}><Badge tone="info">Máquina Comercial</Badge> {TEXTO_RAZAO_CM[commercialIntent.acaoCodigo]} · contato, objetivo, playbook e canal vêm do plano (regras {commercialIntent.versaoRegrasFila} · plano {commercialIntent.versaoRegrasPlano})</p>}
+      {conflitoCM && (rascunhoDoPlano
+        ? <p className="small" role="status" style={{ margin: '8px 0 0' }}><Badge tone="info">Em revisão</Badge> A abordagem deste plano já está gerada e aguarda revisão abaixo; a próxima ação passa a ser revisá-la. Para gerar outra, reabra a Hoje.</p>
+        : <p className="small" role="alert" style={{ margin: '8px 0 0' }}><Badge tone="bad">Contexto mudou</Badge> {MENSAGEM_INTENCAO_MUDOU} Motivo: {TEXTO_CONFLITO_INTENCAO_CM[conflitoCM]}. Nenhuma abordagem é gerada daqui.</p>)}
+      {ctx && <table className="small" style={{ marginTop: 8 }}><tbody>
         <tr><td className="muted">WHY NOW · fato</td><td>{ctx.whyNow ?? 'sem fato verificado: nada a afirmar ao prospect'}{ctx.whyNowDetalhe.referencia && <span className="muted"> · como referir: "{ctx.whyNowDetalhe.referencia}"</span>}{ctx.sinal?.url && <> · <a href={ctx.sinal.url} target="_blank" rel="noreferrer">fonte</a></>}</td></tr>
         {!compacto && <tr><td className="muted">WHY NOW · interno</td><td className="muted">{ctx.whyNowDetalhe.raciocinioInterno}{ctx.whyNowDetalhe.interpretacao && <div>interpretação (não é fato): {ctx.whyNowDetalhe.interpretacao}</div>}</td></tr>}
         <tr><td className="muted">WHO</td><td>{ctx.contato ? <>{ctx.contato.nome}{ctx.contato.cargo ? ` · ${ctx.contato.cargo}` : ''} · {NOME_PERSONA[ctx.contato.persona]} · decision fit {ctx.contato.decisionFit} (ideal {ctx.contato.fitIdeal})</> : 'sem contato'}{ctx.indicacao && <> · indicado por {ctx.indicacao.porNome} <label className="small" style={{ marginLeft: 6 }}><input type="checkbox" checked={citarIndicacao} onChange={(e) => setCitarIndicacao(e.target.checked)} /> autorizado a citar quem indicou</label></>}</td></tr>
@@ -84,10 +103,11 @@ export function Abordagem({ empresaId, contatoId, compacto }: { empresaId: strin
         <tr><td className="muted">CTA</td><td>{ctx.cta ?? '—'}</td></tr>
         {!compacto && <tr><td className="muted">Estágio · estratégia</td><td>{ctx.estagio}{ctx.estrategia ? ` · ${ctx.estrategia}` : ''} · {ctx.historico.resumo}</td></tr>}
         {!compacto && <tr><td className="muted">Fatos permitidos</td><td>{ctx.fatosPermitidos.filter((f) => f.origem === 'sinal').map((f) => `${f.texto} [${f.fonte ?? '?'}, ${Math.round(f.confianca * 100)}%]`).join(' · ') || 'nenhum fato de sinal verificado'}{ctx.fatosNaoVerificados.length > 0 && <div className="muted">não usar (não verificado): {ctx.fatosNaoVerificados.map((f) => f.chave).join(', ')}</div>}</td></tr>}
-      </tbody></table>
-      {podeAgir && ctx.comunicar && ctx.contato && (
+      </tbody></table>}
+      {(semGeracao || (aprovadaCM && !conflitoCM)) && <p className="small muted" style={{ margin: '8px 0 0' }}>{semGeracao ?? 'Abordagem já aprovada na revisão humana: reutilize-a (envio manual e registro da atividade). Nenhuma nova abordagem é gerada.'}</p>}
+      {podeGerar && ctx && ctx.contato && (
         <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-          {CANAIS_GERACAO.filter((c) => ctx.canal.disponiveis.includes(c) || c === 'EMAIL').map((c) => <button key={c} className={`btn sm ${c === ctx.canal.primario ? 'primary' : ''}`} disabled={gerandoIa || !ctx.canal.disponiveis.includes(c)} onClick={() => gerarComIa(c)}>{gerandoIa ? 'Gerando…' : `Gerar com IA · ${NOME_CANAL[c]}`}</button>)}
+          {CANAIS_GERACAO.filter((c) => ctx.canal.disponiveis.includes(c) || (!commercialIntent && c === 'EMAIL')).map((c) => <button key={c} className={`btn sm ${c === ctx.canal.primario ? 'primary' : ''}`} disabled={gerandoIa || !ctx.canal.disponiveis.includes(c)} onClick={() => gerarComIa(c)}>{gerandoIa ? 'Gerando…' : `Gerar com IA · ${NOME_CANAL[c]}`}</button>)}
           {CANAIS_GERACAO.filter((c) => ctx.canal.disponiveis.includes(c)).map((c) => <button key={`pad-${c}`} className="btn sm" disabled={gerandoIa} onClick={() => gerar(c)}>Gerar versão padrão · {NOME_CANAL[c]}</button>)}
           <span className="small muted">rascunho em revisão; nada é enviado{iaIndisponivel ? ` · IA indisponível (${iaIndisponivel}): use a versão padrão` : ''}</span>
         </div>

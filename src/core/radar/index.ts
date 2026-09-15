@@ -19,3 +19,5 @@ export * from './calibracao';
 export * from './fitCalibracao';
 export * from './comunicacao';
 export * from './comunicacaoGeracao';
+export * from './commercialMachine';
+export * from './commercialActionPlan';
