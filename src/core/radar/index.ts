@@ -22,3 +22,4 @@ export * from './comunicacaoGeracao';
 export * from './commercialMachine';
 export * from './commercialActionPlan';
 export * from './commercialCadence';
+export * from './commercialCadenceTask';
