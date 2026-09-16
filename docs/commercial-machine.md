@@ -426,6 +426,10 @@ Busca por `filaHoje`, `recomendarAcao`, `contextoComunicacaoDe` e `lerEmpresa` f
 
 ## 11. Contrato de entrada do CM2 (cadência)
 
+> CM2-A fechado: o contrato temporal detalhado, a paridade dos 28 casos e o plano CM2-B → CM2-F estão em
+> `docs/commercial-machine-cm2.md`. As regras abaixo continuam valendo, restringidas pelas decisões D1–D7 de lá
+> (sem política temporal nova, sem estratégia como política e sem experimento neste ciclo).
+
 O CM2 **poderá**:
 
 - propor cadência por estratégia, persona, estágio e resultado anterior;

@@ -2,11 +2,13 @@
 
 Baseline: `main @ ab642be3c6cfb918241b6c8b637d485a05ce810e`
 
-Branch exclusiva: `feature/commercial-machine-v1`
+Branch exclusiva: `feature/commercial-machine-v1` (CM1, congelada em `a9ef237`) · CM2: `feature/commercial-machine-cm2` (base `a9ef237`)
 
-## Estado (atualizado no CM1-E)
+## Estado (atualizado no CM2-A)
 
 **CM1 fechado.** Arquitetura, invariantes, matriz de autoridade, hipóteses, dívidas e contrato do CM2: `docs/commercial-machine.md`.
+
+**CM2-A fechado.** Contrato temporal, estado temporal × motivo, paridade dos 28 casos, dívidas congeladas e plano CM2-B → CM2-F: `docs/commercial-machine-cm2.md`.
 
 | Bloco | Estado | Commit |
 |---|---|---|
@@ -16,8 +18,9 @@ Branch exclusiva: `feature/commercial-machine-v1`
 | CM1-C — Hoje 2.0 | DONE | `4db77587829469c9811a7b3dfea028587f0aa901` |
 | CM1-D1 — sugestões do Radar pela fila | DONE | `c503199cf7d8bff08c5b76139321432921a79cac` |
 | CM1-D2 — intenção comercial até o Server Truth | DONE | `2cef7059599324203d28c1f67837241c45c27459` |
-| CM1-E — consolidação e fechamento formal | DONE (commit desta consolidação) | este commit |
-| CM2 — Cadence Engine v1 | NOT STARTED | — |
+| CM1-E — consolidação e fechamento formal | DONE | `a9ef23798eb6ee1c4c538f3b491804e848fa73b0` |
+| CM2-A — contrato temporal e paridade CM1-A.1 | DONE (branch `feature/commercial-machine-cm2`, base `a9ef237`) | este commit |
+| CM2-B a CM2-F — Cadence Engine v1 | NOT STARTED (GO por bloco) | — |
 | CM3 — Opportunity Control | NOT STARTED | — |
 | CM4 — Measurement & Learning | NOT STARTED | — |
 | CM5 — Assisted Execution | NOT STARTED | — |
@@ -170,27 +173,34 @@ Filas minimas:
 
 Cada item deve mostrar `por que agora`, proxima acao, prazo, conta, decisor, score, sinal principal e CTA operacional.
 
-### CM2 — Cadence Engine v1 — NOT STARTED
+### CM2 — Cadence Engine v1 — CM2-A DONE, CM2-B a CM2-F NOT STARTED
 
-> Contrato de entrada obrigatório: `docs/commercial-machine.md` §11. O CM2 não substitui o CM1-A (fila) nem o CM1-B
-> (plano), não envia, não ignora supressão nem resultado negativo, não cria sequência, histórico ou tarefa paralela ou
-> duplicada, não age sobre conta AGENDADO antes do prazo e não contorna o Server Truth.
+> Contrato: `docs/commercial-machine-cm2.md` (entrada: `docs/commercial-machine.md` §11). Paridade executável:
+> `src/core/radar/commercialCadence.paridade.test.ts`. O CM2 não substitui o CM1-A (fila) nem o CM1-B (plano), não envia,
+> não ignora supressão nem resultado negativo, não cria sequência, histórico ou tarefa paralela ou duplicada, não age sobre
+> conta AGENDADO antes do prazo e não contorna o Server Truth.
 
-Objetivo: dar disciplina temporal sem robotizar o vendedor.
+Objetivo: dar disciplina temporal sem robotizar o vendedor. A cadência explica o momento e recomenda; tarefa só nasce por
+decisão humana.
 
-A cadencia gera tarefas/recomendacoes, nao envia mensagens.
+Decisões do CM2-A (D1–D7):
 
-Capacidades:
+- D1: CM2 v1 é consumidor do CM1-A; nenhum intervalo, limite, SLA, janela de sinal ou regra de parada nova; nenhum
+  literal temporal no módulo de produção.
+- D2: resultado negativo sem fato novo = espera; sem revisita automática por tempo.
+- D3: data do cliente é soberana; sem data estruturada, o CM2 diz que falta a data; nunca inventa horizonte.
+- D4: `SUGERIR_PROXIMO_PASSO` só na lacuna (conversa tratada sem compromisso), data `RECOMENDADA` limitada pelo SLA
+  restante (com oportunidade) ou pelo intervalo do CM1-A a partir da âncora real (sem oportunidade); nunca muda a fila;
+  sem âncora, decisão humana.
+- D5: dívidas de contagem (GATEKEEPER, atividade sem resultado, contagem por empresa) caracterizadas e não corrigidas.
+- D6: CM2-A = contrato + caracterização + propostas sem migration.
+- D7: sequência B → C → D1 (Hoje só leitura) → E (guarda no store) → D2 (agendar pelo `TarefaForm`); sem `cadence_key` no banco.
 
-- cadencia por estrategia/persona/estagio;
-- passos com atraso, canal preferido, objetivo e playbook;
-- transicao por resultado da atividade;
-- pausa por resposta, opt-out, oportunidade criada, LOST/WON ou bloqueio de dado;
-- replanejamento quando surge sinal mais forte;
-- limite de tentativas e cooldown por contato/empresa;
-- prevencao de duas cadencias concorrentes para o mesmo objetivo.
+Estrutura: estado temporal (`DEVIDA`, `AGUARDANDO`, `SUGERIR_PROXIMO_PASSO`, `PAUSADA`, `ENCERRADA`, `NAO_APLICAVEL`)
+separado do motivo operacional (código da razão do CM1-A). Conta fora da fila não tem cadência operacional.
 
-Sempre reutilizar `radar_task`, `radar_activity`, `radar_strategy`, `radar_communication` e `radar_experiment` antes de propor entidade nova.
+Não usar `radar_strategy` como política nem ativar `radar_experiment` neste ciclo (propostas para o CM4 em
+`docs/propostas/commercial-machine/`).
 
 ### CM3 — Opportunity Control — NOT STARTED
 
