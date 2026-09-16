@@ -2,12 +2,16 @@
 // A tela so APRESENTA o que o motor decidiu: a fila, a ordem e a acao vem de construirCommercialQueue (CM1-A) e o modo,
 // o contato, o objetivo, o playbook e o canal vem de planosDaFilaCM (CM1-B). Nada de prioridade, contato, canal ou
 // proxima acao e recalculado aqui; filtros so escondem itens, nunca reordenam.
+// Cadencia (CM2-B) e sugestao de compromisso (CM2-C) sao somente leitura: a tela mostra estado, proximo toque, natureza da
+// data, tentativas, avisos e a sugestao ja calculados; nenhum botao novo, nenhuma tarefa criada a partir deles.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  CATEGORIAS_COMMERCIAL_QUEUE, MOTIVOS_FORA_DA_FILA, NOME_CANAL, NOME_CATEGORIA_CM, NOME_ESTAGIO, NOME_PERSONA, NOME_TIPO_ATIVIDADE, OBJETIVOS, PLAYBOOKS,
-  TEXTO_BLOQUEIO_PLANO_CM, TEXTO_FORA_DA_FILA, TEXTO_RAZAO_CM, TEXTO_TRAVA_CM, VERSAO_REGRAS_CM, VERSAO_REGRAS_PLANO_CM,
-  chaveQueDecideCM, construirCommercialQueue, itemIdCM, planosDaFilaCM,
-  type CategoriaCommercialQueue, type ChaveOrdemCM, type CommercialActionPlan, type CommercialQueueItem, type Empresa, type ModoPlanoCM, type OrigemResponsavelCM, type RazaoCM, type TarefaRadar,
+  CATEGORIAS_COMMERCIAL_QUEUE, MOTIVOS_FORA_DA_FILA, NOME_CANAL, NOME_CATEGORIA_CM, NOME_ESTAGIO, NOME_PERSONA, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, OBJETIVOS, PLAYBOOKS,
+  TEXTO_AVISO_CADENCIA_CM, TEXTO_AVISO_TAREFA_CM, TEXTO_BLOQUEIO_PLANO_CM, TEXTO_COBERTURA_TAREFA_CM, TEXTO_ESTADO_CADENCIA_CM, TEXTO_FORA_DA_FILA, TEXTO_NATUREZA_TOQUE_CM,
+  TEXTO_PENDENCIA_TAREFA_CM, TEXTO_RAZAO_CM, TEXTO_RETOMADA_CADENCIA_CM, TEXTO_TRAVA_CM, VERSAO_REGRAS_CADENCIA_CM, VERSAO_REGRAS_CM, VERSAO_REGRAS_PLANO_CM,
+  cadenciasDaFilaCM, chaveQueDecideCM, construirCommercialQueue, itemIdCM, planosDaFilaCM, sugestoesTarefaDaFilaCM,
+  type CadenceRecommendationCM, type CategoriaCommercialQueue, type ChaveOrdemCM, type CommercialActionPlan, type CommercialQueueItem, type Empresa, type EstadoSugestaoTarefaCM,
+  type ModoPlanoCM, type NaturezaToqueCM, type OrigemResponsavelCM, type RazaoCM, type RetomadaCadenciaCM, type TarefaRadar, type TaskSuggestionCM,
 } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
 import { normalizar } from '../../ui/busca';
@@ -31,9 +35,32 @@ const NOME_ESTADO_RAZAO: Record<RazaoCM['estado'], string> = { PRINCIPAL: 'Princ
 const NOME_ORIGEM_RESPONSAVEL: Record<OrigemResponsavelCM, string> = { TAREFA: 'pela tarefa', OPORTUNIDADE: 'pela oportunidade', ATIVIDADE: 'pela última atividade', COMUNICACAO: 'pela abordagem', NENHUMA: '' };
 const nomeEmpresa = (e?: Empresa) => (e ? e.nomeFantasia ?? e.razaoSocial : '—');
 const dias = (n: number) => `${n} dia${n === 1 ? '' : 's'}`;
+// cadencia e sugestao: so nomes curtos e cabecalhos para estados que o motor ja devolve
+const NOME_TOQUE_CURTO: Record<NaturezaToqueCM, string> = { IMEDIATA: 'Agora', FIRME: 'firme', BASE_CM1: 'intervalo', RECOMENDADA: 'recomendada' };
+const NOME_RETOMADA_CURTO: Record<RetomadaCadenciaCM, string> = { DATA: 'Data definida', FATO_NOVO: 'Fato novo', DADO: 'Aguardando dado', DECISAO_HUMANA: 'Decisão humana' };
+const CABECALHO_SUGESTAO: Record<EstadoSugestaoTarefaCM, string> = {
+  SUGERIDA: 'Próximo compromisso sugerido',
+  COBERTA: 'Este ciclo já possui compromisso registrado.',
+  REQUER_DATA: 'Falta definir a data antes de agendar.',
+  REQUER_RESPONSAVEL: 'Falta definir quem será responsável pelo próximo compromisso.',
+  BLOQUEADA: 'O próximo compromisso não pode ser preparado ainda.',
+  NAO_APLICAVEL: 'Nenhum novo compromisso precisa ser criado agora.',
+};
+const ddmm = (s: string) => d(s).slice(0, 5);
+const rotuloToque = (c: CadenceRecommendationCM) => {
+  const t = c.proximoToque;
+  if (t) return t.em ? `${ddmm(t.em)} ${NOME_TOQUE_CURTO[t.natureza]}` : NOME_TOQUE_CURTO[t.natureza];
+  return c.retomaCom ? NOME_RETOMADA_CURTO[c.retomaCom] : '—';
+};
 
 type FiltroCategoria = 'TODAS' | CategoriaCommercialQueue;
-interface Linha { item: CommercialQueueItem; plano: CommercialActionPlan; empresa?: Empresa; id: string }
+interface Linha { id: string; item: CommercialQueueItem; plano: CommercialActionPlan; cadencia: CadenceRecommendationCM; sugestao: TaskSuggestionCM; empresa?: Empresa }
+/** Indexa por itemId; duplicado ou ausente e erro explicito (nunca casar por posicao). */
+function porItemId<T extends { itemId: string }>(xs: readonly T[], nome: string): Map<string, T> {
+  const m = new Map<string, T>();
+  for (const x of xs) { if (m.has(x.itemId)) throw new Error(`hoje_${nome}_duplicado`); m.set(x.itemId, x); }
+  return m;
+}
 type AbrirAbordagem = { empresaId: string; contatoId?: string; titulo: string; intencao?: IntencaoComunicacaoCM; semGeracao?: string };
 type AbrirAtividade = { empresaId: string; contatoId?: string; oportunidadeId?: string };
 
@@ -54,13 +81,22 @@ export default function RadarHoje() {
   const [concluir, setConcluir] = useState<TarefaRadar | null>(null);
   const [tarefa, setTarefa] = useState<TarefaRadar | null>(null);
 
-  // fonte de verdade: fila (CM1-A) + planos (CM1-B), sempre sobre o dataset inteiro
+  // fonte de verdade, sempre sobre o dataset inteiro e antes de qualquer filtro:
+  // fila (CM1-A) -> planos (CM1-B) -> cadencias (CM2-B) -> sugestoes de compromisso (CM2-C)
   const fila = useMemo(() => construirCommercialQueue(r, hoje), [r, hoje]);
   const linhas = useMemo<Linha[]>(() => {
-    const planos = new Map(planosDaFilaCM(r, fila).map((p) => [p.itemId, p]));
+    const planos = planosDaFilaCM(r, fila);
+    const cadencias = cadenciasDaFilaCM(r, fila, planos, hoje);
+    const sugestoes = sugestoesTarefaDaFilaCM(r, fila, planos, cadencias, hoje);
+    const planoPor = porItemId(planos, 'plano'); const cadenciaPor = porItemId(cadencias, 'cadencia'); const sugestaoPor = porItemId(sugestoes, 'sugestao');
     const empresas = new Map(r.empresas.map((e) => [e.id, e]));
-    return fila.itens.map((item) => { const id = itemIdCM(item); return { item, id, plano: planos.get(id)!, empresa: empresas.get(item.empresaId) }; });
-  }, [r, fila]);
+    return fila.itens.map((item) => {
+      const id = itemIdCM(item);
+      const plano = planoPor.get(id); const cadencia = cadenciaPor.get(id); const sugestao = sugestaoPor.get(id);
+      if (!plano || !cadencia || !sugestao) throw new Error('hoje_item_sem_correspondencia');
+      return { id, item, plano, cadencia, sugestao, empresa: empresas.get(item.empresaId) };
+    });
+  }, [r, fila, hoje]);
   const contatoPorId = useMemo(() => new Map(r.contatos.map((c) => [c.id, c])), [r.contatos]);
 
   // filtros de visualizacao: escondem itens e preservam a ordem da fila
@@ -81,7 +117,7 @@ export default function RadarHoje() {
 
   return (
     <>
-      <PageHead title="Hoje" subtitle={<>Sua fila comercial priorizada pelo que exige ação agora. Ordem, ação e plano vêm da Máquina Comercial (regras {VERSAO_REGRAS_CM} · plano {VERSAO_REGRAS_PLANO_CM}); os filtros só escondem itens, não mudam a ordem.</>}>
+      <PageHead title="Hoje" subtitle={<>Sua fila comercial priorizada pelo que exige ação agora. Ordem, ação, plano e cadência vêm da Máquina Comercial (fila {VERSAO_REGRAS_CM} · plano {VERSAO_REGRAS_PLANO_CM} · cadência {VERSAO_REGRAS_CADENCIA_CM}); os filtros só escondem itens, não mudam a ordem.</>}>
         <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={somenteMinhas} onChange={(e) => setSomenteMinhas(e.target.checked)} /> Só as minhas</label>
         <Select value={classe} onChange={setClasse} options={['A+', 'A', 'B', 'C', 'D']} allowEmpty="Todas as classes" aria-label="Classe" />
         <Input placeholder="Buscar empresa ou contato" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar empresa ou contato" style={{ width: 220 }} />
@@ -111,7 +147,7 @@ export default function RadarHoje() {
             <h2>Fila ({visiveis.length})</h2>
             <div className="small muted" style={{ marginBottom: 8 }}>Na ordem da Máquina Comercial. Selecione uma linha para trazê-la ao foco.</div>
             <Tabela<Linha>
-              colunas={[{ titulo: '#', num: true, largura: 64 }, { titulo: 'Empresa' }, { titulo: 'Categoria' }, { titulo: 'Ação' }, { titulo: 'Modo' }, { titulo: 'Pessoa' }, { titulo: 'Prazo' }, { titulo: 'Trava' }]}
+              colunas={[{ titulo: '#', num: true, largura: 64 }, { titulo: 'Empresa' }, { titulo: 'Categoria' }, { titulo: 'Ação' }, { titulo: 'Modo' }, { titulo: 'Pessoa' }, { titulo: 'Prazo' }, { titulo: 'Próximo toque' }, { titulo: 'Trava' }]}
               linhas={visiveis} chave={(l) => l.id} onLinha={(l) => setFocoId(l.id)} altura={520}
               linha={(l) => {
                 const bloqueios = l.plano.bloqueios.length + l.item.travas.filter((t) => t.bloqueante && t.bloqueia.length).length;
@@ -125,6 +161,7 @@ export default function RadarHoje() {
                     <td><Badge tone={TOM_MODO[l.plano.modo]}>{NOME_MODO[l.plano.modo]}</Badge></td>
                     <td className="small">{l.plano.contato ? contatoPorId.get(l.plano.contato.id)?.nome : <span className="muted">—</span>}</td>
                     <td className="small">{l.item.porQueAgora.venceEm ? d(l.item.porQueAgora.venceEm) : l.plano.aguardarAte ? d(l.plano.aguardarAte) : '—'}</td>
+                    <td className="small">{rotuloToque(l.cadencia)}</td>
                     <td className="small">{bloqueios ? <Badge tone="bad">{`bloqueio (${bloqueios})`}</Badge> : pendencias ? <Badge tone="warn">{`pendência (${pendencias})`}</Badge> : <span className="muted">—</span>}</td>
                   </>
                 );
@@ -249,6 +286,8 @@ export default function RadarHoje() {
           </div>
         </div>
 
+        {blocoCadencia(linha)}
+
         <div style={{ marginTop: 16 }}>
           <h3>Travas e pendências</h3>
           {!plano.bloqueios.length && !item.travas.length && !item.secundarias.length ? <p className="small muted" style={{ margin: 0 }}>Nenhuma trava ou pendência.</p> : (
@@ -262,6 +301,79 @@ export default function RadarHoje() {
           )}
         </div>
       </section>
+    );
+  }
+
+  // -------------------------------------------------------------------------------------------------------------------
+  // Bloco "Cadencia" (somente leitura): apresenta a cadencia (CM2-B) e a sugestao de compromisso (CM2-C) sem decidir nada.
+  // A tarefa sugerida vem estritamente de sugestao.tarefa: sem contato nela, o contato fica "a definir" (nunca o da fila).
+  // -------------------------------------------------------------------------------------------------------------------
+  function blocoCadencia({ cadencia: c, sugestao: s }: Linha): React.ReactNode {
+    const t = c.proximoToque;
+    const sugerida = s.tarefa;
+    const oportunidadeSugerida = sugerida?.oportunidadeId ? r.oportunidades.find((o) => o.id === sugerida.oportunidadeId) : undefined;
+    const contatoSugerido = sugerida?.contatoId ? contatoPorId.get(sugerida.contatoId) : undefined;
+    const tarefaCobertura = s.cobertura ? r.tarefas.find((x) => x.id === s.cobertura!.tarefaId) : undefined;
+    const lista = { margin: '8px 0 0', paddingLeft: 18, display: 'grid', gap: 4 } as const;
+    return (
+      <div className="grid cols-2" style={{ marginTop: 16, gap: 16 }}>
+        <div>
+          <h3>Cadência</h3>
+          <p style={{ margin: 0 }}><b>{TEXTO_ESTADO_CADENCIA_CM[c.estado]}</b></p>
+          <dl className="kv" style={{ marginTop: 8 }}>
+            <dt>Motivo</dt><dd>{TEXTO_RAZAO_CM[c.motivo]}</dd>
+            {t && t.natureza === 'RECOMENDADA' && t.em && (
+              <><dt>Próximo toque recomendado</dt><dd><b>{d(t.em)}</b><div className="small muted">Ainda não é um compromisso agendado.{t.ancoraEm ? ` Contado a partir do último movimento real em ${d(t.ancoraEm)}.` : ''}</div></dd></>
+            )}
+            {t && t.natureza !== 'RECOMENDADA' && (
+              <><dt>Próximo toque</dt><dd>{t.em ? <><b>{d(t.em)}</b> — {TEXTO_NATUREZA_TOQUE_CM[t.natureza]}</> : <b>{TEXTO_NATUREZA_TOQUE_CM[t.natureza]}</b>}</dd></>
+            )}
+            {c.tentativa && <><dt>Tentativas sem resposta</dt><dd>{c.tentativa.semRespostaSeguidas} de {c.tentativa.limite}{c.tentativa.doContato != null ? ` · neste contato: ${c.tentativa.doContato}` : ''}</dd></>}
+            {c.retomaCom && <><dt>Retomada</dt><dd>{TEXTO_RETOMADA_CADENCIA_CM[c.retomaCom]}</dd></>}
+          </dl>
+          {c.avisos.length > 0 && (
+            <ul className="small" style={lista} aria-label="Avisos da cadência">
+              {c.avisos.map((a) => <li key={a}><Badge tone="info">Aviso</Badge> {TEXTO_AVISO_CADENCIA_CM[a]}</li>)}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <h3>Próximo compromisso</h3>
+          {s.estado === 'NAO_APLICAVEL'
+            ? <p className="small muted" style={{ margin: 0 }}>{CABECALHO_SUGESTAO.NAO_APLICAVEL}{c.estado !== 'DEVIDA' ? ` ${s.explicacao.porQue}.` : ''}</p>
+            : <p style={{ margin: 0 }}><b>{CABECALHO_SUGESTAO[s.estado]}</b></p>}
+          {sugerida && (s.estado === 'SUGERIDA' || s.estado === 'REQUER_RESPONSAVEL') && (
+            <>
+              <p className="small" style={{ margin: '6px 0 0' }}><Badge tone="info">Sugestão</Badge> ainda não existe tarefa: nada foi agendado.</p>
+              <dl className="kv" style={{ marginTop: 8 }}>
+                <dt>Tipo</dt><dd>{NOME_TIPO_TAREFA[sugerida.tipo] ?? sugerida.tipo}</dd>
+                <dt>Data</dt><dd>{d(sugerida.venceEm)}{t?.natureza === 'RECOMENDADA' ? <span className="small muted"> · {TEXTO_NATUREZA_TOQUE_CM.RECOMENDADA}</span> : null}</dd>
+                {sugerida.oportunidadeId && <><dt>Oportunidade</dt><dd>{oportunidadeSugerida ? `${oportunidadeSugerida.titulo} · ${NOME_ESTAGIO[oportunidadeSugerida.estagio]}` : '—'}</dd></>}
+                <dt>Responsável</dt><dd>{sugerida.responsavelId ? nomeUsuario(ds.usuarios, sugerida.responsavelId) : <span className="muted">a definir</span>}</dd>
+                <dt>Contato</dt><dd>{sugerida.contatoId ? contatoSugerido?.nome ?? '—' : 'a definir no agendamento'}</dd>
+                <dt>Descrição</dt><dd>{sugerida.descricaoBase}</dd>
+              </dl>
+            </>
+          )}
+          {s.estado === 'COBERTA' && s.cobertura && (
+            <dl className="kv" style={{ marginTop: 8 }}>
+              <dt>Por quê</dt><dd>{TEXTO_COBERTURA_TAREFA_CM[s.cobertura.motivo]}</dd>
+              {tarefaCobertura && <><dt>Tarefa</dt><dd>{tarefaCobertura.descricao}</dd><dt>Prazo</dt><dd>{d(tarefaCobertura.venceEm)}</dd><dt>Responsável</dt><dd>{nomeUsuario(ds.usuarios, tarefaCobertura.responsavelId)}</dd></>}
+            </dl>
+          )}
+          {(s.estado === 'REQUER_DATA' || s.estado === 'BLOQUEADA') && s.pendencias.length > 0 && (
+            <ul className="small" style={lista} aria-label="Pendências do próximo compromisso">
+              {s.pendencias.map((p) => <li key={p}><Badge tone="warn">Pendência</Badge> {TEXTO_PENDENCIA_TAREFA_CM[p]}</li>)}
+            </ul>
+          )}
+          {s.avisos.length > 0 && (
+            <ul className="small" style={lista} aria-label="Informações do próximo compromisso">
+              {s.avisos.map((a) => <li key={a}><Badge tone="info">Informação</Badge> {TEXTO_AVISO_TAREFA_CM[a]}</li>)}
+            </ul>
+          )}
+        </div>
+      </div>
     );
   }
 
