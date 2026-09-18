@@ -56,6 +56,7 @@ import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { PAPEIS_RADAR } from '../core/radar/comunicacaoLlm';
+import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
@@ -2089,6 +2090,27 @@ export const actions = {
     ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_tarefa' : 'radar_criar_tarefa', 'radar_tarefa', t.id, atual, novo);
     commit(ds);
     return novo;
+  },
+
+  /**
+   * CM2-E — porta governada da cadencia: cria a tarefa do proximo passo SOMENTE depois de revalidar a expectativa da
+   * tela contra o dataset atual (fila, plano, cadencia e sugestao recalculados; cobertura historica primeiro). O id so
+   * nasce depois do veredicto. `salvarTarefaRadar` e as demais acoes legadas continuam como estao.
+   * D-E1: sem indice unico/RPC transacional, isto protege duplo clique e estado local velho, nao concorrencia entre
+   * clientes/dispositivos offline.
+   */
+  criarTarefaDaCadenciaCM(expectativa: ExpectativaCriacaoCadenciaCM, edicoes: EdicoesHumanasCadenciaCM = {}) {
+    let ds = state.ds;
+    exigir('radar');
+    const r = ds.radar;
+    const veredicto = revalidarCriacaoTarefaCadenciaCM(r, ds.params.dataBase, expectativa, edicoes, { usuariosValidos: ds.usuarios.map((u) => u.id) });
+    if (!veredicto.ok) throw new RegraDeNegocioError(`${TEXTO_RECUSA_COMMIT_CM[veredicto.codigo]}${veredicto.detalhe ? ` (${veredicto.detalhe})` : ''}`);
+    const ids = idsRadar(r);
+    const nova: TarefaRadar = { ...veredicto.tarefa, id: ids.novo('TSK'), prioridade: 'Normal', status: 'Aberta', criadoEm: agora() };
+    const radar = recalcularEmpresasRadar({ ...r, tarefas: [...r.tarefas, nova] }, [nova.empresaId], ids);
+    ds = registrar({ ...ds, radar }, 'radar_criar_tarefa_cadencia', 'radar_tarefa', nova.id, undefined, { tarefa: nova, origem: veredicto.origem });
+    commit(ds);
+    return nova;
   },
 
   /** Conclui a tarefa; se ela era a unica proxima acao de uma oportunidade ativa, exige a proxima. */
