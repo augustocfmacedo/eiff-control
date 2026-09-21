@@ -40,6 +40,7 @@ const FONTE_PANORAMA = leia('ComercialPanorama.tsx');
 const CODIGO_PANORAMA = semComentarios(FONTE_PANORAMA);
 const FONTE_HOJE = leia('Hoje.tsx');
 const CODIGO_HOJE = semComentarios(FONTE_HOJE);
+const CODIGO_FOCO = semComentarios(leia('ComercialFoco.tsx'));
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Zonas: composicao do contrato do UX-0, sem classificacao nova
@@ -210,7 +211,7 @@ describe('UX-1 · guardas', () => {
     expect(CODIGO_HOJE).toContain('abrirAgendamento(l.cadencia, l.sugestao)');
     expect(CODIGO_HOJE).toContain('abrirAgendamentoCM(cadencia, sugestao)');
     expect(CODIGO_HOJE).toContain('<TarefaCadenciaForm');
-    expect(CODIGO_HOJE).toContain('ctaCadenciaCM(s, podeAgir)');
+    expect(CODIGO_HOJE).toContain('ctaCadenciaCM(l.sugestao, podeAgir)');
   });
   it('o Panorama e a visao padrao e a fila completa continua acessivel', () => {
     expect(CODIGO_HOJE).toContain("useState<VisaoComercial>('panorama')");
@@ -220,11 +221,14 @@ describe('UX-1 · guardas', () => {
   it('a fila completa preserva a experiencia atual inteira', () => {
     for (const parte of [
       '<KpiStrip', "label: 'Agir agora'", "label: 'Agendado'", 'TEXTO_FORA_DA_FILA', '<Tabs value={categoria}',
-      'blocoFoco(foco, seguinte, indiceFoco + 1, visiveis.length)', 'function blocoFoco', 'function blocoCadencia',
+      '<ComercialFoco linha={foco}', 'modo="OPERACIONAL"', 'acoes={acoes(foco)}', 'ctaCadencia={ctaCadenciaDe(foco)}',
       '<Tabela<Linha>', "titulo: 'Próximo toque'", "titulo: 'Trava'", '<ScoreModal', '<AtividadeForm', '<ConcluirTarefaForm', '<TarefaForm', '<Abordagem',
-      'Travas e pendências', 'Plano de contato', 'Histórico', 'Por que agora',
     ]) {
       expect(CODIGO_HOJE, `a fila completa perdeu: ${parte}`).toContain(parte);
+    }
+    // o conteudo do foco mora no bloco compartilhado (renderizado pela fila em modo OPERACIONAL)
+    for (const parte of ['Travas e pendências', 'Plano de contato', 'Histórico', 'Por que agora', 'Decision fit', 'Canais válidos', 'Objetivo', 'Playbook', 'Tentativas']) {
+      expect(CODIGO_FOCO, `o bloco compartilhado perdeu: ${parte}`).toContain(parte);
     }
   });
   it('as acoes da fila completa mantem rotulos, ordem e destino de antes', () => {
@@ -251,19 +255,11 @@ describe('UX-1 · guardas', () => {
   // -------------------------------------------------------------------------------------------------------------------
   // UX-2 — gaveta "Por quê": 100% da explicabilidade, por construcao (o MESMO blocoFoco da fila completa)
   // -------------------------------------------------------------------------------------------------------------------
-  it('UX-2 · a gaveta renderiza exatamente o bloco de foco da fila completa', () => {
-    // um unico blocoFoco no arquivo: a fila e a gaveta chamam a MESMA funcao (nada e reescrito para a gaveta)
-    expect(CODIGO_HOJE.match(/function blocoFoco\(/g)).toHaveLength(1);
-    expect(CODIGO_HOJE).toContain('blocoFoco(linhaDaGaveta, base[naGaveta + 1], naGaveta + 1, base.length, true)');
-    expect(CODIGO_HOJE).toContain('blocoFoco(foco, seguinte, indiceFoco + 1, visiveis.length)');
-    // e o conteudo do foco continua completo (a lista do contrato §8)
-    for (const parte of [
-      'Conta', 'Por que agora', 'Ação', 'Pessoa', 'Plano de contato', 'Histórico', 'Travas e pendências',
-      'blocoCadencia(linha)', 'Decision fit', 'Canais válidos', 'Objetivo', 'Playbook', 'Por que este canal',
-      'Tentativas', 'NOME_CHAVE_ORDEM[chave]', 'posição {item.posicao} na fila completa',
-    ]) {
-      expect(CODIGO_HOJE, `a gaveta perdeu: ${parte}`).toContain(parte);
-    }
+  it('UX-2/UX-2.1 · a gaveta usa a MESMA apresentacao da fila, em modo de explicacao', () => {
+    // a prova de composicao (nenhum no de acao passa em EXPLICACAO) vive em ComercialFoco.test.ts
+    expect(CODIGO_HOJE.match(/<ComercialFoco/g)).toHaveLength(2);
+    expect(CODIGO_HOJE).toContain('modo="EXPLICACAO"');
+    expect(CODIGO_HOJE).not.toContain('function blocoFoco');
   });
   it('UX-2 · a gaveta mostra as versões CM e leva à fila completa sem perder o foco', () => {
     expect(CODIGO_HOJE).toMatch(/Regras em vigor: fila \{VERSAO_REGRAS_CM\} · plano \{VERSAO_REGRAS_PLANO_CM\} · cadência \{VERSAO_REGRAS_CADENCIA_CM\}/);
