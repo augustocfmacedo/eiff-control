@@ -13,3 +13,6 @@ eiff-control-site.zip
 # Integracao Vibe Prospecting: chave so em .env.local; exportacoes com dados pessoais fora do repositorio
 .env.local
 dados/vibe/
+
+# worktrees de agentes (locais)
+.claude/worktrees/

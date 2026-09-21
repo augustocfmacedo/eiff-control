@@ -222,6 +222,7 @@ export interface Lancamento {
   codigoObra: string;
   servicoId?: string;
   faturamentoDireto?: boolean; // compra paga pelo cliente direto ao fornecedor: abate o contrato global, nao passa pelo caixa nem pelo DRE da EIFF
+  enviadoClienteEm?: string; // nota repassada ao cliente para faturamento direto (planilha: ENVIADO INVEST); vazio = nao enviada
   contraparte: string;
   documento: string;
   descricao: string;
@@ -251,6 +252,23 @@ export interface Lancamento {
   excluidoEm?: string; // exclusao logica: some das listas e das visoes; o registro e a auditoria ficam (nada e apagado no banco)
   excluidoPor?: string;
   motivoExclusao?: string;
+}
+
+/**
+ * Rateio de um lancamento por servico/etapa do contrato: uma NF cobre varias etapas.
+ * Vale no acompanhamento de faturamento; quando nao ha rateio, vale o servicoId do lancamento.
+ * Nao altera custo, caixa nem DRE: e a leitura por etapa do mesmo titulo.
+ */
+export interface RateioFaturamento {
+  id: string;
+  lancamentoId: string;
+  codigoObra: string;
+  servicoId: string;
+  medicaoId?: string; // evento do cronograma coberto por esta parcela, quando houver
+  descricao: string;
+  valor: number;
+  criadoEm: string;
+  criadoPor: string;
 }
 
 export interface Liquidacao {
@@ -770,6 +788,7 @@ export interface Dataset {
   colaboradores: Colaborador[];
   apontamentos: Apontamento[];
   medicoes: Medicao[];
+  rateios: RateioFaturamento[]; // rateio de lancamentos por servico/etapa (entry_service_split)
   insumos: Insumo[];
   composicoes: Composicao[];
   orcamentos: Orcamento[];
