@@ -56,7 +56,8 @@ import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { PAPEIS_RADAR } from '../core/radar/comunicacaoLlm';
-import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
+import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
+import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
@@ -69,6 +70,23 @@ const USER_KEY = 'eiff-control:usuario';
 
 export class RegraDeNegocioError extends Error {
   constructor(message: string, public readonly campos: string[] = []) {
+    super(message);
+  }
+}
+
+/**
+ * CM2-E.1 — recusa da porta governada da cadencia com o codigo estruturado preservado. Continua sendo uma
+ * RegraDeNegocioError (nada muda para quem so mostra a mensagem), mas quem precisa decidir — a UI do CM2-D2 — le
+ * `codigo`, `tarefaId` e `pendencias` sem nenhum parsing de texto.
+ */
+export class RegraCadenciaCommitError extends RegraDeNegocioError {
+  constructor(
+    message: string,
+    public readonly codigo: CodigoRecusaCommitCM,
+    public readonly tarefaId?: string,
+    public readonly pendencias?: readonly CodigoPendenciaTarefaCM[],
+    public readonly detalhe?: string,
+  ) {
     super(message);
   }
 }
@@ -2104,7 +2122,7 @@ export const actions = {
     exigir('radar');
     const r = ds.radar;
     const veredicto = revalidarCriacaoTarefaCadenciaCM(r, ds.params.dataBase, expectativa, edicoes, { usuariosValidos: ds.usuarios.map((u) => u.id) });
-    if (!veredicto.ok) throw new RegraDeNegocioError(`${TEXTO_RECUSA_COMMIT_CM[veredicto.codigo]}${veredicto.detalhe ? ` (${veredicto.detalhe})` : ''}`);
+    if (!veredicto.ok) throw new RegraCadenciaCommitError(`${TEXTO_RECUSA_COMMIT_CM[veredicto.codigo]}${veredicto.detalhe ? ` (${veredicto.detalhe})` : ''}`, veredicto.codigo, veredicto.tarefaId, veredicto.pendencias, veredicto.detalhe);
     const ids = idsRadar(r);
     const nova: TarefaRadar = { ...veredicto.tarefa, id: ids.novo('TSK'), prioridade: 'Normal', status: 'Aberta', criadoEm: agora() };
     const radar = recalcularEmpresasRadar({ ...r, tarefas: [...r.tarefas, nova] }, [nova.empresaId], ids);

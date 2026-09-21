@@ -10,11 +10,11 @@ import { VERSAO_REGRAS_PLANO_CM, planosDaFilaCM } from './commercialActionPlan';
 import { VERSAO_REGRAS_CADENCIA_CM, cadenciasDaFilaCM } from './commercialCadence';
 import { sugestoesTarefaDaFilaCM } from './commercialCadenceTask';
 import {
-  CODIGOS_RECUSA_COMMIT_CM, TEXTO_RECUSA_COMMIT_CM, expectativaDaSugestaoCM, revalidarCriacaoTarefaCadenciaCM, tarefaQueCobreCicloCM,
+  CODIGOS_RECUSA_COMMIT_CM, TEXTO_RECUSA_COMMIT_CM, expectativaDaSugestaoCM, revalidarCriacaoTarefaCadenciaCM, tarefaQueCobreCicloCM, validarContatoCanalTarefaCadenciaCM,
   type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM, type VeredictoCommitCadenciaCM,
 } from './commercialCadenceCommit';
 import { VERSAO_REGRAS_CM, construirCommercialQueue } from './commercialMachine';
-import { type RadarDataset, type Sinal, type Supressao, type TarefaRadar } from './types';
+import { type Contato, type RadarDataset, type Sinal, type Supressao, type TarefaRadar, type TipoTarefa } from './types';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Apoio
@@ -210,6 +210,84 @@ describe('CM2-E — FASE 5: edicoes humanas', () => {
     const semCanal = { ...ds, supressoes: [...ds.supressoes, supressao] };
     const eSemCanal = expectativaDe(semCanal, 'oppsem');
     expect(revalidar(semCanal, eSemCanal, { contatoId: 'c-oppsem' })).toMatchObject({ ok: true }); // continua FOLLOW_UP
+  });
+});
+
+describe('CM2-E.1 — contato e canal obrigatorio (mesmo helper que a FASE 5 usa)', () => {
+  // ramo defensivo: a cadeia real ainda nao produz CALL/EMAIL na lacuna D4 (o plano nao define contato), mas a regra
+  // existe na producao e e provada aqui pelo mesmo codigo, sem duplicar logica
+  const contato = (id: string, p: Partial<Contato>): Contato => ({
+    id, empresaId: 'conta', nome: 'Pessoa', persona: 'CEO', decisor: false, qualidade: 80, observacoes: '', ativo: true,
+    criadoEm: '2026-08-01', atualizadoEm: '2026-08-01', ...p,
+  });
+  const ds = (contatos: Contato[], supressoes: Supressao[] = []): RadarDataset => ({ ...semOportunidade(), contatos, supressoes });
+  const so = (id: string, contatoId: string, tipo: Supressao['tipo']): Supressao => ({ id, contatoId, tipo, motivo: 'teste', criadoPor: 'u1', criadoEm: ts('2026-09-01') });
+  const validar = (base: RadarDataset, tipo: TipoTarefa, contatoId?: string) => validarContatoCanalTarefaCadenciaCM(base, 'conta', tipo, contatoId);
+
+  const comTudo = ds([contato('c-full', { email: 'p@exemplo.com.br', telefone: '556232220000' })]);
+  const soEmail = ds([contato('c-email', { email: 'p@exemplo.com.br' })]);
+  const soFone = ds([contato('c-fone', { celular: '5562999990000' })]);
+
+  it('FOLLOW_UP nao exige canal: com ou sem contato continua permitido', () => {
+    expect(validar(comTudo, 'FOLLOW_UP', undefined)).toBeUndefined();
+    expect(validar(comTudo, 'FOLLOW_UP', 'c-full')).toBeUndefined();
+    expect(validar(ds([contato('c-mudo', {})]), 'FOLLOW_UP', 'c-mudo')).toBeUndefined();
+  });
+
+  it('CALL exige PHONE acionável', () => {
+    expect(validar(comTudo, 'CALL', undefined)).toBe('CONTATO_INVALIDO');
+    expect(validar(soEmail, 'CALL', 'c-email')).toBe('CANAL_INDISPONIVEL');
+    expect(validar(soFone, 'CALL', 'c-fone')).toBeUndefined();
+    expect(validar(comTudo, 'CALL', 'c-full')).toBeUndefined();
+    // telefone existente mas suprimido/invalido tambem nao serve
+    expect(validar(ds([contato('c-sup', { telefone: '556232220000' })], [so('s1', 'c-sup', 'invalid_phone')]), 'CALL', 'c-sup')).toBe('CANAL_INDISPONIVEL');
+    expect(validar(ds([contato('c-inv', { telefone: '556232220000', statusTelefone: 'invalido' })]), 'CALL', 'c-inv')).toBe('CANAL_INDISPONIVEL');
+  });
+
+  it('EMAIL exige e-mail acionável', () => {
+    expect(validar(comTudo, 'EMAIL', undefined)).toBe('CONTATO_INVALIDO');
+    expect(validar(soFone, 'EMAIL', 'c-fone')).toBe('CANAL_INDISPONIVEL');
+    expect(validar(soEmail, 'EMAIL', 'c-email')).toBeUndefined();
+    expect(validar(ds([contato('c-bounce', { email: 'p@exemplo.com.br' })], [so('s2', 'c-bounce', 'email_bounced')]), 'EMAIL', 'c-bounce')).toBe('CANAL_INDISPONIVEL');
+    expect(validar(ds([contato('c-dev', { email: 'p@exemplo.com.br', statusEmail: 'devolvido' })]), 'EMAIL', 'c-dev')).toBe('CANAL_INDISPONIVEL');
+  });
+
+  it('contato de outra empresa ou inelegível é CONTATO_INVALIDO, seja qual for o tipo', () => {
+    const alheio = ds([contato('c-alheio', { empresaId: 'outra', email: 'p@exemplo.com.br', telefone: '556232220000' })]);
+    const optOut = ds([contato('c-out', { email: 'p@exemplo.com.br', telefone: '556232220000' })], [so('s3', 'c-out', 'opt_out')]);
+    for (const tipo of ['FOLLOW_UP', 'CALL', 'EMAIL'] as TipoTarefa[]) {
+      expect(validar(alheio, tipo, 'c-alheio')).toBe('CONTATO_INVALIDO');
+      expect(validar(optOut, tipo, 'c-out')).toBe('CONTATO_INVALIDO');
+      expect(validar(comTudo, tipo, 'c-inexistente')).toBe('CONTATO_INVALIDO');
+    }
+  });
+
+  it('nunca converte o tipo nem escolhe outro contato: só classifica o par recebido', () => {
+    const dois = ds([contato('c-sem-fone', { email: 'p@exemplo.com.br' }), contato('c-com-fone', { celular: '5562999990000' })]);
+    // existe um contato com telefone na conta, mas CALL com o outro contato continua recusado
+    expect(validar(dois, 'CALL', 'c-sem-fone')).toBe('CANAL_INDISPONIVEL');
+    expect(validar(dois, 'EMAIL', 'c-sem-fone')).toBeUndefined();
+    // o mesmo par com o tipo trocado tem veredicto diferente: a decisão é do tipo, não do helper
+    expect(validar(dois, 'CALL', 'c-com-fone')).toBeUndefined();
+    expect(validar(dois, 'EMAIL', 'c-com-fone')).toBe('CANAL_INDISPONIVEL');
+  });
+
+  it('a FASE 5 usa este helper: contato inelegível recusa pela revalidação completa', () => {
+    const base = semOportunidade(); const e = expectativaDe(base, 'posdepois');
+    const suprimido: Supressao = { id: 'sup-f5', contatoId: 'c-posdepois', tipo: 'do_not_contact', motivo: 'pediu', criadoPor: 'u1', criadoEm: ts('2026-09-15', '09:00') };
+    const v = revalidar({ ...base, supressoes: [...base.supressoes, suprimido] }, e, { contatoId: 'c-posdepois' });
+    expect(v).toMatchObject({ ok: false, codigo: 'CONTATO_INVALIDO' });
+    expect(validarContatoCanalTarefaCadenciaCM({ ...base, supressoes: [suprimido] }, 'posdepois', 'FOLLOW_UP', 'c-posdepois')).toBe('CONTATO_INVALIDO');
+  });
+});
+
+describe('CM2-E.1 — usuariosValidos e obrigatorio', () => {
+  it('a lista e exigida pelo tipo: chamar sem ela nao compila', () => {
+    const ds = semOportunidade(); const e = expectativaDe(ds, 'posdepois');
+    // @ts-expect-error opcoes.usuariosValidos e obrigatorio: sem a lista real nao ha como validar o responsavel
+    expect(() => revalidarCriacaoTarefaCadenciaCM(ds, HOJE, e, {}, {})).not.toBeNull();
+    expect(revalidarCriacaoTarefaCadenciaCM(ds, HOJE, e, {}, { usuariosValidos: [] })).toMatchObject({ ok: false, codigo: 'RESPONSAVEL_NECESSARIO', detalhe: 'responsável inexistente' });
+    expect(revalidarCriacaoTarefaCadenciaCM(ds, HOJE, e, {}, { usuariosValidos: USUARIOS })).toMatchObject({ ok: true });
   });
 });
 

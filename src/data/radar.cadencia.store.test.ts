@@ -1,7 +1,7 @@
 // CM2-E (store) — porta governada de criacao da tarefa de cadencia: revalida contra o dataset atual, so entao gera id,
 // persiste pelo mecanismo do Radar, audita a origem e recusa o segundo clique com JA_COBERTA. O legado nao muda.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { RegraDeNegocioError, actions, getState } from './store';
+import { RegraCadenciaCommitError, RegraDeNegocioError, actions, getState } from './store';
 import {
   cadenciasDaFilaCM, construirCommercialQueue, expectativaDaSugestaoCM, planosDaFilaCM, sugestoesTarefaDaFilaCM,
   type ExpectativaCriacaoCadenciaCM, type RadarDataset,
@@ -24,11 +24,18 @@ function cenario(): Partial<RadarDataset> {
     atividades: a.atividades.map((x) => ({ ...x, id: `${x.id}-sd`, empresaId: 'semdono2', contatoId: 'c-semdono2', usuarioId: '' })),
     tarefas: a.tarefas.map((t) => ({ ...t, id: `${t.id}-sd`, empresaId: 'semdono2', contatoId: 'c-semdono2', responsavelId: '' })),
   };
+  // quarta conta: ciclo intocado, usado so para provar os codigos estruturados sem consumir os outros
+  const intocada = {
+    empresas: a.empresas.map((e) => ({ ...e, id: 'ctxmudou', razaoSocial: 'Conta ctxmudou' })),
+    contatos: a.contatos.map((c) => ({ ...c, id: 'c-ctxmudou', empresaId: 'ctxmudou' })),
+    atividades: a.atividades.map((x) => ({ ...x, id: `${x.id}-cx`, empresaId: 'ctxmudou', contatoId: 'c-ctxmudou', usuarioId: '' })),
+    tarefas: a.tarefas.map((t) => ({ ...t, id: `${t.id}-cx`, empresaId: 'ctxmudou', contatoId: 'c-ctxmudou', responsavelId: '' })),
+  };
   return {
-    empresas: [...a.empresas, ...b.empresas, ...semDono.empresas],
-    contatos: [...a.contatos, ...b.contatos, ...semDono.contatos],
-    atividades: [...a.atividades.map((x) => ({ ...x, usuarioId: USUARIO })), ...semDono.atividades],
-    tarefas: [...a.tarefas.map((t) => ({ ...t, responsavelId: USUARIO })), ...semDono.tarefas],
+    empresas: [...a.empresas, ...b.empresas, ...semDono.empresas, ...intocada.empresas],
+    contatos: [...a.contatos, ...b.contatos, ...semDono.contatos, ...intocada.contatos],
+    atividades: [...a.atividades.map((x) => ({ ...x, usuarioId: USUARIO })), ...semDono.atividades, ...intocada.atividades],
+    tarefas: [...a.tarefas.map((t) => ({ ...t, responsavelId: USUARIO })), ...semDono.tarefas, ...intocada.tarefas],
     oportunidades: b.oportunidades.map((o) => ({ ...o, responsavelId: USUARIO })),
     pesosDecisionFit: a.pesosDecisionFit,
   };
@@ -49,6 +56,9 @@ function expectativaDe(empresaId: string): ExpectativaCriacaoCadenciaCM {
 describe('CM2-E (store) — criarTarefaDaCadenciaCM', () => {
   // a expectativa e capturada UMA vez, como a tela faria: depois da criacao ela nao pode mais ser remontada
   let expectativaLida: ExpectativaCriacaoCadenciaCM;
+  let primeiraTarefaId = '';
+  /** captura o erro estruturado sem depender do texto da mensagem */
+  const capturar = (fn: () => unknown): RegraCadenciaCommitError => { try { fn(); } catch (e) { if (e instanceof RegraCadenciaCommitError) return e; throw e; } throw new Error('esperava recusa');  };
   beforeAll(() => {
     actions.trocarUsuario(USUARIO);
     actions.restaurarPlanilha();
@@ -71,6 +81,7 @@ describe('CM2-E (store) — criarTarefaDaCadenciaCM', () => {
     expect(nova.criadoEm).toBeTruthy();
     expect(radar().tarefas).toHaveLength(antes + 1);
     expect(radar().tarefas.find((t) => t.id === nova.id)).toBeDefined();
+    primeiraTarefaId = nova.id;
   });
 
   it('audita a origem da criação (chave, motivo, âncora e versões)', () => {
@@ -121,6 +132,43 @@ describe('CM2-E (store) — criarTarefaDaCadenciaCM', () => {
     expect(radar().tarefas).toHaveLength(antes);
     const nova = actions.criarTarefaDaCadenciaCM(e, { responsavelId: 'u-obra' });
     expect(nova.responsavelId).toBe('u-obra');
+  });
+
+  it('a recusa chega estruturada: código e tarefaId, sem parsing de mensagem', () => {
+    const e = expectativaLida;
+    const erro = capturar(() => actions.criarTarefaDaCadenciaCM(e));
+    expect(erro).toBeInstanceOf(RegraCadenciaCommitError);
+    expect(erro).toBeInstanceOf(RegraDeNegocioError); // quem só mostra mensagem não muda
+    expect(erro.codigo).toBe('JA_COBERTA');
+    expect(erro.tarefaId).toBe(primeiraTarefaId);
+    expect(radar().tarefas.find((t) => t.id === erro.tarefaId)).toBeDefined();
+    expect(erro.pendencias).toBeUndefined();
+  });
+
+  it('contexto realmente mudado chega como CONTEXTO_MUDOU', () => {
+    const e = expectativaDe('ctxmudou');
+    // a recomendação que o humano viu não é mais a atual (guarda 1)
+    const erro = capturar(() => actions.criarTarefaDaCadenciaCM({ ...e, dataRecomendada: '2026-09-30' }));
+    expect(erro.codigo).toBe('CONTEXTO_MUDOU');
+    expect(erro.tarefaId).toBeUndefined();
+    expect(erro.detalhe).toMatch(/recomendação/);
+  });
+
+  it('outros códigos também atravessam estruturados', () => {
+    const e = expectativaDe('ctxmudou');
+    expect(capturar(() => actions.criarTarefaDaCadenciaCM({ ...e, versaoCadencia: 'CM2-B.0' })).codigo).toBe('VERSAO_DIVERGENTE');
+    expect(capturar(() => actions.criarTarefaDaCadenciaCM(e)).codigo).toBe('RESPONSAVEL_NECESSARIO');
+    expect(capturar(() => actions.criarTarefaDaCadenciaCM(e, { responsavelId: USUARIO, contatoId: 'c-inexistente' })).codigo).toBe('CONTATO_INVALIDO');
+    expect(capturar(() => actions.criarTarefaDaCadenciaCM(e, { responsavelId: USUARIO, venceEm: '2026-01-01' })).codigo).toBe('DATA_NO_PASSADO');
+  });
+
+  it('pendências sobrevivem à fronteira quando o veredicto as traz', () => {
+    // BLOQUEADA/REQUER_DATA pela FASE 4 não são alcançáveis com dados coerentes (mesma natureza da D-C2), então o que se
+    // prova aqui é o transporte: o erro carrega a lista estruturada, sem texto
+    const erro = new RegraCadenciaCommitError('x', 'BLOQUEADA', undefined, ['CONTATO_INELEGIVEL', 'RESPONSAVEL_NECESSARIO'], 'detalhe');
+    expect(erro).toBeInstanceOf(RegraDeNegocioError);
+    expect(erro.pendencias).toEqual(['CONTATO_INELEGIVEL', 'RESPONSAVEL_NECESSARIO']);
+    expect(erro.codigo).toBe('BLOQUEADA');
   });
 
   it('o caminho legado de tarefa continua livre da revalidação', () => {

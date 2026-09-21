@@ -100,7 +100,8 @@ export const TEXTO_RECUSA_COMMIT_CM: Readonly<Record<CodigoRecusaCommitCM, strin
   CANAL_INDISPONIVEL: 'O contato escolhido não tem o canal que este tipo de tarefa exige.',
 };
 
-export interface OpcoesCommitCadenciaCM { usuariosValidos?: readonly string[] }
+/** `usuariosValidos` e obrigatorio: sem a lista real nao ha como afirmar que o responsavel existe (nunca ha fallback). */
+export interface OpcoesCommitCadenciaCM { usuariosValidos: readonly string[] }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Utilitarios puros
@@ -135,6 +136,26 @@ export function tarefaQueCobreCicloCM(ds: RadarDataset, identidade: IdentidadeCi
   return ds.tarefas.filter(casa).sort((a, b) => cmp(dia(a.venceEm), dia(b.venceEm)) || cmp(a.criadoEm, b.criadoEm) || cmp(a.id, b.id))[0];
 }
 
+/**
+ * Contato e canal obrigatorio dos campos FINAIS da tarefa (usada pela FASE 5; exportada so para prova direta dos ramos
+ * CALL -> PHONE e EMAIL -> EMAIL, que a cadeia real ainda nao alcanca porque o plano da lacuna D4 nao define contato).
+ * Nunca troca o contato nem converte o tipo: so diz por que aquele par nao serve.
+ * @internal
+ */
+export function validarContatoCanalTarefaCadenciaCM(
+  ds: RadarDataset,
+  empresaId: string,
+  tipoTarefa: TipoTarefa,
+  contatoId: string | undefined,
+): Extract<CodigoRecusaCommitCM, 'CONTATO_INVALIDO' | 'CANAL_INDISPONIVEL'> | undefined {
+  const canal = HIPOTESE_PLANO_CM.canalDaTarefa[tipoTarefa];
+  if (!contatoId) return canal ? 'CONTATO_INVALIDO' : undefined;
+  const contato = ds.contatos.find((c) => c.id === contatoId);
+  if (!contato || contato.empresaId !== empresaId || !contatoElegivel(contato, ds.supressoes)) return 'CONTATO_INVALIDO';
+  if (canal && !canaisAcionaveisCM(contato, ds.supressoes).includes(canal)) return 'CANAL_INDISPONIVEL';
+  return undefined;
+}
+
 /** Monta a expectativa a partir do que a tela mostrou. Só existe com sugestão que carrega rascunho (SUGERIDA/REQUER_RESPONSAVEL). */
 export function expectativaDaSugestaoCM(cadencia: CadenceRecommendationCM, sugestao: TaskSuggestionCM): ExpectativaCriacaoCadenciaCM | undefined {
   const toque = cadencia.proximoToque;
@@ -156,7 +177,7 @@ export function revalidarCriacaoTarefaCadenciaCM(
   hoje: string,
   expectativa: ExpectativaCriacaoCadenciaCM,
   edicoes: EdicoesHumanasCadenciaCM = {},
-  opcoes: OpcoesCommitCadenciaCM = {},
+  opcoes: OpcoesCommitCadenciaCM,
 ): VeredictoCommitCadenciaCM {
   const d0 = normalizarHojeCM(hoje);
   const r = canonicalizarDatasetCM(ds);
@@ -213,16 +234,10 @@ export function revalidarCriacaoTarefaCadenciaCM(
   if (!descricao) return recusa('DESCRICAO_VAZIA');
   const responsavelId = (edicoes.responsavelId ?? atual.tarefa.responsavelId ?? '').trim();
   if (!responsavelId) return recusa('RESPONSAVEL_NECESSARIO');
-  if (opcoes.usuariosValidos && !opcoes.usuariosValidos.includes(responsavelId)) return recusa('RESPONSAVEL_NECESSARIO', { detalhe: 'responsável inexistente' });
+  if (!opcoes.usuariosValidos.includes(responsavelId)) return recusa('RESPONSAVEL_NECESSARIO', { detalhe: 'responsável inexistente' });
   const contatoId = edicoes.contatoId ?? atual.tarefa.contatoId;
-  if (contatoId) {
-    const contato = r.contatos.find((c) => c.id === contatoId);
-    if (!contato || contato.empresaId !== expectativa.empresaId || !contatoElegivel(contato, r.supressoes)) return recusa('CONTATO_INVALIDO');
-    const canal = HIPOTESE_PLANO_CM.canalDaTarefa[atual.tarefa.tipo];
-    if (canal && !canaisAcionaveisCM(contato, r.supressoes).includes(canal)) return recusa('CANAL_INDISPONIVEL');
-  } else if (HIPOTESE_PLANO_CM.canalDaTarefa[atual.tarefa.tipo]) {
-    return recusa('CONTATO_INVALIDO', { detalhe: 'o tipo de tarefa exige um canal e não há contato' });
-  }
+  const problemaDeContato = validarContatoCanalTarefaCadenciaCM(r, expectativa.empresaId, atual.tarefa.tipo, contatoId);
+  if (problemaDeContato) return recusa(problemaDeContato, contatoId ? {} : { detalhe: 'o tipo de tarefa exige um canal e não há contato' });
 
   // --- FASE 6: segunda cobertura, conservadora, com a identidade efetiva (o contato pode ter sido escolhido agora)
   const coberturaEfetiva = tarefaQueCobreCicloCM(r, { ...identidadeHistorica, contatoId });
