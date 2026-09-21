@@ -19,7 +19,8 @@ import { Tabela } from '../../ui/Tabela';
 import { Badge, Empty, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, useToast, type Tone } from '../../ui/components';
 import { Abordagem } from './Abordagem';
 import { intencaoDoPlanoCM, type IntencaoComunicacaoCM } from '../../core/radar/comunicacaoIntencaoCM';
-import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaForm, d, nomeUsuario } from './comum';
+import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaCadenciaForm, TarefaForm, d, nomeUsuario } from './comum';
+import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Rotulos de apresentacao (nenhuma regra: so nomes para codigos que o motor ja devolve)
@@ -80,6 +81,7 @@ export default function RadarHoje() {
   const [atividade, setAtividade] = useState<AbrirAtividade | null>(null);
   const [concluir, setConcluir] = useState<TarefaRadar | null>(null);
   const [tarefa, setTarefa] = useState<TarefaRadar | null>(null);
+  const [agendar, setAgendar] = useState<Extract<AberturaAgendamentoCM, { ok: true }> | null>(null);
 
   // fonte de verdade, sempre sobre o dataset inteiro e antes de qualquer filtro:
   // fila (CM1-A) -> planos (CM1-B) -> cadencias (CM2-B) -> sugestoes de compromisso (CM2-C)
@@ -177,6 +179,7 @@ export default function RadarHoje() {
       {atividade && <AtividadeForm key={`atividade:${atividade.empresaId}:${atividade.contatoId ?? ''}:${atividade.oportunidadeId ?? ''}`} empresaId={atividade.empresaId} contatoId={atividade.contatoId} oportunidadeId={atividade.oportunidadeId} onClose={() => setAtividade(null)} onErro={toast} onOk={toast} />}
       {concluir && <ConcluirTarefaForm key={concluir.id} tarefa={concluir} onClose={() => setConcluir(null)} onErro={toast} onOk={toast} />}
       {tarefa && <TarefaForm key={tarefa.id} inicial={tarefa} onClose={() => setTarefa(null)} onErro={toast} onOk={toast} />}
+      {agendar && <TarefaCadenciaForm key={agendar.expectativa.chave} abertura={agendar} onClose={() => setAgendar(null)} onOk={toast} onAbrirTarefa={(t) => { setAgendar(null); setTarefa(t); }} />}
       {el}
     </>
   );
@@ -307,6 +310,7 @@ export default function RadarHoje() {
   // -------------------------------------------------------------------------------------------------------------------
   // Bloco "Cadencia" (somente leitura): apresenta a cadencia (CM2-B) e a sugestao de compromisso (CM2-C) sem decidir nada.
   // A tarefa sugerida vem estritamente de sugestao.tarefa: sem contato nela, o contato fica "a definir" (nunca o da fila).
+  // CM2-D2: o CTA abre o formulario governado com o snapshot do clique; quem cria a tarefa e a fronteira (CM2-E).
   // -------------------------------------------------------------------------------------------------------------------
   function blocoCadencia({ cadencia: c, sugestao: s }: Linha): React.ReactNode {
     const t = c.proximoToque;
@@ -315,6 +319,7 @@ export default function RadarHoje() {
     const contatoSugerido = sugerida?.contatoId ? contatoPorId.get(sugerida.contatoId) : undefined;
     const tarefaCobertura = s.cobertura ? r.tarefas.find((x) => x.id === s.cobertura!.tarefaId) : undefined;
     const lista = { margin: '8px 0 0', paddingLeft: 18, display: 'grid', gap: 4 } as const;
+    const rotuloCta = ctaCadenciaCM(s, podeAgir);
     return (
       <div className="grid cols-2" style={{ marginTop: 16, gap: 16 }}>
         <div>
@@ -354,6 +359,12 @@ export default function RadarHoje() {
                 <dt>Contato</dt><dd>{sugerida.contatoId ? contatoSugerido?.nome ?? '—' : 'a definir no agendamento'}</dd>
                 <dt>Descrição</dt><dd>{sugerida.descricaoBase}</dd>
               </dl>
+              {rotuloCta && (
+                <div style={{ marginTop: 10 }}>
+                  <button className="btn sm primary" onClick={() => abrirAgendamento(c, s)} aria-label={`${rotuloCta} recomendada pela Máquina Comercial`}>{rotuloCta}</button>
+                  <p className="small muted" style={{ margin: '6px 0 0' }}>A recomendação é revalidada no momento de agendar: nada é criado sem passar pela Máquina Comercial.</p>
+                </div>
+              )}
             </>
           )}
           {s.estado === 'COBERTA' && s.cobertura && (
@@ -375,6 +386,13 @@ export default function RadarHoje() {
         </div>
       </div>
     );
+  }
+
+  /** Abre o agendamento governado com o retrato do clique. Falha fechada: sem expectativa, nada abre. */
+  function abrirAgendamento(cadencia: CadenceRecommendationCM, sugestao: TaskSuggestionCM) {
+    const abertura = abrirAgendamentoCM(cadencia, sugestao);
+    if (!abertura.ok) { toast(MENSAGEM_SEM_EXPECTATIVA_CM); return; }
+    setAgendar(abertura);
   }
 
   // -------------------------------------------------------------------------------------------------------------------
