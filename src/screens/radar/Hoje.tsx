@@ -21,7 +21,7 @@ import { Abordagem } from './Abordagem';
 import { intencaoDoPlanoCM, type IntencaoComunicacaoCM } from '../../core/radar/comunicacaoIntencaoCM';
 import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaCadenciaForm, TarefaForm, d, nomeUsuario } from './comum';
 import ComercialPanorama from './ComercialPanorama';
-import { visaoComercialUX, type ContaComercialUX } from './comercialVisao';
+import { visaoComercialUX } from './comercialVisao';
 import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -88,6 +88,7 @@ export default function RadarHoje() {
   const [tarefa, setTarefa] = useState<TarefaRadar | null>(null);
   const [agendar, setAgendar] = useState<Extract<AberturaAgendamentoCM, { ok: true }> | null>(null);
   const [visao, setVisao] = useState<VisaoComercial>('panorama');
+  const [porQue, setPorQue] = useState<string | null>(null);
 
   // fonte de verdade, sempre sobre o dataset inteiro e antes de qualquer filtro:
   // fila (CM1-A) -> planos (CM1-B) -> cadencias (CM2-B) -> sugestoes de compromisso (CM2-C)
@@ -127,13 +128,17 @@ export default function RadarHoje() {
   // UX-1: o Panorama le o view-model do UX-0 sobre as mesmas linhas filtradas; a categoria continua sendo filtro da fila.
   const porLinha = useMemo(() => new Map(base.map((l) => [l.id, l])), [base]);
   const contasUX = useMemo(() => visaoComercialUX(base.map(({ item, plano, cadencia, sugestao }) => ({ item, plano, cadencia, sugestao }))), [base]);
-  /** Enquanto o UX-2 (gaveta) nao existe, o detalhe e a propria fila completa com a conta em foco. */
-  const verDetalhes = (conta: ContaComercialUX) => {
-    const linha = porLinha.get(conta.itemId);
+  /** Leva a conta para a fila completa, em foco (a visao de trabalho completa continua a um clique da gaveta). */
+  const verNaFila = (itemId: string) => {
+    const linha = porLinha.get(itemId);
     if (linha && categoria !== 'TODAS' && linha.item.categoria !== categoria) setCategoria('TODAS');
-    setFocoId(conta.itemId);
+    setFocoId(itemId);
+    setPorQue(null);
     setVisao('fila');
   };
+  /** UX-2: a gaveta mostra a MESMA explicabilidade do bloco de foco — nenhum conteudo novo, nenhum conteudo a menos. */
+  const naGaveta = porQue ? base.findIndex((l) => l.id === porQue) : -1;
+  const linhaDaGaveta: Linha | undefined = naGaveta >= 0 ? base[naGaveta] : undefined;
 
   return (
     <>
@@ -158,7 +163,7 @@ export default function RadarHoje() {
               nomeCanal={(canal) => (canal ? NOME_CANAL[canal] : '')}
               acaoPrincipal={(c) => { const l = porLinha.get(c.itemId); return l ? acoes(l, { primeira: true }) : null; }}
               ctaCadencia={(c) => { const l = porLinha.get(c.itemId); if (!l) return null; const rotulo = ctaCadenciaCM(l.sugestao, podeAgir); return rotulo ? <button className="btn sm" onClick={() => abrirAgendamento(l.cadencia, l.sugestao)} aria-label={`${rotulo} recomendada pela Máquina Comercial`}>{rotulo}</button> : null; }}
-              onVerDetalhes={verDetalhes}
+              onPorQue={(c) => setPorQue(c.itemId)}
               onVerTodos={() => setVisao('fila')}
             />
           </div>
@@ -221,6 +226,17 @@ export default function RadarHoje() {
       {concluir && <ConcluirTarefaForm key={concluir.id} tarefa={concluir} onClose={() => setConcluir(null)} onErro={toast} onOk={toast} />}
       {tarefa && <TarefaForm key={tarefa.id} inicial={tarefa} onClose={() => setTarefa(null)} onErro={toast} onOk={toast} />}
       {agendar && <TarefaCadenciaForm key={agendar.expectativa.chave} abertura={agendar} onClose={() => setAgendar(null)} onOk={toast} onAbrirTarefa={(t) => { setAgendar(null); setTarefa(t); }} />}
+      {/* UX-2 — gaveta "Por quê": a MESMA explicabilidade do bloco de foco (blocoFoco), sem nada a menos e nada novo */}
+      {linhaDaGaveta && (
+        <Modal key={`porque:${linhaDaGaveta.id}`} title={`Por quê · ${nomeEmpresa(linhaDaGaveta.empresa)}`} onClose={() => setPorQue(null)} wide>
+          {blocoFoco(linhaDaGaveta, base[naGaveta + 1], naGaveta + 1, base.length, true)}
+          <p className="small muted" style={{ marginTop: 12 }}>Regras em vigor: fila {VERSAO_REGRAS_CM} · plano {VERSAO_REGRAS_PLANO_CM} · cadência {VERSAO_REGRAS_CADENCIA_CM}.</p>
+          <div className="foot">
+            <button className="btn" onClick={() => verNaFila(linhaDaGaveta.id)}>Abrir na fila completa</button>
+            <button className="btn primary" onClick={() => setPorQue(null)}>Fechar</button>
+          </div>
+        </Modal>
+      )}
       {el}
     </>
   );
@@ -228,7 +244,8 @@ export default function RadarHoje() {
   // -------------------------------------------------------------------------------------------------------------------
   // Bloco "Proxima acao" (item em foco)
   // -------------------------------------------------------------------------------------------------------------------
-  function blocoFoco(linha: Linha, seguinte: Linha | undefined, posicaoFiltrada: number, totalFiltrado: number): React.ReactNode {
+  // `naGaveta`: o MESMO conteudo do foco renderizado dentro da gaveta `Por quê ›` (UX-2), sem a moldura de cartao.
+  function blocoFoco(linha: Linha, seguinte: Linha | undefined, posicaoFiltrada: number, totalFiltrado: number, naGaveta = false): React.ReactNode {
     const { item, plano, empresa } = linha;
     const p = item.porQueAgora;
     const oportunidade = item.oportunidadeId ? r.oportunidades.find((o) => o.id === item.oportunidadeId) : undefined;
@@ -244,7 +261,7 @@ export default function RadarHoje() {
     const pendentes = item.secundarias.filter((s) => !informativa(s));
     const h = plano.historico;
     return (
-      <section className="card" aria-labelledby="hoje-foco">
+      <section className={naGaveta ? '' : 'card'} aria-labelledby="hoje-foco">
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <h2 id="hoje-foco" style={{ margin: 0 }}>{primeiro ? 'Próxima ação' : 'Em foco'}</h2>
           <span className="small muted">{posicaoFiltrada}º de {totalFiltrado} nesta visão · posição {item.posicao} na fila completa</span>

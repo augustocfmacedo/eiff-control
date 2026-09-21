@@ -95,11 +95,12 @@ export interface ComercialPanoramaProps {
   acaoPrincipal: (conta: ContaComercialUX) => React.ReactNode;
   /** CTA governado da cadencia (CM2-C -> CM2-E), tambem montado na Hoje. */
   ctaCadencia: (conta: ContaComercialUX) => React.ReactNode;
-  onVerDetalhes: (conta: ContaComercialUX) => void;
+  /** Abre a gaveta `Por quê ›` (UX-2) com a explicabilidade inteira da conta. */
+  onPorQue: (conta: ContaComercialUX) => void;
   onVerTodos: () => void;
 }
 
-export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onVerDetalhes, onVerTodos }: ComercialPanoramaProps) {
+export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos }: ComercialPanoramaProps) {
   const { resumo, agora, programado, risco, espera } = zonasDoPanoramaUX(contas);
   const verTodos = (n: number, rotulo = 'Ver todos') => n > 0 ? <button className="btn sm" onClick={onVerTodos}>{`${rotulo} (${n}) ›`}</button> : null;
 
@@ -146,7 +147,7 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
                         {c.excecoes.length > 1 && <span className="muted">+{c.excecoes.length - 1}</span>}
                       </div>
                       <div className="muted">{textoDaExcecaoUX(e)}</div>
-                      <button className="btn sm" style={{ marginTop: 4 }} onClick={() => onVerDetalhes(c)}>Ver detalhes ›</button>
+                      <button className="btn sm" style={{ marginTop: 4 }} onClick={() => onPorQue(c)}>Por quê ›</button>
                     </li>
                   );
                 })}
@@ -187,7 +188,7 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
                 {c.proximoToque && <span className="small muted">· {TEXTO_NATUREZA_PANORAMA[c.proximoToque.natureza]}</span>}
                 <span className="spacer" />
                 {ctaCadencia(c)}
-                <button className="btn sm" onClick={() => onVerDetalhes(c)}>Ver detalhes ›</button>
+                <button className="btn sm" onClick={() => onPorQue(c)}>Por quê ›</button>
               </li>
             ))}
           </ul>}
@@ -206,7 +207,7 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
         </p>
         <div className="actions" style={{ marginTop: 10 }}>
           {acaoPrincipal(c)}
-          <button className="btn sm" onClick={() => onVerDetalhes(c)}>Ver detalhes ›</button>
+          <button className="btn sm" onClick={() => onPorQue(c)}>Por quê ›</button>
         </div>
       </article>
     );

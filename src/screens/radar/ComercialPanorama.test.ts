@@ -240,11 +240,48 @@ describe('UX-1 · guardas', () => {
     // botao continua exigindo permissao; link continua livre
     expect(CODIGO_HOJE).toContain('.filter((a) => !!a.to || podeAgir)');
   });
-  it('"Ver detalhes" leva a fila completa com a mesma conta em foco, sem criar gaveta', () => {
-    expect(CODIGO_HOJE).toContain('setFocoId(conta.itemId)');
+  it('UX-2 · o Panorama abre a gaveta "Por quê" e nao monta explicacao propria', () => {
+    expect(CODIGO_PANORAMA).toContain('onPorQue');
+    expect(CODIGO_PANORAMA.match(/Por quê ›/g)).toHaveLength(3); // AGORA, RISCO e PROGRAMADO
+    expect(CODIGO_PANORAMA).not.toContain('Ver detalhes ›');
+    // a gaveta e da Hoje: o Panorama so avisa qual conta
+    expect(CODIGO_PANORAMA).not.toContain('<Modal');
+    expect(CODIGO_PANORAMA).not.toContain('blocoFoco');
+  });
+  // -------------------------------------------------------------------------------------------------------------------
+  // UX-2 — gaveta "Por quê": 100% da explicabilidade, por construcao (o MESMO blocoFoco da fila completa)
+  // -------------------------------------------------------------------------------------------------------------------
+  it('UX-2 · a gaveta renderiza exatamente o bloco de foco da fila completa', () => {
+    // um unico blocoFoco no arquivo: a fila e a gaveta chamam a MESMA funcao (nada e reescrito para a gaveta)
+    expect(CODIGO_HOJE.match(/function blocoFoco\(/g)).toHaveLength(1);
+    expect(CODIGO_HOJE).toContain('blocoFoco(linhaDaGaveta, base[naGaveta + 1], naGaveta + 1, base.length, true)');
+    expect(CODIGO_HOJE).toContain('blocoFoco(foco, seguinte, indiceFoco + 1, visiveis.length)');
+    // e o conteudo do foco continua completo (a lista do contrato §8)
+    for (const parte of [
+      'Conta', 'Por que agora', 'Ação', 'Pessoa', 'Plano de contato', 'Histórico', 'Travas e pendências',
+      'blocoCadencia(linha)', 'Decision fit', 'Canais válidos', 'Objetivo', 'Playbook', 'Por que este canal',
+      'Tentativas', 'NOME_CHAVE_ORDEM[chave]', 'posição {item.posicao} na fila completa',
+    ]) {
+      expect(CODIGO_HOJE, `a gaveta perdeu: ${parte}`).toContain(parte);
+    }
+  });
+  it('UX-2 · a gaveta mostra as versões CM e leva à fila completa sem perder o foco', () => {
+    expect(CODIGO_HOJE).toMatch(/Regras em vigor: fila \{VERSAO_REGRAS_CM\} · plano \{VERSAO_REGRAS_PLANO_CM\} · cadência \{VERSAO_REGRAS_CADENCIA_CM\}/);
+    expect(CODIGO_HOJE).toContain('Abrir na fila completa');
+    expect(CODIGO_HOJE).toContain('setFocoId(itemId)');
     expect(CODIGO_HOJE).toContain("setVisao('fila')");
-    expect(CODIGO_PANORAMA).toContain('onVerDetalhes');
-    for (const proibido of ['drawer', 'gaveta', 'Por quê']) expect(CODIGO_PANORAMA).not.toContain(proibido);
+  });
+  it('UX-2 · a gaveta usa o Modal do sistema (foco preso, Esc, tema) e nao inventa overlay', () => {
+    expect(CODIGO_HOJE).toMatch(/<Modal key=\{`porque:\$\{linhaDaGaveta\.id\}`\}/);
+    expect(CODIGO_HOJE).toContain('onClose={() => setPorQue(null)}');
+    for (const proibido of ['position: \'fixed\'', 'zIndex', 'document.addEventListener']) expect(CODIGO_HOJE).not.toContain(proibido);
+  });
+  it('UX-2 · a gaveta nao cria conteudo novo nem toca no motor', () => {
+    const i = CODIGO_HOJE.indexOf('{linhaDaGaveta && (');
+    const gaveta = CODIGO_HOJE.slice(i, CODIGO_HOJE.indexOf('{el}', i));
+    for (const proibido of ['construirCommercialQueue', 'planosDaFilaCM', 'cadenciasDaFilaCM', 'actions.', 'filaHoje']) {
+      expect(gaveta, `a gaveta nao pode usar ${proibido}`).not.toContain(proibido);
+    }
   });
   it('UX-4 e UX-5 nao foram antecipados: sem PIPELINE ATIVO e sem ENTRADA', () => {
     for (const proibido of ['PIPELINE', 'Pipeline', 'ENTRADA', 'Entrada', 'lead', 'Lead']) {
