@@ -23,7 +23,7 @@ import type { Acao } from '../../data/store';
 import type { Dataset } from '../types';
 import { mascararTelefone, type CommunicationContext } from '../radar/canais';
 import { aplicarEventos, estadoVazio, type CentralConversation, type CentralMessage, type EstadoCentral } from './conversa';
-import { normalizarEventosMeta, type NumerosCentral } from './metaEventos';
+import { normalizarEventosMeta, type EventoCentralMeta, type NumerosCentral } from './metaEventos';
 import {
   MENSAGEM_EXECUCAO_BLOQUEADA, portasSemEscrita, resolverUsuarioDaCentral, veCaixaNaCentral,
   type ContextoServidor, type UsuarioDaCentral,
@@ -148,6 +148,12 @@ export interface EntradaFluxoInterno {
   agoraIso: string;
   /** Estado anterior das conversas, quando o servidor tiver um. Sem ele, cada lote comeca do zero. */
   estado?: EstadoCentral;
+  /**
+   * Filtro do SERVIDOR sobre os eventos normalizados (Wave 03, D4): so o que passa entra no caminho de negocio — o resto
+   * nem vira conversa nem tem o texto lido. E assim que o webhook restringe o Alpha ao contexto INTERNAL e ao numero
+   * controlado da allowlist sem reparsear o formato da Meta fora de `metaEventos`. Sem filtro, tudo entra (como antes).
+   */
+  filtroEventos?: (evento: EventoCentralMeta) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +345,8 @@ async function atender(
  * O servidor que chamar isto so precisa decidir "responder ou nao".
  */
 export async function fluxoInterno(entrada: EntradaFluxoInterno): Promise<ResultadoFluxoInterno> {
-  const eventos = normalizarEventosMeta(entrada.payload, { numeros: entrada.servidor.numeros, agoraIso: entrada.agoraIso });
+  const normalizados = normalizarEventosMeta(entrada.payload, { numeros: entrada.servidor.numeros, agoraIso: entrada.agoraIso });
+  const eventos = entrada.filtroEventos ? normalizados.filter(entrada.filtroEventos) : normalizados;
   const aplicado = aplicarEventos(entrada.estado ?? estadoVazio(), eventos, {
     organizationId: entrada.servidor.organizationId, agoraIso: entrada.agoraIso,
   });

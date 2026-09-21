@@ -21,6 +21,7 @@ export const ROTAS_NAV: { to: string; rotulo: string; grupo: string; icone: Icon
   { to: '/dre', rotulo: 'DRE gerencial', grupo: 'Controladoria', icone: 'dre' }, { to: '/checks', rotulo: 'Checks e fechamento', grupo: 'Controladoria', icone: 'checks' },
   { to: '/cadastros', rotulo: 'Cadastros e parâmetros', grupo: 'Administração', icone: 'cadastros' }, { to: '/auditoria', rotulo: 'Auditoria', grupo: 'Administração', icone: 'auditoria', permissao: 'ver_auditoria' },
   { to: '/mission-control', rotulo: 'Mission Control · EIFF Central', grupo: 'Administração', icone: 'checks', permissao: 'ver_mission_control' },
+  { to: '/central/identidades', rotulo: 'Central · Identidades do WhatsApp', grupo: 'Administração', icone: 'chat', permissao: 'ver_central' },
 ];
 
 const RECENTES = 'eiff-control:paleta-recentes';
