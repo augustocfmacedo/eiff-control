@@ -10,11 +10,21 @@ import { navegar } from './router';
 const CHAVE = 'eiff-control:sugestoes-dispensadas';
 const lerDispensadas = (): string[] => { try { return JSON.parse(sessionStorage.getItem(CHAVE) ?? '[]'); } catch { return []; } };
 
+/**
+ * Commercial UX 1.0 (UX-1.1): no Panorama, sugestao que so leva de volta para a propria tela e ruido concorrente — a
+ * tela ja e a superficie daquela informacao, com contagens de outro recorte. Regra ESTREITA e so de apresentacao: nada
+ * muda em `sugestoes.ts`, e sugestao que leva para outro lugar (ex.: duplicatas) continua aparecendo, aqui e nas demais
+ * rotas. Nao generalizar para "mesma rota" em geral: em /radar, por exemplo, o destino util muda so de aba.
+ */
+export const ROTA_PANORAMA_COMERCIAL = '/radar/hoje';
+export const sugestaoRedundanteNoPanorama = (rota: string, destino?: string): boolean =>
+  rota === ROTA_PANORAMA_COMERCIAL && (destino ?? '').split('?')[0] === ROTA_PANORAMA_COMERCIAL;
+
 export function Sugestoes({ rota }: { rota: string }) {
   const { ds, usuario } = useStore();
   const [dispensadas, setDispensadas] = useState<string[]>(lerDispensadas);
   const lista = useMemo(() => { try { return sugestoesPara(rota, ds, usuario); } catch { return []; } }, [rota, ds, usuario]);
-  const visiveis = lista.filter((s) => !dispensadas.includes(s.id)).slice(0, 4);
+  const visiveis = lista.filter((s) => !dispensadas.includes(s.id) && !sugestaoRedundanteNoPanorama(rota, s.acao?.to)).slice(0, 4);
   if (!visiveis.length) return null;
   const dispensar = (id: string) => { const v = [...dispensadas, id]; setDispensadas(v); try { sessionStorage.setItem(CHAVE, JSON.stringify(v)); } catch { /* ignore */ } registrarAcao('sugestao:dispensar'); };
   return (

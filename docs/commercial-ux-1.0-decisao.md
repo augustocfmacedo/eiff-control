@@ -65,6 +65,32 @@ A Inteligência **não é uma segunda fila operacional**.
 
 Nenhuma lista longa no Panorama. O teto é parte do contrato, não preferência de layout.
 
+### 4.1 Card resumido de RISCO — qual exceção aparece (decisão UX-1.1)
+
+Uma conta pode ter várias exceções e o resumo mostra **uma**. A regra, aprovada depois da revisão do UX-1:
+
+1. mostrar a de **maior severidade**, nesta ordem: `BLOQUEIO` → `RISCO` → `ATENÇÃO`;
+2. em empate de severidade, **preservar a ordem de origem** (a primeira que as autoridades produziram);
+3. não alterar a ordem da coleção `conta.excecoes`;
+4. não alterar `contasEmRiscoUX`;
+5. não alterar a posição da conta na Commercial Queue;
+6. não criar score;
+7. não somar pesos.
+
+Isto é **seleção de conteúdo para o resumo visual**, não classificação: a lista completa continua intacta no
+view-model e aparece inteira quando a gaveta `Por quê ›` (UX-2) chegar.
+
+### 4.2 Faixa de sugestões na rota do Panorama (decisão UX-1.1)
+
+Em `/radar/hoje`, a faixa de sugestões do Radar (CM1-D1) **não exibe** a sugestão cuja ação leva de volta para
+`/radar/hoje`: o Panorama já é a superfície daquela informação, e os dois números vêm de recortes diferentes
+(categoria `AGIR_AGORA` do CM1-A × `cadencia.estado === DEVIDA`), o que faz parecerem autoridades concorrentes.
+
+A supressão é **só de apresentação** e **estreita**: nada muda em `src/core/sugestoes.ts` — as sugestões continuam
+sendo geradas —, sugestão que leva para outro destino (por exemplo, duplicatas) continua aparecendo, e nas demais
+rotas (`/radar`, `/radar/empresas`, e todas as outras) nada muda. A regra não é "esconder o que aponta para a rota
+atual": em `/radar`, por exemplo, o destino útil muda só de aba.
+
 ## 5. PIPELINE ATIVO (antes "Em movimento")
 
 O nome "em movimento" exigiria uma regra nova de movimento — **não criar**. A zona chama-se **PIPELINE ATIVO** e mostra

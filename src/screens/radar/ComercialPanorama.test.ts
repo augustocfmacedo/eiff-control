@@ -114,6 +114,17 @@ describe('UX-1 · risco sobreposto', () => {
     const outraAtencao = { ...atencao, codigo: 'OPORTUNIDADE_PARADA_CRITICA' } as const;
     expect(excecaoPrincipalUX({ ...base, excecoes: [atencao, outraAtencao] })).toEqual(atencao);
   });
+  it('UX-1.1 · a selecao da excecao nao reordena a colecao, nao mexe no contador e nao cria metrica', () => {
+    const base = CONTAS.find((c) => c.excecoes.length > 1) ?? CONTAS.find((c) => c.excecoes.length)!;
+    const antes = JSON.parse(JSON.stringify(base.excecoes));
+    const resumoAntes = resumoComercialUX(CONTAS);
+    excecaoPrincipalUX(base);
+    expect(base.excecoes).toEqual(antes);
+    expect(resumoComercialUX(CONTAS)).toEqual(resumoAntes);
+    expect(contasEmRiscoUX(CONTAS).map((c) => c.itemId)).toEqual(CONTAS.filter((c) => c.excecoes.some((e) => e.severidade !== 'ATENCAO')).map((c) => c.itemId));
+    expect(CODIGO_PANORAMA.toLowerCase()).not.toContain('score');
+    expect(CODIGO_PANORAMA).not.toMatch(/\+=|\breduce\(/);
+  });
   it('a excecao mostrada e a mais severa, e o texto vem da tabela da autoridade de origem', () => {
     for (const c of CONTAS) {
       const e = excecaoPrincipalUX(c);
