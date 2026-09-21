@@ -279,9 +279,16 @@ describe('UX-1 · guardas', () => {
       expect(gaveta, `a gaveta nao pode usar ${proibido}`).not.toContain(proibido);
     }
   });
-  it('UX-4 e UX-5 nao foram antecipados: sem PIPELINE ATIVO e sem ENTRADA', () => {
-    for (const proibido of ['PIPELINE', 'Pipeline', 'ENTRADA', 'Entrada', 'lead', 'Lead']) {
+  it('UX-5 nao foi antecipado: sem ENTRADA e sem lead', () => {
+    for (const proibido of ['ENTRADA', 'Entrada', 'lead', 'Lead']) {
       expect(CODIGO_PANORAMA, `nao pode antecipar ${proibido}`).not.toContain(proibido);
+    }
+  });
+  it('UX-4: o Panorama recebe o pipeline pronto e nao le dataset nem escolhe oportunidade', () => {
+    expect(CODIGO_PANORAMA).toContain('pipelineAtivo: readonly OportunidadePipelineUX[]');
+    expect(CODIGO_PANORAMA).toContain('recorteUX(pipelineAtivo, ORCAMENTO_PANORAMA_COMERCIAL.pipeline)');
+    for (const proibido of ['oportunidades.find', 'estagioAtivo', 'ds.radar', 'historicoEstagios', '.sort(']) {
+      expect(CODIGO_PANORAMA, `o Panorama nao pode conter ${proibido}`).not.toContain(proibido);
     }
   });
 });

@@ -22,6 +22,7 @@ import { AtividadeForm, ConcluirTarefaForm, ScoreModal, TarefaCadenciaForm, Tare
 import ComercialPanorama from './ComercialPanorama';
 import ComercialFoco, { NOME_MODO, TOM_CATEGORIA, TOM_MODO, gavetaFailClosed, nomeEmpresaCM as nomeEmpresa } from './ComercialFoco';
 import ComercialModoFoco, { focoAoEntrarUX, focoInvalidadoUX, type AcaoFocoUX, type FocoTrabalhoUX } from './ComercialModoFoco';
+import { pipelineAtivoUX } from './comercialPipeline';
 import { visaoComercialUX } from './comercialVisao';
 import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
 
@@ -114,6 +115,13 @@ export default function RadarHoje() {
   // UX-1: o Panorama le o view-model do UX-0 sobre as mesmas linhas filtradas; a categoria continua sendo filtro da fila.
   const porLinha = useMemo(() => new Map(base.map((l) => [l.id, l])), [base]);
   const contasUX = useMemo(() => visaoComercialUX(base.map(({ item, plano, cadencia, sugestao }) => ({ item, plano, cadencia, sugestao }))), [base]);
+  // UX-4: a zona PIPELINE ATIVO le a oportunidade de REFERENCIA que o CM1-A ja escolheu (item.oportunidadeId) sobre
+  // as mesmas linhas de `base`. Nenhuma fila nova, nenhuma escolha de oportunidade, nenhuma reordenacao.
+  const pipelineUX = useMemo(() => {
+    const contaPorId = new Map(contasUX.map((c) => [c.itemId, c]));
+    const entradas = base.flatMap((l) => { const conta = contaPorId.get(l.id); return conta ? [{ item: l.item, conta }] : []; });
+    return pipelineAtivoUX(entradas, { oportunidades: r.oportunidades, historicoEstagios: r.historicoEstagios, atividades: r.atividades, hoje });
+  }, [base, contasUX, r.oportunidades, r.historicoEstagios, r.atividades, hoje]);
   // UX-3: a conta em foco saiu da base (acao, filtro ou recomputacao legitima). O efeito so INVALIDA o foco e
   // registra a perda; nunca seleciona outra conta — quem escolhe a proxima e o usuario, sempre por clique.
   useEffect(() => {
@@ -176,6 +184,7 @@ export default function RadarHoje() {
               ctaCadencia={(c) => { const l = porLinha.get(c.itemId); if (!l) return null; const rotulo = ctaCadenciaCM(l.sugestao, podeAgir); return rotulo ? <button className="btn sm" onClick={() => abrirAgendamento(l.cadencia, l.sugestao)} aria-label={`${rotulo} recomendada pela Máquina Comercial`}>{rotulo}</button> : null; }}
               onPorQue={(c) => setPorQue(c.itemId)}
               onVerTodos={() => setVisao('fila')}
+              pipelineAtivo={pipelineUX}
             />
           </div>
       ) : visao === 'foco' ? (

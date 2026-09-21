@@ -10,7 +10,9 @@ import React from 'react';
 import { TEXTO_BLOQUEIO_PLANO_CM, type CodigoBloqueioPlanoCM } from '../../core/radar/commercialActionPlan';
 import type { NaturezaToqueCM, RetomadaCadenciaCM } from '../../core/radar/commercialCadence';
 import { TEXTO_RAZAO_CM, TEXTO_TRAVA_CM, type CodigoRazaoCM, type CodigoTravaCM } from '../../core/radar/commercialMachine';
-import { Badge, type Tone } from '../../ui/components';
+import { NOME_ESTAGIO } from '../../core/radar/padroes';
+import { Badge, Link, money, type Tone } from '../../ui/components';
+import type { EstadoPipelineUX, OportunidadePipelineUX } from './comercialPipeline';
 import {
   ORCAMENTO_PANORAMA_COMERCIAL, contasDoHorizonteUX, contasEmRiscoUX, recorteUX, resumoComercialUX, resumoEsperaUX,
   type ContaComercialUX, type EsperaComercialUX, type ExcecaoComercialUX, type RecorteUX, type ResumoComercialUX, type SeveridadeExcecaoUX,
@@ -33,6 +35,13 @@ export const TEXTO_ESPERA_PANORAMA: Readonly<Record<RetomadaCadenciaCM, string>>
   DECISAO_HUMANA: 'decisão humana',
 };
 export const TEXTO_ESPERA_SEM_MOTIVO_PANORAMA = 'sem motivo informado';
+
+/** UX-4: os dois unicos estados do pipeline. Nao existe rotulo positivo ("em movimento", "saudavel"): sem contrato, sem badge. */
+export const TEXTO_ESTADO_PIPELINE: Readonly<Record<EstadoPipelineUX, string>> = { PARADA: 'PARADA', EM_RISCO: 'EM RISCO' };
+export const TOM_ESTADO_PIPELINE: Readonly<Record<EstadoPipelineUX, Tone>> = { PARADA: 'warn', EM_RISCO: 'bad' };
+export const TEXTO_SEM_VALOR_PIPELINE = 'valor não informado';
+/** A inteligencia de pipeline ja existe no Command Center; o Panorama nao cria rota nova. */
+export const ROTA_PIPELINE_PANORAMA = '/radar';
 const TOM_SEVERIDADE: Readonly<Record<SeveridadeExcecaoUX, Tone>> = { BLOQUEIO: 'bad', RISCO: 'bad', ATENCAO: 'warn' };
 const NOME_SEVERIDADE: Readonly<Record<SeveridadeExcecaoUX, string>> = { BLOQUEIO: 'Bloqueio', RISCO: 'Risco', ATENCAO: 'Atenção' };
 const ORDEM_SEVERIDADE: Readonly<Record<SeveridadeExcecaoUX, number>> = { BLOQUEIO: 0, RISCO: 1, ATENCAO: 2 };
@@ -98,10 +107,13 @@ export interface ComercialPanoramaProps {
   /** Abre a gaveta `Por quê ›` (UX-2) com a explicabilidade inteira da conta. */
   onPorQue: (conta: ContaComercialUX) => void;
   onVerTodos: () => void;
+  /** UX-4: oportunidades de referencia ja projetadas (ordem do CM1-A). O Panorama nao le dataset. */
+  pipelineAtivo: readonly OportunidadePipelineUX[];
 }
 
-export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos }: ComercialPanoramaProps) {
+export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos, pipelineAtivo }: ComercialPanoramaProps) {
   const { resumo, agora, programado, risco, espera } = zonasDoPanoramaUX(contas);
+  const pipeline = recorteUX(pipelineAtivo, ORCAMENTO_PANORAMA_COMERCIAL.pipeline);
   const verTodos = (n: number, rotulo = 'Ver todos') => n > 0 ? <button className="btn sm" onClick={onVerTodos}>{`${rotulo} (${n}) ›`}</button> : null;
 
   return (
@@ -169,6 +181,31 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
           </section>
         </div>
       </div>
+
+      <section className="card" aria-labelledby="zona-pipeline" style={{ marginTop: 14 }}>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <h2 id="zona-pipeline" style={{ margin: 0 }}>Pipeline ativo</h2>
+          <span className="small muted">{pipelineAtivo.length === 0 ? 'nenhuma oportunidade ativa nesta visão' : `${pipelineAtivo.length} oportunidade(s) nesta visão`}</span>
+          <span className="spacer" />
+          <Link to={ROTA_PIPELINE_PANORAMA} className="btn sm">Ver pipeline ›</Link>
+        </div>
+        {!pipeline.visiveis.length
+          ? <p className="small muted" style={{ margin: '10px 0 0' }}>Nenhuma oportunidade ativa nesta visão.</p>
+          : <ul style={{ margin: '10px 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
+            {pipeline.visiveis.map((o) => (
+              <li key={o.oportunidadeId} className="row" style={{ gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                {o.estado && <Badge tone={TOM_ESTADO_PIPELINE[o.estado]}>{TEXTO_ESTADO_PIPELINE[o.estado]}</Badge>}
+                <b>{nomeEmpresa(o.empresaId)}</b>
+                <Link to={`/radar/empresas/${o.empresaId}?aba=oportunidades`}>{o.titulo}</Link>
+                <span className="small muted">{NOME_ESTAGIO[o.estagio]}</span>
+                <span className="small muted">{o.valorEstimado === undefined ? TEXTO_SEM_VALOR_PIPELINE : money(o.valorEstimado)}</span>
+                <span className="spacer" />
+                {o.ultimoMovimentoEm && <span className="small muted">Último movimento {ddmm(o.ultimoMovimentoEm)}{o.diasSemMovimento === undefined ? '' : ` · há ${o.diasSemMovimento} dia${o.diasSemMovimento === 1 ? '' : 's'}`}</span>}
+              </li>
+            ))}
+          </ul>}
+        {pipeline.ocultos > 0 && <div className="small muted" style={{ marginTop: 8 }}>{`+${pipeline.ocultos} oportunidade(s) nesta visão · veja em Ver pipeline`}</div>}
+      </section>
 
       <section className="card" aria-labelledby="zona-programado" style={{ marginTop: 14 }}>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
