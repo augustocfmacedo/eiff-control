@@ -9,7 +9,8 @@
 import { contentSpecPersistivel, contextHashDe, contextoComunicacaoDe, hashTextoEfetivo, montarContentSpec, type ContentSpec, type VeredictoEdicao } from './comunicacao';
 import { validarGeracao, type ResultadoGeracao } from './comunicacaoGeracao';
 import { ANTHROPIC_CALL_TIMEOUT_MS, CANAIS_GERACAO_LLM, COMMUNICATION_DEADLINE_MS, ErroGeracaoLlm, ErroTimeoutLlm, PAPEIS_RADAR, PROMPT_LLM_VERSION, PROVEDOR_ANTHROPIC, comTimeout, montarMensagemJuiz, orquestrarGeracaoLlm, validarPedidoGeracao, validarRequisicaoGeracao, type PedidoGeracao, type PortasLlm, type TemposLlm } from './comunicacaoLlm';
-import { radarVazio, type RadarDataset } from './types';
+import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, contextoDeRascunhoCM, origemComercialDe, resolverIntencaoCM, type OrigemComercialCM } from './comunicacaoIntencaoCM';
+import { radarVazio, type Canal, type RadarDataset } from './types';
 import { linhaApp, type ChaveRadar } from '../../data/radar.supabase';
 
 export interface DepsServidor {
@@ -24,6 +25,8 @@ export interface DepsServidor {
   // orcamento de tempo (Latency Budget Patch 01): a funcao sincrona tem 60 s; nunca deixar o Netlify responder 504
   deadlineMs?: number; timeoutChamadaMs?: number; relogio?: () => number;
   log?: (telemetria: Record<string, unknown>) => void; // communication_timing: so numeros, modelos, etapa e outcome
+  /** Fuso da organizacao para o "hoje" da Maquina Comercial (CM1-D2); nunca a data enviada pelo navegador. */
+  fusoHorario?: string;
 }
 type Resp = { status: number; corpo: Record<string, unknown> };
 type Row = Record<string, unknown>;
@@ -91,6 +94,83 @@ async function reconstruir(p: PedidoGeracao, s: Sessao, d: DepsServidor): Promis
   return { spec, ctx, estrategias };
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// CM1-D2: pedido com intencao da Maquina Comercial. O servidor carrega TUDO o que a fila e o plano leem da conta (pela RLS
+// do usuario), recalcula construirCommercialQueue + planoDeAcaoCM com o "hoje" da organizacao e exige que a intencao seja
+// exatamente a decisao atual; divergencia = 409 context_changed. So entao monta o contexto com objetivo/playbook/canal do
+// plano recalculado e segue o mesmo caminho (ContentSpec, fact gate estrutural, idempotencia, LLM, juiz, INSERT).
+// ---------------------------------------------------------------------------------------------------------------------
+export const FUSO_PADRAO_ORGANIZACAO = 'America/Sao_Paulo';
+export function hojeDaOrganizacao(d: Pick<DepsServidor, 'agora' | 'fusoHorario'>): string {
+  const instante = new Date((d.agora ?? (() => new Date().toISOString()))());
+  const partes = new Intl.DateTimeFormat('en-CA', { timeZone: d.fusoHorario || FUSO_PADRAO_ORGANIZACAO, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instante);
+  const v = (t: string) => partes.find((x) => x.type === t)?.value ?? '';
+  return `${v('year')}-${v('month')}-${v('day')}`;
+}
+
+interface ContaCM { r: RadarDataset; estrategias: Row[] }
+/** Dataset da conta com tudo que CM1-A/CM1-B leem: empresa, contatos, sinais, atividades, oportunidades + historico, tarefas, comunicacoes, duplicatas, supressoes (empresa e todos os contatos), projetos, estrategias, regras de persona, pesos. */
+async function carregarContaCM(empresaId: string, contatoId: string, s: Sessao): Promise<Resp | ContaCM> {
+  const { get, perfil } = s;
+  const empRows = await get(`radar_company?id=eq.${empresaId}&select=*`);
+  if (!empRows?.length) return resp(404, { erro: 'empresa_nao_encontrada' });
+  const emp = empRows[0];
+  if (emp.organization_id !== perfil.organization_id) return resp(403, { erro: 'empresa_de_outra_organizacao' });
+  const contatoRows = await get(`radar_contact?id=eq.${contatoId}&select=*`);
+  if (!contatoRows?.length) return resp(404, { erro: 'contato_nao_encontrado' });
+  if (contatoRows[0].organization_id !== perfil.organization_id) return resp(403, { erro: 'contato_de_outra_organizacao' });
+  if (contatoRows[0].company_id !== empresaId) return resp(400, { erro: 'contato_de_outra_empresa' });
+  const [contatos, sinais, atividades, oportunidades, projetos, tarefas, comunicacoes, duplicatas, fontes, estrategias, regrasPersona, pesosFit] = await Promise.all([
+    get(`radar_contact?company_id=eq.${empresaId}&select=*`), get(`radar_signal?company_id=eq.${empresaId}&select=*`), get(`radar_activity?company_id=eq.${empresaId}&select=*`),
+    get(`radar_opportunity?company_id=eq.${empresaId}&select=*`), get(`radar_project?company_id=eq.${empresaId}&select=*`), get(`radar_task?company_id=eq.${empresaId}&select=*`),
+    get(`radar_communication?company_id=eq.${empresaId}&select=*`), get(`radar_possible_duplicate?or=(company_id.eq.${empresaId},candidate_id.eq.${empresaId})&select=*`),
+    get('radar_source?select=*'), get('radar_strategy?select=*'), get('radar_persona_rule?select=*&order=priority'), get('radar_decision_fit_weight?select=key,value'),
+  ]);
+  if (!contatos || !sinais || !atividades || !oportunidades || !projetos || !tarefas || !comunicacoes || !duplicatas || !fontes || !estrategias || !regrasPersona || !pesosFit) return resp(502, { erro: 'leitura_falhou' });
+  const idsContatos = contatos.map((c) => String(c.id)).filter((x) => UUID.test(x));
+  const idsOportunidades = oportunidades.map((o) => String(o.id)).filter((x) => UUID.test(x));
+  const [supressoes, historico] = await Promise.all([
+    get(`radar_suppression?or=(company_id.eq.${empresaId}${idsContatos.length ? `,contact_id.in.(${idsContatos.join(',')})` : ''})&select=*`),
+    idsOportunidades.length ? get(`radar_opportunity_stage_history?opportunity_id=in.(${idsOportunidades.join(',')})&select=*`) : Promise.resolve([] as Row[]),
+  ]);
+  if (!supressoes || !historico) return resp(502, { erro: 'leitura_falhou' });
+  const m = <T,>(chave: ChaveRadar, rows: Row[]) => rows.map((x) => linhaApp(chave, x)) as unknown as T[];
+  const r: RadarDataset = {
+    ...radarVazio(), empresas: m('empresas', [emp]), contatos: m('contatos', contatos), sinais: m('sinais', sinais), atividades: m('atividades', atividades), oportunidades: m('oportunidades', oportunidades),
+    historicoEstagios: m('historicoEstagios', historico), projetos: m('projetos', projetos), tarefas: m('tarefas', tarefas), comunicacoes: m('comunicacoes', comunicacoes), duplicatas: m('duplicatas', duplicatas),
+    supressoes: m('supressoes', supressoes), fontes: m('fontes', fontes), estrategias: m('estrategias', estrategias), regrasPersona: m('regrasPersona', regrasPersona), pesosDecisionFit: pesosFit.map((x) => ({ chave: String(x.key), valor: Number(x.value) })),
+  };
+  return { r, estrategias };
+}
+
+async function remetenteDe(s: Sessao, d: DepsServidor) {
+  const empresaEiff = await s.get('company?select=name&active=is.true&limit=1');
+  return { nome: String(s.perfil.name ?? '').trim() || 'Equipe comercial', empresa: String(empresaEiff?.[0]?.name ?? 'EIFF Engenharia'), cidade: d.cidadeRemetente };
+}
+
+async function reconstruirCM(p: PedidoGeracao, s: Sessao, d: DepsServidor): Promise<Resp | Reconstrucao> {
+  const intencao = p.intencaoComercial!;
+  const conta = await carregarContaCM(p.empresaId, p.contatoId, s); if (ehResp(conta)) return conta;
+  const hoje = hojeDaOrganizacao(d);
+  const res = resolverIntencaoCM(conta.r, hoje, intencao, { canal: p.canal, paraGeracao: true });
+  if (!res.ok) return resp(409, { erro: 'context_changed', conflito: res.conflito, mensagem: MENSAGEM_INTENCAO_MUDOU, detalhe: TEXTO_CONFLITO_INTENCAO_CM[res.conflito] });
+  const ctx = contextoComunicacaoCM(conta.r, res.item, res.plano, hoje, { canal: res.canal, citarIndicacao: p.citarIndicacao });
+  let spec: ContentSpec;
+  try { spec = montarContentSpec(ctx, res.canal, await remetenteDe(s, d), { horaLocal: p.horaLocal }); } catch (e) { return resp(409, { erro: 'sem_comunicacao', mensagem: mascarar((e as Error).message) }); }
+  const vr = validarRequisicaoGeracao({ empresaId: p.empresaId, contatoId: p.contatoId, sinalId: ctx.sinal?.id, estrategiaId: res.plano.comunicacao?.estrategiaId, spec });
+  if (!vr.ok) return resp(500, { erro: 'spec_invalido', motivos: vr.erros });
+  return { spec, ctx, estrategias: conta.estrategias };
+}
+
+async function reconstruirRascunhoCM(p: PedidoGeracao, c: Row, s: Sessao, d: DepsServidor): Promise<Resp | Reconstrucao> {
+  const conta = await carregarContaCM(p.empresaId, p.contatoId, s); if (ehResp(conta)) return conta;
+  const valido = contextoDeRascunhoCM(conta.r, { empresaId: p.empresaId, contatoId: p.contatoId, objetivo: String(c.objective), playbook: String(c.playbook), canal: p.canal as Canal, sinalId: p.sinalId, estrategiaId: p.estrategiaId }, hojeDaOrganizacao(d), { citarIndicacao: p.citarIndicacao });
+  if (!valido.ok) return resp(409, { erro: 'context_changed', mensagem: MENSAGEM_CONTEXTO_MUDOU, detalhe: valido.motivo });
+  let spec: ContentSpec;
+  try { spec = montarContentSpec(valido.ctx, p.canal, await remetenteDe(s, d), { horaLocal: p.horaLocal }); } catch (e) { return resp(409, { erro: 'sem_comunicacao', mensagem: mascarar((e as Error).message) }); }
+  return { spec, ctx: valido.ctx, estrategias: conta.estrategias };
+}
+
 export async function tratarGeracaoComunicacao(req: Req, d: DepsServidor): Promise<Resp> {
   if (req.method !== 'POST') return resp(405, { erro: 'metodo' });
   if (req.body && typeof req.body === 'object' && (req.body as Row).acao === 'validar_edicao') return tratarValidacaoEdicao(req, d);
@@ -105,7 +185,7 @@ export async function tratarGeracaoComunicacao(req: Req, d: DepsServidor): Promi
   const vp = validarPedidoGeracao(req.body);
   if (!vp.ok) return resp(400, { erro: 'requisicao_invalida', motivos: vp.erros });
   const p = vp.pedido;
-  const rec = await reconstruir(p, s, d); if (ehResp(rec)) return rec;
+  const rec = p.intencaoComercial ? await reconstruirCM(p, s, d) : await reconstruir(p, s, d); if (ehResp(rec)) return rec;
   const { spec, ctx, estrategias } = rec;
   tempos.context_load_ms = relogio() - t0 - Number(tempos.auth_ms ?? 0);
   // 6) idempotencia por hash calculado no servidor
@@ -123,9 +203,9 @@ export async function tratarGeracaoComunicacao(req: Req, d: DepsServidor): Promi
   // 8) INSERT completo (snapshot imutavel), READY_FOR_REVIEW, com o JWT do usuario (RLS + trigger de coerencia no banco)
   const agora = (d.agora ?? (() => new Date().toISOString()))();
   const row = {
-    organization_id: perfil.organization_id, company_id: p.empresaId, contact_id: p.contatoId, signal_id: ctx.sinal?.id ?? null, strategy_id: p.estrategiaId ?? estrategias.find((e) => e.code === ctx.estrategia)?.id ?? null,
+    organization_id: perfil.organization_id, company_id: p.empresaId, contact_id: p.contatoId, signal_id: ctx.sinal?.id ?? null, strategy_id: p.estrategiaId ?? estrategias.find((e) => e.code === ctx.estrategia)?.id ?? null, // com intencao CM, ctx.estrategia e a do plano recalculado
     objective: spec.objetivo, playbook: spec.playbook, channel: spec.canal, state: 'READY_FOR_REVIEW', context_hash: spec.contextHash,
-    content_spec: contentSpecPersistivel(spec), generated_content: gerado.resultado, edited_content: null, validation: gerado.validacao,
+    content_spec: contentSpecPersistivel(spec), generated_content: p.intencaoComercial ? { ...gerado.resultado, metadados: { ...gerado.resultado.metadados, origemComercial: origemComercialDe(p.intencaoComercial) } } : gerado.resultado, edited_content: null, validation: gerado.validacao,
     provider: PROVEDOR_ANTHROPIC, model: gerado.resultado.metadados.modelo ?? d.modelo, prompt_version: PROMPT_LLM_VERSION, playbook_version: spec.versoes.playbook, content_spec_version: spec.versoes.contentSpec,
     created_by: uid, last_transition_reason: `gerado por ${PROVEDOR_ANTHROPIC} em ${agora}`,
   };
@@ -176,7 +256,9 @@ export async function tratarValidacaoEdicao(req: Req, d: DepsServidor): Promise<
   if (!(CANAIS_GERACAO_LLM as readonly string[]).includes(canal)) return fim(resp(409, { erro: 'context_changed', mensagem: MENSAGEM_CONTEXTO_MUDOU, detalhe: 'canal fora do catálogo de validação' }), 'context_changed');
   // Server Truth: o spec completo e reconstruido a partir do banco, nunca do snapshot enviado pelo navegador
   const pedido: PedidoGeracao = { empresaId: String(c.company_id), contatoId: String(c.contact_id), sinalId: c.signal_id ? String(c.signal_id) : undefined, estrategiaId: c.strategy_id ? String(c.strategy_id) : undefined, canal: canal as PedidoGeracao['canal'], citarIndicacao: snapshot.sourceDisclosure === 'ALLOWED', horaLocal: typeof snapshot.horaLocal === 'number' ? snapshot.horaLocal : undefined };
-  const rec = await reconstruir(pedido, s, d);
+  // rascunho nascido da Maquina Comercial: a decisao e a do proprio rascunho; o Server Truth confere se ela continua valida
+  const origemCM = (((c.generated_content ?? {}) as Row).metadados as Row | undefined)?.origemComercial as OrigemComercialCM | undefined;
+  const rec = origemCM ? await reconstruirRascunhoCM(pedido, c, s, d) : await reconstruir(pedido, s, d);
   if (ehResp(rec)) { if (rec.status === 401 || rec.status === 403 || rec.status >= 500) return rec; return fim(resp(409, { erro: 'context_changed', mensagem: MENSAGEM_CONTEXTO_MUDOU, detalhe: rec.corpo.erro }), 'context_changed'); }
   const { spec, ctx } = rec;
   tempos.context_load_ms = relogio() - t0 - Number(tempos.auth_ms ?? 0);

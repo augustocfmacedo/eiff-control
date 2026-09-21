@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA, NOME_CANAL, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, PERSONAS, TIPOS_ATIVIDADE, TIPOS_SINAL, TIPOS_TAREFA, calcularDecisionFit, calcularScore, contextoEmpresa, normalizarContatosCsv, tipoProjetoPrincipal, normalizarEmpresasCsv, type Atividade, type Canal, type Contato, type Empresa, type Estagio, type ExplicacaoScore, type ImportacaoJob, type Oportunidade, type Projeto, type TarefaRadar, type TipoAtividade, type TipoSinal, type TipoTarefa, ACOES_SINAL, NOME_ACAO_SINAL, NOME_RELEVANCIA, RELEVANCIAS, RELEVANCIA_PADRAO_POR_TIPO, type AcaoSinal, type RelevanciaEstrutural } from '../../core/radar';
-import { actions, useStore } from '../../data/store';
+import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA, NOME_CANAL, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, PERSONAS, TIPOS_ATIVIDADE, TIPOS_SINAL, TIPOS_TAREFA, calcularDecisionFit, calcularScore, contextoEmpresa, normalizarContatosCsv, tipoProjetoPrincipal, normalizarEmpresasCsv, type Atividade, type Canal, type Contato, type Empresa, type Estagio, type ExplicacaoScore, type ImportacaoJob, type Oportunidade, type Projeto, type TarefaRadar, type TipoAtividade, type TipoSinal, type TipoTarefa, ACOES_SINAL, NOME_ACAO_SINAL, NOME_RELEVANCIA, RELEVANCIAS, RELEVANCIA_PADRAO_POR_TIPO, type AcaoSinal, type RelevanciaEstrutural, TEXTO_PENDENCIA_TAREFA_CM, type CodigoPendenciaTarefaCM } from '../../core/radar';
+import { RegraCadenciaCommitError, actions, useStore } from '../../data/store';
+import { MENSAGEM_AGENDADA_CM, TEXTO_CONFLITO_CADENCIA_CM, TITULO_CONFLITO_CADENCIA_CM, campoDaRecusaCadenciaCM, edicoesDoFormularioCM, reacaoDaRecusaCadenciaCM, validarFormularioAgendamentoCM, type AberturaAgendamentoCM, type CampoAgendamentoCM, type CamposAgendamentoCM, type ReacaoRecusaCadenciaCM } from './HojeCadencia';
 import { dryRunContatosCsv, relatorioDryRun, type DryRunContatos } from '../../core/radar/dryrun';
 import { Badge, Field, Input, Modal, NumberInput, Select, money, tentar, type Tone } from '../../ui/components';
 
@@ -218,6 +219,97 @@ export function TarefaForm({ inicial, onClose, onErro, onOk }: FormProps<TarefaR
         <Field label="Descrição" req full><Input value={t.descricao} onChange={(ev) => up({ descricao: ev.target.value })} /></Field>
       </div>
       <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => { actions.salvarTarefaRadar(t); onOk('Tarefa salva.'); }, onErro, onClose)}>Salvar</button></div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CM2-D2 — agendamento governado do proximo compromisso (Maquina Comercial).
+// Formulario separado do TarefaForm de proposito: aqui tipo e oportunidade sao imutaveis, nao ha prioridade e o Salvar
+// chama SOMENTE actions.criarTarefaDaCadenciaCM, que revalida tudo (CM2-E) antes de criar. A tela nunca persiste a
+// sugestao direto nem escolhe canal, contato alternativo ou data por conta propria: recusa vem por codigo, nao por texto.
+// ---------------------------------------------------------------------------
+export function TarefaCadenciaForm({ abertura, onClose, onOk, onAbrirTarefa }: {
+  abertura: Extract<AberturaAgendamentoCM, { ok: true }>;
+  onClose: () => void;
+  onOk: (m: string) => void;
+  onAbrirTarefa: (t: TarefaRadar) => void;
+}) {
+  const { ds } = useStore();
+  const [campos, setCampos] = useState<CamposAgendamentoCM>(abertura.campos);
+  const [erro, setErro] = useState<{ mensagem: string; campo?: CampoAgendamentoCM } | null>(null);
+  const [conflito, setConflito] = useState<{ reacao: Exclude<ReacaoRecusaCadenciaCM, 'CAMPO'>; tarefa?: TarefaRadar; pendencias: readonly CodigoPendenciaTarefaCM[] } | null>(null);
+  const up = (p: Partial<CamposAgendamentoCM>) => setCampos({ ...campos, ...p });
+  const oportunidade = abertura.tarefa.oportunidadeId ? ds.radar.oportunidades.find((o) => o.id === abertura.tarefa.oportunidadeId) : undefined;
+  const contatoFixo = abertura.tarefa.contatoId ? ds.radar.contatos.find((c) => c.id === abertura.tarefa.contatoId) : undefined;
+
+  const salvar = () => {
+    setErro(null);
+    // campo vazio e decisao do humano, nao ausencia de edicao: a fronteira nao pode reaproveitar o responsavel sugerido
+    const pendente = validarFormularioAgendamentoCM(campos);
+    if (pendente) { setErro(pendente); return; }
+    try {
+      actions.criarTarefaDaCadenciaCM(abertura.expectativa, edicoesDoFormularioCM(campos));
+      onOk(MENSAGEM_AGENDADA_CM);
+      onClose();
+    } catch (e) {
+      if (e instanceof RegraCadenciaCommitError) {
+        const reacao = reacaoDaRecusaCadenciaCM(e.codigo);
+        if (reacao === 'CAMPO') { setErro({ mensagem: e.message, campo: campoDaRecusaCadenciaCM(e.codigo) }); return; }
+        setConflito({ reacao, tarefa: e.tarefaId ? ds.radar.tarefas.find((t) => t.id === e.tarefaId) : undefined, pendencias: e.pendencias ?? [] });
+        return;
+      }
+      setErro({ mensagem: (e as Error).message });
+    }
+  };
+
+  if (conflito) {
+    return (
+      <Modal title={TITULO_CONFLITO_CADENCIA_CM[conflito.reacao]} onClose={onClose}>
+        <p style={{ margin: 0 }}>{TEXTO_CONFLITO_CADENCIA_CM[conflito.reacao]}</p>
+        {conflito.tarefa && (
+          <dl className="kv" style={{ marginTop: 10 }}>
+            <dt>Tarefa</dt><dd>{conflito.tarefa.descricao}</dd>
+            <dt>Prazo</dt><dd>{d(conflito.tarefa.venceEm)}</dd>
+            <dt>Responsável</dt><dd>{nomeUsuario(ds.usuarios, conflito.tarefa.responsavelId)}</dd>
+          </dl>
+        )}
+        {conflito.pendencias.length > 0 && (
+          <ul className="small" style={{ margin: '10px 0 0', paddingLeft: 18, display: 'grid', gap: 4 }}>
+            {conflito.pendencias.map((p) => <li key={p}><Badge tone="warn">Pendência</Badge> {TEXTO_PENDENCIA_TAREFA_CM[p]}</li>)}
+          </ul>
+        )}
+        <div className="foot">
+          {conflito.tarefa && <button className="btn" onClick={() => onAbrirTarefa(conflito.tarefa!)}>Abrir tarefa existente</button>}
+          <button className="btn primary" onClick={onClose}>{conflito.reacao === 'CONTEXTO' ? 'Voltar para a fila' : 'Fechar'}</button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Agendar próxima ação" onClose={onClose}>
+      <p className="small muted" style={{ margin: 0 }}>Recomendação da Máquina Comercial. Ao confirmar, a recomendação é revalidada e a tarefa nasce com prioridade Normal.</p>
+      <div className="form" style={{ marginTop: 10 }}>
+        <Field label="Tipo"><Input value={NOME_TIPO_TAREFA[abertura.tarefa.tipo] ?? abertura.tarefa.tipo} readOnly /></Field>
+        <Field label="Data recomendada pela Máquina Comercial" req erro={erro?.campo === 'venceEm' ? erro.mensagem : undefined}>
+          <Input type="date" value={campos.venceEm.slice(0, 10)} onChange={(ev) => up({ venceEm: ev.target.value })} />
+        </Field>
+        <Field label="Responsável" req erro={erro?.campo === 'responsavelId' ? erro.mensagem : undefined}>
+          <Select value={campos.responsavelId} onChange={(v) => up({ responsavelId: v })} options={ds.usuarios.filter((u) => u.ativo).map((u) => ({ value: u.id, label: u.nome }))} allowEmpty="— selecione —" />
+        </Field>
+        <Field label="Contato" erro={erro?.campo === 'contatoId' ? erro.mensagem : undefined}>
+          {campos.contatoEditavel
+            ? <Select value={campos.contatoId} onChange={(v) => up({ contatoId: v })} options={ds.radar.contatos.filter((c) => c.empresaId === abertura.empresaId).map((c) => ({ value: c.id, label: c.nome }))} allowEmpty="— sem contato —" />
+            : <Input value={contatoFixo?.nome ?? '—'} readOnly />}
+        </Field>
+        <Field label="Oportunidade"><Input value={oportunidade ? `${oportunidade.titulo} · ${NOME_ESTAGIO[oportunidade.estagio]}` : '—'} readOnly /></Field>
+        <Field label="Descrição" req full erro={erro?.campo === 'descricao' ? erro.mensagem : undefined}>
+          <Input value={campos.descricao} onChange={(ev) => up({ descricao: ev.target.value })} />
+        </Field>
+      </div>
+      {erro && !erro.campo && <p className="small erro" role="alert" style={{ marginTop: 10 }}>{erro.mensagem}</p>}
+      <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={salvar}>Agendar</button></div>
     </Modal>
   );
 }
