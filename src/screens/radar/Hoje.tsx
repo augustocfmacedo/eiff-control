@@ -8,7 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   CATEGORIAS_COMMERCIAL_QUEUE, MOTIVOS_FORA_DA_FILA, NOME_CANAL, NOME_CATEGORIA_CM,
   TEXTO_FORA_DA_FILA, TEXTO_RAZAO_CM, VERSAO_REGRAS_CADENCIA_CM, VERSAO_REGRAS_CM, VERSAO_REGRAS_PLANO_CM,
-  cadenciasDaFilaCM, construirCommercialQueue, itemIdCM, planosDaFilaCM, sugestoesTarefaDaFilaCM,
+  OBJETIVOS, cadenciasDaFilaCM, construirCommercialQueue, itemIdCM, planosDaFilaCM, sugestoesTarefaDaFilaCM,
   type CadenceRecommendationCM, type CategoriaCommercialQueue, type CommercialActionPlan, type CommercialQueueItem, type Empresa,
   type NaturezaToqueCM, type RetomadaCadenciaCM, type TarefaRadar, type TaskSuggestionCM,
 } from '../../core/radar';
@@ -21,6 +21,7 @@ import { intencaoDoPlanoCM, type IntencaoComunicacaoCM } from '../../core/radar/
 import { AtividadeForm, ConcluirTarefaForm, ScoreModal, TarefaCadenciaForm, TarefaForm, d } from './comum';
 import ComercialPanorama from './ComercialPanorama';
 import ComercialFoco, { NOME_MODO, TOM_CATEGORIA, TOM_MODO, gavetaFailClosed, nomeEmpresaCM as nomeEmpresa } from './ComercialFoco';
+import ComercialModoFoco, { focoAoEntrarUX, focoInvalidadoUX, type AcaoFocoUX, type FocoTrabalhoUX } from './ComercialModoFoco';
 import { visaoComercialUX } from './comercialVisao';
 import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
 
@@ -38,9 +39,9 @@ const rotuloToque = (c: CadenceRecommendationCM) => {
 };
 
 type FiltroCategoria = 'TODAS' | CategoriaCommercialQueue;
-type VisaoComercial = 'panorama' | 'fila';
+type VisaoComercial = 'panorama' | 'foco' | 'fila';
 /** Descritor de acao: o Panorama mostra so a principal e a fila mostra todas, sem duplicar o `switch (plano.modo)`. */
-interface AcaoItemUX { id: string; rotulo: string; primario?: boolean; to?: string; onClick?: () => void }
+type AcaoItemUX = AcaoFocoUX;
 interface Linha { id: string; item: CommercialQueueItem; plano: CommercialActionPlan; cadencia: CadenceRecommendationCM; sugestao: TaskSuggestionCM; empresa?: Empresa }
 /** Indexa por itemId; duplicado ou ausente e erro explicito (nunca casar por posicao). */
 function porItemId<T extends { itemId: string }>(xs: readonly T[], nome: string): Map<string, T> {
@@ -70,6 +71,10 @@ export default function RadarHoje() {
   const [agendar, setAgendar] = useState<Extract<AberturaAgendamentoCM, { ok: true }> | null>(null);
   const [visao, setVisao] = useState<VisaoComercial>('panorama');
   const [porQue, setPorQue] = useState<string | null>(null);
+  // UX-3: identidade do foco de trabalho e o itemId (nunca o indice). `perdido` guarda a conta que saiu da base:
+  // enquanto estiver preenchido, a tela fica no estado neutro e NENHUMA outra conta e escolhida no lugar.
+  const [focoTrabalhoId, setFocoTrabalhoId] = useState<string | null>(null);
+  const [focoPerdido, setFocoPerdido] = useState<string | null>(null);
 
   // fonte de verdade, sempre sobre o dataset inteiro e antes de qualquer filtro:
   // fila (CM1-A) -> planos (CM1-B) -> cadencias (CM2-B) -> sugestoes de compromisso (CM2-C)
@@ -109,6 +114,25 @@ export default function RadarHoje() {
   // UX-1: o Panorama le o view-model do UX-0 sobre as mesmas linhas filtradas; a categoria continua sendo filtro da fila.
   const porLinha = useMemo(() => new Map(base.map((l) => [l.id, l])), [base]);
   const contasUX = useMemo(() => visaoComercialUX(base.map(({ item, plano, cadencia, sugestao }) => ({ item, plano, cadencia, sugestao }))), [base]);
+  // UX-3: a conta em foco saiu da base (acao, filtro ou recomputacao legitima). O efeito so INVALIDA o foco e
+  // registra a perda; nunca seleciona outra conta — quem escolhe a proxima e o usuario, sempre por clique.
+  useEffect(() => {
+    if (focoInvalidadoUX(contasUX, focoTrabalhoId)) { setFocoPerdido(focoTrabalhoId); setFocoTrabalhoId(null); }
+  }, [contasUX, focoTrabalhoId]);
+  /** Entrada EXPLICITA no Modo Foco: preserva foco valido, senao seleciona a primeira da fila. So no clique da aba. */
+  const trocarVisao = (v: VisaoComercial) => {
+    if (v === 'foco') { setFocoTrabalhoId(focoAoEntrarUX(contasUX, focoTrabalhoId)); setFocoPerdido(null); }
+    setVisao(v);
+  };
+  const foco3: FocoTrabalhoUX = { id: focoTrabalhoId, perdido: focoPerdido };
+  /** Unico caminho de saida do estado "conta indisponivel", e so por clique do usuario. */
+  const irParaPrimeiraDisponivel = () => { const c = contasUX[0]; if (c) { setFocoTrabalhoId(c.itemId); setFocoPerdido(null); } };
+  /** Objetivo: catalogo OBJETIVOS quando ha plano de comunicacao; senao a explicacao do modo que o CM1-B ja escreveu. */
+  const objetivoDaConta = (itemId: string) => {
+    const l = porLinha.get(itemId);
+    if (!l) return '';
+    return l.plano.comunicacao ? OBJETIVOS[l.plano.comunicacao.objetivo].nome : l.plano.explicacao.modo;
+  };
   /** Leva a conta para a fila completa, em foco (a visao de trabalho completa continua a um clique da gaveta). */
   const verNaFila = (itemId: string) => {
     const linha = porLinha.get(itemId);
@@ -127,7 +151,9 @@ export default function RadarHoje() {
 
   return (
     <>
-      <PageHead title="Comercial" subtitle={<>{visao === 'panorama'
+      <PageHead title="Comercial" subtitle={<>{visao === 'foco'
+        ? <>Uma conta por vez, na ordem da Máquina Comercial. Executar uma ação não avança a fila: a próxima conta é sempre uma escolha sua.</>
+        : visao === 'panorama'
         ? <>O que precisa da sua atenção agora, o que espera alguém e o que está programado. Ordem, ação e cadência vêm da Máquina Comercial; o Panorama só apresenta.</>
         : <>Sua fila comercial priorizada pelo que exige ação agora. Ordem, ação, plano e cadência vêm da Máquina Comercial (fila {VERSAO_REGRAS_CM} · plano {VERSAO_REGRAS_PLANO_CM} · cadência {VERSAO_REGRAS_CADENCIA_CM}); os filtros só escondem itens, não mudam a ordem.</>}</>}>
         <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={somenteMinhas} onChange={(e) => setSomenteMinhas(e.target.checked)} /> Só as minhas</label>
@@ -135,7 +161,7 @@ export default function RadarHoje() {
         <Input placeholder="Buscar empresa ou contato" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar empresa ou contato" style={{ width: 220 }} />
       </PageHead>
 
-      <Tabs value={visao} onChange={setVisao} items={[{ id: 'panorama' as VisaoComercial, label: 'Panorama' }, { id: 'fila' as VisaoComercial, label: `Fila completa (${base.length})` }]} />
+      <Tabs value={visao} onChange={trocarVisao} items={[{ id: 'panorama' as VisaoComercial, label: 'Panorama' }, { id: 'foco' as VisaoComercial, label: 'Trabalhar a fila' }, { id: 'fila' as VisaoComercial, label: `Fila completa (${base.length})` }]} />
 
       {visao === 'panorama' ? (
         !fila.itens.length
@@ -152,6 +178,24 @@ export default function RadarHoje() {
               onVerTodos={() => setVisao('fila')}
             />
           </div>
+      ) : visao === 'foco' ? (
+        <div style={{ marginTop: 12 }}>
+          <ComercialModoFoco
+            contas={contasUX}
+            foco={foco3}
+            nomeEmpresa={(id) => nomeEmpresa(empresaPorId.get(id))}
+            nomeContato={(id) => contatoPorId.get(id)?.nome ?? '—'}
+            nomeCanal={(canal) => (canal ? NOME_CANAL[canal] : '')}
+            classeDaConta={(itemId) => porLinha.get(itemId)?.item.priorityClass}
+            objetivoDaConta={objetivoDaConta}
+            acoes={(itemId) => { const l = porLinha.get(itemId); return l ? acoesDisponiveis(l) : []; }}
+            ctaCadencia={(itemId) => { const l = porLinha.get(itemId); return l ? ctaCadenciaDe(l) : null; }}
+            onFoco={(itemId) => { setFocoTrabalhoId(itemId); setFocoPerdido(null); }}
+            onPorQue={setPorQue}
+            onPanorama={() => setVisao('panorama')}
+            onPrimeiraDisponivel={irParaPrimeiraDisponivel}
+          />
+        </div>
       ) : (
       <>
       <KpiStrip itens={[
@@ -304,9 +348,14 @@ export default function RadarHoje() {
     }
   }
 
-  /** Renderiza os descritores. Botao exige permissao (como sempre); link nao. `primeira` e o que o Panorama mostra. */
+  /** Descritores que este usuario pode acionar: botao exige permissao (como sempre); link nao. */
+  function acoesDisponiveis(linha: Linha): AcaoItemUX[] {
+    return acoesDoItem(linha).filter((a) => !!a.to || podeAgir);
+  }
+
+  /** Renderiza os descritores. `primeira` e o que o Panorama mostra. */
   function acoes(linha: Linha, opcoes: { primeira?: boolean } = {}): React.ReactNode {
-    const disponiveis = acoesDoItem(linha).filter((a) => !!a.to || podeAgir);
+    const disponiveis = acoesDisponiveis(linha);
     const lista = opcoes.primeira ? [disponiveis.find((a) => a.primario) ?? disponiveis[0]].filter((a): a is AcaoItemUX => !!a) : disponiveis;
     return lista.map((a) => a.to
       ? <Link key={a.id} to={a.to} className={`btn sm${a.primario ? ' primary' : ''}`}>{a.rotulo}</Link>
