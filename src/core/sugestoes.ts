@@ -3,10 +3,18 @@
 import { calcLancamentos, calcTransacoes, carteiraObras, dashboard } from './engine';
 import { acompanhamentoFaturamento } from './faturamento';
 import { resumoProducao } from './obras';
-import { filaHoje } from './radar/pipeline';
+import { construirCommercialQueue, type CategoriaCommercialQueue } from './radar/commercialMachine';
+import type { RadarDataset } from './radar/types';
 import type { Dataset, Usuario } from './types';
 
 export interface Sugestao { id: string; tom: 'info' | 'warn' | 'bad'; texto: string; detalhe?: string; acao?: { rotulo: string; to: string } }
+
+/**
+ * Contador do menu "Radar · Hoje" derivado da Commercial Queue (itens em AGIR_AGORA). Preparado para substituir o
+ * contador atual do App.tsx (tarefas abertas vencidas), que ainda NAO usa a maquina: divida temporaria conhecida,
+ * integracao depois que a Wave 03 da Central estiver no baseline (evita conflito em App.tsx).
+ */
+export const contadorRadarHojeCM = (radar: RadarDataset, hoje: string): number => construirCommercialQueue(radar, hoje).porCategoria.AGIR_AGORA;
 
 const diasEntre = (a: string, b: string) => Math.round((new Date(`${b.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${a.slice(0, 10)}T00:00:00Z`).getTime()) / 86_400_000);
 const n = (v: number, um: string, varios: string) => `${v.toLocaleString('pt-BR')} ${v === 1 ? um : varios}`;
@@ -49,15 +57,20 @@ export function sugestoesPara(rota: string, ds: Dataset, usuario: Usuario, hoje 
     }
   }
   if (raiz === 'radar') {
+    // a faixa do Radar resume a mesma verdade da Hoje: contagens da Commercial Queue, sem recalcular prioridade
     const r = ds.radar;
     if (r) {
-      const fila = filaHoje(r, hoje);
-      const vencidas = fila.filter((i) => i.proximaAcaoEm && i.proximaAcaoEm.slice(0, 10) < hoje);
-      if (vencidas.length) out.push({ id: 'radar-vencidas', tom: 'warn', texto: `${n(vencidas.length, 'próxima ação vencida', 'próximas ações vencidas')} na fila.`, acao: { rotulo: 'Ver fila', to: '/radar/hoje' } });
-      const semDecisor = fila.filter((i) => !i.decisor && (i.empresa.priorityClass === 'A+' || i.empresa.priorityClass === 'A'));
-      if (semDecisor.length) out.push({ id: 'radar-sem-decisor', tom: 'info', texto: `${n(semDecisor.length, 'conta A/A+', 'contas A/A+')} sem decisor cadastrado.`, detalhe: semDecisor.slice(0, 4).map((i) => i.empresa.nomeFantasia ?? i.empresa.razaoSocial).join(', '), acao: { rotulo: 'Abrir', to: `/radar/empresas/${semDecisor[0].empresa.id}` } });
-      const dup = (r.duplicatas ?? []).filter((d) => d.status === 'pendente').length;
-      if (dup) out.push({ id: 'radar-duplicatas', tom: 'info', texto: `${n(dup, 'possível duplicata', 'possíveis duplicatas')} aguardando revisão.`, acao: { rotulo: 'Revisar', to: '/radar' } });
+      const fila = construirCommercialQueue(r, hoje);
+      const nomes = (c: CategoriaCommercialQueue) => fila.itens.filter((i) => i.categoria === c).slice(0, 4).map((i) => { const e = r.empresas.find((x) => x.id === i.empresaId); return e ? e.nomeFantasia ?? e.razaoSocial : i.empresaId; }).join(', ');
+      const p = fila.porCategoria;
+      if (p.AGIR_AGORA) out.push({ id: 'radar-agir-agora', tom: 'warn', texto: `${n(p.AGIR_AGORA, 'ação exige', 'ações exigem')} atenção agora na fila comercial.`, detalhe: nomes('AGIR_AGORA'), acao: { rotulo: 'Ver fila', to: '/radar/hoje' } });
+      if (p.REVISAR) {
+        // duplicata pendente vista pela propria fila (trava do item principal) leva direto a revisao de duplicatas
+        const porDuplicata = fila.itens.some((i) => i.categoria === 'REVISAR' && i.porQueAgora.trava === 'DUPLICATA_PENDENTE');
+        out.push({ id: 'radar-revisar', tom: 'info', texto: `${n(p.REVISAR, 'item precisa', 'itens precisam')} de revisão.`, detalhe: nomes('REVISAR'), acao: porDuplicata ? { rotulo: 'Revisar duplicatas', to: '/radar?aba=duplicatas' } : { rotulo: 'Ver fila', to: '/radar/hoje' } });
+      }
+      if (p.ENRIQUECER) out.push({ id: 'radar-enriquecer', tom: 'info', texto: `${n(p.ENRIQUECER, 'conta precisa', 'contas precisam')} de enriquecimento (decisor, canal ou verificação).`, detalhe: nomes('ENRIQUECER'), acao: { rotulo: 'Ver fila', to: '/radar/hoje' } });
+      if (p.FOLLOW_UP) out.push({ id: 'radar-follow-up', tom: 'info', texto: `${n(p.FOLLOW_UP, 'follow-up pendente', 'follow-ups pendentes')} na fila comercial.`, detalhe: nomes('FOLLOW_UP'), acao: { rotulo: 'Ver fila', to: '/radar/hoje' } });
     }
   }
   if (raiz === 'conciliacao') {

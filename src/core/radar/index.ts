@@ -19,3 +19,8 @@ export * from './calibracao';
 export * from './fitCalibracao';
 export * from './comunicacao';
 export * from './comunicacaoGeracao';
+export * from './commercialMachine';
+export * from './commercialActionPlan';
+export * from './commercialCadence';
+export * from './commercialCadenceTask';
+export * from './commercialCadenceCommit';

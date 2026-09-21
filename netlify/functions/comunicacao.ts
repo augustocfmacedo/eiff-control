@@ -56,6 +56,7 @@ export default async (req: Request): Promise<Response> => {
     const r = await tratarGeracaoComunicacao({ method: req.method, authorization: req.headers.get('authorization'), body }, {
       fetch, supabaseUrl, anon, llmDisponivel: !!chave, portas: (m, mj) => portasAnthropic(chave, cfg, m, mj), modelo: cfg.modelo, modeloJuiz: cfg.modeloJuiz,
       cidadeRemetente: (process.env.EIFF_REMETENTE_CIDADE ?? 'Goiânia').trim(),
+      fusoHorario: (process.env.EIFF_FUSO_HORARIO ?? '').trim() || undefined, // "hoje" da Maquina Comercial no servidor (padrao America/Sao_Paulo)
       deadlineMs: cfg.deadlineMs, timeoutChamadaMs: cfg.timeoutChamadaMs,
       log: (t) => console.log('[communication_timing]', JSON.stringify(t)), // so numeros, modelos, etapa e outcome
     });

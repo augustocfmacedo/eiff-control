@@ -113,11 +113,57 @@ Motor de contexto de comunicação, reutilizável para qualquer conta, contato, 
 - **Command Center** (`#/radar`): pipeline ponderado, leads A+/A, novos sinais, follow-ups vencidos, oportunidades sem
   próxima ação, atividades, respostas, reuniões, projetos recebidos, propostas; abas Alertas, Regras de score,
   Estratégias, Importações, Duplicatas, Não contatar.
-- **Hoje** (`#/radar/hoje`): fila por prioridade (vencidas primeiro), com motivo, sinal principal, decisor, última
-  interação, próxima ação e ação recomendada; registrar atividade, concluir tarefa ou agendar direto da fila.
+- **Hoje** (`#/radar/hoje`, Hoje 2.0 — Máquina Comercial CM1-C + CM2-D1/D2): apresenta a Commercial Queue, o
+  Commercial Action Plan e a cadência, sem decidir nada na tela. Resumo por categoria, filtros (só as minhas pelo
+  responsável do item, classe, categoria, busca), bloco "Próxima ação" (conta, por que agora, chave que decide a ordem,
+  ação por modo, pessoa, plano de contato com motivo do objetivo e do canal, histórico, travas), bloco "Cadência"
+  (estado temporal, motivo, próximo toque com a natureza da data, tentativas, retomada, avisos) e "Próximo compromisso"
+  (sugestão do CM2-C: tipo, data, oportunidade, responsável, contato, descrição, pendências ou a tarefa que já cobre o
+  ciclo) e a fila na ordem da máquina. Botões: os do modo do plano ("Criar tarefa manual" é o caminho livre do CM1-C) e,
+  no bloco do compromisso, "Agendar próxima ação" — o único caminho governado de criação. Ver "Máquina Comercial" abaixo.
 - **Empresas** (`#/radar/empresas`): tabela com filtros (classe, UF, setor, situação) e ordenação.
 - **Empresa** (`#/radar/empresas/:id`): Overview, Contatos, Projetos, Sinais, Atividades (com tarefas),
   Oportunidades (com histórico), Inteligência (explicação do score, estratégia sugerida, linhagem).
+
+## Máquina Comercial (CM1 + CM2)
+
+Arquitetura completa, invariantes, hipóteses e dívidas em `docs/commercial-machine.md`; o Cadence Engine v1 (CM2) tem
+documento canônico em `docs/commercial-machine-cm2.md`. Resumo:
+
+- **Não é um segundo CRM.** É uma projeção/orquestração pura sobre `radar_company`, `radar_contact`, `radar_signal`,
+  `radar_opportunity` (+ histórico), `radar_activity`, `radar_task`, `radar_strategy`, `radar_experiment`,
+  `radar_communication`, duplicatas e supressões. Nenhuma entidade, tabela ou migration nova.
+- **CM1-A — Commercial Queue** (`commercialMachine.ts`): *o que precisa acontecer agora?* Uma entrada por conta com ação
+  principal explicável, pendências secundárias, travas e `foraDaFila`. Categorias em escada: AGIR_AGORA,
+  AVANCAR_OPORTUNIDADE, FOLLOW_UP, REVISAR, PROSPECTAR, ENRIQUECER, NURTURE, AGENDADO. Sem score próprio e sem soma de
+  pesos: ordem por degrau → tier → urgência (dias de fato) → classe → `priorityScore` (só desempate) → valor ponderado →
+  prazo → id. Dado faltante nunca melhora a posição.
+- **CM1-B — Commercial Action Plan** (`commercialActionPlan.ts`): *como executar?* Modo CONTATO, ACAO_INTERNA, REVISAR,
+  ENRIQUECER ou AGUARDAR, derivado da ação concreta (não da categoria). Só CONTATO tem objetivo, playbook e canal, e só
+  quando empresa, contato, canal, histórico e travas permitem. Canal = política existente ∩ canais acionáveis (supressões
+  `invalid_phone`/`email_bounced` valem).
+- **CM1-C — Hoje 2.0**: apresenta fila + plano; `filaHoje` não é mais autoridade da Hoje. A faixa de sugestões do Radar
+  (CM1-D1) também resume a fila.
+- **CM1-D — Intenção de comunicação** (`comunicacaoIntencaoCM.ts`): a Abordagem aberta pela Hoje gera (IA ou versão
+  padrão) com a intenção do plano. A Máquina Comercial decide a intenção; o Server Truth decide se ela continua válida:
+  `/api/comunicacao` recalcula fila e plano no banco e responde `409 context_changed` se algo mudou, sem fallback.
+  Abordagem aprovada nunca gera outra. Sem a intenção, a Abordagem mantém o comportamento anterior.
+- **CM2-B — Cadence Engine** (`commercialCadence.ts`): *quando essa conta volta?* Estado temporal (`DEVIDA`,
+  `AGUARDANDO`, `SUGERIR_PROXIMO_PASSO`, `PAUSADA`, `ENCERRADA`, `NAO_APLICAVEL`) separado do motivo (o código da razão
+  do CM1-A) e próximo toque com natureza: `IMEDIATA`, `FIRME` (compromisso real), `BASE_CM1` (data que a fila já
+  produziu) e `RECOMENDADA` — esta última só na lacuna pós-conversa, com âncora real, e **não é compromisso**. Data do
+  cliente nunca é inventada: sem data estruturada, é decisão humana.
+- **CM2-C — Sugestão de compromisso** (`commercialCadenceTask.ts`): *isso precisa virar tarefa?* Estados `SUGERIDA`,
+  `COBERTA`, `REQUER_DATA`, `REQUER_RESPONSAVEL`, `BLOQUEADA`, `NAO_APLICAVEL`. Uma tarefa aberta compatível criada
+  depois da âncora cobre o ciclo e nenhuma sugestão nova aparece. Nada é persistido aqui.
+- **CM2-E — Agendamento governado** (`commercialCadenceCommit.ts` + `actions.criarTarefaDaCadenciaCM`): a tela nunca
+  grava a sugestão. Ao confirmar, o store revalida sobre o Radar **atual** — cobertura histórica do ciclo, recálculo de
+  fila, plano, cadência e sugestão, comparação do contexto que o humano viu, edições humanas e segunda cobertura — e
+  então autoriza ou recusa com código: `JA_COBERTA` (com a tarefa exata que já cobre), `CONTEXTO_MUDOU`,
+  `VERSAO_DIVERGENTE`, pendências ou erro de campo. A tarefa só ganha id depois do veredicto.
+- **Nada é enviado nem automatizado**: sem envio, sem tarefa automática, sem movimentar oportunidade, sem Vibe
+  automático. Nenhuma tabela, coluna ou migration nasceu com o CM2. Hipóteses (`VERSAO_REGRAS_CM = CM1-A.1`,
+  `VERSAO_REGRAS_PLANO_CM = CM1-B.1`, `VERSAO_REGRAS_CADENCIA_CM = CM2-B.1`) são iniciais e serão calibradas por dados.
 
 ## Importação CSV
 
