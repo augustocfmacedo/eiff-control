@@ -4,11 +4,13 @@ Baseline: `main @ ab642be3c6cfb918241b6c8b637d485a05ce810e`
 
 Branch exclusiva: `feature/commercial-machine-v1` (CM1, congelada em `a9ef237`) · CM2: `feature/commercial-machine-cm2` (base `a9ef237`)
 
-## Estado (atualizado no CM2-A)
+## Estado (atualizado no CM2-F)
 
 **CM1 fechado.** Arquitetura, invariantes, matriz de autoridade, hipóteses, dívidas e contrato do CM2: `docs/commercial-machine.md`.
 
-**CM2-A fechado.** Contrato temporal, estado temporal × motivo, paridade dos 28 casos, dívidas congeladas e plano CM2-B → CM2-F: `docs/commercial-machine-cm2.md`.
+**CM2 fechado.** Cadence Engine v1 completo (contrato temporal, motor, sugestão de compromisso, Hoje, fronteira de
+escrita governada e confirmação humana), invariantes, dívidas abertas e fechadas, versões e gate final:
+`docs/commercial-machine-cm2.md` (documento canônico).
 
 | Bloco | Estado | Commit |
 |---|---|---|
@@ -19,13 +21,22 @@ Branch exclusiva: `feature/commercial-machine-v1` (CM1, congelada em `a9ef237`) 
 | CM1-D1 — sugestões do Radar pela fila | DONE | `c503199cf7d8bff08c5b76139321432921a79cac` |
 | CM1-D2 — intenção comercial até o Server Truth | DONE | `2cef7059599324203d28c1f67837241c45c27459` |
 | CM1-E — consolidação e fechamento formal | DONE | `a9ef23798eb6ee1c4c538f3b491804e848fa73b0` |
-| CM2-A — contrato temporal e paridade CM1-A.1 | DONE (branch `feature/commercial-machine-cm2`, base `a9ef237`) | este commit |
-| CM2-B a CM2-F — Cadence Engine v1 | NOT STARTED (GO por bloco) | — |
+| CM2-A — contrato temporal e paridade CM1-A.1 | DONE (branch `feature/commercial-machine-cm2`, base `a9ef237`) | `2ec5da1eebbfd162b6f4cb372ac67e56ad40daca` |
+| CM2-B — Cadence Engine puro (`VERSAO_REGRAS_CADENCIA_CM = CM2-B.1`) | DONE | `d94313fb581708dac17cf5fb58a68bdd29ebe703` |
+| CM2-C — sugestão governada de compromisso (chave semântica + cobertura) | DONE | `113008311baa10d36d9ee6b1a4a56deaeaa5ab33` |
+| CM2-D1 — cadência e sugestão na Hoje, somente leitura | DONE | `7859c430b34b984cef4144477d6676e406d9cc8e` |
+| CM2-E — fronteira de escrita governada no store | DONE | `b16bf49e6a73828d340b61b7843f0a286fcdcd37` |
+| CM2-E.1 — recusa estruturada, usuários válidos, contato/canal | DONE | `d053b823481763a0c38fbc6b831a39826f948637` |
+| CM2-D2 — ativação assistida (CTA + formulário governado) | DONE | `33cd9a28d101382ae011be5f70a87726a13a5ba3` |
+| CM2-D2.1 — responsável vazio e rótulo do CTA manual | DONE | `7e4ebea276702c5e2ba0d7c7d0a49c72ccb6bc4d` |
+| CM2-F — consolidação e fechamento formal (só docs) | DONE | este commit |
+| **LEAD ENGINE 1.0** — alimentação contínua do Radar | NEXT (não iniciado) | — |
 | CM3 — Opportunity Control | NOT STARTED | — |
 | CM4 — Measurement & Learning | NOT STARTED | — |
 | CM5 — Assisted Execution | NOT STARTED | — |
 
-Hipóteses em vigor: `VERSAO_REGRAS_CM = CM1-A.1` e `VERSAO_REGRAS_PLANO_CM = CM1-B.1` — hipóteses operacionais iniciais,
+Hipóteses em vigor: `VERSAO_REGRAS_CM = CM1-A.1`, `VERSAO_REGRAS_PLANO_CM = CM1-B.1` e
+`VERSAO_REGRAS_CADENCIA_CM = CM2-B.1` — hipóteses operacionais iniciais,
 sujeitas a calibração por CM4. A regra temporária de migrations (§2) continua valendo: a Wave 03 da Central ainda não está
 em `main`.
 
@@ -172,35 +183,47 @@ Filas minimas:
 - NURTURE — conta relevante sem timing atual.
 
 Cada item deve mostrar `por que agora`, proxima acao, prazo, conta, decisor, score, sinal principal e CTA operacional.
+### CM2 — Cadence Engine v1 — CLOSED
 
-### CM2 — Cadence Engine v1 — CM2-A DONE, CM2-B a CM2-F NOT STARTED
+> Documento canônico: `docs/commercial-machine-cm2.md` (contrato temporal, arquitetura por camada, invariantes, dívidas,
+> versões e gate final). Entrada arquitetural: `docs/commercial-machine.md` §11. Paridade executável:
+> `src/core/radar/commercialCadence.paridade.test.ts`.
 
-> Contrato: `docs/commercial-machine-cm2.md` (entrada: `docs/commercial-machine.md` §11). Paridade executável:
-> `src/core/radar/commercialCadence.paridade.test.ts`. O CM2 não substitui o CM1-A (fila) nem o CM1-B (plano), não envia,
-> não ignora supressão nem resultado negativo, não cria sequência, histórico ou tarefa paralela ou duplicada, não age sobre
-> conta AGENDADO antes do prazo e não contorna o Server Truth.
+Objetivo cumprido: disciplina temporal sem robotizar o vendedor. A cadência explica o momento e recomenda; a tarefa só
+nasce por decisão humana, e a fronteira de escrita revalida tudo contra o Radar atual antes de deixá-la nascer.
 
-Objetivo: dar disciplina temporal sem robotizar o vendedor. A cadência explica o momento e recomenda; tarefa só nasce por
-decisão humana.
+Entregue:
 
-Decisões do CM2-A (D1–D7):
+- **CM2-A** — contrato temporal congelado e paridade com o CM1-A.1 (44 fixtures), dívidas legadas caracterizadas.
+- **CM2-B** — `commercialCadence.ts`: estado temporal (`DEVIDA`, `AGUARDANDO`, `SUGERIR_PROXIMO_PASSO`, `PAUSADA`,
+  `ENCERRADA`, `NAO_APLICAVEL`) separado do motivo (código da razão do CM1-A), próximo toque com natureza (`IMEDIATA`,
+  `FIRME`, `BASE_CM1`, `RECOMENDADA`), retomada, tentativas e avisos. `VERSAO_REGRAS_CADENCIA_CM = 'CM2-B.1'`.
+- **CM2-C** — `commercialCadenceTask.ts`: sugestão de compromisso só na lacuna D4, chave semântica do ciclo e cobertura
+  por tarefa aberta compatível. Nada persistido, nenhum id.
+- **CM2-D1** — Hoje apresenta cadência e sugestão em leitura pura, sem nenhum CTA novo.
+- **CM2-E / E.1** — `commercialCadenceCommit.ts` + `actions.criarTarefaDaCadenciaCM`: expectativa → cobertura histórica
+  → recálculo → comparação de contexto → edições humanas → segunda cobertura → autoriza/recusa, com
+  `RegraCadenciaCommitError` (`codigo`, `tarefaId`, `pendencias`).
+- **CM2-D2 / D2.1** — confirmação humana na Hoje: CTA só em `SUGERIDA`/`REQUER_RESPONSAVEL`, formulário governado
+  (`TarefaCadenciaForm`), conflito tratado por código, responsável vazio bloqueado e CTA manual do CM1-C renomeado para
+  "Criar tarefa manual".
+- **CM2-F** — consolidação documental, sem código.
 
-- D1: CM2 v1 é consumidor do CM1-A; nenhum intervalo, limite, SLA, janela de sinal ou regra de parada nova; nenhum
-  literal temporal no módulo de produção.
-- D2: resultado negativo sem fato novo = espera; sem revisita automática por tempo.
-- D3: data do cliente é soberana; sem data estruturada, o CM2 diz que falta a data; nunca inventa horizonte.
-- D4: `SUGERIR_PROXIMO_PASSO` só na lacuna (conversa tratada sem compromisso), data `RECOMENDADA` limitada pelo SLA
-  restante (com oportunidade) ou pelo intervalo do CM1-A a partir da âncora real (sem oportunidade); nunca muda a fila;
-  sem âncora, decisão humana.
-- D5: dívidas de contagem (GATEKEEPER, atividade sem resultado, contagem por empresa) caracterizadas e não corrigidas.
-- D6: CM2-A = contrato + caracterização + propostas sem migration.
-- D7: sequência B → C → D1 (Hoje só leitura) → E (guarda no store) → D2 (agendar pelo `TarefaForm`); sem `cadence_key` no banco.
+Decisões do CM2 (D1–D7, mantidas até o fim): CM2 é consumidor do CM1-A, sem número temporal novo e sem literal de
+política no módulo de produção; resultado negativo sem fato novo é espera; data do cliente nunca é inventada;
+`SUGERIR_PROXIMO_PASSO` só na lacuna, sem mudar a fila; dívidas de contagem caracterizadas e não corrigidas;
+sequência B → C → D1 → E → D2; sem `cadence_key` no banco.
 
-Estrutura: estado temporal (`DEVIDA`, `AGUARDANDO`, `SUGERIR_PROXIMO_PASSO`, `PAUSADA`, `ENCERRADA`, `NAO_APLICAVEL`)
-separado do motivo operacional (código da razão do CM1-A). Conta fora da fila não tem cadência operacional.
+Não usou `radar_strategy` como política nem ativou `radar_experiment` (propostas para o CM4 em
+`docs/propostas/commercial-machine/`). Dívida aberta principal: **D-E1 — unicidade transacional cross-client**.
 
-Não usar `radar_strategy` como política nem ativar `radar_experiment` neste ciclo (propostas para o CM4 em
-`docs/propostas/commercial-machine/`).
+### LEAD ENGINE 1.0 — NEXT (não iniciado)
+
+Alimentar continuamente o Radar com empresas, decisores e sinais de timing, sem criar base paralela. As fundações já
+existem (adapters CNO/PNCP/CNPJ/notícias, ingestão normalizada, deduplicação, lineage, Vibe, sinais, importação CSV), por
+isso o primeiro bloco é **auditoria do estado real dessas fundações**, não integração nova. Fluxo pretendido: fontes →
+descoberta → normalização → deduplicação → enriquecimento → decisor → sinais de timing → Radar → Máquina Comercial.
+Detalhe em `docs/commercial-machine-cm2.md` §20.
 
 ### CM3 — Opportunity Control — NOT STARTED
 

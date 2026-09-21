@@ -1,7 +1,13 @@
-# EIFF Commercial Machine — arquitetura do CM1
+# EIFF Commercial Machine — arquitetura (CM1 + CM2)
 
-Estado: **CM1 fechado** (CM1-A, CM1-B, CM1-C, CM1-D1, CM1-D2, CM1-E). CM2 a CM5 não iniciados.
-Branch: `feature/commercial-machine-v1` · baseline: `main @ ab642be` · plano e histórico: `COMMERCIAL_MACHINE_V1_PLAN.md`.
+Estado: **CM1 fechado** (CM1-A, CM1-B, CM1-C, CM1-D1, CM1-D2, CM1-E) e **CM2 fechado** (Cadence Engine v1: CM2-A a
+CM2-F). CM3 a CM5 não iniciados; a próxima grande frente é o **Lead Engine 1.0**.
+Branches: `feature/commercial-machine-v1` (CM1, congelada em `a9ef237`) e `feature/commercial-machine-cm2` (CM2) ·
+baseline original: `main @ ab642be` · plano e histórico: `COMMERCIAL_MACHINE_V1_PLAN.md` · documento canônico do CM2:
+`docs/commercial-machine-cm2.md`.
+
+Este documento é a visão arquitetural geral: as seções 1 a 10 descrevem o CM1 e continuam valendo como estão; a §11
+registra o CM2 entregue e aponta para o documento canônico.
 
 A Máquina Comercial é a **camada de orquestração operacional do Radar**: lê as entidades que o Radar já tem e responde,
 de forma determinística e explicável, *o que precisa acontecer agora*, *como executar* e *com qual intenção gerar a
@@ -14,8 +20,18 @@ Commercial Queue ............... CM1-A  src/core/radar/commercialMachine.ts
   ↓
 Commercial Action Plan ......... CM1-B  src/core/radar/commercialActionPlan.ts
   ↓
-Hoje 2.0 ....................... CM1-C  src/screens/radar/Hoje.tsx
+Cadence Engine ................. CM2-B  src/core/radar/commercialCadence.ts
   ↓
+Task Suggestion ................ CM2-C  src/core/radar/commercialCadenceTask.ts
+  ↓
+Hoje 2.0 ....................... CM1-C + CM2-D1/D2  src/screens/radar/Hoje.tsx
+  ↓
+Write Guard (confirmação humana) CM2-E  src/core/radar/commercialCadenceCommit.ts → actions.criarTarefaDaCadenciaCM
+  ↓
+radar_task (tarefa real, auditada)
+
+Em paralelo, a partir da Hoje:
+
 Commercial Communication Intent  CM1-D  src/core/radar/comunicacaoIntencaoCM.ts
   ↓
 Communication Server Truth .....        src/core/radar/comunicacaoServidor.ts (/api/comunicacao)
@@ -424,34 +440,40 @@ Busca por `filaHoje`, `recomendarAcao`, `contextoComunicacaoDe` e `lerEmpresa` f
 
 ---
 
-## 11. Contrato de entrada do CM2 (cadência)
+## 11. CM2 — Cadence Engine v1 (entregue)
 
-> CM2-A fechado: o contrato temporal detalhado, a paridade dos 28 casos e o plano CM2-B → CM2-F estão em
-> `docs/commercial-machine-cm2.md`. As regras abaixo continuam valendo, restringidas pelas decisões D1–D7 de lá
-> (sem política temporal nova, sem estratégia como política e sem experimento neste ciclo).
+> Documento canônico, com contrato temporal, paridade, arquitetura por camada, invariantes, dívidas e gate:
+> `docs/commercial-machine-cm2.md`. Aqui fica só o resumo de como o CM2 se encaixa no CM1.
 
-O CM2 **poderá**:
+Pergunta do CM2: **quando essa conta volta?** — e, quando o humano decide agendar, **o compromisso pode mesmo nascer?**
 
-- propor cadência por estratégia, persona, estágio e resultado anterior;
-- recomendar a próxima data de toque;
-- gerar **sugestão** de tarefa;
-- criar tarefa `radar_task` **somente após decisão explícita do usuário**, com auditoria;
-- reagir ao resultado registrado em `radar_activity` (pausar, reagendar, trocar canal dentro do plano).
+| Camada | Módulo | Papel |
+|---|---|---|
+| CM2-B — Cadence Engine | `commercialCadence.ts` (`VERSAO_REGRAS_CADENCIA_CM = 'CM2-B.1'`) | estado temporal (`DEVIDA`, `AGUARDANDO`, `SUGERIR_PROXIMO_PASSO`, `PAUSADA`, `ENCERRADA`, `NAO_APLICAVEL`), próximo toque com natureza (`IMEDIATA`, `FIRME`, `BASE_CM1`, `RECOMENDADA`), retomada, tentativas, avisos |
+| CM2-C — Task Suggestion | `commercialCadenceTask.ts` | "isso precisa virar compromisso?" (`SUGERIDA`, `COBERTA`, `REQUER_DATA`, `REQUER_RESPONSAVEL`, `BLOQUEADA`, `NAO_APLICAVEL`), chave semântica do ciclo e cobertura por tarefa aberta |
+| CM2-D1 — Hoje (leitura) | `Hoje.tsx` | mostra cadência, próximo toque, sugestão, pendências e cobertura; não escreve |
+| CM2-E — Write guard | `commercialCadenceCommit.ts` + `actions.criarTarefaDaCadenciaCM` | revalida tudo sobre o Radar atual e autoriza ou recusa com código (`JA_COBERTA`, `CONTEXTO_MUDOU`, `VERSAO_DIVERGENTE`, pendências e erros de campo) |
+| CM2-D2 — Confirmação humana | `HojeCadencia.ts` + `TarefaCadenciaForm` | CTA, formulário governado e reação a conflito; o Save só chama a fronteira |
 
-O CM2 **não poderá**:
+O que o CM2 respeitou do contrato de entrada desenhado no CM1:
 
-- substituir o CM1-A como autoridade da fila, da prioridade ou da ação principal;
-- substituir o CM1-B na decisão de modo, contato, objetivo, playbook ou canal;
-- enviar automaticamente ou contornar provider protegido, allowlist ou ledger;
-- ignorar supressão, opt-out, contato inelegível ou canal inválido;
-- criar sequência, cadência ou histórico paralelo ao Radar (tarefas continuam em `radar_task`, interações em `radar_activity`);
-- criar tarefa duplicada (mesma conta, contato, objetivo e janela já cobertos por tarefa aberta);
-- gerar ação quando a conta está `AGENDADO` antes do prazo;
-- ignorar resultado negativo sem fato novo;
-- contornar o Server Truth ou reinterpretar a intenção CM na geração.
+- não substituiu o CM1-A como autoridade da fila, da prioridade ou da ação principal, nem o CM1-B na decisão de modo,
+  contato, objetivo, playbook ou canal;
+- não envia, não contorna provider protegido, allowlist ou ledger, e não ignora supressão, opt-out, contato inelegível
+  ou canal inválido;
+- não criou sequência, cadência persistida, histórico paralelo, tabela ou migration: tarefa continua em `radar_task` e
+  interação em `radar_activity`;
+- não cria tarefa duplicada (a cobertura do ciclo roda duas vezes na escrita) nem age sobre conta `AGENDADO` antes do
+  prazo, e resultado negativo sem fato novo continua sendo espera;
+- não contorna o Server Truth nem reinterpreta a intenção CM na geração de abordagem.
 
-Qualquer nova hipótese do CM2 entra versionada ao lado de `VERSAO_REGRAS_CM` / `VERSAO_REGRAS_PLANO_CM` e, se precisar de
-schema, primeiro como proposta documentada (sem numerar migration enquanto a Wave 03 não estiver no baseline).
+O que ficou **fora** do CM2 v1, por decisão: `radar_strategy` como política de cadência, experimentos (`radar_experiment`)
+e qualquer chave de idempotência no banco (a proposta de `cadence_key` segue sem migration, em
+`docs/propostas/commercial-machine/radar-task-cadence-key.md`). Reação automática ao resultado registrado em
+`radar_activity` continua limitada ao que o CM1-A já faz: o CM2 explica o momento, não reprograma sozinho.
+
+Hipóteses em vigor: `VERSAO_REGRAS_CM = CM1-A.1`, `VERSAO_REGRAS_PLANO_CM = CM1-B.1`, `VERSAO_REGRAS_CADENCIA_CM = CM2-B.1`.
+As três viajam na expectativa do agendamento e são conferidas na escrita.
 
 ---
 
@@ -499,6 +521,12 @@ Guarda estática da Hoje (não há teste de componente no repositório): o coman
 
 ```bash
 grep -nE "filaHoje|recomendarAcao|NOME_ESTADO_ACAO|\.recomendacao" src/screens/radar/Hoje.tsx
+```
+
+Cadência, sugestão, fronteira de escrita e a tela (CM2):
+
+```bash
+npx vitest run src/core/radar/commercialCadence.paridade.test.ts src/core/radar/commercialCadence.test.ts src/core/radar/commercialCadenceTask.test.ts src/core/radar/commercialCadenceCommit.test.ts src/data/radar.cadencia.store.test.ts src/screens/radar/HojeCadencia.test.ts
 ```
 
 Guardas estáticas dentro dos testes: os módulos da máquina

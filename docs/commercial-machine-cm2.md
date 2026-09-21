@@ -1,17 +1,40 @@
-# EIFF Commercial Machine — CM2: contrato temporal (cadência)
+# EIFF Commercial Machine — CM2: Cadence Engine v1 (documento canônico)
 
-Estado: **CM2-A fechado** — contrato temporal e paridade com o CM1-A.1 congelados. **Nenhum Cadence Engine existe ainda**
-(CM2-B não iniciado). Branch: `feature/commercial-machine-cm2` · baseline: `feature/commercial-machine-v1 @ a9ef237`
-(CM1 fechado) · arquitetura do CM1: `docs/commercial-machine.md` · plano: `COMMERCIAL_MACHINE_V1_PLAN.md`.
+Estado: **CM2 CLOSED** (CM2-A, CM2-B, CM2-C, CM2-D1, CM2-E, CM2-E.1, CM2-D2, CM2-D2.1, CM2-F).
+Branch: `feature/commercial-machine-cm2` · baseline: `feature/commercial-machine-v1 @ a9ef237` (CM1 congelado) ·
+compatibilidade verificada contra `integracao-wave03 @ 9aeb640` · arquitetura geral: `docs/commercial-machine.md` ·
+plano e roadmap: `COMMERCIAL_MACHINE_V1_PLAN.md`.
 
 Pergunta que o CM2 responde: **quem decide quando voltar a agir?**
 
-O CM2 não é sequenciador de e-mail. É disciplina temporal comercial: explica o momento de cada conta e, só nas lacunas em
-que nenhuma autoridade temporal falou, recomenda uma data. Não envia, não cria score, não reordena a fila, não cria
-tarefa sozinho, não cria tabela nem histórico próprio.
+O CM2 não é sequenciador de e-mail. É disciplina temporal comercial: explica o momento de cada conta, recomenda uma data
+só nas lacunas em que nenhuma autoridade temporal falou e, quando o humano decide agendar, revalida tudo contra o Radar
+atual antes de deixar a tarefa nascer. Não envia, não cria score, não reordena a fila, não cria tarefa sozinho, não cria
+tabela nem histórico próprio.
 
-Evidência executável deste contrato: `src/core/radar/commercialCadence.paridade.test.ts` (só caracterização; nenhum
-código de produção).
+O produto funcional foi entregue até o CM2-D2.1; o CM2-F é consolidação documental e não mudou código de produção.
+
+**Histórico canônico do CM2** (um bloco, um commit, gate completo em cada um):
+
+| Bloco | Conteúdo | Commit |
+|---|---|---|
+| CM2-A | contrato temporal congelado + paridade CM1-A.1 (44 casos) + propostas sem migration | `2ec5da1eebbfd162b6f4cb372ac67e56ad40daca` |
+| CM2-B | Cadence Engine puro (`commercialCadence.ts`, `VERSAO_REGRAS_CADENCIA_CM = 'CM2-B.1'`) | `d94313fb581708dac17cf5fb58a68bdd29ebe703` |
+| CM2-C | sugestão governada de compromisso + chave semântica + cobertura (`commercialCadenceTask.ts`) | `113008311baa10d36d9ee6b1a4a56deaeaa5ab33` |
+| CM2-D1 | cadência e sugestão na Hoje, somente leitura (zero CTA novo) | `7859c430b34b984cef4144477d6676e406d9cc8e` |
+| CM2-E | fronteira de escrita governada (`commercialCadenceCommit.ts` + `actions.criarTarefaDaCadenciaCM`) | `b16bf49e6a73828d340b61b7843f0a286fcdcd37` |
+| CM2-E.1 | recusa estruturada, `usuariosValidos` obrigatório, contato/canal com provas CALL/EMAIL | `d053b823481763a0c38fbc6b831a39826f948637` |
+| CM2-D2 | ativação assistida na Hoje: CTA, formulário governado, conflitos por código | `33cd9a28d101382ae011be5f70a87726a13a5ba3` |
+| CM2-D2.1 | responsável vazio deixa de ser "não editado"; CTA livre do CM1-C vira "Criar tarefa manual" | `7e4ebea276702c5e2ba0d7c7d0a49c72ccb6bc4d` |
+| CM2-F | consolidação, invariantes, dívidas, gate e fechamento formal (só documentação) | este commit |
+
+Módulos de produção do CM2: `src/core/radar/commercialCadence.ts`, `commercialCadenceTask.ts`,
+`commercialCadenceCommit.ts`, `src/screens/radar/HojeCadencia.ts`, o formulário `TarefaCadenciaForm` em
+`src/screens/radar/comum.tsx`, a apresentação em `src/screens/radar/Hoje.tsx` e a ação
+`criarTarefaDaCadenciaCM` em `src/data/store.ts`. Nenhuma migration, nenhuma tabela, nenhuma coluna.
+
+Evidência executável do contrato temporal: `src/core/radar/commercialCadence.paridade.test.ts` (caracterização do CM1-A.1,
+com as fixtures compartilhadas em `cadenciaParidadeCM.fixtures.ts`).
 
 ---
 
@@ -114,6 +137,9 @@ devolve decisão humana necessária.
 | `RECOMENDAR_DATA` | lacuna D4 |
 | `DECISAO_HUMANA` | trava, responsável ausente, horizonte guardado onde a fila não lê |
 
+> Entregue: esta taxonomia de intenção do CM2-A não virou campo do Cadence Engine. Ela reaparece como os estados do
+> CM2-C (§13): `NAO_APLICAVEL`, `SUGERIDA`, `REQUER_DATA`, `REQUER_RESPONSAVEL`, `COBERTA` e `BLOQUEADA`.
+
 Avisos previstos (o CM2 aponta; nunca corrige sozinho):
 
 | Aviso | Situação |
@@ -154,47 +180,56 @@ não a segura; tarefa criada **depois** é o tratamento.
 cadência operacional** no CM2 v1 (`cm2: null` nas fixtures). Uma projeção separada para explicar suprimida/inativa/
 mesclada pode existir no futuro, fora do contrato principal.
 
-## 8. Contrato de saída previsto (CM2-B)
+## 8. Contrato de saída do Cadence Engine (CM2-B — entregue)
+
+Previsto no CM2-A, implementado no CM2-B. O que foi construído difere do rascunho em dois pontos, ambos por simplificação
+deliberada: o campo `sugestao` saiu do contrato (a decisão "isso vira compromisso?" ficou inteira no CM2-C, que é a
+camada certa para ela) e `explicacao` ganhou `titulo` para a tela não ter de compor texto.
 
 ```ts
-interface CadenceRecommendationCM {
-  itemId: string; empresaId: string;
-  versaoCadencia: string;      // VERSAO_REGRAS_CADENCIA_CM — criada no CM2-B, sem repetir 'CM1-A.1' no nome
+export interface CadenceRecommendationCM {
+  itemId: string;
+  empresaId: string;
+  versaoCadencia: string;      // VERSAO_REGRAS_CADENCIA_CM = 'CM2-B.1'
   versaoRegrasFila: string;    // VERSAO_REGRAS_CM
   versaoPlano: string;         // VERSAO_REGRAS_PLANO_CM
-  estado: EstadoTemporal;
+  estado: EstadoCadenciaCM;    // DEVIDA | AGUARDANDO | SUGERIR_PROXIMO_PASSO | PAUSADA | ENCERRADA | NAO_APLICAVEL
   motivo: CodigoRazaoCM;       // razão principal do CM1-A, sem renomear
-  retomaCom?: 'DATA' | 'FATO_NOVO' | 'DECISAO_HUMANA' | 'DADO';
-  proximoToque?: { natureza: 'FIRME' | 'BASE_CM1' | 'RECOMENDADA' | 'IMEDIATA'; em?: string; ancora?: ReferenciaCM };
-  tentativa?: { semRespostaSeguidas: number; limite: number };   // exibição; limite importado
-  sugestao: 'NENHUMA' | 'TRATAR_AGORA' | 'PEDIR_DATA' | 'RECOMENDAR_DATA' | 'DECISAO_HUMANA';
-  avisos: AvisoCadenciaCM[];
-  explicacao: { porQue: string; fatos: string[] };
+  retomaCom?: RetomadaCadenciaCM;                                // DATA | FATO_NOVO | DADO | DECISAO_HUMANA
+  proximoToque?: ProximoToqueCM;                                 // { natureza, em?, origem, ancoraEm? }
+  tentativa?: { semRespostaSeguidas: number; limite: number; doContato?: number };
+  avisos: CodigoAvisoCadenciaCM[];
+  explicacao: { titulo: string; porQue: string; fatos: string[] };
 }
 ```
 
-Entrada: `CommercialQueueItem` + `CommercialActionPlan` + dataset + `hoje`. Nunca chama `recomendarAcao`, `filaHoje`,
-`lerEmpresa` ou `recomendarCanal`. Nenhuma constante de produção foi criada no CM2-A.
+Entrada: `cadenciaDaContaCM(ds, item, plano, hoje)` — `CommercialQueueItem` + `CommercialActionPlan` + dataset + `hoje`.
+Nunca chama `recomendarAcao`, `filaHoje`, `lerEmpresa` ou `recomendarCanal`, e nenhuma constante temporal de política
+nasceu no módulo: tudo vem de `HIPOTESE_COMMERCIAL_MACHINE`/`sinalLeitura`.
 
 ## 9. Guarda de números temporais
 
 O teste de paridade varre `src/core/radar/commercialCadence*.ts` (exceto testes) e falha se aparecer literal igual a um
 valor de política (SLAs, intervalo, limite, janela de sinal novo, janelas de família, fallback, 180, 14) ou dependência
 de autoridade legada/efeito (`recomendarAcao`, `filaHoje`, `lerEmpresa`, `recomendarCanal`, `data/`, supabase, `fetch`,
-`canais`, `comunicacaoServidor`). Hoje nenhum arquivo existe; o autoteste prova que a guarda pega a violação. O
-multiplicador 2 e o fit 40 não entram na lista (não são tempo e colidiriam com código comum).
+`canais`, `comunicacaoServidor`). A guarda nasceu antes dos módulos (com autoteste provando que ela pega a violação) e
+hoje varre os três módulos de produção do CM2. O multiplicador 2 e o fit 40 não entram na lista (não são tempo e
+colidiriam com código comum).
 
 ## 10. Tarefa ↔ cadência e idempotência
 
-- Chave conceitual: `cad:<versão>:<empresaId>:<contatoId|->:<oportunidadeId|->:<motivo>:<âncora.tipo>:<âncora.id>`.
-  Não depende de `hoje`; a recomendação é determinística.
-- **CM2-C:** cobertura semântica — tarefa existente por empresa, contato, oportunidade, tipo/natureza, estado aberto e
-  relação temporal com a âncora. Havendo cobertura, não há sugestão nova.
-- **CM2-E:** proteção mínima no store contra criação concorrente/duplo clique (se o merge-tree com a Wave 03 continuar
-  seguro).
-- **Sem `cadence_key` no banco agora.** Coluna + índice único parcial ficam só em
+- **Chave do ciclo** (`chaveCadenciaCM`, CM2-C):
+  `cad:<versaoCadencia>:<empresaId>:<contatoId|->:<oportunidadeId|->:<motivo>:<ancora.tipo>:<ancora.id>`.
+  Não depende de `hoje` nem de data; a recomendação é determinística. Não é persistida.
+- **CM2-C:** cobertura semântica — tarefa aberta por empresa, contato, oportunidade e tipo compatível
+  (`TIPOS_QUE_COBREM_CM`), criada depois da âncora. Havendo cobertura, o estado é `COBERTA` e não há sugestão nova.
+- **CM2-E:** a mesma cobertura roda de novo na escrita, **antes** do recálculo e de novo depois das edições humanas; é o
+  que garante que duplo clique e repetição devolvam `JA_COBERTA` com o `tarefaId` exato, em vez de criar o segundo
+  compromisso. Não é garantia distribuída (ver dívida D-E1 na §16).
+- **Sem `cadence_key` no banco.** Coluna + índice único parcial continuam só como proposta em
   `docs/propostas/commercial-machine/radar-task-cadence-key.md`, sem migration numerada.
-- Tarefa só nasce por decisão humana, pelo `TarefaForm` existente, com confirmação explícita (CM2-D2).
+- Tarefa só nasce por decisão humana, no formulário governado `TarefaCadenciaForm` (CM2-D2), com confirmação explícita.
+  O `TarefaForm` legado continua existindo para a tarefa manual livre ("Criar tarefa manual"), fora da cadência.
 
 ## 11. Paridade CM1-A.1 (resultado congelado em 15/09/2026, `hoje = 2026-09-15`)
 
@@ -271,38 +306,282 @@ Comportamento CM1-A.1. O CM2 não corrige; o CM4 poderá trazer evidência para 
 | C14 | Conta com oportunidade NURTURE/WON e nenhuma atividade vira "nunca abordada" | casos 20b, 22b |
 | C15 | Oportunidade sem responsável gera inconsistência que passa na frente da agenda | caso 28 |
 | C16 | Tarefas abertas não são canceladas quando a empresa é suprimida (badge legado ainda conta) | caso 24 |
+## 13. Arquitetura final: quem responde o quê
 
-## 13. Invariantes do CM2
+Cada camada responde a uma pergunta e só a ela. Nenhuma delas reimplementa a anterior.
 
-1. O CM2 não altera categoria, tier, urgência, ordem ou posição da Commercial Queue.
-2. O estado temporal deriva da razão principal do CM1-A; o motivo é o código do CM1-A, sem renomear.
-3. Nenhum literal temporal de política no módulo de produção; valores vêm de `HIPOTESE_COMMERCIAL_MACHINE`/`sinalLeitura`.
-4. Datas `FIRME` e `BASE_CM1` são sempre datas que o CM1-A já produziu.
-5. Data `RECOMENDADA` só em `SUGERIR_PROXIMO_PASSO`, com âncora real, nunca antes de hoje.
-6. Sem âncora confiável, sem data: decisão humana.
-7. Data do cliente nunca é inventada.
-8. Conta fora da fila não tem cadência operacional.
-9. O CM2 não escolhe canal, contato, objetivo ou playbook; aviso quando a tarefa não é executável.
-10. O CM2 não escolhe responsável.
-11. O CM2 não cria tarefa, não envia, não grava histórico, não chama provider, Server Truth ou `/api/comunicacao`.
-12. Recomendação determinística: mesma entrada e mesmo dia → mesma saída; a chave de idempotência não depende de `hoje`.
-13. `radar_strategy` não é política de cadência neste ciclo; experimentos desligados até o CM4.
+### Radar — fonte de verdade
 
-## 14. Plano CM2-B → CM2-F
+Empresa, Contato, Sinal, Oportunidade (+ histórico), Atividade, Tarefa, Comunicação, Supressão, duplicata, fonte,
+estratégia, score e decision fit continuam sendo do Radar, nas tabelas `radar_*`. **O CM2 não criou um segundo CRM**: não
+há entidade, tabela, coluna, migration, cache nem histórico paralelo. Tarefa criada pela cadência é `radar_task` comum.
 
-| Bloco | Conteúdo | Pode tocar |
+### CM1-A — Commercial Queue (`commercialMachine.ts`, `VERSAO_REGRAS_CM = 'CM1-A.1'`)
+
+*O que precisa ser feito agora?* Uma entrada por conta, com ação principal explicável, razões secundárias, travas e
+`foraDaFila`. Categorias em escada e ordenação determinística. O CM2 **lê** esse resultado; nunca o reordena.
+
+### CM1-B — Commercial Action Plan (`commercialActionPlan.ts`, `VERSAO_REGRAS_PLANO_CM = 'CM1-B.1'`)
+
+*Como executar?* Modo (CONTATO, ACAO_INTERNA, REVISAR, ENRIQUECER, AGUARDAR), contato, objetivo, playbook e canal. O CM2
+herda tipo de tarefa e contato daqui; não escolhe canal nem converte canal.
+
+### CM2-B — Cadence Engine (`commercialCadence.ts`, `VERSAO_REGRAS_CADENCIA_CM = 'CM2-B.1'`)
+
+*Quando essa conta volta?* Projeção pura sobre fila + plano + dataset + `hoje`.
+
+- Estados: `DEVIDA`, `AGUARDANDO`, `SUGERIR_PROXIMO_PASSO`, `PAUSADA`, `ENCERRADA`, `NAO_APLICAVEL`.
+- Naturezas do próximo toque: `IMEDIATA` (agora, sem data), `FIRME` (data de compromisso real), `BASE_CM1` (data que o
+  CM1-A já produziu) e `RECOMENDADA` (só na lacuna D4, com âncora real e nunca antes de hoje).
+- O motivo é sempre o código da razão principal do CM1-A (`CodigoRazaoCM`), sem taxonomia nova.
+- `retomaCom` diz o que destrava a conta: `DATA`, `FATO_NOVO`, `DADO` ou `DECISAO_HUMANA`.
+- API: `cadenciaDaContaCM(ds, item, plano, hoje)` e `cadenciasDaFilaCM(ds, fila, planos, hoje)`.
+
+### CM2-C — Task Suggestion (`commercialCadenceTask.ts`)
+
+*Essa recomendação precisa virar compromisso?* Nem tudo que está devido vira lembrete: o que é para fazer agora se faz
+agora. Sugestão nasce só da lacuna D4 (próximo toque `RECOMENDADA` e datado).
+
+- Estados: `SUGERIDA`, `COBERTA`, `REQUER_DATA`, `REQUER_RESPONSAVEL`, `BLOQUEADA`, `NAO_APLICAVEL`.
+- Composição sem reinterpretar autoridade: data = CM2-B; tipo e contato = CM1-B; oportunidade e responsável = CM1-A.
+- **Chave semântica do ciclo** (`chaveCadenciaCM`):
+  `cad:<versaoCadencia>:<empresaId>:<contatoId|->:<oportunidadeId|->:<motivo>:<ancora.tipo>:<ancora.id>`.
+  Não depende de `hoje` nem de data: identifica o *ciclo* (conta + interlocutor + negócio + motivo + fato que ancorou),
+  para que a mesma recomendação seja reconhecida entre renders, sessões e recálculos. Não é persistida no banco.
+- Cobertura: tarefa aberta compatível (`TIPOS_QUE_COBREM_CM`), criada depois da âncora, na mesma identidade →
+  `COBERTA`, sem sugestão nova. `sugestoesTarefaDaFilaCM` não persiste nada e não prepara tarefa real (sem id).
+
+### CM2-D1 — Hoje, somente leitura (`Hoje.tsx`)
+
+A tela apresenta fila, plano, cadência, próximo toque com a natureza da data, tentativas, retomada, avisos, sugestão de
+compromisso, pendências e cobertura — tudo já calculado. Nenhuma regra em React, nenhum dado inventado, nenhuma escrita.
+
+### CM2-E — Write boundary (`commercialCadenceCommit.ts` + `actions.criarTarefaDaCadenciaCM`)
+
+A UI nunca é autoridade. No momento de criar, a fronteira executa **sempre nesta ordem**:
+
+```text
+valida a expectativa recebida (versões, catálogos, datas, chave recalculada dos próprios campos)
+  ↓
+cobertura histórica do ciclo (tarefaQueCobreCicloCM) — ANTES de qualquer recálculo
+  ↓
+recalcula fila (CM1-A) → plano (CM1-B) → cadência (CM2-B) → sugestão (CM2-C) sobre o dataset ATUAL
+  ↓
+reencontra a recomendação pela chave e compara o contexto (item, empresa, tipo, oportunidade, contato, data recomendada)
+  ↓
+aplica e valida as edições humanas (data, descrição, responsável, contato + canal)
+  ↓
+segunda cobertura, agora com a identidade efetiva (contato escolhido pelo humano)
+  ↓
+autoriza (devolve a tarefa a criar) ou recusa com código
+```
+
+- **`JA_COBERTA`**: a cobertura histórica vem antes do recálculo de propósito. É o que faz o duplo clique — e a
+  repetição depois que a fila já mudou — devolver "já existe compromisso" em vez de "o contexto mudou". A recusa carrega
+  o `tarefaId` **exato** da tarefa que cobre o ciclo; a tela só abre aquela tarefa, nunca "alguma tarefa aberta da conta".
+- **`CONTEXTO_MUDOU`**: reservado à mudança real — a chave não existe mais na recomendação recalculada, ou existe com
+  item, empresa, tipo, oportunidade, contato ou data recomendada diferentes do que o humano viu.
+- **Versões**: `versaoCadencia`, `versaoRegrasFila` e `versaoPlano` viajam na expectativa; divergência é
+  `VERSAO_DIVERGENTE`, nunca "tenta assim mesmo".
+- **Nenhum id antes do veredicto**: a tarefa só ganha id no store, depois do `ok`; a UI não gera id, nem `criadoEm`, nem
+  status.
+- **Erro estruturado** `RegraCadenciaCommitError` (`src/data/store.ts`): `codigo`, `tarefaId?`, `pendencias?` e
+  `detalhe?`. A mensagem existe para o humano ler, não para o código interpretar.
+- `usuariosValidos` é obrigatório na revalidação (o motor não conhece `Dataset.usuarios`), e contato + canal passam por
+  `validarContatoCanalTarefaCadenciaCM` (`CONTATO_INVALIDO`, `CANAL_INDISPONIVEL`).
+
+### CM2-D2 — Human confirmation (`HojeCadencia.ts` + `TarefaCadenciaForm` + `Hoje.tsx`)
+
+- CTA só em `SUGERIDA` ("Agendar próxima ação") e `REQUER_RESPONSAVEL` ("Definir responsável e agendar"), sempre com
+  rascunho de tarefa e permissão `radar`. O CTA livre do CM1-C chama-se **"Criar tarefa manual"** e continua sendo o
+  caminho operacional antigo, pelo `TarefaForm` legado.
+- No clique, a tela captura o snapshot com `expectativaDaSugestaoCM`; sem expectativa, falha fechada (não abre).
+- Tipo e oportunidade são só leitura; data, descrição e responsável são editáveis; contato é editável **apenas** quando a
+  sugestão não define um; prioridade não aparece (a ação grava `Normal`).
+- Save chama exclusivamente `actions.criarTarefaDaCadenciaCM(expectativa, edicoes)`; nunca `salvarTarefaRadar`,
+  `novaTarefaRadar` ou persistência direta, e nenhum id nasce na UI.
+- A reação a recusa é por **código**, nunca por texto da mensagem. Erros corrigíveis mantêm o formulário aberto com a
+  mensagem no campo; conflitos viram tela de conflito; `REQUER_DATA`/`BLOQUEADA` mostram as pendências sem corrigir nada.
+- Única validação que mora na tela (`validarFormularioAgendamentoCM`): responsável vazio bloqueia antes da fronteira,
+  porque vazio é decisão do humano e `undefined` significa "não editado" para o CM2-E.
+
+## 14. Fluxo canônico
+
+```text
+RADAR
+  ↓
+Commercial Queue (CM1-A)
+  ↓
+Action Plan (CM1-B)
+  ↓
+Cadence Engine (CM2-B)
+  ↓
+Task Suggestion (CM2-C)
+  ↓
+HOJE
+  ↓
+humano escolhe "Agendar próxima ação"
+  ↓
+snapshot da expectativa
+  ↓
+formulário governado
+  ↓
+humano confirma
+  ↓
+CM2-E revalida sobre Radar atual
+       ├─ JA_COBERTA
+       ├─ CONTEXTO_MUDOU
+       ├─ pendência/erro
+       └─ autorizado
+              ↓
+          radar_task
+              ↓
+       Radar recalculado
+              ↓
+       fila/cadência mudam naturalmente
+```
+
+## 15. Invariantes do CM2
+
+1. O CM2 não reordena a Commercial Queue (categoria, tier, urgência, ordem e posição continuam do CM1-A).
+2. O CM2 não tem segundo score: nenhuma pontuação, peso ou classe própria.
+3. O CM2 não cria um segundo CRM: nenhuma entidade, tabela, coluna, migration ou histórico paralelo.
+4. O CM2 não envia comunicação nem prepara envio; não toca provider, allowlist, ledger ou Server Truth.
+5. O CM2 não movimenta oportunidade, estágio, score ou supressão automaticamente.
+6. O CM2 não cria tarefa sem decisão humana explícita.
+7. Data `FIRME` vence recomendação genérica: compromisso real manda.
+8. Data `RECOMENDADA` não é compromisso — a tela diz isso com todas as letras.
+9. Data do cliente nunca é inventada: sem data estruturada, é decisão humana.
+10. Contato nunca é trocado automaticamente por outro "melhor".
+11. Canal nunca é convertido automaticamente (CALL não vira EMAIL).
+12. Responsável nunca cai no usuário logado como fallback, em nenhuma camada.
+13. A expectativa vinda da UI nunca é autoridade para persistir: é declaração do que o humano viu.
+14. O store revalida sobre o dataset atual, não sobre o que a tela tinha em memória.
+15. Sugestão velha não é gravada silenciosamente: ou é reconhecida, ou é recusada com código.
+16. Ciclo já coberto devolve `JA_COBERTA` com o `tarefaId` exato.
+17. Mudança real de contexto devolve `CONTEXTO_MUDOU`, sem reaplicar e sem retry automático.
+18. A UI reage por código de recusa, nunca por parsing de mensagem.
+19. Tipo e oportunidade governados não são editáveis na confirmação.
+20. Todo efeito externo permanece humano.
+
+Invariantes do contrato temporal (CM2-A) que continuam valendo: o estado temporal deriva da razão principal do CM1-A;
+nenhum literal temporal de política nos módulos de produção (tudo vem de `HIPOTESE_COMMERCIAL_MACHINE`/`sinalLeitura`);
+`RECOMENDADA` só em `SUGERIR_PROXIMO_PASSO`, com âncora real; conta fora da fila não tem cadência; recomendação
+determinística e chave independente de `hoje`; `radar_strategy` não é política de cadência e experimentos ficam para o CM4.
+
+## 16. Dívidas abertas do CM2
+
+| # | Dívida | Situação |
 |---|---|---|
-| **CM2-B** | Cadence Engine puro: `VERSAO_REGRAS_CADENCIA_CM`, `cadenciaDaContaCM(item, plano, ds, hoje)`, estado/motivo/retomada/próximo toque/tentativa/avisos/explicação; fixtures `cm2` desta paridade viram expectativa executável | `commercialCadence.ts` + teste; `index.ts` (export) |
-| **CM2-C** | Sugestão de tarefa: chave semântica, cobertura/duplicidade, contato e canal da tarefa (só aviso), `RESPONSAVEL_NECESSARIO` | mesmo módulo ou `commercialCadenceTarefa.ts` + teste |
-| **CM2-D1** | Hoje somente leitura: estado temporal, próximo toque, natureza da data, tentativa, avisos, sugestão. Sem atalho novo que crie tarefa; documentar se o fluxo manual existente é seguro | `Hoje.tsx` |
-| **CM2-E** | Guarda governada/idempotente no store contra criação concorrente/duplo clique; auditoria com origem da cadência; sem migration | `store.ts` (diff mínimo, merge-tree com Wave 03 antes) |
-| **CM2-D2** | Fluxo operacional "Agendar próxima ação" pelo `TarefaForm` existente: data pré-preenchida só quando `RECOMENDADA`, vazia quando depende do cliente, tudo editável, confirmação humana | `Hoje.tsx`, `comum.tsx` se necessário |
-| **CM2-F** | Consolidação: docs, invariantes, dívidas, runbook, status | docs |
+| D-E1 | **Unicidade transacional cross-client.** Sem índice único, RPC transacional ou chave de idempotência persistida, duas sessões ou dispositivos realmente concorrentes ainda podem criar compromissos equivalentes antes de sincronizar. O CM2-E protege duplo clique, repetição sequencial, estado local velho e dado já sincronizado — **não** é garantia distribuída. Proposta (coluna + índice único parcial) em `docs/propostas/commercial-machine/radar-task-cadence-key.md`, sem migration numerada. | aberta |
+| D-C3 | **Âncora por dia.** Onde compara âncora e criação de tarefa, a comparação é em granularidade de dia (`YYYY-MM-DD`); dois eventos no mesmo dia são indistinguíveis para a cobertura. | aberta |
+| D-C4 | **Data humana ausente.** `CALL_BACK`, `FUTURE_PROJECT` e reunião pedida sem data estruturada continuam exigindo decisão humana (`REQUER_DATA`); o sistema não inventa horizonte. | aberta por decisão (D3) |
+| D-C2 | **Ramos defensivos.** `COBERTA`/`BLOQUEADA` na sugestão e `REQUER_DATA`/`BLOQUEADA` na fronteira são inalcançáveis com dado coerente; CALL/EMAIL estão provados no CM2-E.1, mas a lacuna D4 atual normalmente produz `FOLLOW_UP`. São defesas de domínio, não fluxo corrente — e nunca foram simuladas com dado falso na UI. | aberta como defesa |
+| C1–C16 | Divergências legadas do CM1-A.1 caracterizadas no CM2-A (§12), preservadas como dívida histórica. O CM2 não as corrige; o CM4 poderá trazer evidência para recalibrar. | congeladas |
 
-Cada bloco: GO explícito, um commit, gate completo (vitest, `tsc --noEmit`, eslint, build, guarda de caminhos, diff review).
+## 17. Dívidas fechadas (não listar mais como abertas)
 
-## 15. O que o CM2 não faz
+| Dívida | Fechada em |
+|---|---|
+| D-C1 — sugestão sem contato ("contato a definir") | CM2-D1 mostra "a definir no agendamento" e o CM2-D2 deixa o humano escolher entre os contatos da conta (`7859c43`, `33cd9a2`) |
+| Recusa estruturada perdida no store (a tela teria de ler texto) | `RegraCadenciaCommitError` com `codigo`/`tarefaId`/`pendencias` (`d053b82`) |
+| `usuariosValidos` opcional na revalidação | obrigatório no tipo, quebra em TypeScript se esquecido (`d053b82`) |
+| Contato/canal sem prova real CALL/EMAIL | `validarContatoCanalTarefaCadenciaCM` com provas por canal (`d053b82`) |
+| D-D2.1 — responsável limpo pelo humano virava "não editado" | guarda `validarFormularioAgendamentoCM` antes da fronteira (`7e4ebea`) |
+| Colisão visual de dois "Agendar próxima ação" na Hoje | CTA livre do CM1-C renomeado para "Criar tarefa manual" (`7e4ebea`) |
 
-Não envia nem prepara envio; não amplia allowlists nem contorna guardas de provider; não cria sequência, `radar_sequence`,
-`radar_cadence_event` ou entidade de tentativa; não cria score nem reordena a fila; não cria tarefa sem decisão humana;
-não altera hipóteses do CM1-A; não usa estratégia como política nem ativa experimento; não cria migration.
+## 18. Versões em vigor
+
+```text
+VERSAO_REGRAS_CM          = CM1-A.1   (fila; commercialMachine.ts)
+VERSAO_REGRAS_PLANO_CM    = CM1-B.1   (plano; commercialActionPlan.ts)
+VERSAO_REGRAS_CADENCIA_CM = CM2-B.1   (cadência; commercialCadence.ts)
+```
+
+O CM2-F não criou versão nova: documentação não muda regra. As três versões viajam na expectativa e são conferidas pela
+fronteira a cada criação.
+
+## 19. Gate final (execução real no fechamento, worktree `commercial-machine-cm2`)
+
+| Verificação | Resultado |
+|---|---|
+| `npx vitest run` dos blocos CM2 (paridade, cadência, sugestão, fronteira, store, Hoje) | 6 arquivos · 296 testes · verde |
+| `npm test` (suíte completa) | 83 arquivos · 1113 testes + 8 todo · verde |
+| `npx tsc --noEmit` | limpo |
+| `npm run lint` (`eslint src`) | limpo |
+| `npm run build` | ok (aviso de chunk > 500 kB é pré-existente do projeto) |
+| `git diff --check` | limpo |
+| path guard | só documentação neste commit |
+| `git merge-tree --write-tree HEAD origin/integracao-wave03` | exit 0, sem conflito |
+| CI | **Nenhum status de CI publicado para este SHA.** O workflow `EIFF Quality Gate` (`.github/workflows/quality-gate.yml`) só dispara em `pull_request`/`push` para `main` ou por `workflow_dispatch`; a branch `feature/commercial-machine-cm2` não abre PR ainda, e esta sessão não tem `gh` autenticado para consultar. A evidência do gate é local, executada no worktree. |
+
+Runbook do CM2 (comandos reais):
+
+```bash
+npx vitest run src/core/radar/commercialCadence.paridade.test.ts src/core/radar/commercialCadence.test.ts src/core/radar/commercialCadenceTask.test.ts src/core/radar/commercialCadenceCommit.test.ts src/data/radar.cadencia.store.test.ts src/screens/radar/HojeCadencia.test.ts
+```
+
+```bash
+npm test
+```
+
+```bash
+npm run build
+```
+
+## 20. Roadmap
+
+```text
+CM1 — CLOSED   (feature/commercial-machine-v1 @ a9ef237)
+CM2 — CLOSED   (feature/commercial-machine-cm2, este commit)
+
+NEXT:
+LEAD ENGINE 1.0
+
+Depois:
+CM3 — Opportunity Control
+CM4 — Measurement & Learning
+CM5 — Assisted Execution
+```
+
+### Próxima Wave — Lead Engine 1.0 (não iniciada)
+
+Objetivo: alimentar continuamente o Radar com empresas, decisores e sinais de timing **sem criar uma base paralela**.
+
+O Radar já tem fundações para isso e a próxima Wave **não deve reconstruí-las**: `adapters.ts` (interface `AdapterFonte`
+com adapters iniciais para CNO, PNCP, CNPJ/Receita, enriquecimento B2B e notícias), ingestão normalizada
+(`ingerirRegistrosRadar`), deduplicação (CNPJ → domínio → nome+local → parecido), lineage (`radar_source_record`, jobs de
+importação), Vibe/enriquecimento (`vibe.ts`, `vibeServidor.ts`, ledger `radar_vibe_operation`), sinais e leitura de sinal,
+e importação CSV com dry run.
+
+Por isso o primeiro bloco do Lead Engine é **auditoria do estado real dessas fundações**, não integração nova.
+
+Fluxo pretendido:
+
+```text
+fontes
+↓
+descoberta de empresas
+↓
+normalização
+↓
+deduplicação
+↓
+enriquecimento
+↓
+decisor
+↓
+sinais de timing
+↓
+Radar
+↓
+Máquina Comercial
+```
+
+Nada disso foi implementado no CM2-F.
+
+## 21. O que o CM2 não faz
+
+Não envia nem prepara envio; não amplia allowlists nem contorna guardas de provider; não cria sequência,
+`radar_sequence`, `radar_cadence_event` ou entidade de tentativa; não cria score nem reordena a fila; não cria tarefa sem
+decisão humana; não altera hipóteses do CM1-A; não usa estratégia como política nem ativa experimento; não cria migration.
