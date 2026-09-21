@@ -20,6 +20,8 @@ import { Badge, Empty, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, use
 import { Abordagem } from './Abordagem';
 import { intencaoDoPlanoCM, type IntencaoComunicacaoCM } from '../../core/radar/comunicacaoIntencaoCM';
 import { AtividadeForm, ConcluirTarefaForm, RESPOSTA_NOME, ScoreModal, ScorePill, TarefaCadenciaForm, TarefaForm, d, nomeUsuario } from './comum';
+import ComercialPanorama from './ComercialPanorama';
+import { visaoComercialUX, type ContaComercialUX } from './comercialVisao';
 import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -55,6 +57,9 @@ const rotuloToque = (c: CadenceRecommendationCM) => {
 };
 
 type FiltroCategoria = 'TODAS' | CategoriaCommercialQueue;
+type VisaoComercial = 'panorama' | 'fila';
+/** Descritor de acao: o Panorama mostra so a principal e a fila mostra todas, sem duplicar o `switch (plano.modo)`. */
+interface AcaoItemUX { id: string; rotulo: string; primario?: boolean; to?: string; onClick?: () => void }
 interface Linha { id: string; item: CommercialQueueItem; plano: CommercialActionPlan; cadencia: CadenceRecommendationCM; sugestao: TaskSuggestionCM; empresa?: Empresa }
 /** Indexa por itemId; duplicado ou ausente e erro explicito (nunca casar por posicao). */
 function porItemId<T extends { itemId: string }>(xs: readonly T[], nome: string): Map<string, T> {
@@ -82,6 +87,7 @@ export default function RadarHoje() {
   const [concluir, setConcluir] = useState<TarefaRadar | null>(null);
   const [tarefa, setTarefa] = useState<TarefaRadar | null>(null);
   const [agendar, setAgendar] = useState<Extract<AberturaAgendamentoCM, { ok: true }> | null>(null);
+  const [visao, setVisao] = useState<VisaoComercial>('panorama');
 
   // fonte de verdade, sempre sobre o dataset inteiro e antes de qualquer filtro:
   // fila (CM1-A) -> planos (CM1-B) -> cadencias (CM2-B) -> sugestoes de compromisso (CM2-C)
@@ -100,6 +106,7 @@ export default function RadarHoje() {
     });
   }, [r, fila, hoje]);
   const contatoPorId = useMemo(() => new Map(r.contatos.map((c) => [c.id, c])), [r.contatos]);
+  const empresaPorId = useMemo(() => new Map(r.empresas.map((e) => [e.id, e])), [r.empresas]);
 
   // filtros de visualizacao: escondem itens e preservam a ordem da fila
   const termo = normalizar(busca);
@@ -117,14 +124,46 @@ export default function RadarHoje() {
   const foraPorMotivo = MOTIVOS_FORA_DA_FILA.map((m) => [m, fila.foraDaFila.filter((f) => f.motivo === m).length] as const).filter(([, n]) => n > 0);
   const limparFiltros = () => { setSomenteMinhas(false); setClasse(''); setCategoria('TODAS'); setBusca(''); };
 
+  // UX-1: o Panorama le o view-model do UX-0 sobre as mesmas linhas filtradas; a categoria continua sendo filtro da fila.
+  const porLinha = useMemo(() => new Map(base.map((l) => [l.id, l])), [base]);
+  const contasUX = useMemo(() => visaoComercialUX(base.map(({ item, plano, cadencia, sugestao }) => ({ item, plano, cadencia, sugestao }))), [base]);
+  /** Enquanto o UX-2 (gaveta) nao existe, o detalhe e a propria fila completa com a conta em foco. */
+  const verDetalhes = (conta: ContaComercialUX) => {
+    const linha = porLinha.get(conta.itemId);
+    if (linha && categoria !== 'TODAS' && linha.item.categoria !== categoria) setCategoria('TODAS');
+    setFocoId(conta.itemId);
+    setVisao('fila');
+  };
+
   return (
     <>
-      <PageHead title="Hoje" subtitle={<>Sua fila comercial priorizada pelo que exige ação agora. Ordem, ação, plano e cadência vêm da Máquina Comercial (fila {VERSAO_REGRAS_CM} · plano {VERSAO_REGRAS_PLANO_CM} · cadência {VERSAO_REGRAS_CADENCIA_CM}); os filtros só escondem itens, não mudam a ordem.</>}>
+      <PageHead title="Comercial" subtitle={<>{visao === 'panorama'
+        ? <>O que precisa da sua atenção agora, o que espera alguém e o que está programado. Ordem, ação e cadência vêm da Máquina Comercial; o Panorama só apresenta.</>
+        : <>Sua fila comercial priorizada pelo que exige ação agora. Ordem, ação, plano e cadência vêm da Máquina Comercial (fila {VERSAO_REGRAS_CM} · plano {VERSAO_REGRAS_PLANO_CM} · cadência {VERSAO_REGRAS_CADENCIA_CM}); os filtros só escondem itens, não mudam a ordem.</>}</>}>
         <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={somenteMinhas} onChange={(e) => setSomenteMinhas(e.target.checked)} /> Só as minhas</label>
         <Select value={classe} onChange={setClasse} options={['A+', 'A', 'B', 'C', 'D']} allowEmpty="Todas as classes" aria-label="Classe" />
         <Input placeholder="Buscar empresa ou contato" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar empresa ou contato" style={{ width: 220 }} />
       </PageHead>
 
+      <Tabs value={visao} onChange={setVisao} items={[{ id: 'panorama' as VisaoComercial, label: 'Panorama' }, { id: 'fila' as VisaoComercial, label: `Fila completa (${base.length})` }]} />
+
+      {visao === 'panorama' ? (
+        !fila.itens.length
+          ? <Empty icone="hoje" titulo="Nada na carteira">Nenhuma conta exige ação agora. Importe empresas, registre sinais ou atividades: a fila se monta a partir do que acontece no Radar.</Empty>
+          : <div style={{ marginTop: 12 }}>
+            <ComercialPanorama
+              contas={contasUX}
+              nomeEmpresa={(id) => nomeEmpresa(empresaPorId.get(id))}
+              nomeContato={(id) => contatoPorId.get(id)?.nome ?? '—'}
+              nomeCanal={(canal) => (canal ? NOME_CANAL[canal] : '')}
+              acaoPrincipal={(c) => { const l = porLinha.get(c.itemId); return l ? acoes(l, { primeira: true }) : null; }}
+              ctaCadencia={(c) => { const l = porLinha.get(c.itemId); if (!l) return null; const rotulo = ctaCadenciaCM(l.sugestao, podeAgir); return rotulo ? <button className="btn sm" onClick={() => abrirAgendamento(l.cadencia, l.sugestao)} aria-label={`${rotulo} recomendada pela Máquina Comercial`}>{rotulo}</button> : null; }}
+              onVerDetalhes={verDetalhes}
+              onVerTodos={() => setVisao('fila')}
+            />
+          </div>
+      ) : (
+      <>
       <KpiStrip itens={[
         { label: 'Agir agora', value: contagem('AGIR_AGORA'), tone: contagem('AGIR_AGORA') ? 'neg' : undefined, hint: 'resposta, tarefa vencida, sinal novo, oportunidade crítica' },
         { label: 'Avançar oportunidade', value: contagem('AVANCAR_OPORTUNIDADE'), tone: contagem('AVANCAR_OPORTUNIDADE') ? 'warn' : undefined, hint: 'negócio ativo sem movimento' },
@@ -171,6 +210,8 @@ export default function RadarHoje() {
             />
           </div>
         </>
+      )}
+      </>
       )}
 
       {score && <ScoreModal e={score} onClose={() => setScore(null)} />}
@@ -398,51 +439,74 @@ export default function RadarHoje() {
   // -------------------------------------------------------------------------------------------------------------------
   // CTAs: dependem do MODO do plano e da referencia exata do item (nunca da categoria nem de "qualquer tarefa aberta")
   // -------------------------------------------------------------------------------------------------------------------
-  function acoes({ item, plano, empresa }: Linha): React.ReactNode {
+  // UX-1: as acoes viraram descritores para o Panorama poder mostrar SO a principal sem duplicar regra. O
+  // `switch (plano.modo)` continua existindo aqui e so aqui; rotulos, ordem e destino sao os mesmos de sempre.
+  function acoesDoItem({ item, plano, empresa }: Linha): AcaoItemUX[] {
     const empresaId = item.empresaId;
     const titulo = (t: string) => `${t} · ${nomeEmpresa(empresa)}`;
     const tarefaPorRef = (ref?: { tipo: string; id: string }) => (ref?.tipo === 'tarefa' ? r.tarefas.find((t) => t.id === ref.id && t.status === 'Aberta') : undefined);
     const tarefaDaAcao = tarefaPorRef(plano.referencia);
-    const link = (to: string, texto: string, primario = false) => <Link to={to} className={`btn sm${primario ? ' primary' : ''}`}>{texto}</Link>;
-    const abrirEmpresa = (aba?: string, texto = 'Abrir empresa', primario = false) => link(`/radar/empresas/${empresaId}${aba ? `?aba=${aba}` : ''}`, texto, primario);
-    const botao = (texto: string, onClick: () => void, primario = false) => podeAgir ? <button className={`btn sm${primario ? ' primary' : ''}`} onClick={onClick}>{texto}</button> : null;
+    // o id do descritor e o proprio rotulo (unico dentro do modo): serve so de key, nunca de regra
+    const link = (to: string, texto: string, primario = false): AcaoItemUX => ({ id: texto, rotulo: texto, to, primario });
+    const abrirEmpresa = (aba?: string, texto = 'Abrir empresa', primario = false): AcaoItemUX => link(`/radar/empresas/${empresaId}${aba ? `?aba=${aba}` : ''}`, texto, primario);
+    const botao = (texto: string, onClick: () => void, primario = false): AcaoItemUX => ({ id: texto, rotulo: texto, onClick, primario });
     const novaTarefa = (p: Partial<TarefaRadar>) => setTarefa(actions.novaTarefaRadar(empresaId, p));
 
     switch (plano.modo) {
       case 'CONTATO': {
         const contatoId = plano.contato!.id;
-        return <>
-          {botao(plano.comunicacao?.origem === 'ARTEFATO_APROVADO' ? 'Abrir abordagem aprovada' : 'Preparar abordagem', () => setAbordagem({ empresaId, contatoId, titulo: titulo('Abordagem'), intencao: intencaoDoPlanoCM(plano) }), true)}
-          {botao('Registrar atividade', () => setAtividade({ empresaId, contatoId, oportunidadeId: item.oportunidadeId }))}
-          {tarefaDaAcao ? botao('Concluir esta tarefa', () => setConcluir(tarefaDaAcao)) : botao('Agendar tarefa', () => novaTarefa({ tipo: plano.tipoTarefa, contatoId, oportunidadeId: item.oportunidadeId, descricao: plano.explicacao.acao }))}
-        </>;
+        return [
+          botao(plano.comunicacao?.origem === 'ARTEFATO_APROVADO' ? 'Abrir abordagem aprovada' : 'Preparar abordagem', () => setAbordagem({ empresaId, contatoId, titulo: titulo('Abordagem'), intencao: intencaoDoPlanoCM(plano) }), true),
+          botao('Registrar atividade', () => setAtividade({ empresaId, contatoId, oportunidadeId: item.oportunidadeId })),
+          tarefaDaAcao
+            ? botao('Concluir esta tarefa', () => setConcluir(tarefaDaAcao))
+            : botao('Agendar tarefa', () => novaTarefa({ tipo: plano.tipoTarefa, contatoId, oportunidadeId: item.oportunidadeId, descricao: plano.explicacao.acao })),
+        ];
       }
       case 'ACAO_INTERNA': {
-        if (tarefaDaAcao) return <>{botao('Concluir esta tarefa', () => setConcluir(tarefaDaAcao), true)}{botao('Registrar atividade', () => setAtividade({ empresaId, contatoId: tarefaDaAcao.contatoId, oportunidadeId: tarefaDaAcao.oportunidadeId }))}{abrirEmpresa()}</>;
-        if (plano.referencia?.tipo === 'oportunidade') { const oportunidadeId = plano.referencia.id; return <>{abrirEmpresa('oportunidades', 'Abrir oportunidade', true)}{botao('Criar tarefa manual', () => novaTarefa({ tipo: plano.tipoTarefa, oportunidadeId, descricao: plano.explicacao.modo }))}</>; }
-        return abrirEmpresa(undefined, 'Abrir empresa', true);
+        if (tarefaDaAcao) return [
+          botao('Concluir esta tarefa', () => setConcluir(tarefaDaAcao), true),
+          botao('Registrar atividade', () => setAtividade({ empresaId, contatoId: tarefaDaAcao.contatoId, oportunidadeId: tarefaDaAcao.oportunidadeId })),
+          abrirEmpresa(),
+        ];
+        if (plano.referencia?.tipo === 'oportunidade') {
+          const oportunidadeId = plano.referencia.id;
+          return [abrirEmpresa('oportunidades', 'Abrir oportunidade', true), botao('Criar tarefa manual', () => novaTarefa({ tipo: plano.tipoTarefa, oportunidadeId, descricao: plano.explicacao.modo }))];
+        }
+        return [abrirEmpresa(undefined, 'Abrir empresa', true)];
       }
       case 'REVISAR': {
         const rv = plano.revisar;
         const comunicacao = rv?.referencia?.tipo === 'comunicacao' ? r.comunicacoes.find((c) => c.id === rv.referencia!.id) : undefined;
         const tarefaRevisar = tarefaPorRef(rv?.referencia) ?? tarefaDaAcao;
-        const revisarTarefa = tarefaRevisar ? botao('Revisar tarefa', () => setTarefa(tarefaRevisar)) : null;
-        if (comunicacao) return <>{botao('Revisar abordagem', () => setAbordagem({ empresaId, contatoId: comunicacao.contatoId, titulo: titulo('Revisar abordagem'), semGeracao: 'A Máquina Comercial pede revisar a abordagem existente: nenhuma nova é gerada daqui.' }), true)}{abrirEmpresa()}</>;
-        if (rv?.trava === 'DUPLICATA_PENDENTE') return <>{link('/radar?aba=duplicatas', 'Resolver duplicata', true)}{abrirEmpresa()}</>;
-        if (plano.bloqueios.some((b) => b.codigo === 'EMPRESA_SUPRIMIDA')) return <>{link('/radar?aba=supressoes', 'Ver lista de não contatar', true)}{abrirEmpresa()}</>;
-        if (rv?.trava === 'OPORTUNIDADE_SEM_RESPONSAVEL') return <>{abrirEmpresa('oportunidades', 'Definir responsável da oportunidade', true)}{revisarTarefa}</>;
-        if (rv?.trava === 'CONFLITO_TAREFA_COMUNICACAO') return <>{abrirEmpresa('atividades', 'Revisar tarefas e abordagens', true)}{revisarTarefa}</>;
-        if (rv?.alvo === 'COMPROMISSO' && tarefaRevisar) return <>{botao('Revisar tarefa', () => setTarefa(tarefaRevisar), true)}{abrirEmpresa()}</>;
-        return <>{abrirEmpresa('contatos', 'Revisar contatos da empresa', true)}{revisarTarefa}</>;
+        const revisarTarefa = tarefaRevisar ? [botao('Revisar tarefa', () => setTarefa(tarefaRevisar))] : [];
+        if (comunicacao) return [botao('Revisar abordagem', () => setAbordagem({ empresaId, contatoId: comunicacao.contatoId, titulo: titulo('Revisar abordagem'), semGeracao: 'A Máquina Comercial pede revisar a abordagem existente: nenhuma nova é gerada daqui.' }), true), abrirEmpresa()];
+        if (rv?.trava === 'DUPLICATA_PENDENTE') return [link('/radar?aba=duplicatas', 'Resolver duplicata', true), abrirEmpresa()];
+        if (plano.bloqueios.some((b) => b.codigo === 'EMPRESA_SUPRIMIDA')) return [link('/radar?aba=supressoes', 'Ver lista de não contatar', true), abrirEmpresa()];
+        if (rv?.trava === 'OPORTUNIDADE_SEM_RESPONSAVEL') return [abrirEmpresa('oportunidades', 'Definir responsável da oportunidade', true), ...revisarTarefa];
+        if (rv?.trava === 'CONFLITO_TAREFA_COMUNICACAO') return [abrirEmpresa('atividades', 'Revisar tarefas e abordagens', true), ...revisarTarefa];
+        if (rv?.alvo === 'COMPROMISSO' && tarefaRevisar) return [botao('Revisar tarefa', () => setTarefa(tarefaRevisar), true), abrirEmpresa()];
+        return [abrirEmpresa('contatos', 'Revisar contatos da empresa', true), ...revisarTarefa];
       }
       case 'ENRIQUECER': {
         const en = plano.enriquecer;
         const principal = en?.alvo === 'VERIFICAR_SINAL' ? abrirEmpresa('sinais', 'Verificar sinal', true)
           : abrirEmpresa('contatos', en?.alvo === 'CANAL' ? 'Completar canal do contato' : en?.alvo === 'CONTATO_VALIDO' ? 'Validar ou trocar contato' : 'Buscar decisor nos contatos', true);
-        return <>{principal}{tarefaDaAcao ? botao('Revisar tarefa', () => setTarefa(tarefaDaAcao)) : botao('Agendar pesquisa', () => novaTarefa({ tipo: 'RESEARCH', contatoId: en?.contatoId, oportunidadeId: item.oportunidadeId, descricao: plano.explicacao.modo }))}</>;
+        return [principal, tarefaDaAcao
+          ? botao('Revisar tarefa', () => setTarefa(tarefaDaAcao))
+          : botao('Agendar pesquisa', () => novaTarefa({ tipo: 'RESEARCH', contatoId: en?.contatoId, oportunidadeId: item.oportunidadeId, descricao: plano.explicacao.modo }))];
       }
       case 'AGUARDAR':
-        return abrirEmpresa();
+        return [abrirEmpresa()];
     }
+  }
+
+  /** Renderiza os descritores. Botao exige permissao (como sempre); link nao. `primeira` e o que o Panorama mostra. */
+  function acoes(linha: Linha, opcoes: { primeira?: boolean } = {}): React.ReactNode {
+    const disponiveis = acoesDoItem(linha).filter((a) => !!a.to || podeAgir);
+    const lista = opcoes.primeira ? [disponiveis.find((a) => a.primario) ?? disponiveis[0]].filter((a): a is AcaoItemUX => !!a) : disponiveis;
+    return lista.map((a) => a.to
+      ? <Link key={a.id} to={a.to} className={`btn sm${a.primario ? ' primary' : ''}`}>{a.rotulo}</Link>
+      : <button key={a.id} className={`btn sm${a.primario ? ' primary' : ''}`} onClick={a.onClick}>{a.rotulo}</button>);
   }
 }
