@@ -9,11 +9,12 @@ import { ObraForm } from './Obras';
 import { LancamentoForm } from './LancamentoForm';
 import { DemandasTab, MedicoesTab, ProducaoTab, ServicosTab } from './ObraOperacao';
 import { MateriaisTab } from './Materiais';
+import { FaturamentoTab } from './FaturamentoObra';
 
 export default function Obra360({ codigo }: { codigo: string }) {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'cronograma' | 'servicos' | 'materiais' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
+  const [aba, setAba] = useState<'resumo' | 'medicoes' | 'cronograma' | 'faturamento' | 'servicos' | 'materiais' | 'demandas' | 'fabricacao' | 'montagem' | 'financeiro' | 'execucao' | 'timeline'>('resumo');
   const [editando, setEditando] = useState(false);
   const [novoLanc, setNovoLanc] = useState(false);
   const [exec, setExec] = useState<{ execucaoFisica: number; medidoFaturado: number; estimativaConcluir: number; justificativa: string } | null>(null);
@@ -76,6 +77,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
           { id: 'resumo', label: 'Resumo econômico' },
           { id: 'medicoes', label: `Cronograma e medições (${o.medicoes.medicoes.filter((m) => m.medida).length}/${o.medicoes.medicoes.length})` },
           { id: 'cronograma', label: 'Cronograma visual' },
+          { id: 'faturamento', label: 'Faturamento' },
           { id: 'servicos', label: `Serviços (${o.servicos.length})` },
           { id: 'materiais', label: `Materiais (${o.peso.pesoTotal ? `${Math.round(o.peso.pctMontado * 100)}% de ${(o.peso.pesoTotal / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} t` : 'kg'})` },
           { id: 'demandas', label: `Demandas (${o.demandasPendentes + o.demandasAtrasadas} pend.)` },
@@ -87,6 +89,7 @@ export default function Obra360({ codigo }: { codigo: string }) {
         ]} />
         {aba === 'medicoes' && <MedicoesTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'cronograma' && <Gantt o={o} dataBase={ds.params.dataBase} lancamentos={movimentos} />}
+        {aba === 'faturamento' && <FaturamentoTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'servicos' && <ServicosTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'materiais' && <MateriaisTab o={o} onErro={toast} onOk={toast} />}
         {aba === 'demandas' && <DemandasTab o={o} onErro={toast} />}
