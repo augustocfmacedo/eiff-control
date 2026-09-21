@@ -103,3 +103,15 @@ const CAMPO: Partial<Record<CodigoRecusaCommitCM, CampoAgendamentoCM>> = {
   CONTATO_INVALIDO: 'contatoId', CANAL_INDISPONIVEL: 'contatoId', DESCRICAO_VAZIA: 'descricao',
 };
 export const campoDaRecusaCadenciaCM = (codigo: CodigoRecusaCommitCM): CampoAgendamentoCM | undefined => CAMPO[codigo];
+
+/**
+ * Unica validacao que mora na tela, e so para desfazer uma ambiguidade de apresentacao: campo vazio significa "o humano
+ * apagou", enquanto a fronteira (CM2-E) le `undefined` como "nao editado" e reaproveita o responsavel sugerido. Sem isso,
+ * limpar o campo criaria a tarefa com o responsavel do motor. Nada de dominio e checado aqui (existencia do usuario,
+ * contato, canal, data, oportunidade e contexto continuam sendo decididos pelo CM2-E).
+ */
+export const MENSAGEM_RESPONSAVEL_VAZIO_CM = 'Informe quem será responsável pela tarefa.';
+export function validarFormularioAgendamentoCM(campos: CamposAgendamentoCM): { campo: CampoAgendamentoCM; mensagem: string } | undefined {
+  if (!campos.responsavelId.trim()) return { campo: 'responsavelId', mensagem: MENSAGEM_RESPONSAVEL_VAZIO_CM };
+  return undefined;
+}

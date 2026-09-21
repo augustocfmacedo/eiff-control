@@ -13,7 +13,7 @@ import { CODIGOS_RECUSA_COMMIT_CM, expectativaDaSugestaoCM, type CodigoRecusaCom
 import { construirCommercialQueue } from '../../core/radar/commercialMachine';
 import {
   MENSAGEM_AGENDADA_CM, MENSAGEM_SEM_EXPECTATIVA_CM, ROTULO_CTA_CADENCIA, TEXTO_CONFLITO_CADENCIA_CM, TITULO_CONFLITO_CADENCIA_CM,
-  abrirAgendamentoCM, campoDaRecusaCadenciaCM, ctaCadenciaCM, edicoesDoFormularioCM, mantemFormularioAbertoCM, reacaoDaRecusaCadenciaCM,
+  MENSAGEM_RESPONSAVEL_VAZIO_CM, abrirAgendamentoCM, campoDaRecusaCadenciaCM, ctaCadenciaCM, edicoesDoFormularioCM, mantemFormularioAbertoCM, reacaoDaRecusaCadenciaCM, validarFormularioAgendamentoCM,
   type CamposAgendamentoCM,
 } from './HojeCadencia';
 
@@ -257,5 +257,62 @@ describe('CM2-D2 · guardas da tela', () => {
     expect(legado).toContain('actions.salvarTarefaRadar(t)');
     expect(legado).toContain('TIPOS_TAREFA');
     expect(legado).not.toContain('criarTarefaDaCadenciaCM');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// CM2-D2.1 — responsavel vazio e decisao do humano, nunca "nao editado"
+// ---------------------------------------------------------------------------------------------------------------------
+describe('CM2-D2.1 · guarda do responsavel vazio', () => {
+  const base: CamposAgendamentoCM = { venceEm: '2026-09-30', descricao: 'Retomar conversa', responsavelId: 'u1', contatoId: '', contatoEditavel: true };
+  it('campo vazio bloqueia com mensagem no responsavel', () => {
+    expect(validarFormularioAgendamentoCM({ ...base, responsavelId: '' })).toEqual({ campo: 'responsavelId', mensagem: MENSAGEM_RESPONSAVEL_VAZIO_CM });
+    expect(MENSAGEM_RESPONSAVEL_VAZIO_CM).toBe('Informe quem será responsável pela tarefa.');
+  });
+  it('so espaco em branco tambem e vazio', () => {
+    expect(validarFormularioAgendamentoCM({ ...base, responsavelId: '   ' })?.campo).toBe('responsavelId');
+  });
+  it('campo preenchido libera o caminho da fronteira', () => {
+    expect(validarFormularioAgendamentoCM(base)).toBeUndefined();
+  });
+  it('sugestao sem responsavel abre vazia e ja nasce bloqueada ate o humano escolher', () => {
+    const semDono = { ...comExpectativa.sugestao, estado: 'REQUER_RESPONSAVEL' as const, tarefa: { ...comExpectativa.sugestao.tarefa!, responsavelId: undefined } };
+    const a = abrirAgendamentoCM(comExpectativa.cadencia, semDono);
+    if (!a.ok) throw new Error('esperava abertura');
+    expect(a.campos.responsavelId).toBe('');
+    expect(validarFormularioAgendamentoCM(a.campos)?.campo).toBe('responsavelId');
+  });
+  it('sugestao com responsavel: limpar o campo bloqueia em vez de reaproveitar o do motor', () => {
+    const a = abrirAgendamentoCM(comExpectativa.cadencia, comExpectativa.sugestao);
+    if (!a.ok) throw new Error('esperava abertura');
+    expect(a.campos.responsavelId).toBe(comExpectativa.sugestao.tarefa!.responsavelId);
+    expect(validarFormularioAgendamentoCM(a.campos)).toBeUndefined();
+    expect(validarFormularioAgendamentoCM({ ...a.campos, responsavelId: '' })?.campo).toBe('responsavelId');
+  });
+  it('a guarda nao valida dominio: data, contato, descricao e oportunidade seguem com o CM2-E', () => {
+    expect(validarFormularioAgendamentoCM({ ...base, venceEm: '2020-01-01' })).toBeUndefined();
+    expect(validarFormularioAgendamentoCM({ ...base, descricao: '' })).toBeUndefined();
+    expect(validarFormularioAgendamentoCM({ ...base, contatoId: 'c-inexistente' })).toBeUndefined();
+    expect(validarFormularioAgendamentoCM({ ...base, responsavelId: 'u-inexistente' })).toBeUndefined();
+  });
+  it('o contrato do CM2-E nao mudou: vazio continua virando ausente nas edicoes', () => {
+    expect(edicoesDoFormularioCM({ ...base, responsavelId: '' }).responsavelId).toBeUndefined();
+  });
+  it('o Save confere o responsavel ANTES de chamar a fronteira e retorna sem gravar', () => {
+    const i = FORMULARIO.indexOf('validarFormularioAgendamentoCM(campos)');
+    const j = FORMULARIO.indexOf('actions.criarTarefaDaCadenciaCM(');
+    expect(i, 'a guarda existe no Save').toBeGreaterThan(-1);
+    expect(i, 'a guarda vem antes da fronteira').toBeLessThan(j);
+    expect(FORMULARIO).toMatch(/if \(pendente\) \{ setErro\(pendente\); return; \}/);
+  });
+  it('o formulario nunca cai no usuario da sessao', () => {
+    // "usuarios" (a lista de opcoes) pode aparecer; o usuario da sessao, nunca
+    expect(FORMULARIO).not.toMatch(/usuario(?!s)/);
+    expect(FORMULARIO).not.toContain('salvarTarefaRadar');
+  });
+  it('o CTA manual do CM1-C tem rotulo proprio e o "Agendar próxima ação" fica so na cadencia', () => {
+    expect(FONTE_HOJE).toContain("botao('Criar tarefa manual'");
+    expect(FONTE_HOJE.match(/'Agendar próxima ação'/g) ?? []).toHaveLength(0);
+    expect(FONTE_HOJE).toContain('novaTarefa({ tipo: plano.tipoTarefa, oportunidadeId, descricao: plano.explicacao.modo })');
   });
 });

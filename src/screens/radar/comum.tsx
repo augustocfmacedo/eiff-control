@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA, NOME_CANAL, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, NOME_TIPO_ATIVIDADE, NOME_TIPO_TAREFA, PERSONAS, TIPOS_ATIVIDADE, TIPOS_SINAL, TIPOS_TAREFA, calcularDecisionFit, calcularScore, contextoEmpresa, normalizarContatosCsv, tipoProjetoPrincipal, normalizarEmpresasCsv, type Atividade, type Canal, type Contato, type Empresa, type Estagio, type ExplicacaoScore, type ImportacaoJob, type Oportunidade, type Projeto, type TarefaRadar, type TipoAtividade, type TipoSinal, type TipoTarefa, ACOES_SINAL, NOME_ACAO_SINAL, NOME_RELEVANCIA, RELEVANCIAS, RELEVANCIA_PADRAO_POR_TIPO, type AcaoSinal, type RelevanciaEstrutural, TEXTO_PENDENCIA_TAREFA_CM, type CodigoPendenciaTarefaCM } from '../../core/radar';
 import { RegraCadenciaCommitError, actions, useStore } from '../../data/store';
-import { MENSAGEM_AGENDADA_CM, TEXTO_CONFLITO_CADENCIA_CM, TITULO_CONFLITO_CADENCIA_CM, campoDaRecusaCadenciaCM, edicoesDoFormularioCM, reacaoDaRecusaCadenciaCM, type AberturaAgendamentoCM, type CampoAgendamentoCM, type CamposAgendamentoCM, type ReacaoRecusaCadenciaCM } from './HojeCadencia';
+import { MENSAGEM_AGENDADA_CM, TEXTO_CONFLITO_CADENCIA_CM, TITULO_CONFLITO_CADENCIA_CM, campoDaRecusaCadenciaCM, edicoesDoFormularioCM, reacaoDaRecusaCadenciaCM, validarFormularioAgendamentoCM, type AberturaAgendamentoCM, type CampoAgendamentoCM, type CamposAgendamentoCM, type ReacaoRecusaCadenciaCM } from './HojeCadencia';
 import { dryRunContatosCsv, relatorioDryRun, type DryRunContatos } from '../../core/radar/dryrun';
 import { Badge, Field, Input, Modal, NumberInput, Select, money, tentar, type Tone } from '../../ui/components';
 
@@ -245,6 +245,9 @@ export function TarefaCadenciaForm({ abertura, onClose, onOk, onAbrirTarefa }: {
 
   const salvar = () => {
     setErro(null);
+    // campo vazio e decisao do humano, nao ausencia de edicao: a fronteira nao pode reaproveitar o responsavel sugerido
+    const pendente = validarFormularioAgendamentoCM(campos);
+    if (pendente) { setErro(pendente); return; }
     try {
       actions.criarTarefaDaCadenciaCM(abertura.expectativa, edicoesDoFormularioCM(campos));
       onOk(MENSAGEM_AGENDADA_CM);

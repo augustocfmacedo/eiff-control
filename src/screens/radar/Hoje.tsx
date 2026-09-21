@@ -419,7 +419,7 @@ export default function RadarHoje() {
       }
       case 'ACAO_INTERNA': {
         if (tarefaDaAcao) return <>{botao('Concluir esta tarefa', () => setConcluir(tarefaDaAcao), true)}{botao('Registrar atividade', () => setAtividade({ empresaId, contatoId: tarefaDaAcao.contatoId, oportunidadeId: tarefaDaAcao.oportunidadeId }))}{abrirEmpresa()}</>;
-        if (plano.referencia?.tipo === 'oportunidade') { const oportunidadeId = plano.referencia.id; return <>{abrirEmpresa('oportunidades', 'Abrir oportunidade', true)}{botao('Agendar próxima ação', () => novaTarefa({ tipo: plano.tipoTarefa, oportunidadeId, descricao: plano.explicacao.modo }))}</>; }
+        if (plano.referencia?.tipo === 'oportunidade') { const oportunidadeId = plano.referencia.id; return <>{abrirEmpresa('oportunidades', 'Abrir oportunidade', true)}{botao('Criar tarefa manual', () => novaTarefa({ tipo: plano.tipoTarefa, oportunidadeId, descricao: plano.explicacao.modo }))}</>; }
         return abrirEmpresa(undefined, 'Abrir empresa', true);
       }
       case 'REVISAR': {
