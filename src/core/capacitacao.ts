@@ -264,6 +264,25 @@ export const LICOES: Licao[] = [
     verificacao: [{ pergunta: 'O saldo de faturamento direto do contrato vem de…', opcoes: ['Dos lançamentos', 'Da soma do faturamento direto dos eventos de medição', 'Do orçamento SINAPI'], correta: 1 }],
   },
   {
+    id: 'obra-faturamento', titulo: 'Acompanhar o faturamento do contrato', area: 'Obras', rota: '/obras', minutos: 10,
+    objetivo: 'Ver, por etapa do contrato, quanto já foi faturado nas duas frentes — direto ao cliente e pela construtora — e quanto falta.',
+    passos: [
+      'Obra 360 › Faturamento mostra o contratado por etapa (do cronograma de medições) contra o faturado, com saldo, % faturado e % executado.',
+      'A lista de notas agrupa por documento: cada NF aparece com as etapas que cobre, a situação e o repasse ao cliente.',
+      'Nota de faturamento direto é o lançamento de saída marcado como faturamento direto, com a obra e o serviço da etapa; enquanto estiver em Rascunho conta como estimativa.',
+      'Quando a nota do fornecedor vai para o cliente, use "Marcar enviada": o valor sai do indicador "a repassar ao cliente".',
+      'Quando uma NF cobre mais de uma etapa (uma medição parcial, por exemplo), use "Ratear" e divida o título entre as etapas.',
+    ],
+    obrigatorios: ['Obra e serviço no lançamento', 'Número da nota no campo documento'],
+    regras: [
+      'O rateio é leitura por etapa do mesmo título: não muda valor, caixa, custo nem DRE, e as duas somas têm de fechar.',
+      'Receita apenas prevista, sem rateio e sem medição vinculada, não conta como faturada: faturamento é a nota que existe.',
+      'Faturamento direto não entra no caixa nem no DRE da EIFF, mas conta no comprometido da obra e abate o saldo de faturamento direto do contrato.',
+    ],
+    erros: ['Lançar a NF sem serviço: o valor fica fora da etapa.', 'Quebrar a NF da construtora em vários recebíveis em vez de ratear um só título.'],
+    verificacao: [{ pergunta: 'Uma NF de medição cobre três etapas. O certo é…', opcoes: ['Criar um recebível por etapa', 'Lançar um recebível e ratear por etapa', 'Lançar só na etapa de maior valor'], correta: 1 }],
+  },
+  {
     id: 'obra-demandas', titulo: 'Demandas e ordens de produção', area: 'Obras', rota: '/central', minutos: 8,
     objetivo: 'Usar a Central de obras para demandas do período e ordens de fabricação e montagem.',
     passos: [
@@ -557,9 +576,9 @@ export const LICOES: Licao[] = [
 const BASE = ['base-navegacao', 'base-caixa-entrada', 'base-obra360'];
 export const TRILHAS: Record<Papel, string[]> = {
   Administrador: LICOES.map((l) => l.id),
-  Diretoria: [...BASE, 'dir-painel', 'fin-aprovacao', 'fin-posicao', 'dir-fluxo24', 'ctb-dre', 'obra-medicoes-cliente', 'fab-produtividade', 'fin-fechamento', 'adm-cadastros', 'aud-auditoria'],
-  Financeiro: [...BASE, 'fin-lancamento', 'fin-aprovacao', 'fin-liquidar', 'fin-receber', 'fin-ofx', 'fin-posicao', 'fin-dividas', 'comp-receber', 'ctb-dre', 'fin-fechamento', 'adm-cadastros'],
-  'Gestor de obra': [...BASE, 'obra-contrato', 'obra-servicos', 'obra-medicao-fisica', 'obra-medicoes-cliente', 'obra-demandas', 'obra-materiais', 'fab-apontar-estacao', 'fab-romaneio', 'fab-produtividade', 'est-consumo', 'est-rastreio', 'eq-colaboradores', 'eq-apontamento-diario', 'eq-tarefas', 'fin-lancamento', 'comp-pedido', 'fin-aprovacao'],
+  Diretoria: [...BASE, 'dir-painel', 'fin-aprovacao', 'fin-posicao', 'dir-fluxo24', 'ctb-dre', 'obra-medicoes-cliente', 'obra-faturamento', 'fab-produtividade', 'fin-fechamento', 'adm-cadastros', 'aud-auditoria'],
+  Financeiro: [...BASE, 'fin-lancamento', 'fin-aprovacao', 'fin-liquidar', 'fin-receber', 'obra-faturamento', 'fin-ofx', 'fin-posicao', 'fin-dividas', 'comp-receber', 'ctb-dre', 'fin-fechamento', 'adm-cadastros'],
+  'Gestor de obra': [...BASE, 'obra-contrato', 'obra-servicos', 'obra-medicao-fisica', 'obra-medicoes-cliente', 'obra-faturamento', 'obra-demandas', 'obra-materiais', 'fab-apontar-estacao', 'fab-romaneio', 'fab-produtividade', 'est-consumo', 'est-rastreio', 'eq-colaboradores', 'eq-apontamento-diario', 'eq-tarefas', 'fin-lancamento', 'comp-pedido', 'fin-aprovacao'],
   Engenharia: [...BASE, 'eng-orcamento', 'eng-composicoes', 'obra-servicos', 'obra-materiais', 'obra-medicao-fisica', 'obra-demandas', 'fab-apontar-estacao', 'fab-produtividade', 'est-consumo', 'est-rastreio', 'comp-pedido'],
   Compras: [...BASE, 'comp-pedido', 'comp-receber', 'comp-comparativo', 'est-entrada', 'est-consumo', 'eng-composicoes', 'fin-lancamento'],
   Contabilidade: [...BASE, 'ctb-dre', 'fin-receber', 'fin-fechamento', 'aud-auditoria'],

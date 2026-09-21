@@ -1,6 +1,7 @@
 // Assistente contextual: sugestoes acionaveis por tela, derivadas dos mesmos calculos do motor (nada novo e calculado aqui).
 // Cada regra diz o que esta pendente, quantos, e leva para onde se resolve. Funcao pura; a tela so apresenta e permite dispensar.
 import { calcLancamentos, calcTransacoes, carteiraObras, dashboard } from './engine';
+import { acompanhamentoFaturamento } from './faturamento';
 import { resumoProducao } from './obras';
 import { filaHoje } from './radar/pipeline';
 import type { Dataset, Usuario } from './types';
@@ -41,6 +42,8 @@ export function sugestoesPara(rota: string, ds: Dataset, usuario: Usuario, hoje 
       if (o.medicoes.atrasadas > 0) out.push({ id: `obra-${o.obra.codigo}-medicoes`, tom: 'warn', texto: `${n(o.medicoes.atrasadas, 'medição prevista', 'medições previstas')} já passou da data e segue pendente.` });
       if (o.pctMargemProjetada < 0) out.push({ id: `obra-${o.obra.codigo}-margem`, tom: 'bad', texto: 'Margem projetada negativa: reorçar e travar novos compromissos até revisar o ETC.' });
       if (o.faturamentoDiretoSaldo < 0) out.push({ id: `obra-${o.obra.codigo}-direto`, tom: 'warn', texto: 'Compras com faturamento direto passaram do saldo contratado com o cliente.' });
+      const aRepassar = acompanhamentoFaturamento({ codigoObra: o.obra.codigo, servicos: ds.servicos, medicoes: ds.medicoes, lancamentos: ds.lancamentos, rateios: ds.rateios, planoContas: ds.planoContas }).totais.diretoNaoEnviado;
+      if (aRepassar > 0) out.push({ id: `obra-${o.obra.codigo}-repasse`, tom: 'warn', texto: `${aRepassar.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })} em notas de faturamento direto ainda não repassados ao cliente.`, detalhe: 'Enquanto a nota não chega ao cliente, o fornecedor não recebe e o saldo do contrato não anda.' });
       const parados = o.servicos.filter((s) => s.status === 'Em andamento' && s.pctExecucao === 0);
       if (parados.length) out.push({ id: `obra-${o.obra.codigo}-parados`, tom: 'info', texto: `${n(parados.length, 'serviço em andamento', 'serviços em andamento')} sem nenhum avanço apontado.`, detalhe: parados.map((s) => s.codigo).join(', ') });
     }
