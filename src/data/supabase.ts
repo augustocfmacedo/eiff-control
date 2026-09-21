@@ -102,6 +102,7 @@ interface Refs {
   fotos: Map<string, string>;
   funcoes: Map<string, string>;
   alocacoes: Map<string, string>;
+  rateios: Map<string, string>;
 }
 let refs: Refs | null = null;
 
@@ -182,7 +183,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const [estacaoRows, romaneioRows, stockItems, stockMovs] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number'), selTodos('stock_item', 'code'), selTodos('stock_movement', 'moved_on')]);
   const trainingRows = await selTodos('training_progress', 'completed_at');
   const fotoRows = await selTodos('field_photo', 'taken_at');
-  const [funcRows, alocRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on')]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
+  const [funcRows, alocRows, rateioRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on'), selTodos('entry_service_split', 'created_at')]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -240,6 +241,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     fotos: new Map(fotoRows.map((x) => [x.id, x.id])),
     funcoes: new Map(funcRows.map((x) => [x.id, x.id])),
     alocacoes: new Map(alocRows.map((x) => [x.id, x.id])),
+    rateios: new Map(rateioRows.map((x) => [x.id, x.id])),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -301,7 +303,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       competencia: l.competence_date, vencimento: l.due_date ?? '', realizacao: l.settlement_date ?? undefined, status: l.status, confiabilidade: l.confidence, probabilidade: Number(l.probability),
       contaFinanceira: l.bank_account_id ? r.contasInv.get(l.bank_account_id) ?? '' : '', valorBruto: Number(l.gross_amount), retencoes: Number(l.tax_amount), desconto: Number(l.discount_amount), multaJuros: Number(l.interest_amount),
       valorRealizado: Number(l.settled_amount) > 0 ? Number(l.settled_amount) : undefined, conciliado: l.reconciled, observacoes: l.notes ?? '', anexos: [], origem: l.source_system, idExterno: l.external_id ?? undefined,
-      criadoEm: l.created_at, criadoPor: nome(l.created_by), atualizadoEm: l.updated_at, atualizadoPor: nome(l.updated_by), versao: l.version, motivoCancelamento: l.cancellation_reason ?? undefined, faturamentoDireto: !!l.direct_billing,
+      criadoEm: l.created_at, criadoPor: nome(l.created_by), atualizadoEm: l.updated_at, atualizadoPor: nome(l.updated_by), versao: l.version, motivoCancelamento: l.cancellation_reason ?? undefined, faturamentoDireto: !!l.direct_billing, enviadoClienteEm: l.client_forwarded_on ?? undefined,
       excluidoEm: l.deleted_at ?? undefined, excluidoPor: l.deleted_by ? nome(l.deleted_by) : undefined, motivoExclusao: l.deletion_reason ?? undefined,
     })),
     liquidacoes: liqs.map((q) => ({ id: q.id, lancamentoId: r.lancsInv.get(q.entry_id) ?? '', data: q.settled_on, valor: Number(q.amount), conta: r.contasInv.get(q.bank_account_id) ?? '', documento: q.document_number ?? undefined, criadoPor: nome(q.created_by), criadoEm: q.created_at })),
@@ -349,7 +351,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       producao: (prodPor.get(t.id) ?? []).map((p) => ({ servicoId: p.service_id ?? undefined, ordemId: p.order_id ?? undefined, descricao: p.description, quantidade: Number(p.quantity), unidade: p.unit })),
       ocorrencias: (ocPor.get(t.id) ?? []).map((o) => ({ tipo: o.kind, descricao: o.description ?? '', horasPerdidas: Number(o.lost_hours) })),
     })),
-    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], fotos: [], funcoes: [], alocacoes: [], radar: radarVazio(),
+    insumos: [], composicoes: [], orcamentos: [], pedidos: [], conjuntos: [], avancos: [], apontamentosEstacao: [], romaneios: [], itensEstoque: [], movimentosEstoque: [], treinamentos: [], fotos: [], funcoes: [], alocacoes: [], rateios: [], radar: radarVazio(),
     medicoes: medicoesRows.map((m) => ({
       id: m.id, codigoObra: r.obrasInv.get(m.project_id) ?? '', servicoId: m.service_id ?? undefined, numero: m.number, mes: Number(m.month_no ?? 1), etapa: m.stage ?? '', evento: m.title ?? m.number, escopo: m.scope ?? '', criterio: m.criteria ?? '', documentos: m.documents ?? '',
       tipoMedicao: m.kind ?? '', responsavelAprovacao: m.approver ?? '', dataPrevista: m.planned_on ?? undefined, valorBruto: Number(m.gross_amount ?? m.amount ?? 0), faturamentoDireto: Number(m.direct_amount ?? 0), faturamentoConstrutora: Number(m.contractor_amount ?? m.amount ?? 0), retencao: Number(m.retention_amount ?? 0),
@@ -378,6 +380,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     revisao: x.revision ?? undefined, liberadoEm: x.released_on ?? undefined, fabricadoQtd: Number(x.fabricated_qty ?? 0), expedidoQtd: Number(x.shipped_qty ?? 0), montadoQtd: Number(x.erected_qty ?? 0), observacoes: x.notes ?? '', atualizadoEm: x.updated_at,
   }));
   ds.avancos = avancosRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, data: x.measured_on, quantidade: Number(x.quantity), pct: x.pct === null || x.pct === undefined ? undefined : Number(x.pct), descricao: x.description ?? '', evidencia: x.evidence ?? undefined, responsavel: x.created_by ?? '', criadoEm: x.created_at }));
+  ds.rateios = rateioRows.map((x) => ({ id: x.id, lancamentoId: r.lancsInv.get(x.entry_id) ?? '', codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, medicaoId: x.measurement_id ?? undefined, descricao: x.description ?? '', valor: Number(x.amount), criadoEm: x.created_at, criadoPor: x.created_by ?? '' }));
   ds.apontamentosEstacao = estacaoRows.map((x) => ({ id: x.id, data: x.log_date, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, linha: x.line, estacao: x.station, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], pecas: Number(x.pieces ?? 0), pesoKg: Number(x.weight_kg ?? 0), colaboradores: (x.workers ?? []) as { colaboradorId: string; horas: number }[], observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
   ds.movimentosEstoque = stockMovs.map((x) => ({ id: x.id, data: x.moved_on, tipo: x.kind, itemId: x.item_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) : undefined, servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], quantidade: Number(x.quantity_kg), pecas: x.pieces != null ? Number(x.pieces) : undefined, corrida: x.heat_number ?? undefined, certificado: x.certificate ?? undefined, fornecedor: x.supplier ?? undefined, pedidoId: x.purchase_order_id ?? undefined, notaFiscal: x.invoice ?? undefined, custoUnitario: Number(x.unit_cost ?? 0), origemId: x.origin_id ?? undefined, origemTipo: x.origin_kind ?? undefined, observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
@@ -784,6 +787,21 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     r.conjuntos.delete(c.id);
   }
 
+  // rateio de faturamento por servico (leitura por etapa do mesmo titulo; insere novos, remove os que sairam)
+  for (const t of mudou(antes.rateios ?? [], depois.rateios ?? [], 'id').filter((x) => !r.rateios.get(x.id))) {
+    const entryId = r.lancs.get(t.lancamentoId);
+    if (!entryId) { falha('gravar rateio de faturamento', { message: `lançamento ${t.lancamentoId} não encontrado` }); continue; }
+    const { data, error } = await sb.from('entry_service_split').insert({ organization_id: r.orgId, entry_id: entryId, project_id: r.obras.get(t.codigoObra), service_id: r.servicos.get(t.servicoId), measurement_id: t.medicaoId ? r.medicoes.get(t.medicaoId) ?? null : null, description: t.descricao || null, amount: t.valor, created_by: atorId }).select('id');
+    falha('gravar rateio de faturamento', error);
+    if (data?.[0]) r.rateios.set(t.id, data[0].id);
+  }
+  const ratDepois = new Set((depois.rateios ?? []).map((t) => t.id));
+  for (const t of (antes.rateios ?? []).filter((x) => !ratDepois.has(x.id) && r.rateios.get(x.id))) {
+    const { error } = await sb.from('entry_service_split').delete().eq('id', r.rateios.get(t.id)!);
+    falha('excluir rateio de faturamento', error);
+    r.rateios.delete(t.id);
+  }
+
   // medicoes fisicas de servico (imutaveis: insere novas, remove excluidas)
   for (const a of mudou(antes.avancos ?? [], depois.avancos ?? [], 'id').filter((x) => !r.avancos.get(x.id))) {
     const { data, error } = await sb.from('service_progress').insert({ organization_id: r.orgId, project_id: r.obras.get(a.codigoObra), service_id: r.servicos.get(a.servicoId), measured_on: a.data, quantity: a.quantidade, pct: a.pct ?? null, description: a.descricao, evidence: a.evidencia ?? null, created_by: atorId }).select('id');
@@ -922,7 +940,7 @@ function lancRow(l: Lancamento, r: Refs, tipoDe: ReturnType<typeof mapaPlano>, a
     competence_date: l.competencia, due_date: l.vencimento || null, settlement_date: realizado ? l.realizacao ?? l.vencimento : null, status: l.status, confidence: l.confiabilidade, probability: l.probabilidade,
     bank_account_id: r.contas.get(l.contaFinanceira) ?? null, gross_amount: l.valorBruto, tax_amount: l.retencoes, discount_amount: l.desconto, interest_amount: l.multaJuros,
     settled_amount: l.status === 'Cancelado' ? 0 : l.valorRealizado ?? 0, reconciled: l.conciliado, notes: l.observacoes || null, source_system: l.origem || 'eiff-control', external_id: l.idExterno ?? l.id,
-    direct_billing: !!l.faturamentoDireto, cancellation_reason: l.motivoCancelamento ?? null, cancelled_at: l.status === 'Cancelado' ? new Date().toISOString() : null, cancelled_by: l.status === 'Cancelado' ? atorId : null, updated_by: atorId,
+    direct_billing: !!l.faturamentoDireto, client_forwarded_on: l.enviadoClienteEm ?? null, cancellation_reason: l.motivoCancelamento ?? null, cancelled_at: l.status === 'Cancelado' ? new Date().toISOString() : null, cancelled_by: l.status === 'Cancelado' ? atorId : null, updated_by: atorId,
     deleted_at: l.excluidoEm ?? null, deleted_by: l.excluidoEm ? atorId : null, deletion_reason: l.excluidoEm ? l.motivoExclusao ?? null : null,
   };
 }

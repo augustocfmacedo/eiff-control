@@ -1,7 +1,7 @@
 # Relatorio de migracao da planilha
 
 Fonte: `D:/Usuario/Documents/Fluxo_de_Caixa_EIFF.xlsx`
-Gerado em: 2026-09-08T12:25:55.008Z
+Gerado em: 2026-09-21T17:19:57.072Z
 Data-base: 2026-09-01 | Cenario: Base | Dados demonstrativos na planilha: Nao
 
 ## Aceitos

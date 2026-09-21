@@ -35,6 +35,7 @@ import type {
   OrdemProducao,
   Papel,
   Params,
+  RateioFaturamento,
   Romaneio,
   PlanoConta,
   Servico,
@@ -1439,6 +1440,60 @@ export const actions = {
     if (!motivo.trim()) throw new RegraDeNegocioError('Motivo é obrigatório.');
     ds = registrar({ ...ds, avancos: ds.avancos.filter((x) => x.id !== id) }, 'excluir_medicao_servico', 'servico', a.servicoId, a, undefined, motivo);
     commit(ds);
+  },
+
+  // -------------------------------------------------------------------------
+  // Faturamento do contrato: rateio por etapa e repasse da nota ao cliente
+  // -------------------------------------------------------------------------
+  /**
+   * Define o rateio de um titulo por servico/etapa (uma NF cobre varias etapas do contrato).
+   * E leitura por etapa do MESMO titulo: nao muda valor, caixa, custo nem DRE. Lista vazia remove o rateio.
+   */
+  salvarRateioFaturamento(lancamentoId: string, itens: { servicoId: string; descricao?: string; valor: number; medicaoId?: string }[]) {
+    let ds = state.ds;
+    const l = ds.lancamentos.find((x) => x.id === lancamentoId);
+    if (!l) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    if (!l.codigoObra) throw new RegraDeNegocioError('Só é possível ratear por etapa um lançamento vinculado a uma obra.');
+    exigir('editar_lancamento', l.codigoObra);
+    if (l.excluidoEm) throw new RegraDeNegocioError('Lançamento excluído não pode ser rateado.');
+    const anteriores = ds.rateios.filter((r) => r.lancamentoId === lancamentoId);
+    const limpos = itens.filter((i) => i.valor !== 0);
+    for (const i of limpos) {
+      const srv = ds.servicos.find((x) => x.id === i.servicoId);
+      if (!srv || srv.codigoObra !== l.codigoObra) throw new RegraDeNegocioError('Serviço não pertence à obra do lançamento.');
+      if (!(i.valor > 0)) throw new RegraDeNegocioError('Valor do rateio deve ser positivo.');
+      if (i.medicaoId && !ds.medicoes.some((m) => m.id === i.medicaoId && m.codigoObra === l.codigoObra)) throw new RegraDeNegocioError('Medição não pertence à obra do lançamento.');
+    }
+    const total = Math.round(limpos.reduce((a, i) => a + i.valor, 0) * 100) / 100;
+    const bruto = Math.round(l.valorBruto * 100) / 100;
+    if (limpos.length && Math.abs(total - bruto) > 0.01) throw new RegraDeNegocioError(`O rateio soma ${total.toFixed(2)} e o título vale ${bruto.toFixed(2)}. As duas somas têm de fechar.`);
+    let ids = ds.rateios.map((r) => r.id);
+    const novos: RateioFaturamento[] = limpos.map((i) => {
+      const id = seq('RTF', ids);
+      ids = [...ids, id];
+      return {
+        id, lancamentoId, codigoObra: l.codigoObra, servicoId: i.servicoId, medicaoId: i.medicaoId,
+        descricao: (i.descricao ?? '').trim(), valor: Math.round(i.valor * 100) / 100, criadoEm: agora(), criadoPor: state.usuario.id,
+      };
+    });
+    const rateios = [...ds.rateios.filter((r) => r.lancamentoId !== lancamentoId), ...novos];
+    ds = registrar({ ...ds, rateios }, 'ratear_faturamento', 'lancamento', lancamentoId, anteriores, novos);
+    commit(ds);
+    return novos;
+  },
+
+  /** Marca (ou desmarca) que a nota de faturamento direto foi repassada ao cliente. */
+  marcarEnvioCliente(lancamentoId: string, data?: string) {
+    let ds = state.ds;
+    const l = ds.lancamentos.find((x) => x.id === lancamentoId);
+    if (!l) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    exigir('editar_lancamento', l.codigoObra);
+    if (!l.faturamentoDireto) throw new RegraDeNegocioError('Só faz sentido para nota de faturamento direto: é o repasse ao cliente.');
+    if (data && !/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new RegraDeNegocioError('Data de envio inválida.');
+    const atualizado = { ...l, enviadoClienteEm: data || undefined, atualizadoEm: agora(), atualizadoPor: state.usuario.id, versao: l.versao + 1 };
+    ds = registrar({ ...ds, lancamentos: ds.lancamentos.map((x) => (x.id === l.id ? atualizado : x)) }, data ? 'enviar_nota_cliente' : 'desmarcar_envio_nota', 'lancamento', l.id, { enviadoClienteEm: l.enviadoClienteEm }, { enviadoClienteEm: data || undefined });
+    commit(ds);
+    return atualizado;
   },
 
   // -------------------------------------------------------------------------

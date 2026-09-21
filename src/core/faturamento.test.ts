@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import planilha from './__fixtures__/faturamento-smartfit.json';
 import { acompanhamentoFaturamento, parcelasDoLancamento } from './faturamento';
-import type { Lancamento, Medicao, RateioFaturamento, Servico } from './types';
+import type { Lancamento, Medicao, PlanoConta, RateioFaturamento, Servico } from './types';
 
 // A fixture e a leitura da planilha que a EIFF usava para controlar o contrato
 // (ACOMPANHAMENTO_FATURAMENTO_INVEST_CESAR LATTES_R01.xlsx), extraida por
@@ -51,7 +51,12 @@ const rateios: RateioFaturamento[] = planilha.notas.filter((n) => n.frente === '
   valor: n.valor, criadoEm: '2026-09-16', criadoPor: 'teste',
 }));
 
-const base = { codigoObra: OBRA, servicos, medicoes, lancamentos: [...diretos, ...construtora], rateios };
+const planoContas: PlanoConta[] = [
+  { categoria: 'Outros custos diretos', tipo: 'Saída', grupoFluxo: 'Custos', grupoDre: 'Custos', classe: 'Direto', orientacao: '', ativa: true },
+  { categoria: 'Receita de contrato', tipo: 'Entrada', grupoFluxo: 'Receitas', grupoDre: 'Receita', classe: 'Receita', orientacao: '', ativa: true },
+];
+
+const base = { codigoObra: OBRA, servicos, medicoes, lancamentos: [...diretos, ...construtora], rateios, planoContas };
 
 describe('acompanhamento de faturamento contra a planilha', () => {
   const r = acompanhamentoFaturamento(base);

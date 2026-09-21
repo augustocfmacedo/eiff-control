@@ -13,7 +13,7 @@
 //   sem rateio e sem medicao, nao e faturamento e fica de fora.
 // - Cancelados e excluidos nunca entram.
 
-import type { Lancamento, Medicao, RateioFaturamento, Servico } from './types';
+import type { Lancamento, Medicao, PlanoConta, RateioFaturamento, Servico, TipoLancamento } from './types';
 
 export type FrenteFaturamento = 'Direto' | 'Construtora';
 export type SituacaoFaturamento = 'Faturado' | 'Estimativa';
@@ -103,6 +103,8 @@ export interface ParamsFaturamento {
   medicoes: Medicao[];
   lancamentos: Lancamento[];
   rateios: RateioFaturamento[];
+  /** plano de contas: da o tipo (Entrada/Saida) de cada categoria, como no engine */
+  planoContas: PlanoConta[];
   /** avanco fisico por servico (0-1), do motor (calcServico.pctExecucao) */
   execucaoPorServico?: Map<string, number>;
 }
@@ -112,6 +114,8 @@ export function acompanhamentoFaturamento(p: ParamsFaturamento): AcompanhamentoF
   const medicoes = p.medicoes.filter((m) => m.codigoObra === p.codigoObra && m.status !== 'Cancelado');
   const lancs = p.lancamentos.filter((l) => l.codigoObra === p.codigoObra && ativo(l));
   const rateios = p.rateios.filter((r) => r.codigoObra === p.codigoObra);
+  const tipoDe = new Map<string, TipoLancamento>(p.planoContas.map((c) => [c.categoria, c.tipo]));
+  const tipo = (l: Lancamento) => tipoDe.get(l.categoria);
 
   const chave = (servicoId?: string) => servicoId ?? SEM_ETAPA;
   const linhas = new Map<string, EtapaFaturamento>();
@@ -179,11 +183,11 @@ export function acompanhamentoFaturamento(p: ParamsFaturamento): AcompanhamentoF
   };
 
   for (const l of lancs) {
-    if (l.tipo === 'Saída' && l.faturamentoDireto) {
+    if (tipo(l) === 'Saída' && l.faturamentoDireto) {
       registrar(l, 'Direto', l.status === 'Rascunho' ? 'Estimativa' : 'Faturado', parcelasDoLancamento(l, rateios));
       continue;
     }
-    if (l.tipo === 'Entrada' && !l.faturamentoDireto) {
+    if (tipo(l) === 'Entrada' && !l.faturamentoDireto) {
       const partes = parcelasDaEntrada(l, rateios, medicoes);
       if (partes) registrar(l, 'Construtora', l.status === 'Rascunho' ? 'Estimativa' : 'Faturado', partes);
     }
