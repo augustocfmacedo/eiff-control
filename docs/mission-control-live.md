@@ -413,6 +413,31 @@ e ausência de informação vira `null` — a tela diz "desconhecido" em vez de 
 Netlify (desenvolvimento local, CI do GitHub) o arquivo gerado é sempre `null`, então ele fica estável no
 repositório e nenhum build local suja a árvore.
 
+## 15-C. Smoke publicado — 22/09/2026 (Deploy Preview 6)
+
+Primeira leitura REAL do GitHub pelo artefato publicado. Branch `feature/mission-control-live-cert`,
+commit `11dfd95`, deploy `6ab2c4c4e5f64e000804d36e`, contexto `deploy-preview`, PR #6 DRAFT.
+
+| | Resultado |
+| --- | --- |
+| `GET /api/development-status` sem sessão | **401** `{"erro":"nao_autenticado"}` |
+| `POST` | **405** |
+| `GET` com a sessão do Administrador | **200**, pela própria aplicação |
+| `build.sha` | **11dfd95** — a correção do § 15-B funcionou; deixou de ser "desconhecido" |
+| `github.main.sha` (eiff-control) | **88c9ccc**, commitado em 2026-09-22T13:38:05Z |
+| classificação | **SNAPSHOT** — "esta tela é a publicação de 11dfd95; o main observado já está em 88c9ccc". Num preview isso é o esperado, não um erro |
+| `eiff-control` | **LIVE** · CI **verde** (`completed:success`) · **3 PRs** abertos (#6, #5, #2) |
+| `eiff-dev-factory` (repositório **privado**) | **LIVE** · main **88f999d** · **CI indisponível** · 0 PRs · **0 issues** `factory:task` |
+| chamadas no ciclo | **7** (teto 7) · limite restante **4706 de 5000** |
+| correlação real | **parcial** — nenhum PR carrega `taskId` e a fábrica ainda não tem issue de job, então a cadeia issue → taskId → PR não existe naturalmente. Nada foi fabricado para completá-la |
+| bundle publicado | **40 chunks** varridos: sem `GITHUB_READ_TOKEN`, sem `api.github.com`, sem `Authorization: Bearer`, sem `x-github-api-version`, sem padrão de PAT. O único chunk que fala de rede de status é `MissionControl-*.js`, e só com `api/development-status` |
+| logs da Function | **nenhuma linha** em 30 minutos, cobrindo todo o smoke — coerente com o código, cuja única saída é `console.error('[development-status]', e.name)` |
+
+**`Checks` não é oferecido no PAT fine-grained** destes repositórios. O CI da fábrica aparece como
+indisponível e **o repositório continua LIVE**: é a degradação por capacidade do § 11 funcionando em
+produção. As 0 issues são **zero real** (o endpoint respondeu e a lista veio vazia), não indisponibilidade —
+a distinção está no contrato (`erroIssues` ausente) e na tela.
+
 ## 16. Frescor e stale
 
 Toda leitura carrega `observadoEm`. `avaliarFrescor` marca `stale` quando passa do limite da fonte — limite por
