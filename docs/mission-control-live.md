@@ -251,18 +251,25 @@ Control**.
 
 Fine-grained, **only select repositories**: `augustocfmacedo/eiff-control` e `augustocfmacedo/eiff-dev-factory`.
 
-| Permissão | Nível | Por quê |
-| --- | --- | --- |
-| Metadata | Read | obrigatória para qualquer leitura de repositório |
-| Contents | Read | `GET /repos/{r}/commits/main` — SHA e data do último commit |
-| Pull requests | Read | `GET /repos/{r}/pulls?state=open` |
-| Issues | Read | `GET /repos/{r}/issues?labels=factory:task` (projeção da Factory) |
-| Checks | Read | `GET /repos/{r}/commits/{sha}/check-runs` — situação do CI |
-| Actions | Read | leitura de workflow run, se a evolução do painel exigir |
+O código chama **exatamente quatro endpoints**, e nada além disso:
 
-**Nenhuma permissão de escrita.** Nada de Administration, Secrets, Webhooks, Workflows (write) nem acesso a todos
-os repositórios. `Commit statuses: Read` **não** foi pedido: o painel usa check runs, não o statuses API — se um
-dia usar, a necessidade é justificada antes.
+| Endpoint | Permissão | Por quê |
+| --- | --- | --- |
+| `GET /repos/{r}/commits/main` | Contents: Read | SHA, data e título do último commit |
+| `GET /repos/{r}/commits/{sha}/check-runs` | Checks: Read | situação do CI |
+| `GET /repos/{r}/pulls?state=open` | Pull requests: Read | PRs abertos |
+| `GET /repos/{r}/issues?labels=factory:task` | Issues: Read | projeção da Factory |
+| (qualquer leitura de repositório) | Metadata: Read | obrigatória |
+
+**Concedido em 22/09/2026: Metadata, Contents, Issues, Pull requests, Checks — todas Read.** Nenhuma permissão de
+escrita, nada de Administration, Secrets ou Webhooks, e acesso só aos dois repositórios.
+
+- **`Actions: Read` NÃO foi concedido e NÃO é necessário.** O painel lê **check runs** (`/commits/{sha}/check-runs`),
+  que é a API de Checks; não existe nenhuma chamada a `/actions/…` no código, e um teste varre `src/` e `netlify/`
+  atrás delas. *(Correção: uma versão anterior desta tabela pedia `Actions: Read` "se a evolução exigir" — era
+  permissão pedida a mais, sem uso. Removida.)*
+- **`Commit statuses: Read` NÃO foi pedido**: o painel usa check runs, não a statuses API. Se algum dia precisar,
+  a necessidade é justificada **antes**, nunca contornada trocando de endpoint.
 
 ### REST, não GraphQL
 
