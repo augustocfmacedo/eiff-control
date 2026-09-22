@@ -208,7 +208,7 @@ export default function ComercialModoFoco(p: ComercialModoFocoProps) {
       : <button key={a.id} className={`btn${primario ? ' primary' : ''}`} onClick={a.onClick}>{a.rotulo}</button>;
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(260px, 1fr)', gap: 16, alignItems: 'start' }}>
+    <div className="foco-trabalho">
       <article className="card">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
           <span className="small muted">{indice + 1} de {total}</span>
@@ -219,7 +219,7 @@ export default function ComercialModoFoco(p: ComercialModoFocoProps) {
 
         <p style={{ margin: '12px 0 0' }}>{motivoDaContaUX(conta)}</p>
 
-        <dl className="small" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', margin: '12px 0 0' }}>
+        <dl className="small foco-dados">
           <dt className="muted">Com quem</dt>
           <dd style={{ margin: 0 }}>{conta.contato ? p.nomeContato(conta.contato.id) : <span className="muted">sem contato definido para este passo</span>}</dd>
           <dt className="muted">Canal</dt>
@@ -228,18 +228,18 @@ export default function ComercialModoFoco(p: ComercialModoFocoProps) {
           <dd style={{ margin: 0 }}>{p.objetivoDaConta(conta.itemId) || <span className="muted">—</span>}</dd>
         </dl>
 
-        <div className="actions" style={{ marginTop: 14 }}>
+        <div className="actions foco-acoes">
           {principal && botao(principal, true)}
           {secundaria && botao(secundaria, false)}
           {p.ctaCadencia(conta.itemId)}
-          <button className="btn" onClick={() => p.onPorQue(conta.itemId)}>Por quê ›</button>
+          <button className="btn" onClick={() => p.onPorQue(conta.itemId)} aria-label="Por quê esta conta está na fila">Por quê ›</button>
         </div>
 
         {/* navegacao: SO aqui o foco muda, e so por clique */}
-        <div className="row" style={{ justifyContent: 'space-between', marginTop: 16, gap: 8 }}>
-          <button className="btn sm" disabled={!anterior} onClick={() => anterior && p.onFoco(anterior.itemId)}>← Anterior</button>
-          <button className="btn sm" disabled={!proxima} onClick={() => proxima && p.onFoco(proxima.itemId)}>Próxima conta →</button>
-        </div>
+        <nav className="foco-nav" aria-label="Navegar na fila">
+          <button className="btn sm" disabled={!anterior} onClick={() => anterior && p.onFoco(anterior.itemId)} aria-label="Conta anterior da fila">← Anterior</button>
+          <button className="btn sm" disabled={!proxima} onClick={() => proxima && p.onFoco(proxima.itemId)} aria-label="Próxima conta da fila">Próxima conta →</button>
+        </nav>
       </article>
 
       <aside className="card">
@@ -247,10 +247,10 @@ export default function ComercialModoFoco(p: ComercialModoFocoProps) {
         {proximas.length === 0 ? (
           <p className="small muted" style={{ margin: 0 }}>Esta é a última conta da fila com os filtros atuais.</p>
         ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 }}>
+          <ul className="foco-depois">
             {proximas.map((c, i) => (
               <li key={c.itemId}>
-                <button className="btn sm" style={{ width: '100%', justifyContent: 'flex-start', textAlign: 'left' }} onClick={() => p.onFoco(c.itemId)}>
+                <button className="btn sm" onClick={() => p.onFoco(c.itemId)} aria-label={`Trazer ${p.nomeEmpresa(c.empresaId)} para o foco`}>
                   <span className="muted">{indice + 2 + i}.</span>&nbsp;{p.nomeEmpresa(c.empresaId)}
                 </button>
               </li>

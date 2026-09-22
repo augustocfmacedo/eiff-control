@@ -356,7 +356,8 @@ describe('UX-3 — cadencia e explicacao reutilizam as autoridades existentes', 
     let pedido: string | null = null;
     const saida = html(props(FILA6, { id: 'item-3', perdido: null }, { onPorQue: (id) => { pedido = id; } }));
     expect(saida).toContain('Por quê ›');
-    expect(BLOCO_FOCO_NO_HOJE).toContain('onPorQue={setPorQue}');
+    expect(BLOCO_FOCO_NO_HOJE).toContain('onPorQue={abrirPorQue}');
+    expect(CODIGO_HOJE).toContain('const abrirPorQue = (itemId: string) => { registrarEventoComercial(EVENTOS_COMERCIAIS_UX.porQueAbrir); setPorQue(itemId); };');
     expect(CODIGO_FOCO).not.toContain('Modal');
     expect(CODIGO_FOCO).not.toContain('ComercialFoco');
     expect(pedido).toBeNull();
@@ -440,7 +441,7 @@ describe('UX-3 — a conta saiu da fila', () => {
   });
 
   it('so o clique explicito escolhe a primeira disponivel', () => {
-    expect(CODIGO_HOJE).toContain('const irParaPrimeiraDisponivel = () => { const c = contasUX[0]; if (c) { setFocoTrabalhoId(c.itemId); setFocoPerdido(null); } };');
+    expect(CODIGO_HOJE).toContain('const irParaPrimeiraDisponivel = () => { const c = contasUX[0]; if (c) { registrarEventoComercial(EVENTOS_COMERCIAIS_UX.focoPrimeiraDisponivel); setFocoTrabalhoId(c.itemId); setFocoPerdido(null); } };');
     expect(BLOCO_FOCO_NO_HOJE).toContain('onPrimeiraDisponivel={irParaPrimeiraDisponivel}');
   });
 

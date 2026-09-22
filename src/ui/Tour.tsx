@@ -17,7 +17,8 @@ const GERAL: PassoTour[] = [
   { seletor: '.topbar .busca', titulo: 'Buscar ou ir para', texto: 'Ctrl+K abre a paleta: qualquer tela, ação ou registro (obra, lançamento, empresa, contato, orçamento) em poucas letras.' },
   { seletor: '.sidebar .nav', titulo: 'Menu', texto: 'Grupos recolhem ao clicar no título; a estrela fixa um item em Favoritos, no topo.' },
 ];
-const POR_ROTA: Record<string, PassoTour[]> = {
+/** Exportado para teste: o conteudo do tour e parte do contrato da tela, nao so decoracao. */
+export const POR_ROTA: Record<string, PassoTour[]> = {
   '/': [
     { seletor: '.content .page-head', titulo: 'Painel executivo', texto: 'A leitura de 1 minuto: caixa, carteira, compromissos e alertas na data-base. "Apresentar" abre o modo para reunião.' },
     { seletor: '.content .hero-grid .kpi:first-child', titulo: 'Caixa', texto: 'Saldo bancário hoje (só extrato) e a projeção de 13 semanas com a reserva mínima tracejada.' },
@@ -42,8 +43,16 @@ const POR_ROTA: Record<string, PassoTour[]> = {
   '/obras': [
     { seletor: '.content .tabs', titulo: 'Obra 360', texto: 'Resumo econômico, cronograma visual com curva S, serviços, materiais com a estrutura 3D, produção, financeiro e prazo.' },
   ],
+  // Maquina Comercial (CM1 + CM2 apresentados pelo Commercial UX 1.0). O texto anterior falava de "ordenado pelo
+  // score", que nao descreve mais a arquitetura: a ordem, a acao e a cadencia vem do motor, e a tela so apresenta.
   '/radar/hoje': [
-    { seletor: '.content .page-head', titulo: 'Radar · Hoje', texto: 'A fila do dia por prioridade: vencidas primeiro, depois o score. Cada linha diz por que a empresa está aqui e a próxima ação.' },
+    { seletor: '.content .page-head', titulo: 'Comercial', texto: 'A Máquina Comercial decide a ordem, a ação e a cadência de cada conta. Os filtros aqui em cima escondem itens, mas nunca mudam a prioridade.' },
+    { seletor: '.content .tabs', titulo: 'As três visões', texto: 'Panorama é a leitura do dia inteiro; Trabalhar a fila atende uma conta por vez; Fila completa é a lista toda, com todas as ações.' },
+    { seletor: '[data-tour="comercial-agora"]', titulo: 'Panorama', texto: 'Agora é o que exige ação; Aguardando espera alguém ou algum fato; Programado tem data à frente; Risco e travas é o que impede ou ameaça o negócio.' },
+    { seletor: '[data-tour="comercial-pipeline"]', titulo: 'Pipeline ativo', texto: 'A oportunidade de referência que o motor escolheu para cada conta, com o último movimento factual (criação, mudança de estágio ou atividade). PARADA e EM RISCO vêm da máquina, não desta tela.' },
+    { seletor: '[data-tour="comercial-entrada"]', titulo: 'Entrada', texto: 'Três coisas diferentes: sinal novo (o que o Radar acabou de saber), conta adicionada ao Radar e enriquecimento. Falta de decisor ou de canal é enriquecimento — nunca um lead novo.' },
+    { seletor: '.content .tabs', titulo: 'Trabalhar a fila', texto: 'Uma conta por vez, na ordem do motor. Executar uma ação não avança a fila: a próxima conta é sempre uma escolha sua, no botão.' },
+    { seletor: '[data-tour="comercial-porque"]', titulo: 'Por quê', texto: 'Abre a explicação completa da decisão: razão, plano, cadência e travas. É só leitura — nada é alterado por ali.' },
   ],
   '/producao': [
     { seletor: '.content .page-head', titulo: 'Fábrica e montagem', texto: 'Apontamento por estação em kg, peças e horas. "Modo quiosque" leva o painel para a TV da fábrica.' },

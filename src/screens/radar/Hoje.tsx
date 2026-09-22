@@ -23,6 +23,7 @@ import ComercialPanorama from './ComercialPanorama';
 import ComercialFoco, { NOME_MODO, TOM_CATEGORIA, TOM_MODO, gavetaFailClosed, nomeEmpresaCM as nomeEmpresa } from './ComercialFoco';
 import ComercialModoFoco, { focoAoEntrarUX, focoInvalidadoUX, type AcaoFocoUX, type FocoTrabalhoUX } from './ComercialModoFoco';
 import { entradaComercialUX } from './comercialEntrada';
+import { EVENTOS_COMERCIAIS_UX, registrarEventoComercial, type EventoComercialUX } from './comercialTelemetria';
 import { pipelineAtivoUX } from './comercialPipeline';
 import { visaoComercialUX } from './comercialVisao';
 import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
@@ -137,11 +138,22 @@ export default function RadarHoje() {
   /** Entrada EXPLICITA no Modo Foco: preserva foco valido, senao seleciona a primeira da fila. So no clique da aba. */
   const trocarVisao = (v: VisaoComercial) => {
     if (v === 'foco') { setFocoTrabalhoId(focoAoEntrarUX(contasUX, focoTrabalhoId)); setFocoPerdido(null); }
+    registrarEventoComercial(v === 'panorama' ? EVENTOS_COMERCIAIS_UX.visaoPanorama : v === 'foco' ? EVENTOS_COMERCIAIS_UX.visaoFoco : EVENTOS_COMERCIAIS_UX.visaoFila);
     setVisao(v);
   };
+  /** Abre a gaveta de explicacao. Registra so a interacao — o itemId fica no estado, nunca na telemetria. */
+  const abrirPorQue = (itemId: string) => { registrarEventoComercial(EVENTOS_COMERCIAIS_UX.porQueAbrir); setPorQue(itemId); };
   const foco3: FocoTrabalhoUX = { id: focoTrabalhoId, perdido: focoPerdido };
   /** Unico caminho de saida do estado "conta indisponivel", e so por clique do usuario. */
-  const irParaPrimeiraDisponivel = () => { const c = contasUX[0]; if (c) { setFocoTrabalhoId(c.itemId); setFocoPerdido(null); } };
+  const irParaPrimeiraDisponivel = () => { const c = contasUX[0]; if (c) { registrarEventoComercial(EVENTOS_COMERCIAIS_UX.focoPrimeiraDisponivel); setFocoTrabalhoId(c.itemId); setFocoPerdido(null); } };
+  /** Troca explicita de foco: registra qual GESTO foi (proxima, anterior ou escolha em "Depois desta"). */
+  const trocarFoco = (itemId: string) => {
+    const atual = contasUX.findIndex((c) => c.itemId === focoTrabalhoId);
+    const alvo = contasUX.findIndex((c) => c.itemId === itemId);
+    registrarEventoComercial(alvo === atual + 1 ? EVENTOS_COMERCIAIS_UX.focoProxima : alvo === atual - 1 ? EVENTOS_COMERCIAIS_UX.focoAnterior : EVENTOS_COMERCIAIS_UX.focoSelecionarDepois);
+    setFocoTrabalhoId(itemId);
+    setFocoPerdido(null);
+  };
   /** Objetivo: catalogo OBJETIVOS quando ha plano de comunicacao; senao a explicacao do modo que o CM1-B ja escreveu. */
   const objetivoDaConta = (itemId: string) => {
     const l = porLinha.get(itemId);
@@ -189,10 +201,11 @@ export default function RadarHoje() {
               nomeCanal={(canal) => (canal ? NOME_CANAL[canal] : '')}
               acaoPrincipal={(c) => { const l = porLinha.get(c.itemId); return l ? acoes(l, { primeira: true }) : null; }}
               ctaCadencia={(c) => { const l = porLinha.get(c.itemId); if (!l) return null; const rotulo = ctaCadenciaCM(l.sugestao, podeAgir); return rotulo ? <button className="btn sm" onClick={() => abrirAgendamento(l.cadencia, l.sugestao)} aria-label={`${rotulo} recomendada pela Máquina Comercial`}>{rotulo}</button> : null; }}
-              onPorQue={(c) => setPorQue(c.itemId)}
+              onPorQue={(c) => abrirPorQue(c.itemId)}
               onVerTodos={() => setVisao('fila')}
               pipelineAtivo={pipelineUX}
               entrada={entradaUX}
+              onEvento={(evento) => registrarEventoComercial(evento as EventoComercialUX)}
             />
           </div>
       ) : visao === 'foco' ? (
@@ -207,8 +220,8 @@ export default function RadarHoje() {
             objetivoDaConta={objetivoDaConta}
             acoes={(itemId) => { const l = porLinha.get(itemId); return l ? acoesDisponiveis(l) : []; }}
             ctaCadencia={(itemId) => { const l = porLinha.get(itemId); return l ? ctaCadenciaDe(l) : null; }}
-            onFoco={(itemId) => { setFocoTrabalhoId(itemId); setFocoPerdido(null); }}
-            onPorQue={setPorQue}
+            onFoco={trocarFoco}
+            onPorQue={abrirPorQue}
             onPanorama={() => setVisao('panorama')}
             onPrimeiraDisponivel={irParaPrimeiraDisponivel}
           />

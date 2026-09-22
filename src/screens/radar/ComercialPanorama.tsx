@@ -14,6 +14,7 @@ import { NOME_ESTAGIO, NOME_SINAL } from '../../core/radar/padroes';
 import { Badge, Link, money, type Tone } from '../../ui/components';
 import type { EstadoPipelineUX, OportunidadePipelineUX } from './comercialPipeline';
 import { entradaVaziaUX, textoDaRazaoEntradaUX, type EntradaComercialUX } from './comercialEntrada';
+import { EVENTOS_COMERCIAIS_UX } from './comercialTelemetria';
 import {
   ORCAMENTO_PANORAMA_COMERCIAL, contasDoHorizonteUX, contasEmRiscoUX, recorteUX, resumoComercialUX, resumoEsperaUX,
   type ContaComercialUX, type EsperaComercialUX, type ExcecaoComercialUX, type RecorteUX, type ResumoComercialUX, type SeveridadeExcecaoUX,
@@ -46,6 +47,8 @@ export const ROTA_PIPELINE_PANORAMA = '/radar';
 
 /** UX-5: a inteligencia ampla (sinais, contas, enriquecimento) ja vive no Command Center; nenhuma rota nova. */
 export const ROTA_ENTRADA_PANORAMA = '/radar';
+export const EVENTO_PIPELINE_PANORAMA = EVENTOS_COMERCIAIS_UX.pipelineAbrir;
+export const EVENTO_ENTRADA_PANORAMA = EVENTOS_COMERCIAIS_UX.entradaInteligencia;
 /** Rotulos da zona ENTRADA. "Conta adicionada ao Radar" e deliberado: nunca "empresa nova", nunca "lead". */
 export const TITULO_SINAL_ENTRADA = 'SINAL NOVO';
 export const TITULO_CONTA_ENTRADA = 'CONTA ADICIONADA AO RADAR';
@@ -121,13 +124,15 @@ export interface ComercialPanoramaProps {
   /** Abre a gaveta `Por quê ›` (UX-2) com a explicabilidade inteira da conta. */
   onPorQue: (conta: ContaComercialUX) => void;
   onVerTodos: () => void;
+  /** UX-6: nome do evento de interface para a telemetria local do Hoje. Nunca recebe id ou dado comercial. */
+  onEvento?: (evento: string) => void;
   /** UX-4: oportunidades de referencia ja projetadas (ordem do CM1-A). O Panorama nao le dataset. */
   pipelineAtivo: readonly OportunidadePipelineUX[];
   /** UX-5: view-model da zona ENTRADA, ja projetado. O Panorama nao calcula recencia nem escolhe sinal/conta. */
   entrada: EntradaComercialUX;
 }
 
-export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos, pipelineAtivo, entrada }: ComercialPanoramaProps) {
+export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos, pipelineAtivo, entrada, onEvento }: ComercialPanoramaProps) {
   const { resumo, agora, programado, risco, espera } = zonasDoPanoramaUX(contas);
   const pipeline = recorteUX(pipelineAtivo, ORCAMENTO_PANORAMA_COMERCIAL.pipeline);
   const verTodos = (n: number, rotulo = 'Ver todos') => n > 0 ? <button className="btn sm" onClick={onVerTodos}>{`${rotulo} (${n}) ›`}</button> : null;
@@ -142,7 +147,7 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
       </div>
 
       <div className="grid cols-2" style={{ marginTop: 14, gap: 14, alignItems: 'start' }}>
-        <section className="card" aria-labelledby="zona-agora">
+        <section className="card" aria-labelledby="zona-agora" data-tour="comercial-agora">
           <div className="row" style={{ gap: 8, alignItems: 'center' }}>
             <h2 id="zona-agora" style={{ margin: 0 }}>Agora</h2>
             <span className="small muted">{resumo.agora === 0 ? 'nada exige ação neste instante' : `${resumo.agora} conta(s)`}</span>
@@ -198,18 +203,18 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
         </div>
       </div>
 
-      <section className="card" aria-labelledby="zona-pipeline" style={{ marginTop: 14 }}>
+      <section className="card" aria-labelledby="zona-pipeline" data-tour="comercial-pipeline" style={{ marginTop: 14 }}>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <h2 id="zona-pipeline" style={{ margin: 0 }}>Pipeline ativo</h2>
           <span className="small muted">{pipelineAtivo.length === 0 ? 'nenhuma oportunidade ativa nesta visão' : `${pipelineAtivo.length} oportunidade(s) nesta visão`}</span>
           <span className="spacer" />
-          <Link to={ROTA_PIPELINE_PANORAMA} className="btn sm">Ver pipeline ›</Link>
+          <Link to={ROTA_PIPELINE_PANORAMA} className="btn sm" onClick={() => onEvento?.(EVENTO_PIPELINE_PANORAMA)}>Ver pipeline ›</Link>
         </div>
         {!pipeline.visiveis.length
           ? <p className="small muted" style={{ margin: '10px 0 0' }}>Nenhuma oportunidade ativa nesta visão.</p>
           : <ul style={{ margin: '10px 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
             {pipeline.visiveis.map((o) => (
-              <li key={o.oportunidadeId} className="row" style={{ gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <li key={o.oportunidadeId} className="pipeline-item">
                 {o.estado && <Badge tone={TOM_ESTADO_PIPELINE[o.estado]}>{TEXTO_ESTADO_PIPELINE[o.estado]}</Badge>}
                 <b>{nomeEmpresa(o.empresaId)}</b>
                 <Link to={`/radar/empresas/${o.empresaId}?aba=oportunidades`}>{o.titulo}</Link>
@@ -223,12 +228,12 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
         {pipeline.ocultos > 0 && <div className="small muted" style={{ marginTop: 8 }}>{`+${pipeline.ocultos} oportunidade(s) nesta visão · veja em Ver pipeline`}</div>}
       </section>
 
-      <section className="card" aria-labelledby="zona-entrada" style={{ marginTop: 14 }}>
+      <section className="card" aria-labelledby="zona-entrada" data-tour="comercial-entrada" style={{ marginTop: 14 }}>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <h2 id="zona-entrada" style={{ margin: 0 }}>Entrada</h2>
           <span className="small muted">{`últimos ${entrada.janelaDias} dias`}</span>
           <span className="spacer" />
-          <Link to={ROTA_ENTRADA_PANORAMA} className="btn sm">Ver inteligência ›</Link>
+          <Link to={ROTA_ENTRADA_PANORAMA} className="btn sm" onClick={() => onEvento?.(EVENTO_ENTRADA_PANORAMA)}>Ver inteligência ›</Link>
         </div>
         <div className="small muted" style={{ marginTop: 6 }}>
           {`${entrada.sinais.total} sinal(is) novo(s) · ${entrada.contas.total} conta(s) adicionada(s) · ${entrada.enriquecimento.total} para enriquecer`}
@@ -236,7 +241,7 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
         </div>
         {entradaVaziaUX(entrada)
           ? <p className="small muted" style={{ margin: '10px 0 0' }}>{TEXTO_ENTRADA_VAZIA}</p>
-          : <div className="grid cols-3" style={{ gap: 10, marginTop: 10, alignItems: 'start' }}>
+          : <div className="grid cols-3 entrada-cards" style={{ gap: 10, marginTop: 10, alignItems: 'start' }}>
             {entrada.sinais.destaque && (
               <article className="card" style={{ padding: 12 }}>
                 <div className="small muted">{TITULO_SINAL_ENTRADA}</div>
@@ -308,7 +313,7 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
         </p>
         <div className="actions" style={{ marginTop: 10 }}>
           {acaoPrincipal(c)}
-          <button className="btn sm" onClick={() => onPorQue(c)}>Por quê ›</button>
+          <button className="btn sm" data-tour="comercial-porque" onClick={() => onPorQue(c)} aria-label={`Por quê ${nomeEmpresa(c.empresaId)} está na fila`}>Por quê ›</button>
         </div>
       </article>
     );

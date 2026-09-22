@@ -800,3 +800,43 @@ tr.arrastando td { opacity: 0.55; }
 @media (max-width: 1100px) { .mc-escada { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .mc-escada { grid-template-columns: 1fr; } }
 @media print { .mc-degrau, .mc-camada, .mc-beneficio, .mc-bloqueio { break-inside: avoid; } }
+
+/* ---------------------------------------------------------------------------------------------------------------
+   Maquina Comercial — acabamento operacional (UX-6)
+   Responsividade e area de toque das superficies comerciais (/radar/hoje). Nenhuma regra de negocio aqui: so
+   layout. As classes sao ESCOPADAS ao Panorama e ao Modo Foco para nao mudar nenhuma outra tela.
+   --------------------------------------------------------------------------------------------------------------- */
+/* `row`/`spacer` eram usados no JSX sem regra propria: os itens ficavam em fluxo inline e o `spacer` nao empurrava
+   nada. Aqui viram flex de verdade, dentro das duas superficies comerciais. */
+.panorama .row, .foco-trabalho .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.panorama .spacer, .foco-trabalho .spacer { flex: 1 1 auto; }
+
+/* Modo Foco: conta em foco + "Depois desta". Em tela estreita vira uma coluna so. */
+.foco-trabalho { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 16px; align-items: start; }
+.foco-trabalho .foco-acoes { margin-top: 14px; }
+.foco-trabalho .foco-nav { display: flex; justify-content: space-between; gap: 8px; margin-top: 16px; }
+.foco-trabalho .foco-dados { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 12px 0 0; }
+.foco-trabalho .foco-dados dt { color: var(--muted); }
+.foco-trabalho .foco-dados dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.foco-depois { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.foco-depois .btn { width: 100%; justify-content: flex-start; text-align: left; }
+@media (max-width: 900px) { .foco-trabalho { grid-template-columns: 1fr; } }
+@media (max-width: 480px) {
+  .foco-trabalho .foco-acoes { display: grid; gap: 8px; }
+  .foco-trabalho .foco-acoes .btn { width: 100%; justify-content: center; min-height: 44px; }
+  .foco-trabalho .foco-nav .btn { flex: 1 1 0; justify-content: center; min-height: 44px; }
+  .foco-trabalho .foco-dados { grid-template-columns: 1fr; gap: 0 0; }
+  .foco-trabalho .foco-dados dt { margin-top: 8px; }
+}
+
+/* Pipeline ativo: linha em telas largas, bloco empilhado no celular (nada de rolagem lateral). */
+.pipeline-item { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.pipeline-item > * { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .pipeline-item { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .pipeline-item .spacer { display: none; }
+}
+
+/* Entrada: tres conceitos lado a lado no desktop, 2+1 no intermediario, um por linha no celular. */
+@media (max-width: 640px) { .entrada-cards { grid-template-columns: 1fr; } }
+.entrada-cards .card { min-width: 0; overflow-wrap: anywhere; }
