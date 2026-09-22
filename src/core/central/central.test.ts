@@ -197,7 +197,9 @@ describe('contratos do orquestrador e dos agentes', () => {
   });
   it('a AÇÃO escolhe a permissão, e toda permissão do catálogo existe na matriz do Control', () => {
     const usuario = getState().usuario;
-    const fonteStore = fs.readFileSync(new URL('../../data/store.ts', import.meta.url), 'utf8');
+    // a MATRIZ mudou de arquivo na MC-LIVE-1 (src/core/permissoes.ts, para poder valer tambem no
+    // servidor). Continua sendo UMA so: o store reexporta. O guarda segue conferindo a matriz REAL.
+    const fonteStore = fs.readFileSync(new URL('../permissoes.ts', import.meta.url), 'utf8');
     for (const a of CATALOGO_ACOES) {
       expect(AGENTES).toContain(a.agente);
       if (a.permissao === null) continue;

@@ -465,7 +465,7 @@ describe('ameaça 7: dado financeiro não autorizado', () => {
   it('cada intenção da Central usa uma ação REAL da matriz do Control (sem segunda ACL)', () => {
     actions.trocarUsuario('u-obra');
     const usuario = getState().usuario;
-    const fonte = ler('src/data/store.ts');
+    const fonte = ler('src/core/permissoes.ts'); // a matriz vive aqui desde a MC-LIVE-1; o store reexporta
     // a permissao vem da ACAO, nunca da intencao: cada acao do catalogo aponta para uma acao real da MATRIZ
     for (const a of CATALOGO_ACOES) {
       if (a.permissao === null) continue;
@@ -724,15 +724,37 @@ describe('ameaça 10: envio indevido', () => {
     expect(chamadas.every((c) => c.metodo.toUpperCase() === 'GET')).toBe(true);
     expect(posts()).toHaveLength(0);
   });
+  // Fronteiras de rede DECLARADAS da Central. Fora desta lista, nenhum modulo conhece fetch.
+  // metaServidor.ts  — canal Meta (o envio segue fechado por modo e allowlist).
+  // githubAdapter.ts / statusServidor.ts — Mission Control Live (MC-LIVE-1): leitura do GitHub, GET apenas.
+  const FRONTEIRAS_DE_REDE = ['metaServidor.ts', 'githubAdapter.ts', 'statusServidor.ts'];
+
   it('não existe POST de mensagem no código da Central', () => {
     for (const f of fontesTs('src/core/central').filter((x) => !x.endsWith('.test.ts'))) {
       const t = ler(f);
       expect(t, f).not.toMatch(/method:\s*'(POST|PUT|PATCH)'/);
       // metaEnvio.ts MONTA o caminho /{id}/messages de proposito (caminho pronto, fechado por modo e
-      // allowlist). O que nao pode existir e a EXECUCAO: nenhum modulo da Central conhece fetch.
-      if (!f.endsWith('metaServidor.ts')) expect(t, f).not.toMatch(/\bfetch\s*\(/);
+      // allowlist). O que nao pode existir e a EXECUCAO: fora das fronteiras declaradas, ninguem faz fetch.
+      if (!FRONTEIRAS_DE_REDE.some((x) => f.endsWith(x))) expect(t, f).not.toMatch(/\bfetch\s*\(/);
       expect(t, f).not.toMatch(/send-template/);
     }
+  });
+
+  it('as fronteiras de rede do Mission Control são SOMENTE LEITURA: GET, sem corpo, e longe da Meta', () => {
+    for (const f of ['src/core/central/githubAdapter.ts', 'src/core/central/statusServidor.ts']) {
+      const t = ler(f);
+      // nenhum verbo de escrita SAINDO: fetch sem `method` e GET (o `method` de statusServidor e o da
+      // requisicao que CHEGA, e ele so aceita GET — conferido logo abaixo)
+      expect(t, f).not.toMatch(/method\s*:\s*['"](POST|PUT|PATCH|DELETE)/i);
+      expect(t, f).not.toMatch(/body\s*:/);          // requisicao sem corpo nao escreve nada
+      expect(t, f).not.toMatch(/graph\.facebook\.com/);
+      expect(t, f).not.toMatch(/octadesk/i);
+    }
+    // e o adapter do GitHub nao conhece nenhum caminho de escrita da API
+    const gh = ler('src/core/central/githubAdapter.ts');
+    for (const escrita of ['/dispatches', '/merges', 'POST', 'PATCH', 'DELETE']) expect(gh, escrita).not.toContain(escrita);
+    // o endpoint so atende GET: qualquer outro verbo e recusado antes de tudo
+    expect(ler('src/core/central/statusServidor.ts')).toMatch(/req\.method !== 'GET'/);
   });
   it('META_CLOUD ainda não é provider de entrega: o banco recusa e, quando abrir, a coerência de canal tem de fechar junto', () => {
     expect(PROVIDERS_ENTREGA).not.toContain('META_CLOUD');

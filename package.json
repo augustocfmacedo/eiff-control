@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && eslint src && vite build",
+    "build": "node scripts/gerar-build-sha.mjs && tsc --noEmit && eslint src && vite build",
     "preview": "vite preview --port 5173",
     "test": "vitest run",
     "migrate:planilha": "node scripts/migrate-spreadsheet.mjs",

@@ -265,3 +265,55 @@ O gate `MISSION_CONTROL_LIVE` fica **aberto** e é prioridade da próxima wave. 
 
 Acesso ao painel: permissão própria `ver_mission_control` (Administrador e Diretoria), conferida na rota — não só
 no menu.
+
+### Mission Control Live — iniciativa MC-LIVE (a partir de 22/09/2026)
+
+O contrato arquitetural da evolução do painel em central viva de arquitetura e execução está em
+**[docs/mission-control-live.md](mission-control-live.md)**: fontes de verdade, matriz de autoridade,
+`MissionControlWorkItem`, `MissionControlEvent`, correlação, normalização de estados, mapa de dependências,
+integração com Factory/GitHub/arquitetura/Máquina Comercial, realtime futuro, frescor, degradação, segurança e
+waves. Leia aquele documento antes de mexer em qualquer peça do Mission Control.
+
+O que a **MC-LIVE-0** entregou (contrato, sem fonte externa):
+
+- [src/core/central/workItem.ts](../src/core/central/workItem.ts) — fronteira de normalização
+  (`FONTE REAL → ADAPTER → NORMALIZAÇÃO → MissionControlWorkItem → UI`), com `statusOrigem` sempre preservado,
+  id determinístico, correlação pelo `taskId` da fábrica, consolidação sem duplicata e degradação que **nunca
+  inventa estado**. Módulo puro: sem fetch, sem store, sem React, sem Supabase.
+- [src/core/central/mapaVivo.ts](../src/core/central/mapaVivo.ts) — o modelo do grafo (nós e arestas tipadas
+  `fluxo · dependencia · observa · evidencia`). A arquitetura deixou de ser só lista e virou grafo com
+  dependências explícitas. Sem UI nesta wave.
+- Oito gates novos (`DEVELOPMENT_STATUS_ENDPOINT`, `GITHUB_ADAPTER_READONLY`, `FACTORY_ADAPTER_READONLY`,
+  `WORK_ITEM_CORRELACAO`, `MAPA_VIVO`, `EXECUCAO_LIVE`, `MC_REALTIME`, `MC_DEGRADACAO`), todos **abertos**, com
+  `MISSION_CONTROL_LIVE` passando a ser a **conclusão** do conjunto (campo `dependeDe` no `Gate`). A prontidão do
+  sistema caiu de 19/30 para 19/38 **de propósito**: a capacidade sempre faltou, agora está contada.
+- Estado dos estados da fábrica: a autoridade é `packages/contracts` no `eiff-dev-factory`; aqui há um espelho
+  declarado com **contract drift detection** (teste que abre o arquivo da fábrica quando os repositórios estão
+  lado a lado e reprova divergência).
+
+A fábrica está na **W1**; `packages/api` (a fonte viva da Factory) é a **W5** dela e **ainda não existe**. Até lá,
+a execução observável é a das issues do GitHub com labels `factory:state:*`.
+
+O que a **MC-LIVE-1** entregou (a primeira fonte realmente viva):
+
+- **`GET /api/development-status`** ([netlify/functions/development-status.ts](../netlify/functions/development-status.ts),
+  regra em [statusServidor.ts](../src/core/central/statusServidor.ts)): JWT → perfil real no banco →
+  `ver_mission_control` → GitHub → sanitização. Sem JWT é 401; com JWT e sem a permissão é 403, e nesses casos o
+  GitHub **nem é consultado**. A allowlist de repositórios é server-side e **não existe parâmetro de repositório**:
+  o endpoint não vira proxy do GitHub.
+- [githubAdapter.ts](../src/core/central/githubAdapter.ts) — somente leitura, `fetch` injetado, único módulo que
+  conhece o formato da API do GitHub. Lê SHA de `main`, check runs, PRs abertos e as issues de job da fábrica em
+  **no máximo 7 chamadas por ciclo** (3 no eiff-control + 4 no eiff-dev-factory). Nenhuma chamada por cartão.
+- [statusVivo.ts](../src/core/central/statusVivo.ts) — `LIVE` × `SNAPSHOT` × `STALE` × `UNAVAILABLE`, comparando o
+  SHA publicado (`COMMIT_REF` do Netlify) com o `main` observado. Sem `COMMIT_REF`, a comparação é `DESCONHECIDO` e
+  a tela diz isso: **nenhum SHA é inventado para a comparação "funcionar"**.
+- [statusRemoto.ts](../src/data/statusRemoto.ts) — polling de 60 s com `AbortController`, sem chamadas
+  sobrepostas, backoff até 300 s e **preservação do último dado válido**. O navegador fala só com o endpoint
+  interno; nunca com o GitHub, e nunca conhece o token.
+- Bloco **"Desenvolvimento ao vivo"** no topo do Mission Control. O resto da tela (gates) continua sendo snapshot
+  do build — e agora a diferença está nomeada.
+- Segredo: **`GITHUB_READ_TOKEN`** só no painel do Netlify. Nunca `VITE_`, nunca no bundle (teste varre `src/`, as
+  funções e, quando existe, o `dist/`). Sem o token, a fonte volta como `NOT_CONFIGURED`, zero chamadas são feitas
+  e nada é inventado.
+- Gate `DEVELOPMENT_STATUS_ENDPOINT` **fechado** com evidência. `GITHUB_ADAPTER_READONLY` e `MC_DEGRADACAO` seguem
+  **abertos**: o PAT ainda não existe, então não houve leitura real. Prontidão: 20/38.

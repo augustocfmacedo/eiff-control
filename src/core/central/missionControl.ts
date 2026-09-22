@@ -41,6 +41,11 @@ export interface Gate {
   // palavra que ele procura aparece dentro de "deliberado". O nome mudou aqui; o guarda continua intacto.
   /** bloqueado DE PROPOSITO (seguranca intencional), nao por falta de trabalho */
   porDesenho?: boolean;
+  /**
+   * Gates que precisam estar fechados ANTES deste fazer sentido. E dependencia declarada, nao prontidao:
+   * a conta continua sendo fechados/exigidos. Serve para o mapa e para responder "o que vem antes".
+   */
+  dependeDe?: string[];
 }
 
 const g = (gate: Gate): Gate => gate;
@@ -335,9 +340,119 @@ export const GATES: Gate[] = [
   g({
     id: 'MISSION_CONTROL_LIVE',
     titulo: 'Mission Control em tempo real',
-    prova: 'Endpoint server-side de development-status com adapter do GitHub: SHA de main ao vivo, status do CI, branches/workstreams, última atualização e polling controlado. Hoje o painel é um SNAPSHOT derivado do código no momento do build.',
+    prova: 'O painel mostra a operação, não um retrato dela: fonte viva do GitHub e da Factory, correlação ponta a ponta, mapa e quadro de execução alimentados por projeção, atualização sem recarregar e degradação honesta. É a CONCLUSÃO do conjunto MC-LIVE: só fecha quando os oito gates de que depende estiverem fechados com evidência. Hoje o painel é um SNAPSHOT derivado do código no momento do build.',
     situacao: 'aberto',
-    evidencias: [{ tipo: 'documento', referencia: 'docs/eiff-central.md', simbolo: 'MISSION_CONTROL_LIVE' }],
+    dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT', 'GITHUB_ADAPTER_READONLY', 'FACTORY_ADAPTER_READONLY', 'WORK_ITEM_CORRELACAO', 'MAPA_VIVO', 'EXECUCAO_LIVE', 'MC_REALTIME', 'MC_DEGRADACAO'],
+    evidencias: [
+      { tipo: 'documento', referencia: 'docs/eiff-central.md', simbolo: 'MISSION_CONTROL_LIVE' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MISSION_CONTROL_LIVE', nota: 'contrato arquitetural da iniciativa' },
+    ],
+  }),
+
+  // --------------------------------------------------------------------- mission control live (MC-LIVE)
+  // Estes oito gates foram declarados na MC-LIVE-0 (22/09/2026) porque a capacidade que eles medem nao
+  // existia no catalogo: ate aqui "Mission Control ao vivo" era UM gate, e um gate nao se fecha por
+  // partes. Declarar aumenta o denominador de proposito — prontidao honesta vale mais do que prontidao
+  // alta. Cada um tem criterio de prova objetivo; nenhum representa "tarefa do roadmap".
+  g({
+    id: 'DEVELOPMENT_STATUS_ENDPOINT',
+    titulo: 'Endpoint agregador server-side do estado da construção',
+    prova: 'Uma função Netlify /api/development-status que valida JWT → perfil do banco → ver_mission_control, agrega GitHub e Factory numa resposta só, com cache e sem nenhum segredo na saída; quem não tem a permissão recebe 403 mesmo sabendo a URL.',
+    situacao: 'fechado',
+    evidencias: [
+      { tipo: 'funcao', referencia: 'netlify/functions/development-status.ts', simbolo: 'tratarDevelopmentStatus' },
+      { tipo: 'modulo', referencia: 'src/core/central/statusServidor.ts', simbolo: 'autenticarStatus' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'papel sem ver_mission_control → 403' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'DEVELOPMENT_STATUS_ENDPOINT' },
+      // leitura honesta do "agrega Factory": a fabrica entra pela UNICA fonte canonica que existe hoje
+      // (issues com label factory:state:*), declarada na resposta como GITHUB_PROJECTION. O estado
+      // operacional real da fabrica e outro gate, FACTORY_ADAPTER_READONLY, que segue aberto.
+      { tipo: 'modulo', referencia: 'src/core/central/statusServidor.ts', simbolo: 'AVISO_FACTORY_PROJECAO', nota: 'a Factory entra como projeção do GitHub, e a resposta diz isso' },
+    ],
+  }),
+  g({
+    id: 'GITHUB_ADAPTER_READONLY',
+    titulo: 'Adapter do GitHub somente leitura, com o token só no servidor',
+    prova: 'SHA de main, check runs, PRs e issues lidos por um adapter puro (fetch injetado), token fine-grained read-only apenas no painel do Netlify, nenhuma variável VITE_*, e um teste que varre o bundle e o código atrás do token.',
+    // Fechado em 22/09/2026 com o smoke publicado no Deploy Preview 6 (commit 11dfd95): leitura REAL dos
+    // dois repositorios (eiff-control main 88c9ccc com CI verde e 3 PRs; eiff-dev-factory main 88f999d,
+    // privado, so acessivel com o PAT), 7 chamadas no ciclo contra o teto de 7, e varredura dos 40 chunks
+    // do artefato publicado sem token, sem api.github.com e sem cabecalho de autorizacao. O CI da fabrica
+    // ficou indisponivel porque a permissao `Checks` nao e oferecida no PAT fine-grained: tratado como
+    // CAPACIDADE DEGRADAVEL — o repositorio segue LIVE e so o CI falta. Registro em docs/mission-control-live.md.
+    situacao: 'fechado',
+    dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/githubAdapter.ts', simbolo: 'lerRepositorio', nota: 'adapter puro, fetch injetado, capacidades independentes' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'degradação por capacidade' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'GITHUB_ADAPTER_READONLY' },
+      { tipo: 'commit', referencia: '11dfd95' },
+    ],
+  }),
+  g({
+    id: 'FACTORY_ADAPTER_READONLY',
+    titulo: 'Adapter da Factory contra o contrato congelado, com detector de divergência',
+    prova: 'Os 15 estados do job chegam pelo contrato da fábrica (packages/contracts), não por enumeração paralela: um teste de contract drift abre o arquivo da fábrica e reprova qualquer divergência com o espelho. A Factory é lida, nunca escrita.',
+    situacao: 'aberto',
+    dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'ESPELHO_JOB_STATES', nota: 'espelho e catálogo escritos; falta a fonte viva (packages/api é a W5 da fábrica)' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'FACTORY_ADAPTER_READONLY' },
+    ],
+  }),
+  g({
+    id: 'WORK_ITEM_CORRELACAO',
+    titulo: 'A cadeia demanda → merge cabe num cartão só',
+    prova: 'Issue, taskId, worker, branch, commit, PR, CI, merge e gate aparecem correlacionados em um único item, com id determinístico derivado de identidade canônica da fonte, e a mesma entidade nunca produz dois cartões — provado sobre dados reais das duas fontes, não sobre fixture.',
+    situacao: 'aberto',
+    dependeDe: ['GITHUB_ADAPTER_READONLY', 'FACTORY_ADAPTER_READONLY'],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'consolidarWorkItems', nota: 'contrato e normalização prontos; falta a correlação sobre fonte real' },
+      { tipo: 'teste', referencia: 'src/core/central/workItem.test.ts' },
+    ],
+  }),
+  g({
+    id: 'MAPA_VIVO',
+    titulo: 'Mapa de dependências com o estado real em cada nó',
+    prova: 'O grafo do sistema desenhado a partir do modelo (nós, arestas tipadas, sem ciclo), cada nó mostrando o estado que vem da sua fonte, clique abrindo o detalhe — sem dependência nova no package.json e sem quadro mantido à mão.',
+    situacao: 'aberto',
+    dependeDe: ['WORK_ITEM_CORRELACAO'],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/mapaVivo.ts', simbolo: 'ARESTAS', nota: 'modelo do grafo escrito; a tela é a MC-LIVE-4' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MAPA_VIVO' },
+    ],
+  }),
+  g({
+    id: 'EXECUCAO_LIVE',
+    titulo: 'Quadro de execução como projeção, nunca como autoridade',
+    prova: 'As colunas do quadro são projeção do estado das fontes, com o estado cru sempre visível ao lado do normalizado, e nenhuma interação da tela escreve na Factory, no GitHub ou no Radar — provado por teste que varre o código.',
+    situacao: 'aberto',
+    dependeDe: ['WORK_ITEM_CORRELACAO'],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'descricaoStatus', nota: 'regra do "Em validação · CI_RUNNING" escrita; falta a tela' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'EXECUCAO_LIVE' },
+    ],
+  }),
+  g({
+    id: 'MC_REALTIME',
+    titulo: 'O cartão muda sozinho enquanto a tela está aberta',
+    prova: 'Mudança de estado chega ao painel sem recarregar, e a queda do canal não deixa a tela parada: o polling controlado nunca é desligado, só espaçado enquanto o canal está vivo.',
+    situacao: 'aberto',
+    dependeDe: ['EXECUCAO_LIVE'],
+    evidencias: [{ tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MC_REALTIME', nota: 'desenho aprovado; nenhuma infraestrutura nova contratada' }],
+  }),
+  g({
+    id: 'MC_DEGRADACAO',
+    titulo: 'Fonte fora do ar não vira dado falso',
+    prova: 'GitHub ou Factory indisponíveis mantêm o último estado conhecido marcado como stale, com a hora da última sincronização na tela, e o painel continua utilizável — indisponibilidade nunca é apresentada como estado da operação.',
+    situacao: 'aberto',
+    dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'preservarUltimoConhecido' },
+      { tipo: 'modulo', referencia: 'src/data/statusRemoto.ts', simbolo: 'o último dado válido CONTINUA', nota: 'falha de leitura não apaga o que já se sabia' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'falha da fonte nunca vira dado' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MC_DEGRADACAO', nota: 'FALTA para fechar: o smoke publicado provou a recusa honesta (fonte indisponível vira causa declarada, nunca lista vazia verdadeira) e a degradação por capacidade; falta observar ao vivo a TRANSIÇÃO de fonte boa para fonte caída preservando o último estado conhecido como stale — hoje isso só existe em teste' },
+    ],
   }),
   g({
     id: 'OBSERVABILIDADE',
@@ -424,7 +539,7 @@ export const WORKSTREAMS: Workstream[] = [
   { id: 'SEGURANCA', titulo: 'Segurança e operação', responsavel: 'Agent QA', onda: 'Onda 01', foco: 'Ameaças presas por teste, segredo no servidor, borda protegida.', gates: ['THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'RATE_LIMIT_EDGE', 'OPERACAO_MONITORADA'] },
   { id: 'BANCO', titulo: 'Banco da Central', responsavel: 'Agent DB Release', onda: 'Wave 02', foco: 'Levar 0049, 0050 e 0051 ao banco real, com preflight.', gates: ['MIGRATIONS_ESCRITAS', 'MIGRATIONS_SMOKE_POSTGRES', 'MIGRATIONS_APLICADAS', 'AUDITORIA_CENTRAL'] },
   { id: 'ALPHA', titulo: 'Alpha ponta a ponta', responsavel: 'Agent Alpha E2E', onda: 'Wave 02', foco: 'Uma mensagem atravessando todas as fronteiras num teste só.', gates: ['E2E_ALPHA', 'CONTEXTO_EXTERNO'] },
-  { id: 'OBSERVABILIDADE', titulo: 'Mission Control', responsavel: 'Agent Observability', onda: 'Wave 02', foco: 'O estado da construção legível em dez segundos.', gates: ['OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
+  { id: 'OBSERVABILIDADE', titulo: 'Mission Control', responsavel: 'Agent Observability', onda: 'Wave 02', foco: 'O estado da construção legível em dez segundos.', gates: ['OBSERVABILIDADE', 'MISSION_CONTROL_LIVE', 'DEVELOPMENT_STATUS_ENDPOINT', 'GITHUB_ADAPTER_READONLY', 'FACTORY_ADAPTER_READONLY', 'WORK_ITEM_CORRELACAO', 'MAPA_VIVO', 'EXECUCAO_LIVE', 'MC_REALTIME', 'MC_DEGRADACAO'] },
 ];
 
 export const prontidaoDoWorkstream = (w: Workstream): Prontidao => prontidao(w.gates);
@@ -475,7 +590,7 @@ export const DEGRAUS: Degrau[] = [
     publico: 'Duas ou três pessoas escolhidas',
     oQueMuda: 'A resposta volta pelo WhatsApp, só para números da allowlist.',
     // MISSION_CONTROL_LIVE entra aqui, nao no Alpha: o painel ao vivo importa quando mais de uma pessoa acompanha
-    novos: ['META_NUMERO_PRODUCAO', 'ENVIO_CANARY_LIBERADO', 'RATE_LIMIT_EDGE', 'IDENTIDADE_ONBOARDING', 'MISSION_CONTROL_LIVE'],
+    novos: ['META_NUMERO_PRODUCAO', 'ENVIO_CANARY_LIBERADO', 'RATE_LIMIT_EDGE', 'IDENTIDADE_ONBOARDING', 'MISSION_CONTROL_LIVE', 'DEVELOPMENT_STATUS_ENDPOINT', 'GITHUB_ADAPTER_READONLY', 'FACTORY_ADAPTER_READONLY', 'WORK_ITEM_CORRELACAO', 'MAPA_VIVO', 'EXECUCAO_LIVE', 'MC_REALTIME', 'MC_DEGRADACAO'],
   },
   {
     id: 'TEAM_BETA',
@@ -537,7 +652,7 @@ export const CAMADAS: CamadaArquitetura[] = [
   { id: 'ORQUESTRADOR', titulo: 'Orquestrador', papel: 'Intenção, agente alvo e a permissão exigida pela ação.', gates: ['ORQUESTRADOR_DETERMINISTICO', 'PERMISSAO_PELA_ACAO', 'AUTORIDADE_SERVIDOR'] },
   { id: 'AGENTES', titulo: 'Agentes de domínio', papel: 'Interpretam e PROPÕEM; quem decide é o motor.', gates: ['FINANCE_ADAPTER', 'AGENTES_DEMAIS', 'CONTEXTO_EXTERNO'] },
   { id: 'CONTROL', titulo: 'EIFF Control', papel: 'Motor determinístico, matriz de permissões e execução.', gates: ['ESCRITA_FAIL_CLOSED', 'ESCRITA_SERVIDOR'] },
-  { id: 'AUDITORIA', titulo: 'Auditoria e operação', papel: 'Registra, vigia e mostra o estado.', gates: ['AUDITORIA_CENTRAL', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'OPERACAO_MONITORADA', 'E2E_ALPHA', 'OBSERVABILIDADE', 'MISSION_CONTROL_LIVE'] },
+  { id: 'AUDITORIA', titulo: 'Auditoria e operação', papel: 'Registra, vigia e mostra o estado.', gates: ['AUDITORIA_CENTRAL', 'THREAT_MODEL', 'SEGREDOS_SERVIDOR', 'OPERACAO_MONITORADA', 'E2E_ALPHA', 'OBSERVABILIDADE', 'MISSION_CONTROL_LIVE', 'DEVELOPMENT_STATUS_ENDPOINT', 'GITHUB_ADAPTER_READONLY', 'FACTORY_ADAPTER_READONLY', 'WORK_ITEM_CORRELACAO', 'MAPA_VIVO', 'EXECUCAO_LIVE', 'MC_REALTIME', 'MC_DEGRADACAO'] },
 ];
 
 export const prontidaoDaCamada = (c: CamadaArquitetura): Prontidao => prontidao(c.gates);

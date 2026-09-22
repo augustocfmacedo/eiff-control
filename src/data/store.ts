@@ -56,7 +56,7 @@ import { ESTACAO_CONCLUI, estacoesDe } from '../core/producao';
 import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
-import { PAPEIS_RADAR } from '../core/radar/comunicacaoLlm';
+import { MATRIZ, pode, type Acao } from '../core/permissoes';
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
@@ -349,52 +349,12 @@ function registrar(ds: Dataset, acao: string, entidade: string, entidadeId: stri
 // ---------------------------------------------------------------------------
 // Permissoes (matriz da secao 7)
 // ---------------------------------------------------------------------------
-export type Acao =
-  | 'ver_bancos'
-  | 'editar_lancamento'
-  | 'liquidar'
-  | 'conciliar'
-  | 'aprovar'
-  | 'editar_obra'
-  | 'editar_etc'
-  | 'editar_cadastros'
-  | 'editar_parametros'
-  | 'fechar_periodo'
-  | 'reabrir_periodo'
-  | 'ver_auditoria'
-  | 'ver_mission_control'
-  | 'administrar'
-  | 'comentar'
-  | 'exportar'
-  | 'orcar'
-  | 'comprar'
-  | 'radar'
-  | 'radar_config';
+// A matriz vive em src/core/permissoes.ts para poder ser usada TAMBEM do lado do servidor (funcoes
+// Netlify), sem arrastar React, seed e cliente do Supabase junto. Continua sendo UMA matriz so: quem
+// importa `pode` daqui recebe exatamente a mesma funcao.
+export { pode, MATRIZ };
+export type { Acao };
 
-const MATRIZ: Record<Acao, Papel[]> = {
-  ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
-  editar_lancamento: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras'],
-  liquidar: ['Administrador', 'Financeiro'],
-  conciliar: ['Administrador', 'Financeiro'],
-  aprovar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'],
-  editar_obra: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'],
-  editar_etc: ['Administrador', 'Diretoria', 'Gestor de obra', 'Engenharia', 'Financeiro'],
-  editar_cadastros: ['Administrador', 'Financeiro'],
-  editar_parametros: ['Administrador', 'Financeiro', 'Diretoria'],
-  fechar_periodo: ['Administrador', 'Financeiro'],
-  reabrir_periodo: ['Administrador', 'Diretoria'],
-  ver_auditoria: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
-  // Mission Control (painel executivo da EIFF Central): SO Administrador e Diretoria nesta fase. Permissao propria de
-  // proposito — ver_auditoria alcanca Financeiro, Contabilidade e Auditoria, que nao entram aqui.
-  ver_mission_control: ['Administrador', 'Diretoria'],
-  administrar: ['Administrador'],
-  comentar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
-  exportar: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
-  orcar: ['Administrador', 'Diretoria', 'Financeiro', 'Engenharia', 'Compras', 'Gestor de obra'],
-  comprar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
-  radar: [...PAPEIS_RADAR], // mesma lista que a funcao /api/comunicacao confere no perfil do banco
-  radar_config: ['Administrador', 'Diretoria'],
-};
 
 /**
  * Papeis que decidem o alinhamento diario do Diretor Financeiro. NAO e uma segunda ACL: a permissao exigida
@@ -402,13 +362,6 @@ const MATRIZ: Record<Acao, Papel[]> = {
  * "aprovar" inclui Gestor de obra — justamente quem mais abre pedido no Diretor Financeiro.
  */
 export const PAPEIS_DECISAO_DF: readonly Papel[] = ['Administrador', 'Diretoria', 'Financeiro'];
-
-export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {
-  if (!usuario.ativo) return false;
-  if (!MATRIZ[acao].includes(usuario.papel)) return false;
-  if (codigoObra && usuario.obras !== '*' && !usuario.obras.includes(codigoObra)) return false;
-  return true;
-}
 
 export function obrasVisiveis(usuario: Usuario, obras: Obra[]): Obra[] {
   return usuario.obras === '*' ? obras : obras.filter((o) => (usuario.obras as string[]).includes(o.codigo));
