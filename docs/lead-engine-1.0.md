@@ -1,13 +1,14 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-0 fechado** (este documento). LE-1 a LE-8 não iniciados.
-Branch: `feature/lead-engine-1` · baseline: `main @ 88c9ccc` (Commercial UX 1.0 em produção).
+Estado: **LE-0 fechado** (contrato, §1 a §26) e **LE-1 fechado** (intake canônico, §27). **LE-2 não iniciado.**
+LE-3 a LE-8 não iniciados.
+Branch: `feature/lead-engine-1` · baseline do LE-0: `main @ 88c9ccc` · baseline do LE-1: `98636bd`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
 `docs/commercial-machine-cm2.md`; o Radar, em `docs/radar.md`.
 
-**Este bloco é docs-only.** Nada de runtime foi criado ou alterado no LE-0: nenhuma tabela, migration, endpoint,
-crawler, agendador, integração externa, tela, score, fila ou entidade nova. O que está aqui é **contrato**: o que o
-Lead Engine é, o que ele nunca pode ser, e quais decisões precisam do Augusto antes de LE-1.
+As seções 1 a 26 são o **contrato** do LE-0 e continuam valendo como estão: o que o Lead Engine é e o que ele nunca
+pode ser. As 15 decisões da §24 foram **todas fechadas em 22/09/2026** e estão resumidas na tabela daquela seção.
+A §27 registra o que o LE-1 entregou em runtime.
 
 ---
 
@@ -424,7 +425,7 @@ ignorar supressão; reescrever payload bruto; criar segunda ACL ou segundo camin
 
 | Bloco | Escopo | Runtime? | Migration? |
 | --- | --- | --- | --- |
-| **LE-1** | Contrato de descoberta (`DiscoveryRecord`) + staging lógico + idempotência `(fonteId, externoId)`. Core puro, sem rede. | `src/core/radar/**` | talvez (campo de decisão do staging) |
+| ~~**LE-1**~~ | **FECHADO** (§27): `DiscoveryRecord` + staging lógico + idempotência em duas chaves. Core puro, sem rede. | `src/core/radar/**` | sim, `0055` (não aplicada) |
 | **LE-2** | Fila de revisão de candidatos + promoção humana, pelo store, auditada. | core + tela + store | não |
 | **LE-3** | Adapter CNO real, server-side, disparado por pessoa. | função Netlify + core | não |
 | **LE-4** | Adapters PNCP e CNPJ/RFB (identidade e enriquecimento cadastral). | função Netlify + core | não |
@@ -461,9 +462,28 @@ onde gastar crédito depende da autoridade *antiga*.
 
 ---
 
-## 24. Decisões abertas
+## 24. Decisões — todas fechadas em 22/09/2026
 
-Formato: estado atual · evidência · opções · recomendação · impacto · precisa decisão do Augusto.
+| # | Assunto | Decisão adotada |
+| --- | --- | --- |
+| D-1 | Staging | **`RegistroFonte` sem `entidadeId` é o staging lógico.** Nada de `radar_candidate`, nada de segunda raiz de CRM. Extensão mínima de `radar_source_record` autorizada e feita na migration 0055. |
+| D-2 | Ciclo de vida | **Derivado.** Nenhum `lifecycle_stage`, `lead_status` ou `funnel_stage` em `radar_company`. |
+| D-3 | Autoridade de ação | Mantidas as duas com papéis distintos; unificar é **LE-5**. O Lead Engine não cria uma terceira. |
+| D-4 | Automação | **Manual / disparo explícito** de LE-1 a LE-7. Agendador só em **LE-8**. Nenhum cron no LE-1. |
+| D-5 | Primeira fonte real | **CNO**, e isso pertence ao **LE-3**. O LE-1 não chama o CNO. |
+| D-6 | Descoberta sem CNPJ | Não vira Empresa: fica candidato. |
+| D-7 | Idempotência | Identidade externa = `fonteId + externoId`; **separada** de `payloadFingerprint`, que é a versão observada. Fonte automática exige `externoId` estável. Fingerprint nunca é tratado como id do objeto. |
+| D-8 | Score | O Lead Engine **nunca** escreve em score, peso, corte ou decision fit. |
+| D-9 | Vibe | O Lead Engine 1.0 **não inicia operação paga**. Nenhum crédito automático. |
+| D-10 | Promoção | **Human-in-the-loop** de LE-1 a LE-5. Nenhuma promoção automática. |
+| D-11 | Oportunidade | Nunca automática. |
+| D-12 | Supressão | **Supressão vence redescoberta.** O bruto é preservado; a conta não é reativada automaticamente. |
+| D-13 | Revisão de candidato | **Command Center**, não a Hoje. O LE-1 ainda não cria essa tela. |
+| D-14 | Métricas | Estender `cobertura.ts` em LE-7. |
+| D-15 | Duplicatas pendentes | Grupo Sinova × GRUPO SINAGRO segue pendente: é caso real do **LE-2**. |
+
+O detalhamento abaixo (estado atual · evidência · opções · recomendação · impacto) é o registro de **por que** cada
+decisão foi tomada; a resposta adotada é a da tabela acima.
 
 ### D-1 — Como representar o candidato (staging)
 - **Estado atual:** não existe staging; registro sem entidade é `'ignorada'`.
@@ -471,7 +491,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) sem staging · B) tabela `radar_candidate` · C) staging lógico em `RegistroFonte` sem `entidadeId`.
 - **Recomendação:** **C**, com campo de decisão (pendente/aceito/recusado) definido em LE-1.
 - **Impacto:** define se LE-1 tem migration.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-2 — Ciclo de vida gravado ou derivado
 - **Estado atual:** derivado; `Empresa` não tem campo de estágio.
@@ -479,7 +499,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) só derivado · B) coluna `lifecycle_stage` gravada · C) derivado + cache recalculado como os scores.
 - **Recomendação:** **A agora, C se a leitura ficar cara.** Nunca B sem recálculo.
 - **Impacto:** arquitetura de leitura do Lead Engine e das métricas de LE-7.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-3 — Autoridade de ação (`recomendarAcao` × Máquina Comercial)
 - **Estado atual:** duas autoridades coexistem (§23).
@@ -488,7 +508,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
   C) `recomendarAcao` é aposentada e o CM passa a expor estado por conta.
 - **Recomendação:** **A no LE-0/LE-1** (é o que está sendo feito aqui), **decidir entre B e C no LE-5**.
 - **Impacto:** alto; mexe em `cobertura.ts`, `calibracao.ts`, `comunicacao.ts` e `Vibe.tsx`.
-- **Precisa decisão do Augusto: NÃO agora; SIM em LE-5.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-4 — Quando ligar descoberta automática
 - **Estado atual:** nenhuma descoberta automática; nenhum agendador.
@@ -496,7 +516,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) só manual, indefinidamente · B) manual em LE-1..LE-7, agendado em LE-8 · C) agendar já em LE-3.
 - **Recomendação:** **B.**
 - **Impacto:** define o risco operacional e o custo de infraestrutura.
-- **Precisa decisão do Augusto: SIM** (é o compromisso de ritmo).
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-5 — Qual fonte pública primeiro
 - **Estado atual:** adapters CNO, PNCP, CNPJ e NEWS existem, mas só sabem parsear; nenhum busca.
@@ -506,7 +526,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Recomendação:** **A (CNO)** — é o único que descobre *obra real datada com responsável*, que é o negócio da
   EIFF. **C é um bom LE-3.5** e tem risco zero, porque não descobre nada, só melhora o que já está no Radar.
 - **Impacto:** define o conteúdo de LE-3.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-6 — Descoberta sem CNPJ
 - **Estado atual:** `associarEmpresaContato` nunca cria empresa em caso de ambiguidade.
@@ -515,7 +535,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
   C) vira Empresa só se domínio resolver.
 - **Recomendação:** **A.**
 - **Impacto:** qualidade da base; risco de duplicata em massa.
-- **Precisa decisão do Augusto: NÃO** (segue o padrão já vigente), mas registrar ciência.
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-7 — Chave de idempotência da ingestão
 - **Estado atual:** entidades deduplicam; registro bruto não.
@@ -524,7 +544,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
   B) hash do payload · C) nenhum (aceitar duplicata de bruto).
 - **Recomendação:** **A**, com **B como complemento** quando a fonte tiver id instável.
 - **Impacto:** define se o staging acumula lixo.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-8 — Lead Engine pode influenciar score
 - **Estado atual:** não pode; score é regra configurável calibrada.
@@ -532,7 +552,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) nunca · B) só pela dimensão `DATA_QUALITY` · C) dimensão nova para origem da descoberta.
 - **Recomendação:** **A.** Se um dia B, é nova calibração aprovada, não efeito do Lead Engine.
 - **Impacto:** integridade da calibração de produção.
-- **Precisa decisão do Augusto: NÃO** (confirmação apenas).
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-9 — Lead Engine pode gastar crédito Vibe
 - **Estado atual:** não; "nenhuma prospecção nova nem consumo de créditos sem ordem explícita".
@@ -540,7 +560,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) nunca · B) sim, com política e teto próprios · C) sim, reaproveitando a política existente.
 - **Recomendação:** **A** para todo o Lead Engine 1.0.
 - **Impacto:** custo direto em reais.
-- **Precisa decisão do Augusto: SIM** (é dinheiro).
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-10 — Promoção automática ou humana
 - **Estado atual:** não existe promoção; importação cria direto.
@@ -549,14 +569,14 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
   configurável em LE-6.
 - **Recomendação:** **C.**
 - **Impacto:** volume de trabalho manual em LE-2 e LE-3.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-11 — Oportunidade automática
 - **Estado atual:** nunca; store recusa oportunidade ativa sem próxima ação.
 - **Opções:** A) nunca · B) rascunho de oportunidade sem próxima ação · C) automática para sinal forte.
 - **Recomendação:** **A.**
 - **Impacto:** integridade do pipeline e do valor previsto.
-- **Precisa decisão do Augusto: NÃO** (confirmação apenas).
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-12 — Supressão e redescoberta
 - **Estado atual:** supressão bloqueia `recomendarAcao`; não há regra explícita para redescoberta.
@@ -564,7 +584,7 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) supressão vence descoberta, sempre · B) redescoberta reabre para revisão · C) supressão expira.
 - **Recomendação:** **A**, com registro visível ("descoberta suprimida") para auditoria, sem reabrir.
 - **Impacto:** conformidade e confiança.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-13 — Onde o candidato é revisado
 - **Estado atual:** não existe tela.
@@ -572,14 +592,14 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Opções:** A) tela nova no Command Center · B) aba na Hoje · C) reaproveitar o importador do Radar.
 - **Recomendação:** **A** (Command Center), nunca B.
 - **Impacto:** protege o contrato da Commercial UX 1.0.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-14 — Onde vivem as métricas
 - **Estado atual:** `cobertura.ts` já produz relatório; telemetria é de interface.
 - **Opções:** A) estender `cobertura.ts` · B) módulo novo · C) view SQL.
 - **Recomendação:** **A**, com **C** se o volume exigir.
 - **Impacto:** evita um terceiro lugar de verdade.
-- **Precisa decisão do Augusto: NÃO agora** (decidir em LE-7).
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ### D-15 — Resolver as duplicatas pendentes antes de LE-2
 - **Estado atual:** Grupo Sinova × GRUPO SINAGRO pendente desde 08/09/2026.
@@ -588,30 +608,148 @@ Formato: estado atual · evidência · opções · recomendação · impacto · 
 - **Recomendação:** **B** — a fila de revisão de LE-2 é exatamente a ferramenta que falta; resolver à mão antes
   desperdiça o caso de teste real.
 - **Impacto:** LE-2 nasce com um caso real para validar.
-- **Precisa decisão do Augusto: SIM.**
+- **Decidida em 22/09/2026** — ver a tabela no topo desta seção.
 
 ---
 
-## 25. O que este documento não faz
+## 25. O que o LE-0 não fez
 
-Não define algoritmo de descoberta. Não define formato de requisição para CNO ou PNCP. Não define schema de tabela.
-Não escolhe limiar. Não cria tipo em `types.ts`. Não altera nenhuma regra em vigor.
-
-Tudo isso depende das decisões da §24 e entra em LE-1.
+Não definiu algoritmo de descoberta. Não definiu formato de requisição para CNO ou PNCP. Não definiu schema de
+tabela. Não escolheu limiar. Não criou tipo em `types.ts`. Não alterou nenhuma regra em vigor. O LE-0 foi
+docs-only: `git diff --name-status 88c9ccc..98636bd` mostra apenas `docs/`.
 
 ---
 
 ## 26. Como verificar
 
 ```bash
-git diff --name-status 88c9ccc..HEAD
+npm test
+npm run build
 ```
 
-Só `docs/` pode aparecer. Se aparecer qualquer caminho em `src/`, `api/`, `netlify/`, `supabase/`, `migrations/` ou
-`package*.json`, o bloco está inválido.
-
-A suíte não foi tocada e continua sendo a do baseline:
+Escopo do LE-1 (nada fora desta lista pode aparecer):
 
 ```bash
-npm test
+git diff --name-status 98636bd..HEAD
 ```
+
+```text
+A  src/core/radar/leadEngineIntake.ts
+A  src/core/radar/leadEngineIntake.test.ts
+M  src/core/radar/types.ts
+M  src/data/radar.supabase.ts
+A  supabase/migrations/0055_lead_engine_intake.sql
+M  docs/lead-engine-1.0.md
+```
+
+---
+
+## 27. LE-1 entregue — intake canônico, staging lógico e idempotência
+
+Primeiro bloco de runtime. **Não busca nada**: nenhuma chamada a CNO, PNCP, RFB, NEWS ou Vibe; nenhum agendador;
+nenhuma tela. O que o LE-1 entrega é a capacidade de afirmar, com prova: *"recebi este registro externo exatamente
+uma vez, preservei a evidência bruta, sei em que estado ele está e não transformei isso numa conta comercial."*
+
+### 27.1 Schema — `radar_source_record` antes e depois
+
+Antes (migration 0031, sem alteração desde então):
+
+```text
+id uuid pk · organization_id uuid not null → organization(id) · source_id uuid not null → radar_source(id)
+record_type text not null check in ('empresa','contato','projeto','sinal') · external_id text
+payload jsonb not null · entity_id uuid · received_at timestamptz not null default now()
+index radar_source_record_source_idx (source_id, received_at desc)
+```
+
+Depois (migration 0055, **não aplicada**). Cinco colunas, todas anuláveis:
+
+| Coluna | Por que existe |
+| --- | --- |
+| `payload_fingerprint text` | Sem ela não existe idempotência nem conceito de "nova observação". É a chave que separa repetição exata de mudança factual (D-7). |
+| `intake_status text` | `entity_id` só distingue RESOLVED; PENDING, REVIEW e REJECTED são indistinguíveis sem esta coluna. **NULL = registro fora do Lead Engine.** |
+| `decided_at timestamptz` | A §7 exige que o schema responda *quando* a decisão humana aconteceu. |
+| `decided_by uuid → profile(id)` | Responde *quem* decidiu. Mesma convenção de `resolved_by`/`verified_by` do resto do schema. |
+| `decision_reason text` | Responde *por quê*. REJECTED sem motivo é inauditável. |
+
+Nenhuma outra coluna foi criada. Não há coluna redundante com `entity_id`: a coerência entre os dois é um CHECK,
+não uma duplicação.
+
+Restrições e índices:
+
+```sql
+check (intake_status is null or intake_status in ('PENDING','REVIEW','RESOLVED','REJECTED'))
+check (intake_status is distinct from 'RESOLVED' or entity_id is not null)
+check (intake_status is null or (external_id is not null and payload_fingerprint is not null))
+unique index (organization_id, source_id, external_id, payload_fingerprint)
+        where external_id is not null and payload_fingerprint is not null
+index (organization_id, intake_status, received_at desc) where intake_status is not null
+trigger radar_source_record_evidencia  -- evidência bruta imutável no UPDATE
+```
+
+O índice único é deliberadamente **quádruplo**. `unique (organization_id, source_id, external_id)` seria um erro:
+impediria a mesma obra de ser observada de novo com conteúdo diferente. Só a repetição **exata** é proibida.
+
+### 27.2 Registros históricos — sem backlog falso
+
+`intake_status` **NULL** significa "este registro não é gerenciado pelo Lead Engine". Todo o histórico anterior, a
+importação CSV e o Vibe caem nesse caso, sem backfill e sem migração destrutiva. A garantia é dupla:
+
+- no banco, o índice da fila é **parcial** (`where intake_status is not null`), então histórico nunca é listado;
+- no core, `discoveryRecordDe` devolve `undefined` sem `statusIntake`, então histórico **nunca vira `DiscoveryRecord`**
+  e, por construção, nunca vira PENDING. Teste 34 e teste 40 provam isso, inclusive rodando `importarCsv` de verdade.
+
+### 27.3 RLS
+
+Inalterada. `radar_source_record` já tem `radar_source_record_select` (`organization_id = current_org()`) e
+`radar_source_record_write` (papéis comerciais) desde a 0031, mais o `grant` para `authenticated`. Colunas novas
+herdam as políticas existentes. **Nenhuma policy paralela, nenhum escape de service-role, nenhuma escrita sem tenant.**
+
+### 27.4 Contrato de domínio
+
+`src/core/radar/leadEngineIntake.ts` — puro. Importa exatamente dois módulos: `./hash` e `./types` (teste 45 prende
+a lista). `DiscoveryRecord` é **projeção de leitura sobre `RegistroFonte`**, não entidade nova e não tabela nova:
+seu `registroFonteId` é o id do próprio registro.
+
+Dois conceitos formalizados e separados:
+
+```text
+IdentidadeFonte    = fonteId + externoId ........ QUAL objeto externo (a obra, a licitação)
+payloadFingerprint = sha256(jsonCanonico(payload)) QUAL VERSÃO dele foi observada
+```
+
+Classificação da repetição (`classificarIntake`):
+
+| Entrada | Resultado | Efeito |
+| --- | --- | --- |
+| mesma identidade + mesma impressão | `IDEMPOTENT_NOOP` | nada é criado: nem registro, nem sinal, nem revisão |
+| mesma identidade + impressão diferente | `NOVA_OBSERVACAO` | novo registro **ao lado**; o anterior fica intacto |
+| identidade desconhecida | `NOVO_REGISTRO` | primeiro registro daquele objeto |
+
+`validarIntake` recusa com `SEM_IDENTIDADE_EXTERNA` quem chega sem `externoId` estável — sem isso não há
+idempotência possível e a fonte não pode ser automatizada. CSV e MANUAL **não passam por aqui**: continuam em
+`importacao.ts` e `ingerirRegistro`, inalterados.
+
+O hash reusa `hash.ts` (`jsonCanonico` + `sha256Hex`), o mesmo do `context_hash` das comunicações: determinístico,
+puro, funciona no navegador e no servidor, **nenhuma biblioteca nova**. A canonicalização ordena chaves em todos os
+níveis e preserva a ordem dos arrays. `payloadFingerprint` recebe **só o payload** — por construção, `recebidoEm`,
+o id local e qualquer campo gerado pelo app não têm como entrar no hash.
+
+### 27.5 Evidência bruta imutável
+
+Em duas camadas: o mapeamento de `registrosFonte` segue `imutavel: true` (insert-only) e a migration 0055 põe a
+mesma regra no banco (trigger `radar_source_record_evidencia`), permitindo mudar **apenas** `intake_status`,
+`decided_*` e `entity_id`. Conteúdo externo diferente nunca reescreve o registro anterior: gera outro.
+
+### 27.6 Dívida conhecida para o LE-2
+
+`registrosFonte` é **insert-only** no `radar.supabase.ts`. Isso é correto para o LE-1, onde o estado é gravado no
+INSERT e nada transiciona. Mas **transicionar um candidato** (PENDING → RESOLVED/REJECTED) exige tornar aquela spec
+mutável — e aí perde-se o `delete`-quando-some do ramo imutável, que hoje é código morto para esta tabela. O teste
+46 prende `imutavel: true` justamente para que o LE-2 tenha de mudar isso **conscientemente**, com o trigger do
+banco já no lugar para impedir que a mutabilidade toque o bruto.
+
+### 27.7 Migration não aplicada
+
+`supabase/migrations/0055_lead_engine_intake.sql` está no repositório e **não foi aplicada em produção**. Nenhum
+comando foi rodado contra o banco remoto. A aplicação pertence a um release futuro do Lead Engine. O número 0055 foi
+escolhido porque 0052 está reservada pela EIFF Central (existe só em código) e 0053/0054 já foram aplicadas.
