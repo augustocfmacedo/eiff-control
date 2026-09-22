@@ -184,3 +184,9 @@ export function rotuloProcedenciaDoItem(i: Pick<MissionControlWorkItem, 'source'
  * enquanto ele nao existir, esta funcao devolve undefined para todo item, de proposito.
  */
 export const ciDoItem = (_i: MissionControlWorkItem): string | undefined => undefined;
+
+/**
+ * O que a tela diz quando o CI do cartao e desconhecido. Existe para o travessao nao ser mudo: "—" sozinho
+ * confunde "nao ha CI" com "nao conseguimos ler". A frase mora aqui, ao lado da regra, e nao no JSX.
+ */
+export const SEM_EVIDENCIA_DE_CI = 'Sem evidência de CI correlacionada a este item.';

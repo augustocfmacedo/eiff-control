@@ -9,7 +9,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   COLUNAS_QUADRO, ESCOPOS_QUADRO, FILTRO_VAZIO, ROTULO_FACTORY_VIA_GITHUB, STATUS_DESTAQUE, ciDoItem,
-  haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, workstreamsDisponiveis,
+  SEM_EVIDENCIA_DE_CI, haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, workstreamsDisponiveis,
   type EscopoQuadro, type FiltroQuadro,
 } from '../core/central/quadroOperacional';
 import { ROTULO_MC_STATUS, type McStatus, type MissionControlWorkItem } from '../core/central/workItem';
@@ -26,14 +26,18 @@ const TONE_COLUNA: Partial<Record<McStatus, Tone>> = {
 
 const ROTULO_ESCOPO: Record<EscopoQuadro, string> = { TODOS: 'Todos', ARQUITETURA: 'Arquitetura', FACTORY: 'Factory' };
 
-/** Um elo da cadeia tecnica do cartao (issue, branch, PR, CI). Ausente vira travessao, nunca some. */
-function Elo({ rotulo, valor, href }: { rotulo: string; valor?: string; href?: string }) {
+/**
+ * Um elo da cadeia tecnica do cartao (issue, branch, PR, CI). Ausente vira travessao, nunca some.
+ * `semValor` explica a AUSENCIA quando ela precisa de explicacao; sem ele, o travessao continua exatamente
+ * como era — os demais elos nao mudam.
+ */
+function Elo({ rotulo, valor, href, semValor }: { rotulo: string; valor?: string; href?: string; semValor?: string }) {
   return (
     <div className="mcq-elo">
       <span className="mcq-elo-rotulo">{rotulo}</span>
       {valor
         ? (href ? <a href={href} target="_blank" rel="noreferrer">{valor}</a> : <span>{valor}</span>)
-        : <span className="muted">—</span>}
+        : <span className="muted" title={semValor} aria-label={semValor ? `${rotulo}: ${semValor}` : undefined}>—</span>}
     </div>
   );
 }
@@ -77,7 +81,7 @@ function Cartao({ i, agora }: { i: MissionControlWorkItem; agora: string }) {
         <Elo rotulo="Issue" valor={curto(i.links?.issue)} href={i.links?.issue} />
         <Elo rotulo="Branch" valor={i.links?.branch} />
         <Elo rotulo="PR" valor={curto(i.links?.pullRequest)} href={i.links?.pullRequest} />
-        <Elo rotulo="CI" valor={ciDoItem(i)} />
+        <Elo rotulo="CI" valor={ciDoItem(i)} semValor={SEM_EVIDENCIA_DE_CI} />
       </div>
 
       {i.bloqueio && (
