@@ -3,10 +3,11 @@
 Status: **MC-LIVE-2A concluída (22/09/2026)** — o `#/mission-control` tem o **quadro operacional V0** (§ 14):
 Kanban de projeção sobre `MissionControlWorkItem`, com filtros, busca e contadores, no mesmo polling de 60 s.
 
-Status anterior: **MC-LIVE-1 concluída (22/09/2026)** — o endpoint agregador existe, o GitHub é a primeira fonte viva e o
-painel mostra `main`, CI, PRs e a projeção da Factory com LIVE × SNAPSHOT × STALE × UNAVAILABLE. Sem migration,
-sem dependência nova, sem escrita externa. **O primeiro smoke com dados reais ainda não foi feito**: depende do
-PAT `GITHUB_READ_TOKEN` ser criado e cadastrado no painel do Netlify (§ 11).
+Status: **MC-LIVE-1 certificada, 2A e 2B entregues (22/09/2026)** — o endpoint agregador existe, o GitHub é a
+primeira fonte viva, o painel mostra `main`, CI, PRs e a projeção da Factory com LIVE × SNAPSHOT × STALE ×
+UNAVAILABLE, e o quadro operacional lê os mesmos itens. Sem migration, sem dependência nova, sem escrita externa.
+**O smoke com dados reais foi feito** no Deploy Preview do PR #6 com o PAT já cadastrado no painel do Netlify
+(§ 11 e § 16). A Factory continua sendo observada **através do GitHub**: a API da fábrica não existe nesta linha.
 
 Este documento é a autoridade de desenho da iniciativa. Quando uma regra daqui divergir do código, uma das duas
 está errada e a divergência tem de ser resolvida, não contornada.
@@ -321,7 +322,10 @@ Por isso o adapter trata cada capacidade separadamente:
 Lista vazia nunca significa "não há": significa "não foi lido", e o código diz por quê. Rate limit no endpoint
 de checks continua `RATE_LIMIT` — o motivo real nunca é substituído pelo genérico.
 
-Gate: `GITHUB_ADAPTER_READONLY` — segue aberto até a prova publicada completa.
+Gate: `GITHUB_ADAPTER_READONLY` — a prova real já existe (§ 16: leitura viva dos dois repositórios com o PAT e
+varredura do bundle publicado sem nenhum vestígio do token). O gate fecha quando a linha integrada estiver
+publicada e o smoke final repetido sobre ela; até lá a nota de evidência em `missionControl.ts` continua como
+está, porque estado de gate não se fecha por documento.
 
 ## 12. Integração com a arquitetura
 
@@ -473,7 +477,9 @@ não um clone do Miro.
 | Wave | Entrega | Situação |
 | --- | --- | --- |
 | **MC-LIVE-0** | contratos, modelo do mapa, gates, este documento, correção do drift documental | **concluída (22/09/2026)** |
-| **MC-LIVE-1** | `/api/development-status` + GitHub vivo, bloco "Desenvolvimento ao vivo", LIVE × SNAPSHOT × STALE × UNAVAILABLE | **concluída (22/09/2026)**; falta o smoke real com o PAT |
+| **MC-LIVE-1** | `/api/development-status` + GitHub vivo, bloco "Desenvolvimento ao vivo", LIVE × SNAPSHOT × STALE × UNAVAILABLE | **certificada (22/09/2026)** — smoke real no Deploy Preview do PR #6 (§ 16) |
+| **MC-LIVE-2A** | quadro operacional V0 (8 colunas, filtros, busca, contadores, read-only) sobre o mesmo polling | **concluída (22/09/2026)** |
+| **MC-LIVE-2B** | correções do smoke real: procedência por `source` + `procedencia`, CI não inferido do estado cru | **concluída (22/09/2026)** |
 | MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | depende da W5 da fábrica |
 | MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | — |
 | MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | — |
@@ -549,7 +555,7 @@ realtime depois é substituir a origem de `estado` — o quadro não muda.
   bloco até o **fim do arquivo**, o que funcionava só porque aquele bloco era o último. Qualquer CSS acrescentado
   depois quebrava três testes — e quebrou. Corrigido com a sentinela `fim do bloco UX-6` em `styles.css` e os três
   recortes limitados a ela; blocos novos entram depois da linha sem reabrir o problema.
-- O **smoke com dados reais** continua dependendo de `GITHUB_READ_TOKEN` no painel do Netlify (§ 11).
+- O **smoke com dados reais** foi feito em 22/09/2026 com o PAT já cadastrado no painel do Netlify (§ 16).
 
 ## 15. MC-LIVE-2B — correções do smoke real
 
@@ -594,3 +600,41 @@ cartão nenhum.
 virando `#5`, branch, commit e links seguem intactos no contrato, o polling continua único, as 8 colunas seguem
 com `PROXIMO` presente e o quadro continua read-only. A Factory **não** está LIVE: o que existe é a projeção do
 GitHub descrita na § 10.
+
+## 16. Certificação da MC-LIVE-1 e integração final
+
+Smoke real de 22/09/2026 sobre o Deploy Preview do PR #6 (`11dfd95`), com sessão de Administrador e o PAT
+`GITHUB_READ_TOKEN` já cadastrado no painel do Netlify. O que a leitura viva devolveu:
+
+| | resultado observado |
+| --- | --- |
+| `/api/development-status` | **200**; sem `Authorization` → 401, `POST` → 405 |
+| `eiff-control` | disponível · `main` `88c9ccc` · CI **verde** (`completed:success`, "EIFF Quality Gate") · 3 PRs · 0 issues |
+| `eiff-dev-factory` | disponível · `main` `88f999d` · `ci: null` + `erroCi: CHECKS_PERMISSION_UNAVAILABLE` · 0 PRs · 0 issues |
+| `build.sha` | `11dfd95` com `origem: COMMIT_REF` — o commit **deste artefato**, não mais `null` |
+| `github.main.sha` | `88c9ccc` |
+| classificação | **SNAPSHOT** — "esta tela é a publicação de 11dfd95; o main observado já está em 88c9ccc" |
+| segredo | nenhum: zero ocorrência de token, `Authorization`, `Bearer`, `github_pat_`, `ghp_`, `process.env`, `/var/task` ou stack trace, tanto no corpo quanto no bundle publicado |
+
+Três coisas que este smoke provou e que valem como regra:
+
+1. **`SNAPSHOT` num Deploy Preview é acerto, não defeito** (§ 15-B). Forçar `LIVE` seria mentir sobre qual artefato
+   está na tela.
+2. **A degradação por capacidade funciona de verdade**: a fábrica ficou disponível com `main`, PRs e issues lidos e
+   só o CI ausente, com o código do motivo. Uma capacidade sem permissão não derruba o repositório.
+3. **A Factory não tem itens observáveis hoje** — zero PRs e zero issues `factory:state:*`. A projeção existe e está
+   vazia, o que é diferente de indisponível, e é dito com essas palavras na tela.
+
+### 16.1 Como as duas linhas foram juntadas
+
+As linhas divergiram em `430e2b4`: a certificada seguiu com `85aa164` (degradação por capacidade) e `11dfd95`
+(build SHA), enquanto a linha do quadro seguiu com `a05dc8e`/`eaebfda` (MC-LIVE-2A) e `25b4710` (MC-LIVE-2B). A
+integração é um **merge de verdade** das duas, sem rebase, squash, cherry-pick, `ours` ou `theirs`: nenhum commit
+foi reescrito e as seis entregas continuam no histórico com autoria e mensagem originais.
+
+### 16.2 O que ainda NÃO é verdade
+
+A **API da Factory não existe** nesta linha. Tudo que o painel mostra da fábrica é projeção do GitHub
+(`GITHUB_PROJECTION`), e por isso um item da fábrica visto por aí se chama "GitHub projection of Factory" e nunca
+"estado operacional da Factory" — este último rótulo está reservado para quando `FACTORY_API` for real. Heartbeat,
+turno, lease, custo e última ferramenta continuam fora: não existem nesta fonte e não são inventados.
