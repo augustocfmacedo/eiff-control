@@ -374,12 +374,19 @@ export const GATES: Gate[] = [
     id: 'GITHUB_ADAPTER_READONLY',
     titulo: 'Adapter do GitHub somente leitura, com o token só no servidor',
     prova: 'SHA de main, check runs, PRs e issues lidos por um adapter puro (fetch injetado), token fine-grained read-only apenas no painel do Netlify, nenhuma variável VITE_*, e um teste que varre o bundle e o código atrás do token.',
-    situacao: 'aberto',
+    // Fechado em 22/09/2026 com o smoke publicado no Deploy Preview 6 (commit 11dfd95): leitura REAL dos
+    // dois repositorios (eiff-control main 88c9ccc com CI verde e 3 PRs; eiff-dev-factory main 88f999d,
+    // privado, so acessivel com o PAT), 7 chamadas no ciclo contra o teto de 7, e varredura dos 40 chunks
+    // do artefato publicado sem token, sem api.github.com e sem cabecalho de autorizacao. O CI da fabrica
+    // ficou indisponivel porque a permissao `Checks` nao e oferecida no PAT fine-grained: tratado como
+    // CAPACIDADE DEGRADAVEL — o repositorio segue LIVE e so o CI falta. Registro em docs/mission-control-live.md.
+    situacao: 'fechado',
     dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
     evidencias: [
-      { tipo: 'modulo', referencia: 'src/core/central/githubAdapter.ts', simbolo: 'lerGitHub', nota: 'adapter puro com fetch injetado, já provado sobre fixture sintética' },
-      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'segredo nunca chega ao navegador' },
-      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'GITHUB_ADAPTER_READONLY', nota: 'FALTA para fechar: o PAT fine-grained read-only não existe ainda; sem ele não há leitura real nem varredura do bundle publicado' },
+      { tipo: 'modulo', referencia: 'src/core/central/githubAdapter.ts', simbolo: 'lerRepositorio', nota: 'adapter puro, fetch injetado, capacidades independentes' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'degradação por capacidade' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'GITHUB_ADAPTER_READONLY' },
+      { tipo: 'commit', referencia: '11dfd95' },
     ],
   }),
   g({
@@ -444,7 +451,7 @@ export const GATES: Gate[] = [
       { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'preservarUltimoConhecido' },
       { tipo: 'modulo', referencia: 'src/data/statusRemoto.ts', simbolo: 'o último dado válido CONTINUA', nota: 'falha de leitura não apaga o que já se sabia' },
       { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'falha da fonte nunca vira dado' },
-      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MC_DEGRADACAO', nota: 'FALTA para fechar: a degradação está provada para o GitHub sobre fixture; falta valer para a fonte real e para a Factory, que ainda não é fonte' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MC_DEGRADACAO', nota: 'FALTA para fechar: o smoke publicado provou a recusa honesta (fonte indisponível vira causa declarada, nunca lista vazia verdadeira) e a degradação por capacidade; falta observar ao vivo a TRANSIÇÃO de fonte boa para fonte caída preservando o último estado conhecido como stale — hoje isso só existe em teste' },
     ],
   }),
   g({
