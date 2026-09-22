@@ -109,6 +109,21 @@ export const MC_FONTES = ['FACTORY', 'ARCHITECTURE', 'GITHUB', 'COMMERCIAL', 'GA
 export type McFonte = (typeof MC_FONTES)[number];
 
 /**
+ * De ONDE o dado veio, que e outra pergunta: um job da fabrica lido pelas issues do GitHub e projecao,
+ * nao estado operacional da fabrica. A UI precisa dizer isso com todas as letras (MC-LIVE-1, regra do
+ * proprietario: "GitHub projection of Factory", nunca "Factory live operational state").
+ */
+export const PROCEDENCIAS = ['REPOSITORIO', 'GITHUB_PROJECTION', 'FACTORY_API', 'DATASET'] as const;
+export type Procedencia = (typeof PROCEDENCIAS)[number];
+
+export const ROTULO_PROCEDENCIA: Readonly<Record<Procedencia, string>> = {
+  REPOSITORIO: 'curadoria do repositório',
+  GITHUB_PROJECTION: 'projeção do GitHub',
+  FACTORY_API: 'estado operacional da Factory',
+  DATASET: 'dados do Control',
+};
+
+/**
  * Quem agiu. Agente NUNCA vira humano: se a acao foi do dispatcher, o ator e DISPATCHER.
  * Espelha ACTORS da fabrica e acrescenta os atores que existem so do lado do Control.
  */
@@ -199,6 +214,8 @@ export interface MissionControlWorkItem {
   /** derivado de identidade canonica da fonte (taskId na fabrica, id do gate no Mission Control) */
   correlationId?: string;
   source: McFonte;
+  /** por qual caminho este dado chegou — projecao do GitHub nao e estado operacional da fabrica */
+  procedencia: Procedencia;
   sourceId: string;
   title: string;
   status: McStatus;
@@ -211,7 +228,12 @@ export interface MissionControlWorkItem {
   dependsOn?: string[];
   responsavel?: ResponsavelWorkItem;
   startedAt?: string;
-  updatedAt: string;
+  /**
+   * Quando o ESTADO mudou NA FONTE. Opcional de proposito (revisao da MC-LIVE-1): fonte que nao informa
+   * data de alteracao fica sem `updatedAt` — nunca recebe `new Date()`, que seria fabricar historicidade.
+   * O momento em que NOS observamos e outra coisa e mora em `frescor.observadoEm`.
+   */
+  updatedAt?: string;
   completedAt?: string;
   bloqueio?: BloqueioWorkItem;
   evidencias?: Evidencia[];
@@ -251,6 +273,12 @@ export interface MissionControlEvent {
   id: string;
   correlationId?: string;
   tipo: McTipoEvento;
+  /**
+   * O FATO BRUTO da fonte, antes da abstracao — o `statusOrigem` do evento (ex.: `WORKER_REPORT`,
+   * `check_run:completed`). Obrigatorio: o Mission Control nunca deixa o tipo normalizado apagar o que a
+   * fonte realmente disse.
+   */
+  tipoOrigem: string;
   ocorridoEm: string;
   source: McFonte;
   sourceId: string;
@@ -402,6 +430,7 @@ export function normalizarJobFactory(job: JobFactory, ctx: ContextoNormalizacao,
     id: idWorkItem('FACTORY', job.taskId),
     correlationId: job.taskId,
     source: 'FACTORY',
+    procedencia: 'FACTORY_API',
     sourceId: job.taskId,
     title: job.title,
     status: STATUS_POR_ESTADO_FACTORY[job.state],
@@ -436,6 +465,7 @@ export function normalizarGate(g: Gate, ctx: ContextoNormalizacao, workstreamId?
     id: idWorkItem('GATE', g.id),
     correlationId: g.id,
     source: 'GATE',
+    procedencia: 'REPOSITORIO',
     sourceId: g.id,
     title: g.titulo,
     status,
@@ -443,7 +473,7 @@ export function normalizarGate(g: Gate, ctx: ContextoNormalizacao, workstreamId?
     workstreamId,
     gateIds: [g.id],
     dependsOn: g.dependeDe,
-    updatedAt: ctx.observadoEm,
+    // o gate nao tem data de alteracao na fonte (o repositorio muda por commit): nada e inventado aqui
     bloqueio: g.situacao === 'bloqueado'
       ? { motivo: g.bloqueio ?? '', porDesenho: g.porDesenho === true }
       : undefined,
@@ -488,6 +518,7 @@ export function normalizarItemComercial(e: EntradaComercial, ctx: ContextoNormal
     id: idWorkItem('COMMERCIAL', e.itemId),
     correlationId: e.itemId,
     source: 'COMMERCIAL',
+    procedencia: 'DATASET',
     sourceId: e.itemId,
     title: e.titulo,
     status,
@@ -502,6 +533,100 @@ export function normalizarItemComercial(e: EntradaComercial, ctx: ContextoNormal
 /** Preserva a ordem recebida: a fila e da Maquina Comercial, e o Mission Control nao reordena nada. */
 export const normalizarComerciais = (itens: readonly EntradaComercial[], ctx: ContextoNormalizacao): MissionControlWorkItem[] =>
   itens.map((e) => normalizarItemComercial(e, ctx));
+
+// ------------------------------------------------------ normalizacao: GitHub (projecao) -> work item
+
+/**
+ * Formas MINIMAS de entrada, declaradas aqui de proposito: a fronteira de normalizacao nao importa o
+ * adapter (evita ciclo e mantem este modulo puro). `githubAdapter.ts` produz objetos compativeis.
+ *
+ * REGRA DA MC-LIVE-1: isto e PROJECAO DO GITHUB da fabrica, nao o estado operacional dela. Por isso
+ * `procedencia: 'GITHUB_PROJECTION'` e por isso nada de heartbeat, turno, lease, custo ou ultima
+ * ferramenta — esses dados NAO existem nesta fonte e inventa-los seria mentir sobre a operacao.
+ */
+export interface EntradaIssueFactory {
+  repositorio: string;
+  numero: number;
+  titulo: string;
+  /** vindo da label `factory:state:*`; null quando a issue nao declara estado de job */
+  estadoFactory: EstadoJobFactory | null;
+  /** vindo da label `factory:risk:*`; usado so para saber se a decisao e do humano (lane RED) */
+  lane?: LaneFactory | null;
+  taskId: string | null;
+  estadoGitHub: 'open' | 'closed';
+  criadoEm: string;
+  atualizadoEm: string;
+  fechadaEm?: string;
+  url: string;
+}
+
+export interface EntradaPullRequest {
+  repositorio: string;
+  numero: number;
+  titulo: string;
+  branch: string;
+  headSha: string;
+  rascunho: boolean;
+  taskId: string | null;
+  criadoEm: string;
+  atualizadoEm: string;
+  url: string;
+}
+
+/** Identidade canonica de uma issue/PR quando nao ha taskId: o proprio endereco no GitHub. */
+export const refGitHub = (repositorio: string, numero: number): string => `${repositorio}#${numero}`;
+
+export function normalizarIssueFactory(e: EntradaIssueFactory, ctx: ContextoNormalizacao): MissionControlWorkItem {
+  const ref = refGitHub(e.repositorio, e.numero);
+  // sem label de estado a issue e uma DEMANDA registrada, nao um job em execucao
+  const status: McStatus = e.estadoFactory
+    ? STATUS_POR_ESTADO_FACTORY[e.estadoFactory]
+    : e.estadoGitHub === 'closed' ? 'CONCLUIDO' : 'ARQUITETURA';
+  const ator = e.estadoFactory
+    ? (e.estadoFactory === 'ARCH_APPROVED' && e.lane === 'RED' ? 'HUMAN' : ATOR_POR_ESTADO_FACTORY[e.estadoFactory])
+    : undefined;
+  return {
+    id: idWorkItem(e.estadoFactory ? 'FACTORY' : 'ARCHITECTURE', ref),
+    correlationId: e.taskId ?? ref,
+    source: e.estadoFactory ? 'FACTORY' : 'ARCHITECTURE',
+    procedencia: 'GITHUB_PROJECTION',
+    sourceId: ref,
+    title: e.titulo,
+    status,
+    // o fato bruto: o estado do job quando a label existe, senao o estado da propria issue
+    statusOrigem: e.estadoFactory ?? `issue:${e.estadoGitHub}`,
+    responsavel: ator ? responsavel(ator) : undefined,
+    updatedAt: e.atualizadoEm,
+    completedAt: e.fechadaEm,
+    bloqueio: e.estadoFactory === 'BLOCKED'
+      ? { motivo: 'Job bloqueado na fábrica (label factory:state:BLOCKED).', porDesenho: false, desde: e.atualizadoEm }
+      : undefined,
+    links: { repository: e.repositorio, issue: e.url },
+    frescor: avaliarFrescor(ctx),
+  };
+}
+
+/**
+ * PR aberto = codigo em conferencia. O CI por PR NAO e lido aqui: uma chamada por cartao e exatamente o
+ * que o desenho proibe. O CI que aparece no painel e o do `main` de cada repositorio.
+ */
+export function normalizarPullRequest(e: EntradaPullRequest, ctx: ContextoNormalizacao): MissionControlWorkItem {
+  const ref = refGitHub(e.repositorio, e.numero);
+  return {
+    id: idWorkItem('GITHUB', ref),
+    correlationId: e.taskId ?? ref,
+    source: 'GITHUB',
+    procedencia: 'GITHUB_PROJECTION',
+    sourceId: ref,
+    title: e.titulo,
+    status: 'EM_VALIDACAO',
+    statusOrigem: e.rascunho ? 'pr:draft' : 'pr:open',
+    responsavel: responsavel('GITHUB'),
+    updatedAt: e.atualizadoEm,
+    links: { repository: e.repositorio, pullRequest: e.url, branch: e.branch, commit: e.headSha },
+    frescor: avaliarFrescor(ctx),
+  };
+}
 
 // --------------------------------------------------------------------------------- consolidacao
 
@@ -520,13 +645,16 @@ const juntarLinks = (a?: LinksWorkItem, b?: LinksWorkItem): LinksWorkItem | unde
  *     com os links e as evidencias da outra (o GitHub complementa a Factory, nao compete com ela).
  * A ordem de saida e a ordem de entrada do item que sobreviveu — a funcao nao ordena nada.
  */
+/** Data de comparacao: sem `updatedAt` na fonte, o item e o mais ANTIGO possivel — nunca "agora". */
+const quando = (i: MissionControlWorkItem): number => (i.updatedAt ? Date.parse(i.updatedAt) : -Infinity);
+
 export function consolidarWorkItems(itens: readonly MissionControlWorkItem[]): MissionControlWorkItem[] {
   const porId = new Map<string, MissionControlWorkItem>();
   const ordem: string[] = [];
   for (const it of itens) {
     const anterior = porId.get(it.id);
     if (!anterior) { porId.set(it.id, it); ordem.push(it.id); continue; }
-    porId.set(it.id, Date.parse(it.updatedAt) >= Date.parse(anterior.updatedAt) ? { ...it, links: juntarLinks(it.links, anterior.links) } : anterior);
+    porId.set(it.id, quando(it) >= quando(anterior) ? { ...it, links: juntarLinks(it.links, anterior.links) } : anterior);
   }
 
   const porCorrelacao = new Map<string, string>();
@@ -571,8 +699,12 @@ export function preservarUltimoConhecido(
 // ---------------------------------------------------------------------------------------- eventos
 
 /**
- * Comentario estruturado da fabrica -> evento normalizado. `ok` resolve os dois casos que dependem do
- * resultado (relatorio do worker e resultado do CI). Nao existe evento fora deste catalogo.
+ * Comentario estruturado da fabrica -> evento normalizado.
+ *
+ * REVISAO DA MC-LIVE-1 (regra do proprietario): o Mission Control NAO INFERE resultado. `WORKER_REPORT`
+ * sozinho nao prova teste verde: so vira TEST_PASSED/TEST_FAILED quando a fonte entrega um campo
+ * estruturado e canonico com o resultado (`ok`). Sem esse campo, o evento fica em TASK_PROGRESS e o fato
+ * bruto sobrevive em `tipoOrigem`. Vale para qualquer evento: nenhum texto livre vira estado operacional.
  */
 export function tipoEventoDoComentario(kind: ComentarioFactory, ok?: boolean): McTipoEvento {
   switch (kind) {
@@ -580,8 +712,8 @@ export function tipoEventoDoComentario(kind: ComentarioFactory, ok?: boolean): M
     case 'ARCH_APPROVE_SPEC': return 'ARCHITECTURE_COMPLETED';
     case 'ADMITTED': return 'TASK_DISPATCHED';
     case 'CLAIMED': return 'WORKER_STARTED';
-    case 'WORKER_REPORT': return ok === false ? 'TEST_FAILED' : 'TEST_PASSED';
-    case 'CI_RESULT': return ok === false ? 'CI_FAILED' : 'CI_PASSED';
+    case 'WORKER_REPORT': return ok === undefined ? 'TASK_PROGRESS' : ok ? 'TEST_PASSED' : 'TEST_FAILED';
+    case 'CI_RESULT': return ok === undefined ? 'TASK_PROGRESS' : ok ? 'CI_PASSED' : 'CI_FAILED';
     case 'HUMAN_DECISION': return 'AWAITING_HUMAN';
     case 'INTEGRATED': return 'MERGED';
     case 'BLOCKED': return 'BLOCKED';
@@ -589,6 +721,10 @@ export function tipoEventoDoComentario(kind: ComentarioFactory, ok?: boolean): M
     default: return 'TASK_PROGRESS';
   }
 }
+
+/** O par completo: tipo normalizado + fato bruto preservado. E esta a porta que os adapters usam. */
+export const eventoDoComentario = (kind: ComentarioFactory, ok?: boolean): { tipo: McTipoEvento; tipoOrigem: string } =>
+  ({ tipo: tipoEventoDoComentario(kind, ok), tipoOrigem: kind });
 
 /** Ordem consistente e estavel: por data, e no empate pelo id determinstico. */
 export function ordenarEventos(eventos: readonly MissionControlEvent[]): MissionControlEvent[] {

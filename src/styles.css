@@ -840,3 +840,17 @@ tr.arrastando td { opacity: 0.55; }
 /* Entrada: tres conceitos lado a lado no desktop, 2+1 no intermediario, um por linha no celular. */
 @media (max-width: 640px) { .entrada-cards { grid-template-columns: 1fr; } }
 .entrada-cards .card { min-width: 0; overflow-wrap: anywhere; }
+
+/* Mission Control — bloco "Desenvolvimento ao vivo" (MC-LIVE-1).
+   Estado nunca depende só de cor: o Badge traz o texto (Ao vivo / Snapshot desatualizado / Dado
+   envelhecido / Fonte indisponível) e o estado cru do CI aparece ao lado do normalizado. */
+.mc-vivo { margin-top: var(--space-4); }
+.mc-vivo-topo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mc-vivo-topo h2 { margin: 0; }
+.mc-vivo-topo .btn { margin-left: auto; }
+.mc-vivo-repo { padding: 10px 0; border-top: 1px solid var(--border); }
+.mc-vivo-repo:first-of-type { border-top: none; }
+.mc-vivo-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mc-vivo-repo code { font-size: var(--text-xs); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.mc-cru { font-size: var(--text-xs); color: var(--muted); opacity: 0.85; }
+.mc-vivo-resumo { padding-top: 10px; border-top: 1px solid var(--border); line-height: 1.5; }

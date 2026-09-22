@@ -358,8 +358,17 @@ export const GATES: Gate[] = [
     id: 'DEVELOPMENT_STATUS_ENDPOINT',
     titulo: 'Endpoint agregador server-side do estado da construção',
     prova: 'Uma função Netlify /api/development-status que valida JWT → perfil do banco → ver_mission_control, agrega GitHub e Factory numa resposta só, com cache e sem nenhum segredo na saída; quem não tem a permissão recebe 403 mesmo sabendo a URL.',
-    situacao: 'aberto',
-    evidencias: [{ tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'DEVELOPMENT_STATUS_ENDPOINT', nota: 'contrato do endpoint; a função ainda não existe' }],
+    situacao: 'fechado',
+    evidencias: [
+      { tipo: 'funcao', referencia: 'netlify/functions/development-status.ts', simbolo: 'tratarDevelopmentStatus' },
+      { tipo: 'modulo', referencia: 'src/core/central/statusServidor.ts', simbolo: 'autenticarStatus' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'papel sem ver_mission_control → 403' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'DEVELOPMENT_STATUS_ENDPOINT' },
+      // leitura honesta do "agrega Factory": a fabrica entra pela UNICA fonte canonica que existe hoje
+      // (issues com label factory:state:*), declarada na resposta como GITHUB_PROJECTION. O estado
+      // operacional real da fabrica e outro gate, FACTORY_ADAPTER_READONLY, que segue aberto.
+      { tipo: 'modulo', referencia: 'src/core/central/statusServidor.ts', simbolo: 'AVISO_FACTORY_PROJECAO', nota: 'a Factory entra como projeção do GitHub, e a resposta diz isso' },
+    ],
   }),
   g({
     id: 'GITHUB_ADAPTER_READONLY',
@@ -367,7 +376,11 @@ export const GATES: Gate[] = [
     prova: 'SHA de main, check runs, PRs e issues lidos por um adapter puro (fetch injetado), token fine-grained read-only apenas no painel do Netlify, nenhuma variável VITE_*, e um teste que varre o bundle e o código atrás do token.',
     situacao: 'aberto',
     dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
-    evidencias: [{ tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'GITHUB_ADAPTER_READONLY' }],
+    evidencias: [
+      { tipo: 'modulo', referencia: 'src/core/central/githubAdapter.ts', simbolo: 'lerGitHub', nota: 'adapter puro com fetch injetado, já provado sobre fixture sintética' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'segredo nunca chega ao navegador' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'GITHUB_ADAPTER_READONLY', nota: 'FALTA para fechar: o PAT fine-grained read-only não existe ainda; sem ele não há leitura real nem varredura do bundle publicado' },
+    ],
   }),
   g({
     id: 'FACTORY_ADAPTER_READONLY',
@@ -428,8 +441,10 @@ export const GATES: Gate[] = [
     situacao: 'aberto',
     dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
     evidencias: [
-      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'preservarUltimoConhecido', nota: 'regra escrita e testada; falta valer sobre fonte real' },
-      { tipo: 'teste', referencia: 'src/core/central/workItem.test.ts' },
+      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'preservarUltimoConhecido' },
+      { tipo: 'modulo', referencia: 'src/data/statusRemoto.ts', simbolo: 'o último dado válido CONTINUA', nota: 'falha de leitura não apaga o que já se sabia' },
+      { tipo: 'teste', referencia: 'src/core/central/developmentStatus.test.ts', simbolo: 'falha da fonte nunca vira dado' },
+      { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'MC_DEGRADACAO', nota: 'FALTA para fechar: a degradação está provada para o GitHub sobre fixture; falta valer para a fonte real e para a Factory, que ainda não é fonte' },
     ],
   }),
   g({

@@ -1,7 +1,9 @@
 # Mission Control Live — contrato arquitetural
 
-Status: **MC-LIVE-0 concluída (22/09/2026)** — contratos, modelo do mapa, gates e este documento. Nenhuma fonte
-externa é consultada ainda, nenhuma migration, nenhuma dependência nova, nenhum token necessário.
+Status: **MC-LIVE-1 concluída (22/09/2026)** — o endpoint agregador existe, o GitHub é a primeira fonte viva e o
+painel mostra `main`, CI, PRs e a projeção da Factory com LIVE × SNAPSHOT × STALE × UNAVAILABLE. Sem migration,
+sem dependência nova, sem escrita externa. **O primeiro smoke com dados reais ainda não foi feito**: depende do
+PAT `GITHUB_READ_TOKEN` ser criado e cadastrado no painel do Netlify (§ 11).
 
 Este documento é a autoridade de desenho da iniciativa. Quando uma regra daqui divergir do código, uma das duas
 está errada e a divergência tem de ser resolvida, não contornada.
@@ -69,16 +71,25 @@ Contrato em [src/core/central/workItem.ts](../src/core/central/workItem.ts). É 
   gate. Nada é gerado.
 - `status` ∈ `PROXIMO · ARQUITETURA · PRONTO · EXECUTANDO · AGUARDANDO_HUMANO · BLOQUEADO · EM_VALIDACAO ·
   CONCLUIDO`. `statusOrigem` guarda o estado cru e é exibido junto.
-- `frescor` é obrigatório: `{ observadoEm, stale, fonteIndisponivel }`.
+- `procedencia` (revisão da MC-LIVE-1) diz **por qual caminho o dado chegou**: `REPOSITORIO`,
+  `GITHUB_PROJECTION`, `FACTORY_API` ou `DATASET`. É o que impede a projeção do GitHub de se passar por estado
+  operacional da Factory.
+- `updatedAt` é **opcional** (revisão da MC-LIVE-1): fonte que não informa quando o estado mudou fica sem ele.
+  Nunca se usa `new Date()` no lugar — isso seria fabricar historicidade.
+- `frescor` é obrigatório: `{ observadoEm, stale, fonteIndisponivel }`. `observadoEm` é quando **nós** lemos;
+  `updatedAt` é quando a **fonte** mudou. São coisas diferentes e o contrato não as mistura.
 - `bloqueio.porDesenho` preserva a distinção entre segurança intencional e falha.
 - `links` carrega `repository · branch · commit · pullRequest · issue`.
 - `dependsOn`, `parentId`, `gateIds`, `workstreamId`, `waveId` fecham os eixos de leitura.
 
 ## 6. `MissionControlEvent`
 
-`{ id, correlationId, tipo, ocorridoEm, source, sourceId, ator, de, para, motivo, evidencia, metadata }`.
+`{ id, correlationId, tipo, tipoOrigem, ocorridoEm, source, sourceId, ator, de, para, motivo, evidencia,
+metadata }`.
 
 - `id` determinístico (`source|sourceId|tipo|ocorridoEm`): a mesma ocorrência lida em duas coletas é um evento só.
+- `tipoOrigem` (revisão da MC-LIVE-1) guarda o **fato bruto** da fonte antes da abstração — o `statusOrigem` do
+  evento. Obrigatório.
 - `de`/`para` guardam estados **crus**: a timeline conta a verdade da fonte.
 - `ator` distingue `HUMAN · ARCHITECT · DISPATCHER · SUPERVISOR · WORKER · INTEGRATOR · GITHUB ·
   COMMERCIAL_MACHINE · SYSTEM`. **Ação de agente nunca vira humano inventado.**
@@ -165,12 +176,65 @@ Como os repositórios são separados, `workItem.ts` mantém um **espelho declara
 
 Gate: `FACTORY_ADAPTER_READONLY`.
 
-### O que existe hoje
+### O que existe hoje — **GitHub projection of Factory**
 
 A fábrica está na **W1** ("um job à mão"). **`packages/api` não existe**, não há VM, não há
 `factory.eiffcontrol.com.br` e não há `FACTORY_READ_TOKEN`. O que é consultável hoje são as issues do GitHub com
-as labels `factory:state:*` — que já são canônicas por ADR-01. O adapter da MC-LIVE-2 nasce contra o contrato
-congelado, com fallback por labels e com `fonteIndisponivel` explícito.
+as labels `factory:state:*` — que já são canônicas por ADR-01.
+
+Desde a MC-LIVE-1 o painel mostra essa projeção, e ela é **declarada como tal em três lugares**: no dado
+(`procedencia: 'GITHUB_PROJECTION'` em cada work item), na resposta (`factory.aviso`) e na tela (etiqueta
+"projeção do GitHub"). O que **não** é exibido, porque não existe nesta fonte: heartbeat, turno (`turn`), lease,
+custo e última ferramenta. Um teste varre a resposta atrás desses campos.
+
+| | Factory live operational state | GitHub projection of Factory (hoje) |
+| --- | --- | --- |
+| Fonte | SQLite do dispatcher via `/api/factory/status` | issues + labels `factory:state:*` |
+| Estado do job | os 15 estados, em tempo quase real | o mesmo estado, na latência do polling |
+| Worker, turno, lease, custo | sim | **não existe** |
+| Wave | MC-LIVE-2 (depende da W5 da fábrica) | **MC-LIVE-1, no ar** |
+
+## 10-A. O endpoint `/api/development-status` (MC-LIVE-1)
+
+`GET /api/development-status` — Netlify Function v2 com `config.path`, a mesma convenção de `/api/comunicacao`.
+Não existe segundo contrato nem rota alternativa.
+
+```
+request → JWT → usuário do Supabase → perfil REAL no banco (role, active)
+        → pode(usuario, 'ver_mission_control')   [MATRIZ única do Control]
+        → adapter do GitHub (allowlist server-side)
+        → normalização → sanitização → response
+```
+
+| Situação | Resposta |
+| --- | --- |
+| sem `Authorization` | **401** `{ erro: 'nao_autenticado' }` — o GitHub nem é consultado |
+| JWT inválido | **401** |
+| sem perfil na tabela `profile` | **403** `{ erro: 'sem_perfil' }` |
+| papel sem `ver_mission_control` (ou perfil inativo) | **403** `{ erro: 'sem_permissao' }` — o GitHub nem é consultado |
+| método ≠ GET | **405** |
+| autorizado | **200** com o corpo abaixo |
+
+O papel **nunca** vem do navegador. O corpo (`DevelopmentStatusResposta` em `statusServidor.ts`):
+
+```ts
+{
+  observadoEm: string,                       // quando o servidor leu
+  build: { sha: string | null, origem: 'COMMIT_REF' | null },
+  fontes: { github: { fonte, disponivel, stale, observadoEm, erroCodigo?, limite?, chamadas, maxChamadasPorCiclo } },
+  repositorios: [{ repository, papel, ramoPrincipal, observadoEm, disponivel, erroCodigo?,
+                   main: { sha, shaCurto, commitadoEm?, titulo? } | null,
+                   ci: { situacao, statusOrigem, nome?, concluidoEm?, url? } | null,
+                   pullRequests: [...], issues: [...], chamadas }],
+  workItems: MissionControlWorkItem[],       // contrato da MC-LIVE-0
+  contagens: Record<McStatus, number>,
+  factory: { procedencia: 'GITHUB_PROJECTION', aviso, repositorio, contagens },
+  limiteStaleSegundos: number
+}
+```
+
+O que **nunca** sai: token, header do GitHub, URL autenticada, objeto integral da API, stack trace. A resposta é
+montada campo a campo a partir do contrato — nada é serializado direto do GitHub.
 
 ## 11. Integração com o GitHub
 
@@ -179,13 +243,59 @@ Decisão de 22/09/2026: **PAT fine-grained somente leitura**, restrito a `august
 e checks. Nenhuma permissão de escrita. Migração futura para GitHub App **não altera o contrato do Mission
 Control**.
 
-- O token existe **apenas no ambiente de deploy** (painel do Netlify). Nunca `VITE_*`, nunca no navegador, no
-  bundle, no banco, em log ou em resposta de API.
-- Uma chamada agregada por ciclo, com ETag/`If-None-Match` e cache curto compartilhado. **Nunca uma chamada por
-  cartão.** Sem N+1.
+- O token existe **apenas no ambiente de deploy** (painel do Netlify), com o nome **`GITHUB_READ_TOKEN`**. Nunca
+  `VITE_*`, nunca no navegador, no bundle, no banco, em log ou em resposta de API.
 - Adapter puro com `fetch` injetado, no padrão de `metaServidor.ts`/`comunicacaoServidor.ts`.
 
-Gate: `GITHUB_ADAPTER_READONLY`.
+### Permissões do PAT (mínimo necessário)
+
+Fine-grained, **only select repositories**: `augustocfmacedo/eiff-control` e `augustocfmacedo/eiff-dev-factory`.
+
+| Permissão | Nível | Por quê |
+| --- | --- | --- |
+| Metadata | Read | obrigatória para qualquer leitura de repositório |
+| Contents | Read | `GET /repos/{r}/commits/main` — SHA e data do último commit |
+| Pull requests | Read | `GET /repos/{r}/pulls?state=open` |
+| Issues | Read | `GET /repos/{r}/issues?labels=factory:task` (projeção da Factory) |
+| Checks | Read | `GET /repos/{r}/commits/{sha}/check-runs` — situação do CI |
+| Actions | Read | leitura de workflow run, se a evolução do painel exigir |
+
+**Nenhuma permissão de escrita.** Nada de Administration, Secrets, Webhooks, Workflows (write) nem acesso a todos
+os repositórios. `Commit statuses: Read` **não** foi pedido: o painel usa check runs, não o statuses API — se um
+dia usar, a necessidade é justificada antes.
+
+### REST, não GraphQL
+
+REST resolve com poucas chamadas e contrato claro por endpoint; GraphQL exigiria uma query própria e um schema a
+manter para economizar 4 requisições dentro de um orçamento de 5.000/h. Escolha: **REST**.
+
+### Chamadas por ciclo e rate limit
+
+**Teto de 7 chamadas por ciclo** (`MAX_CHAMADAS_POR_CICLO`), e o número real vai na resposta
+(`fontes.github.chamadas`):
+
+| Repositório | Chamadas |
+| --- | --- |
+| `eiff-control` | commit de `main`, check-runs do SHA, pulls = **3** |
+| `eiff-dev-factory` | as três acima + issues com `factory:task` = **4** |
+
+**Nunca há chamada por cartão**: PRs e issues vêm em lista, e o CI lido é o do `main` de cada repositório — o CI
+por PR exigiria uma chamada por PR e por isso não é lido nesta fase. Só o servidor fala com o GitHub; o navegador
+chama exclusivamente `/api/development-status`.
+
+Limite: lido dos cabeçalhos `x-ratelimit-*` da própria resposta (**sem chamada extra**) e exposto como
+`{ restante, total, reiniciaEm }` — nenhum outro header atravessa a fronteira. Em `403` com limite zerado ou `429`
+o código é `RATE_LIMIT`, a fonte fica indisponível e **o último estado conhecido permanece**: nunca vira lista
+vazia.
+
+### Cache
+
+`ETag`/`If-None-Match` com o corpo guardado na memória do processo da função — **otimização oportunista**, nunca
+requisito de consistência: instância nova simplesmente refaz as chamadas completas. Não há Redis, banco de cache
+nem serviço externo. Cache persistente é MC-LIVE-5.
+
+Gate: `GITHUB_ADAPTER_READONLY` — **segue aberto**: o PAT ainda não existe, então não houve leitura real nem
+varredura do bundle publicado.
 
 ## 12. Integração com a arquitetura
 
@@ -209,7 +319,7 @@ degrau **Piloto** — o mesmo lugar onde `MISSION_CONTROL_LIVE` já estava.
 
 | Gate | Objetivo | Prova necessária | Evidência esperada | Depende de |
 | --- | --- | --- | --- | --- |
-| `DEVELOPMENT_STATUS_ENDPOINT` | um agregador server-side do estado da construção | JWT → perfil do banco → `ver_mission_control`; agrega GitHub e Factory numa resposta; cache; nenhum segredo na saída; 403 para quem sabe a URL e não tem a permissão | `netlify/functions/development-status.ts` + teste de acesso | — |
+| `DEVELOPMENT_STATUS_ENDPOINT` **(fechado na MC-LIVE-1)** | um agregador server-side do estado da construção | JWT → perfil do banco → `ver_mission_control`; agrega GitHub e Factory numa resposta; cache; nenhum segredo na saída; 403 para quem sabe a URL e não tem a permissão | `netlify/functions/development-status.ts`, `statusServidor.ts`, `developmentStatus.test.ts` | — |
 | `GITHUB_ADAPTER_READONLY` | ler o GitHub sem expor nada | SHA de `main`, check runs, PRs e issues por adapter puro; token só no painel do Netlify; teste varrendo bundle e código | `src/core/central/githubAdapter.ts` + teste | `DEVELOPMENT_STATUS_ENDPOINT` |
 | `FACTORY_ADAPTER_READONLY` | consumir a fábrica pelo contrato dela | os 15 estados vêm do contrato da fábrica; teste de contract drift reprova divergência; leitura sem nenhum caminho de escrita | `src/core/central/factoryAdapter.ts` + drift test | `DEVELOPMENT_STATUS_ENDPOINT` |
 | `WORK_ITEM_CORRELACAO` | a cadeia inteira num cartão | issue→taskId→worker→branch→commit→PR→CI→merge→gate correlacionados sobre **fonte real**; id determinístico; zero duplicata | `workItem.ts` + teste sobre dados reais | `GITHUB_ADAPTER_READONLY`, `FACTORY_ADAPTER_READONLY` |
@@ -225,6 +335,21 @@ fecharem com evidência. Nenhum deles fechou na MC-LIVE-0 — contrato escrito n
 regressão; houve reconhecimento formal de trabalho que já era necessário e estava representado por um único gate
 ("Mission Control em tempo real"), que não se fecha por partes. Prontidão honesta vale mais que prontidão alta.
 
+## 14-A. Eventos ainda não são emitidos (MC-LIVE-1)
+
+A projeção do GitHub **não gera `MissionControlEvent`** nesta wave. O motivo é a regra do proprietário: o
+Mission Control não infere. Sem a linha do tempo estruturada da issue (ou a API da fábrica), o que existe são
+datas de criação/atualização — e delas não se deduz "testes passaram" nem "CI começou". Por isso:
+
+- `tipoEventoDoComentario(kind, ok)` só devolve `TEST_PASSED`/`TEST_FAILED` e `CI_PASSED`/`CI_FAILED` quando a
+  fonte entrega o resultado em campo estruturado (`ok`); sem ele, o evento é `TASK_PROGRESS`;
+- todo evento carrega `tipoOrigem` com o **fato bruto** da fonte (`WORKER_REPORT`, `check_run:completed`), do
+  mesmo jeito que todo item carrega `statusOrigem`;
+- `updatedAt` é **opcional** no contrato: fonte que não informa data de alteração fica sem ela — `new Date()`
+  nunca é usado como se fosse data do fato. O momento da observação mora em `frescor.observadoEm`.
+
+Eventos entram na MC-LIVE-3/7, com fonte que os prove.
+
 ## 15. Realtime (futuro, MC-LIVE-5)
 
 Preferência: `mudança de estado → evento → projeção → Mission Control → realtime → UI`. Mas a Factory não pode
@@ -238,6 +363,13 @@ escrever no nosso Supabase (§ 3), então quem publica é o agregador. Desenho p
 
 A migration (`central_work_projection`, e possivelmente `central_work_event`) só nasce na MC-LIVE-5, com
 justificativa própria. A numeração livre é **0055** (0052 está reservada para `AUDITORIA_CENTRAL`).
+
+## 15-A. Polling (MC-LIVE-1)
+
+`INTERVALO_STATUS_MS = 60 s`. GitHub não é heartbeat de worker: 1, 2 ou 5 segundos seria pressão inútil sobre a
+API e sobre a função. Em erro o intervalo dobra a cada falha seguida até `INTERVALO_MAXIMO_MS = 300 s`, e volta
+a 60 s na primeira leitura boa. `AbortController` em toda chamada, cancelamento no unmount, e uma guarda
+explícita impede duas chamadas sobrepostas. O botão "Atualizar" reinicia o ciclo.
 
 ## 16. Frescor e stale
 
@@ -259,10 +391,18 @@ mostra a hora da última sincronização, e item stale ganha marcador textual, n
 
 Nenhum destes casos pode derrubar o painel: a prontidão por gate não depende de rede.
 
+Na MC-LIVE-1 isso deixou de ser promessa: o cliente (`src/data/statusRemoto.ts`) **preserva o último dado
+válido** em toda falha, aumenta o intervalo (60 s → 120 s → … → teto de 300 s), cancela com `AbortController`
+e nunca deixa duas leituras em voo. Repositório indisponível devolve `disponivel: false` com código fechado e
+`pullRequests: []` — a ausência de leitura **não** é apresentada como "nenhum PR". Sem token, a fonte volta
+como `NOT_CONFIGURED` e **zero** chamadas são feitas ao GitHub.
+
 ## 18. Segurança
 
-- `ver_mission_control` (Administrador e Diretoria) é conferida **na rota** e passará a ser conferida **também no
-  endpoint**. Esconder do menu não é controle de acesso.
+- `ver_mission_control` (Administrador e Diretoria) é conferida **na rota e no endpoint** (MC-LIVE-1), sempre
+  pela MATRIZ única do Control, com o papel lido da tabela `profile`. Esconder do menu não é controle de acesso.
+- O endpoint **não aceita repositório do cliente**: a allowlist é server-side e não existe parâmetro de
+  repositório. Ele não pode ser usado como proxy do GitHub.
 - Segredos só no painel do Netlify. Nenhuma variável `VITE_*` para GitHub ou Factory.
 - Factory e GitHub são **somente leitura** a partir do Mission Control. Não existe ação de mover cartão.
 - A resposta do agregador é montada a partir de schema explícito, nunca serializando objeto interno — mesmo
@@ -288,7 +428,7 @@ não um clone do Miro.
 | Wave | Entrega | Situação |
 | --- | --- | --- |
 | **MC-LIVE-0** | contratos, modelo do mapa, gates, este documento, correção do drift documental | **concluída (22/09/2026)** |
-| MC-LIVE-1 | `/api/development-status` + GitHub vivo (`DEVELOPMENT_STATUS_ENDPOINT`, `GITHUB_ADAPTER_READONLY`) | a autorizar |
+| **MC-LIVE-1** | `/api/development-status` + GitHub vivo, bloco "Desenvolvimento ao vivo", LIVE × SNAPSHOT × STALE × UNAVAILABLE | **concluída (22/09/2026)**; falta o smoke real com o PAT |
 | MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | depende da W5 da fábrica |
 | MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | — |
 | MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | — |

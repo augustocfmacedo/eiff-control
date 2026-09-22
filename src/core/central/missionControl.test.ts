@@ -492,13 +492,12 @@ describe('dependencia entre gates', () => {
     expect(prontidao(['MISSION_CONTROL_LIVE']).exigidos).toBe(1);
   });
 
-  it('MISSION_CONTROL_LIVE e a conclusao do conjunto MC-LIVE, e nenhum deles esta fechado ainda', () => {
+  it('MISSION_CONTROL_LIVE so fecha depois de TODOS os gates de que depende', () => {
     const live = gatePorId('MISSION_CONTROL_LIVE')!;
-    expect(live.situacao).toBe('aberto');
+    const faltando = (live.dependeDe ?? []).filter((d) => gatePorId(d)!.situacao !== 'fechado');
+    if (faltando.length) expect(live.situacao, `ainda faltam: ${faltando.join(', ')}`).not.toBe('fechado');
     for (const d of live.dependeDe ?? []) {
-      const g = gatePorId(d)!;
-      expect(g.situacao, `${d} nao pode fechar antes da fonte real existir`).toBe('aberto');
-      expect(g.prova.trim().length, `${d} sem criterio de prova`).toBeGreaterThan(40);
+      expect(gatePorId(d)!.prova.trim().length, `${d} sem criterio de prova`).toBeGreaterThan(40);
     }
   });
 });

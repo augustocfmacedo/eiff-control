@@ -10,9 +10,100 @@ import {
   prontidaoDoMarco, prontidaoDoWorkstream, resumoMissionControl,
   type Gate, type Prontidao, type SituacaoGate,
 } from '../core/central/missionControl';
+import { AVISO_FACTORY_PROJECAO } from '../core/central/statusServidor';
+import { LIMITE_STALE_GITHUB_S, avaliarStatusVivo, humanizarIdade, type SituacaoVivo } from '../core/central/statusVivo';
+import { ROTULO_CI, TEXTO_FALHA_FONTE, type RepositorioStatus } from '../core/central/githubAdapter';
+import { TEXTO_CODIGO_CLIENTE, useStatusRemoto } from '../data/statusRemoto';
 import { Badge, Empty, KpiHero, KpiStrip, PageHead, PrintHead, ProgressRow, type Tone } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { Tabela } from '../ui/Tabela';
+
+// ---------------------------------------------------------------------------------------------------
+// Desenvolvimento ao vivo (MC-LIVE-1): a PRIMEIRA fonte realmente viva desta tela.
+// Tudo abaixo vem de /api/development-status; o navegador nunca fala com o GitHub e nunca conhece token.
+// A curadoria de gates (o resto da tela) continua sendo SNAPSHOT do build — e a faixa diz qual é qual.
+// ---------------------------------------------------------------------------------------------------
+const TONE_VIVO: Record<SituacaoVivo, Tone> = { LIVE: 'ok', SNAPSHOT: 'warn', STALE: 'warn', UNAVAILABLE: 'bad' };
+
+function LinhaRepositorio({ r, agora }: { r: RepositorioStatus; agora: string }) {
+  const vivo = avaliarStatusVivo({
+    disponivel: r.disponivel, erroCodigo: r.erroCodigo, observadoEm: r.disponivel ? r.observadoEm : null,
+    agora, limiteStaleSegundos: LIMITE_STALE_GITHUB_S,
+  });
+  const nome = r.repository.split('/')[1] ?? r.repository;
+  return (
+    <div className="mc-vivo-repo">
+      <div className="mc-vivo-cab">
+        <b>{nome}</b>
+        <Badge tone={TONE_VIVO[vivo.situacao]} title={vivo.detalhe}>{vivo.rotulo}</Badge>
+        {r.papel === 'fabrica' && <Badge tone="info" title={AVISO_FACTORY_PROJECAO}>projeção do GitHub</Badge>}
+      </div>
+      {r.disponivel ? (
+        <div className="small muted">
+          {r.main ? <>main <code>{r.main.shaCurto}</code></> : 'main não lido'}
+          {r.ci && <> · {ROTULO_CI[r.ci.situacao]} <span className="mc-cru">{r.ci.statusOrigem}</span></>}
+          {' · '}{r.pullRequests.length} PR aberto(s)
+          {r.papel === 'fabrica' && <> · {r.issues.length} issue(s) de job</>}
+          {vivo.idadeSegundos !== null && <> · observado há {humanizarIdade(vivo.idadeSegundos)}</>}
+        </div>
+      ) : (
+        <div className="small muted">{r.erroCodigo ? TEXTO_FALHA_FONTE[r.erroCodigo] : 'Fonte indisponível.'} Nada foi inventado no lugar.</div>
+      )}
+    </div>
+  );
+}
+
+function DesenvolvimentoAoVivo() {
+  const { dados, recebidoEm, carregando, erro, recarregar } = useStatusRemoto(true);
+  const agora = new Date().toISOString();
+  const fonte = dados?.fontes.github;
+  // antes da PRIMEIRA leitura não se afirma nada: não é "indisponível", é "ainda não perguntamos"
+  const primeiraLeitura = !dados && !erro;
+  const vivo = avaliarStatusVivo({
+    disponivel: !!fonte?.disponivel && !erro,
+    erroCodigo: fonte?.erroCodigo,
+    observadoEm: fonte?.observadoEm ?? recebidoEm,
+    agora,
+    limiteStaleSegundos: dados?.limiteStaleSegundos ?? LIMITE_STALE_GITHUB_S,
+    build: dados?.build,
+    shaMainObservado: dados?.repositorios.find((r) => r.papel === 'produto')?.main?.sha ?? null,
+  });
+  const cont = dados?.factory.contagens;
+
+  return (
+    <div className="card mc-vivo">
+      <div className="mc-vivo-topo">
+        <h2>Desenvolvimento ao vivo</h2>
+        {primeiraLeitura
+          ? <Badge tone="muted" title="Nenhuma leitura concluída ainda">Lendo…</Badge>
+          : <Badge tone={TONE_VIVO[vivo.situacao]} title={vivo.detalhe}>{vivo.rotulo}</Badge>}
+        <button className="btn small no-print" onClick={recarregar} disabled={carregando}>
+          <Icon name="checks" size={14} /> {carregando ? 'Lendo…' : 'Atualizar'}
+        </button>
+      </div>
+      {!primeiraLeitura && <p className="small muted">{vivo.detalhe}{' '}{vivo.comparacaoBuild.comparacao === 'DESCONHECIDO' && vivo.comparacaoBuild.texto}</p>}
+
+      {erro && <div className="alert warn"><b>{TEXTO_CODIGO_CLIENTE[erro]}</b> {dados ? 'O que está abaixo é o último estado conhecido.' : 'Ainda não há estado conhecido para mostrar.'}</div>}
+
+      {dados
+        ? (
+          <>
+            {dados.repositorios.map((r) => <LinhaRepositorio key={r.repository} r={r} agora={agora} />)}
+            {cont && (
+              <div className="small muted mc-vivo-resumo">
+                <b>Factory</b> (projeção do GitHub): {cont.ARQUITETURA} em arquitetura · {cont.PRONTO} prontos · {cont.EXECUTANDO} em execução · {cont.EM_VALIDACAO} em validação · {cont.AGUARDANDO_HUMANO} aguardando humano · {cont.BLOQUEADO} bloqueados
+              </div>
+            )}
+            <p className="small muted">{dados.factory.aviso}</p>
+            {dados.fontes.github.limite && (
+              <p className="small muted">GitHub: {dados.fontes.github.chamadas} chamada(s) neste ciclo (teto {dados.fontes.github.maxChamadasPorCiclo}); limite restante {dados.fontes.github.limite.restante} de {dados.fontes.github.limite.total}.</p>
+            )}
+          </>
+        )
+        : !erro && <p className="small muted">Lendo o estado da construção…</p>}
+    </div>
+  );
+}
 
 const ROTULO_SITUACAO: Record<SituacaoGate, string> = { fechado: 'Fechado', aberto: 'Aberto', bloqueado: 'Bloqueado' };
 const toneDoGate = (g: Gate): Tone => (g.situacao === 'fechado' ? 'ok' : g.situacao === 'aberto' ? 'muted' : g.porDesenho ? 'info' : 'bad');
@@ -56,6 +147,8 @@ export default function MissionControl() {
       <div className={`alert ${r.bloqueiosReais.length ? 'warn' : 'info'}`}>
         <b>Agora:</b> {r.faltaPara} {r.bloqueiosReais.length > 0 && <>· <b>{r.bloqueiosReais.length}</b> bloqueio(s) real(is) em aberto.</>} {r.bloqueiosPorDesenho.length > 0 && <>· <b>{r.bloqueiosPorDesenho.length}</b> fechado(s) de propósito (nada é enviado, nada é gravado).</>}
       </div>
+
+      <DesenvolvimentoAoVivo />
 
       {/* ------------------------------------------------------------------ System Readiness */}
       <div className="hero-grid">
