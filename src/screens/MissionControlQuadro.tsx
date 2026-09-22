@@ -8,10 +8,11 @@
 // segundo relogio. Trocar isso por realtime depois e substituir a origem de `estado`, sem mexer no quadro.
 import React, { useMemo, useState } from 'react';
 import {
-  COLUNAS_QUADRO, ESCOPOS_QUADRO, FILTRO_VAZIO, STATUS_DESTAQUE, haQuantoTempo, montarQuadro,
-  workstreamsDisponiveis, type EscopoQuadro, type FiltroQuadro,
+  COLUNAS_QUADRO, ESCOPOS_QUADRO, FILTRO_VAZIO, ROTULO_FACTORY_VIA_GITHUB, STATUS_DESTAQUE, ciDoItem,
+  haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, workstreamsDisponiveis,
+  type EscopoQuadro, type FiltroQuadro,
 } from '../core/central/quadroOperacional';
-import { ROTULO_MC_STATUS, ROTULO_PROCEDENCIA, type McStatus, type MissionControlWorkItem } from '../core/central/workItem';
+import { ROTULO_MC_STATUS, type McStatus, type MissionControlWorkItem } from '../core/central/workItem';
 import { LIMITE_STALE_GITHUB_S, avaliarStatusVivo, type SituacaoVivo } from '../core/central/statusVivo';
 import { TEXTO_CODIGO_CLIENTE, type EstadoStatusRemoto } from '../data/statusRemoto';
 import { Badge, Empty, type Tone } from '../ui/components';
@@ -76,7 +77,7 @@ function Cartao({ i, agora }: { i: MissionControlWorkItem; agora: string }) {
         <Elo rotulo="Issue" valor={curto(i.links?.issue)} href={i.links?.issue} />
         <Elo rotulo="Branch" valor={i.links?.branch} />
         <Elo rotulo="PR" valor={curto(i.links?.pullRequest)} href={i.links?.pullRequest} />
-        <Elo rotulo="CI" valor={i.status === 'EM_VALIDACAO' ? i.statusOrigem : undefined} />
+        <Elo rotulo="CI" valor={ciDoItem(i)} />
       </div>
 
       {i.bloqueio && (
@@ -88,7 +89,7 @@ function Cartao({ i, agora }: { i: MissionControlWorkItem; agora: string }) {
       <footer className="mcq-rodape small muted">
         <span title="Quando o estado mudou NA FONTE">Alterado: {alterado ?? '—'}</span>
         <span title="Quando NÓS lemos a fonte pela última vez com sucesso">Observado: {observado ?? '—'}</span>
-        <span title={ROTULO_PROCEDENCIA[i.procedencia]}>{i.procedencia === 'GITHUB_PROJECTION' ? 'GitHub projection of Factory' : ROTULO_PROCEDENCIA[i.procedencia]}</span>
+        <span title="Por onde este dado chegou até a tela">{rotuloProcedenciaDoItem(i)}</span>
       </footer>
     </article>
   );
@@ -123,7 +124,7 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
         {primeiraLeitura
           ? <Badge tone="muted">Lendo…</Badge>
           : <Badge tone={TONE_VIVO[vivo.situacao]} title={vivo.detalhe}>GitHub: {vivo.rotulo}</Badge>}
-        <Badge tone="muted" title={dados?.factory.aviso}>Factory: GitHub projection of Factory</Badge>
+        <Badge tone="muted" title={dados?.factory.aviso}>Factory: {ROTULO_FACTORY_VIA_GITHUB}</Badge>
         <span className="spacer" />
         <span className="small muted">Última atualização: {haQuantoTempo(recebidoEm ?? undefined, agora) ?? '—'}</span>
         <button className="btn small no-print" onClick={recarregar} disabled={carregando}>

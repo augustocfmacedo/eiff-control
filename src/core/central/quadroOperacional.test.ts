@@ -3,10 +3,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  COLUNAS_QUADRO, ESCOPOS_QUADRO, FILTRO_VAZIO, STATUS_DESTAQUE, aplicarFiltroQuadro, compararItensQuadro,
-  haQuantoTempo, montarQuadro, textoBuscavel, workstreamsDisponiveis,
+  COLUNAS_QUADRO, ESCOPOS_QUADRO, FILTRO_VAZIO, ROTULO_FACTORY_VIA_GITHUB, STATUS_DESTAQUE, aplicarFiltroQuadro,
+  ciDoItem, compararItensQuadro, haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, textoBuscavel,
+  workstreamsDisponiveis,
 } from './quadroOperacional';
-import { MC_STATUS, ORDEM_MC_STATUS, type McStatus, type MissionControlWorkItem } from './workItem';
+import {
+  MC_FONTES, MC_STATUS, ORDEM_MC_STATUS, PROCEDENCIAS, ROTULO_PROCEDENCIA,
+  type McStatus, type MissionControlWorkItem,
+} from './workItem';
 
 const AGORA = '2026-09-22T14:00:00.000Z';
 
@@ -241,5 +245,109 @@ describe('MC-LIVE-2A · o quadro e projecao, nao autoridade', () => {
     expect(cartao.status).toBe('EXECUTANDO');
     expect(cartao.statusOrigem).toBe('CODING');
     expect(cartao.procedencia).toBe('GITHUB_PROJECTION');
+  });
+});
+
+// -----------------------------------------------------------------------------------------------------
+// MC-LIVE-2B — correcoes do smoke real: procedencia falsa e CI falso.
+// -----------------------------------------------------------------------------------------------------
+
+const TELA = readFileSync('src/screens/MissionControlQuadro.tsx', 'utf8');
+
+describe('MC-LIVE-2B · procedencia depende de source E de procedencia', () => {
+  it('item da fabrica observado pelo GitHub e o UNICO que anuncia projecao da Factory', () => {
+    expect(rotuloProcedenciaDoItem({ source: 'FACTORY', procedencia: 'GITHUB_PROJECTION' }))
+      .toBe('GitHub projection of Factory');
+    expect(ROTULO_FACTORY_VIA_GITHUB).toBe('GitHub projection of Factory');
+  });
+
+  it('item do proprio GitHub usa o rotulo canonico, nunca o da Factory', () => {
+    const r = rotuloProcedenciaDoItem({ source: 'GITHUB', procedencia: 'GITHUB_PROJECTION' });
+    expect(r).toBe(ROTULO_PROCEDENCIA.GITHUB_PROJECTION);
+    expect(r).toBe('projeção do GitHub');
+    expect(r).not.toBe(ROTULO_FACTORY_VIA_GITHUB);
+  });
+
+  it('curadoria do repositorio (arquitetura e gate) usa o rotulo canonico', () => {
+    expect(rotuloProcedenciaDoItem({ source: 'ARCHITECTURE', procedencia: 'REPOSITORIO' }))
+      .toBe(ROTULO_PROCEDENCIA.REPOSITORIO);
+    expect(rotuloProcedenciaDoItem({ source: 'GATE', procedencia: 'REPOSITORIO' }))
+      .toBe(ROTULO_PROCEDENCIA.REPOSITORIO);
+  });
+
+  it('a fabrica lida pela API dela mesma e estado operacional, nao projecao', () => {
+    expect(rotuloProcedenciaDoItem({ source: 'FACTORY', procedencia: 'FACTORY_API' }))
+      .toBe('estado operacional da Factory');
+  });
+
+  it('nenhuma outra combinacao de fonte e procedencia recebe o literal da Factory', () => {
+    const autorizada = { source: 'FACTORY', procedencia: 'GITHUB_PROJECTION' };
+    for (const source of MC_FONTES) {
+      for (const procedencia of PROCEDENCIAS) {
+        const r = rotuloProcedenciaDoItem({ source, procedencia });
+        const eAutorizada = source === autorizada.source && procedencia === autorizada.procedencia;
+        expect(r === ROTULO_FACTORY_VIA_GITHUB).toBe(eAutorizada);
+        if (!eAutorizada) expect(r).toBe(ROTULO_PROCEDENCIA[procedencia]);
+      }
+    }
+  });
+
+  it('a tela nao decide procedencia sozinha: usa a funcao e nao repete o literal na logica do cartao', () => {
+    expect(TELA).toContain('rotuloProcedenciaDoItem(i)');
+    expect(TELA).not.toContain("'GitHub projection of Factory'");
+    expect(TELA).not.toContain("=== 'GITHUB_PROJECTION'");
+  });
+
+  it('o rotulo canonico continua com uma unica autoridade: ROTULO_PROCEDENCIA', () => {
+    for (const p of PROCEDENCIAS) {
+      if (p === 'GITHUB_PROJECTION') continue;
+      expect(rotuloProcedenciaDoItem({ source: 'GITHUB', procedencia: p })).toBe(ROTULO_PROCEDENCIA[p]);
+    }
+    expect(FONTE).not.toContain('projeção do GitHub');
+    expect(FONTE).not.toContain('curadoria do');
+  });
+});
+
+describe('MC-LIVE-2B · CI nao e inferido do estado cru da fonte', () => {
+  it('PR em rascunho nao vira CI: pr:draft e estado do pull request', () => {
+    const pr = item({ source: 'GITHUB', sourceId: '5', status: 'EM_VALIDACAO', statusOrigem: 'pr:draft' });
+    expect(ciDoItem(pr)).toBeUndefined();
+    expect(ciDoItem(pr)).not.toBe(pr.statusOrigem);
+    expect(pr.statusOrigem).toBe('pr:draft'); // o estado cru segue intacto no item
+  });
+
+  it('PR aberto tambem nao vira CI', () => {
+    const pr = item({ source: 'GITHUB', sourceId: '7', status: 'EM_VALIDACAO', statusOrigem: 'pr:open' });
+    expect(ciDoItem(pr)).toBeUndefined();
+  });
+
+  it('estado cru com nome de CI nao vira CI so pelo nome', () => {
+    const rodando = item({ sourceId: 'DF-0501', status: 'EM_VALIDACAO', statusOrigem: 'CI_RUNNING' });
+    expect(ciDoItem(rodando)).toBeUndefined();
+  });
+
+  it('sem evidencia propria de CI a resposta e ausencia, para a tela mostrar travessao', () => {
+    for (const s of MC_STATUS) expect(ciDoItem(item({ sourceId: `X-${s}`, status: s }))).toBeUndefined();
+  });
+
+  it('o campo CI continua no cartao, mostrando travessao — some do dado, nao da tela', () => {
+    expect(TELA).toContain('rotulo="CI"');
+    expect(TELA).toContain('valor={ciDoItem(i)}');
+    expect(TELA).not.toContain("i.status === 'EM_VALIDACAO' ? i.statusOrigem");
+    expect(TELA).toMatch(/rotulo="CI"[^/]*\/>/); // um unico elo de CI, sem valor derivado
+  });
+
+  it('o estado cru continua visivel ao lado do normalizado, e os elos tecnicos seguem intactos', () => {
+    const pr = item({
+      source: 'GITHUB', sourceId: '5', status: 'EM_VALIDACAO', statusOrigem: 'pr:draft',
+      links: { branch: 'feature/x', pullRequest: 'https://github.com/o/r/pull/5', commit: 'abc1234' },
+    });
+    const cartao = montarQuadro([pr]).colunas.find((c) => c.status === 'EM_VALIDACAO')!.itens[0];
+    expect(cartao.statusOrigem).toBe('pr:draft');
+    expect(cartao.links).toEqual(pr.links);
+    expect(TELA).toContain('{i.statusOrigem}');          // o cru continua impresso no cartao
+    expect(TELA).toContain('rotulo="PR"');
+    expect(TELA).toContain('rotulo="Branch"');
+    expect(TELA).toContain('curto(i.links?.pullRequest)'); // PR continua virando #5
   });
 });

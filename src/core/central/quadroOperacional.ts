@@ -10,7 +10,7 @@
 // Ordenar por "mexeu por ultimo" e leitura, nao autoridade.
 //
 // Proibido aqui: React, fetch, Supabase, store, escrita de qualquer tipo.
-import { MC_STATUS, ORDEM_MC_STATUS, type McFonte, type McStatus, type MissionControlWorkItem } from './workItem';
+import { MC_STATUS, ORDEM_MC_STATUS, ROTULO_PROCEDENCIA, type McFonte, type McStatus, type MissionControlWorkItem } from './workItem';
 
 /** As colunas do quadro, na ordem de leitura ja definida pela MC-LIVE-1. */
 export const COLUNAS_QUADRO: McStatus[] = [...MC_STATUS].sort((a, b) => ORDEM_MC_STATUS[a] - ORDEM_MC_STATUS[b]);
@@ -149,3 +149,38 @@ export function haQuantoTempo(iso: string | undefined, agoraIso: string): string
   if (h < 24) return `${h} h`;
   return `${Math.floor(h / 24)} d`;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Apresentacao do cartao (MC-LIVE-2B)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Literal reservado a UM caso: item da fabrica observado atraves do GitHub. Ele nomeia a distancia entre
+ * o que a fabrica faz e o que conseguimos enxergar dela — e por isso nao pode vazar para item nenhum que
+ * seja do proprio GitHub, sob pena de anunciar uma fabrica que nao estamos lendo.
+ */
+export const ROTULO_FACTORY_VIA_GITHUB = 'GitHub projection of Factory';
+
+/**
+ * Rotulo de procedencia do cartao. `source` e `procedencia` respondem perguntas diferentes:
+ *
+ *     source      = de QUEM e o item     (FACTORY = job da fabrica; GITHUB = issue/PR do proprio GitHub)
+ *     procedencia = por ONDE o dado veio (GITHUB_PROJECTION = lido pelas APIs do GitHub)
+ *
+ * So o encontro dos dois — item da fabrica visto pelo GitHub — merece o literal acima. Todo o resto usa o
+ * rotulo canonico, porque ROTULO_PROCEDENCIA continua sendo a unica autoridade de procedencia; esta
+ * funcao e apresentacao, nao um segundo catalogo.
+ */
+export function rotuloProcedenciaDoItem(i: Pick<MissionControlWorkItem, 'source' | 'procedencia'>): string {
+  if (i.source === 'FACTORY' && i.procedencia === 'GITHUB_PROJECTION') return ROTULO_FACTORY_VIA_GITHUB;
+  return ROTULO_PROCEDENCIA[i.procedencia];
+}
+
+/**
+ * CI do cartao. O contrato do item NAO carrega check run correlacionado, e o estado cru da fonte nunca e
+ * CI: `pr:draft` e situacao do pull request, nao resultado de teste; um nome que por acaso lembra CI
+ * tambem nao vira CI. Sem evidencia do proprio item, a resposta honesta e "nao sei" — que a tela mostra
+ * como travessao, e nao apagando o campo. Correlacionar PR/commit/check e outro assunto e outro bloco;
+ * enquanto ele nao existir, esta funcao devolve undefined para todo item, de proposito.
+ */
+export const ciDoItem = (_i: MissionControlWorkItem): string | undefined => undefined;
