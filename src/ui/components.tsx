@@ -201,8 +201,8 @@ export function Empty({ children, icone = 'vazio', titulo, acao }: { children: R
   return <div className="empty"><span className="empty-marca" aria-hidden="true"><Marca size={54} /></span><Icon name={icone} size={26} />{titulo && <div className="empty-title">{titulo}</div>}<div>{children}</div>{acao && <div className="actions" style={{ justifyContent: 'center', marginTop: 6 }}>{acao}</div>}</div>;
 }
 
-export function Link({ to, children, className }: { to: string; children: React.ReactNode; className?: string }) {
-  return <a href={href(to)} className={className}>{children}</a>;
+export function Link({ to, children, className, onClick, 'aria-label': ariaLabel }: { to: string; children: React.ReactNode; className?: string; onClick?: React.MouseEventHandler<HTMLAnchorElement>; 'aria-label'?: string }) {
+  return <a href={href(to)} className={className} onClick={onClick} aria-label={ariaLabel}>{children}</a>;
 }
 
 export function PageHead({ title, subtitle, children }: { title: string; subtitle?: React.ReactNode; children?: React.ReactNode }) {

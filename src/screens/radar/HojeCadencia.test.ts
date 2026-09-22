@@ -245,11 +245,15 @@ describe('CM2-D2 · guardas da tela', () => {
     expect(FONTE_HOJE).toMatch(/if \(!abertura\.ok\)/);
   });
   it('a Hoje nao cria tarefa a partir da cadencia por outro caminho', () => {
-    const i = FONTE_HOJE.indexOf('function blocoCadencia');
-    const bloco = FONTE_HOJE.slice(i, FONTE_HOJE.indexOf('\n  function ', i + 1));
-    for (const proibido of ['novaTarefa(', 'salvarTarefaRadar', 'actions.']) expect(bloco).not.toContain(proibido);
-    expect(bloco).toContain('abrirAgendamento(c, s)');
-    expect(bloco, 'o CTA respeita a permissao do papel').toContain('ctaCadenciaCM(s, podeAgir)');
+    // UX-2.1: a apresentacao da cadencia mora no bloco compartilhado (ComercialFoco); o CTA continua sendo montado
+    // na Hoje, com a mesma autoridade, e o bloco so recebe o no pronto.
+    const foco = leia('ComercialFoco.tsx');
+    for (const proibido of ['novaTarefa(', 'salvarTarefaRadar', 'actions.', 'criarTarefaDaCadenciaCM']) expect(foco).not.toContain(proibido);
+    const i = FONTE_HOJE.indexOf('function ctaCadenciaDe');
+    const cta = FONTE_HOJE.slice(i, FONTE_HOJE.indexOf('\n  }', i));
+    for (const proibido of ['novaTarefa(', 'salvarTarefaRadar', 'actions.']) expect(cta).not.toContain(proibido);
+    expect(cta).toContain('abrirAgendamento(l.cadencia, l.sugestao)');
+    expect(cta, 'o CTA respeita a permissao do papel').toContain('ctaCadenciaCM(l.sugestao, podeAgir)');
   });
   it('o TarefaForm legado segue intacto', () => {
     const i = FONTE_COMUM.indexOf('export function TarefaForm');
