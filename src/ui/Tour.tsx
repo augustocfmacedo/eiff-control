@@ -62,11 +62,23 @@ export const chaveTour = (rota: string) => `eiff-control:tour:${rota.split('/').
 export const tourVisto = (rota: string) => { try { return localStorage.getItem(chaveTour(rota)) === '1'; } catch { return true; } };
 export const marcarTourVisto = (rota: string) => { try { localStorage.setItem(chaveTour(rota), '1'); } catch { /* ignore */ } };
 
+/**
+ * Passos GENERICOS que uma rota especializada ja cobre com texto proprio. Sem isto, /radar/hoje mostrava 11 passos:
+ * o generico "Métricas de apoio" repetia a zona Agora/Aguardando/Programado/Risco (passo 3) e ainda prometia que
+ * cada item leva a uma lista, o que nao e verdade na faixa do Panorama; o generico "Filtros" repetia o passo 1 e
+ * oferecia "salvar vistas", que nao existe nesta tela. Os genericos de SHELL (busca, menu) continuam, porque falam
+ * do app, nao da tela. Nenhuma outra rota e afetada: quem nao esta no mapa recebe os genericos como sempre.
+ */
+export const GENERICOS_DISPENSADOS: Readonly<Record<string, readonly string[]>> = {
+  '/radar/hoje': ['.content .strip', '.content .filters, .content .row'],
+};
+
 function passosDe(rota: string): PassoTour[] {
   const base = rota === '/' ? '/' : `/${rota.split('/')[1]}`; const chaveRota = POR_ROTA[rota] ? rota : POR_ROTA[base] ? base : '';
   const licao = LICOES.find((l) => l.rota === rota) ?? LICOES.find((l) => l.rota === base);
   const proprios = chaveRota ? POR_ROTA[chaveRota] : [];
-  const todos = [...proprios, ...GERAL.filter((g) => !proprios.some((p) => p.seletor === g.seletor))];
+  const dispensados = GENERICOS_DISPENSADOS[chaveRota] ?? [];
+  const todos = [...proprios, ...GERAL.filter((g) => !proprios.some((p) => p.seletor === g.seletor) && !dispensados.includes(g.seletor))];
   const existentes = todos.filter((p) => document.querySelector(p.seletor));
   if (licao) existentes.unshift({ seletor: '.content .page-head', titulo: licao.titulo, texto: `${licao.objetivo} A lição completa, com passos e verificação, está em Capacitação.|${licao.id}` });
   return existentes;

@@ -12,7 +12,7 @@ import ComercialPanorama from './ComercialPanorama';
 import { entradaComercialUX } from './comercialEntrada';
 import { EVENTOS_COMERCIAIS_UX } from './comercialTelemetria';
 import type { ContaComercialUX } from './comercialVisao';
-import { POR_ROTA } from '../../ui/Tour';
+import { GENERICOS_DISPENSADOS, POR_ROTA } from '../../ui/Tour';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Apoio
@@ -267,6 +267,15 @@ describe('UX-6 — tour da Máquina Comercial', () => {
     expect(PASSOS_HOJE.some((p) => p.seletor === '.content .tabs')).toBe(true);
     expect(CODIGO_HOJE).toContain('<PageHead');
     expect(CODIGO_HOJE).toContain('<Tabs value={visao}');
+  });
+
+  it('a rota especializada dispensa só os genéricos redundantes — e nenhuma outra rota é afetada', () => {
+    expect(GENERICOS_DISPENSADOS['/radar/hoje']).toEqual(['.content .strip', '.content .filters, .content .row']);
+    expect(Object.keys(GENERICOS_DISPENSADOS)).toEqual(['/radar/hoje']);
+    // os genéricos de SHELL continuam: eles falam do app, não da tela
+    expect(CODIGO_TOUR).toContain(".topbar .busca'");
+    expect(CODIGO_TOUR).toContain(".sidebar .nav'");
+    expect(CODIGO_TOUR).toContain('!dispensados.includes(g.seletor)');
   });
 
   it('não existe um segundo tour', () => {
