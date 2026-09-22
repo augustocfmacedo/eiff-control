@@ -265,3 +265,31 @@ O gate `MISSION_CONTROL_LIVE` fica **aberto** e é prioridade da próxima wave. 
 
 Acesso ao painel: permissão própria `ver_mission_control` (Administrador e Diretoria), conferida na rota — não só
 no menu.
+
+### Mission Control Live — iniciativa MC-LIVE (a partir de 22/09/2026)
+
+O contrato arquitetural da evolução do painel em central viva de arquitetura e execução está em
+**[docs/mission-control-live.md](mission-control-live.md)**: fontes de verdade, matriz de autoridade,
+`MissionControlWorkItem`, `MissionControlEvent`, correlação, normalização de estados, mapa de dependências,
+integração com Factory/GitHub/arquitetura/Máquina Comercial, realtime futuro, frescor, degradação, segurança e
+waves. Leia aquele documento antes de mexer em qualquer peça do Mission Control.
+
+O que a **MC-LIVE-0** entregou (contrato, sem fonte externa):
+
+- [src/core/central/workItem.ts](../src/core/central/workItem.ts) — fronteira de normalização
+  (`FONTE REAL → ADAPTER → NORMALIZAÇÃO → MissionControlWorkItem → UI`), com `statusOrigem` sempre preservado,
+  id determinístico, correlação pelo `taskId` da fábrica, consolidação sem duplicata e degradação que **nunca
+  inventa estado**. Módulo puro: sem fetch, sem store, sem React, sem Supabase.
+- [src/core/central/mapaVivo.ts](../src/core/central/mapaVivo.ts) — o modelo do grafo (nós e arestas tipadas
+  `fluxo · dependencia · observa · evidencia`). A arquitetura deixou de ser só lista e virou grafo com
+  dependências explícitas. Sem UI nesta wave.
+- Oito gates novos (`DEVELOPMENT_STATUS_ENDPOINT`, `GITHUB_ADAPTER_READONLY`, `FACTORY_ADAPTER_READONLY`,
+  `WORK_ITEM_CORRELACAO`, `MAPA_VIVO`, `EXECUCAO_LIVE`, `MC_REALTIME`, `MC_DEGRADACAO`), todos **abertos**, com
+  `MISSION_CONTROL_LIVE` passando a ser a **conclusão** do conjunto (campo `dependeDe` no `Gate`). A prontidão do
+  sistema caiu de 19/30 para 19/38 **de propósito**: a capacidade sempre faltou, agora está contada.
+- Estado dos estados da fábrica: a autoridade é `packages/contracts` no `eiff-dev-factory`; aqui há um espelho
+  declarado com **contract drift detection** (teste que abre o arquivo da fábrica quando os repositórios estão
+  lado a lado e reprova divergência).
+
+A fábrica está na **W1**; `packages/api` (a fonte viva da Factory) é a **W5** dela e **ainda não existe**. Até lá,
+a execução observável é a das issues do GitHub com labels `factory:state:*`.

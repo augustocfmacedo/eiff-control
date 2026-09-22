@@ -454,3 +454,51 @@ describe('acesso ao Mission Control', () => {
     expect(CAMADAS.filter((c) => c.gates.includes('MISSION_CONTROL_LIVE'))).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Dependencia declarada entre gates (MC-LIVE-0): metadado do mapa, NUNCA prontidao.
+// A conta continua sendo fechados/exigidos; `dependeDe` so responde "o que vem antes".
+// ---------------------------------------------------------------------------
+describe('dependencia entre gates', () => {
+  it('toda dependencia aponta para gate que existe e nunca para o proprio gate', () => {
+    const conhecidos = new Set(GATES.map((g) => g.id));
+    for (const g of GATES) {
+      for (const d of g.dependeDe ?? []) {
+        expect(conhecidos.has(d), `${g.id} depende de gate inexistente: ${d}`).toBe(true);
+        expect(d, `${g.id} depende de si mesmo`).not.toBe(g.id);
+      }
+    }
+  });
+
+  it('nao ha ciclo de dependencia entre gates', () => {
+    const estado = new Map<string, 0 | 1 | 2>();
+    const ciclos: string[] = [];
+    const visitar = (id: string, pilha: string[]): void => {
+      estado.set(id, 1);
+      for (const d of gatePorId(id)?.dependeDe ?? []) {
+        if (estado.get(d) === 1) { ciclos.push([...pilha, id, d].join(' -> ')); continue; }
+        if (!estado.get(d)) visitar(d, [...pilha, id]);
+      }
+      estado.set(id, 2);
+    };
+    for (const g of GATES) if (!estado.get(g.id)) visitar(g.id, []);
+    expect(ciclos).toEqual([]);
+  });
+
+  it('dependencia nao entra na conta de prontidao: o denominador continua sendo a lista de gates', () => {
+    // MISSION_CONTROL_LIVE depende de oito gates, mas prontidao(['MISSION_CONTROL_LIVE']) exige UM.
+    const live = gatePorId('MISSION_CONTROL_LIVE')!;
+    expect((live.dependeDe ?? []).length).toBe(8);
+    expect(prontidao(['MISSION_CONTROL_LIVE']).exigidos).toBe(1);
+  });
+
+  it('MISSION_CONTROL_LIVE e a conclusao do conjunto MC-LIVE, e nenhum deles esta fechado ainda', () => {
+    const live = gatePorId('MISSION_CONTROL_LIVE')!;
+    expect(live.situacao).toBe('aberto');
+    for (const d of live.dependeDe ?? []) {
+      const g = gatePorId(d)!;
+      expect(g.situacao, `${d} nao pode fechar antes da fonte real existir`).toBe('aberto');
+      expect(g.prova.trim().length, `${d} sem criterio de prova`).toBeGreaterThan(40);
+    }
+  });
+});
