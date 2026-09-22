@@ -99,14 +99,14 @@ describe('UX-6 — responsividade', () => {
     expect(CSS).toContain('.pipeline-item { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; min-width: 0; }');
     expect(temMedia('640px', '.pipeline-item { display: grid;')).toBe(true);
     expect(CSS).not.toContain('white-space: nowrap; }\n.pipeline-item');
-    expect(CSS.slice(CSS.indexOf('.pipeline-item'))).not.toContain('overflow-x: auto');
+    expect(CSS.slice(CSS.indexOf('.pipeline-item'), CSS.indexOf('fim do bloco UX-6'))).not.toContain('overflow-x: auto');
   });
 
   it('"Depois desta" é lista vertical, nunca carousel', () => {
     expect(CODIGO_FOCO).toContain('className="foco-depois"');
     expect(CSS).toContain('.foco-depois { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }');
     for (const proibido of ['carousel', 'carrossel', 'scroll-snap', 'overflow-x']) {
-      expect(CSS.slice(CSS.indexOf('.foco-depois')), `sem ${proibido}`).not.toContain(proibido);
+      expect(CSS.slice(CSS.indexOf('.foco-depois'), CSS.indexOf('fim do bloco UX-6')), `sem ${proibido}`).not.toContain(proibido);
       expect(CODIGO_FOCO, `sem ${proibido}`).not.toContain(proibido);
     }
   });
@@ -117,7 +117,7 @@ describe('UX-6 — responsividade', () => {
   });
 
   it('o mobile ESCONDE espaçador, nunca conteúdo ou ação', () => {
-    const bloco = CSS.slice(CSS.indexOf('Maquina Comercial — acabamento operacional'));
+    const bloco = CSS.slice(CSS.indexOf('Maquina Comercial — acabamento operacional'), CSS.indexOf('fim do bloco UX-6'));
     const escondidos = [...bloco.matchAll(/([^{}\n]+)\{[^{}]*display: none/g)].map((m) => m[1].trim());
     expect(escondidos).toEqual(['.pipeline-item .spacer']);
     for (const alvo of ['Por quê', 'aria-label', '.btn', '.foco-acoes', '.foco-nav', '.foco-depois', '.entrada-cards .card']) {
@@ -191,13 +191,13 @@ describe('UX-6 — acessibilidade', () => {
 
   it('nada novo ignora prefers-reduced-motion e nenhuma ação depende de hover', () => {
     expect(CSS).toContain('@media (prefers-reduced-motion: reduce)');
-    const novo = CSS.slice(CSS.indexOf('Maquina Comercial — acabamento operacional'));
+    const novo = CSS.slice(CSS.indexOf('Maquina Comercial — acabamento operacional'), CSS.indexOf('fim do bloco UX-6'));
     for (const proibido of ['animation:', 'transition:', ':hover']) expect(novo, `o bloco novo nao usa ${proibido}`).not.toContain(proibido);
     for (const codigo of [CODIGO_FOCO, CODIGO_PANORAMA]) expect(codigo).not.toContain('onMouseEnter');
   });
 
   it('os dois temas continuam usando tokens, sem cor nova', () => {
-    const novo = CSS.slice(CSS.indexOf('Maquina Comercial — acabamento operacional'));
+    const novo = CSS.slice(CSS.indexOf('Maquina Comercial — acabamento operacional'), CSS.indexOf('fim do bloco UX-6'));
     expect(novo).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     expect(novo).not.toMatch(/rgb\(|rgba\(/);
     expect(CSS).toContain(':root[data-theme="light"]');

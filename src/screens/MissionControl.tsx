@@ -13,7 +13,8 @@ import {
 import { AVISO_FACTORY_PROJECAO } from '../core/central/statusServidor';
 import { LIMITE_STALE_GITHUB_S, avaliarStatusVivo, humanizarIdade, type SituacaoVivo } from '../core/central/statusVivo';
 import { ROTULO_CI, TEXTO_FALHA_FONTE, type RepositorioStatus } from '../core/central/githubAdapter';
-import { TEXTO_CODIGO_CLIENTE, useStatusRemoto } from '../data/statusRemoto';
+import { TEXTO_CODIGO_CLIENTE, useStatusRemoto, type EstadoStatusRemoto } from '../data/statusRemoto';
+import QuadroOperacional from './MissionControlQuadro';
 import { Badge, Empty, KpiHero, KpiStrip, PageHead, PrintHead, ProgressRow, type Tone } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { Tabela } from '../ui/Tabela';
@@ -57,8 +58,8 @@ function LinhaRepositorio({ r, agora }: { r: RepositorioStatus; agora: string })
   );
 }
 
-function DesenvolvimentoAoVivo() {
-  const { dados, recebidoEm, carregando, erro, recarregar } = useStatusRemoto(true);
+function DesenvolvimentoAoVivo({ estado }: { estado: EstadoStatusRemoto & { recarregar: () => void } }) {
+  const { dados, recebidoEm, carregando, erro, recarregar } = estado;
   const agora = new Date().toISOString();
   const fonte = dados?.fontes.github;
   // antes da PRIMEIRA leitura não se afirma nada: não é "indisponível", é "ainda não perguntamos"
@@ -121,6 +122,9 @@ function Conta({ p }: { p: Prontidao }) {
 }
 
 export default function MissionControl() {
+  // MC-LIVE-2A: UMA leitura por ciclo, compartilhada pela faixa ao vivo e pelo quadro operacional.
+  // Dois hooks seriam dois polls por minuto sobre a mesma API, que tem teto de chamadas por ciclo.
+  const estado = useStatusRemoto(true);
   const [situacao, setSituacao] = useState<SituacaoGate | 'todos'>('todos');
   const [frente, setFrente] = useState<string>('');
 
@@ -152,7 +156,8 @@ export default function MissionControl() {
         <b>Agora:</b> {r.faltaPara} {r.bloqueiosReais.length > 0 && <>· <b>{r.bloqueiosReais.length}</b> bloqueio(s) real(is) em aberto.</>} {r.bloqueiosPorDesenho.length > 0 && <>· <b>{r.bloqueiosPorDesenho.length}</b> fechado(s) de propósito (nada é enviado, nada é gravado).</>}
       </div>
 
-      <DesenvolvimentoAoVivo />
+      <DesenvolvimentoAoVivo estado={estado} />
+      <QuadroOperacional estado={estado} />
 
       {/* ------------------------------------------------------------------ System Readiness */}
       <div className="hero-grid">

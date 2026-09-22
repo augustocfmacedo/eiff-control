@@ -854,3 +854,61 @@ tr.arrastando td { opacity: 0.55; }
 .mc-vivo-repo code { font-size: var(--text-xs); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 .mc-cru { font-size: var(--text-xs); color: var(--muted); opacity: 0.85; }
 .mc-vivo-resumo { padding-top: 10px; border-top: 1px solid var(--border); line-height: 1.5; }
+
+/* fim do bloco UX-6 — guardas do Commercial UX param aqui; blocos novos vao depois desta linha */
+/* MC-LIVE-2A — quadro operacional. Desktop primeiro: a tela fica aberta ao lado do trabalho.
+   As colunas rolam na horizontal; o cartao nunca estoura o texto. */
+.mcq { margin-top: var(--space-4); }
+.mcq-topo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mcq-topo h2 { margin: 0; }
+.mcq-topo .spacer { flex: 1 1 auto; }
+
+.mcq-contadores { display: flex; gap: 8px; flex-wrap: wrap; margin: var(--space-3) 0; }
+.mcq-contador { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 116px; min-height: 44px;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
+  color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.mcq-contador:hover { border-color: var(--brand); }
+.mcq-contador.ativo { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand); }
+.mcq-contador-n { font-size: var(--text-xl); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.mcq-contador-r { font-size: var(--text-xs); color: var(--muted); }
+
+.mcq-filtros { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: var(--space-3); }
+.mcq-chips { display: flex; gap: 6px; }
+.mcq-busca { flex: 1 1 220px; min-width: 180px; min-height: 36px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: inherit; }
+.mcq-ws { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: inherit; }
+
+.mcq-colunas { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+.mcq-coluna { flex: 0 0 268px; min-width: 268px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.mcq-coluna-topo { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.mcq-coluna-n { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); font-size: var(--text-sm); }
+.mcq-pilha { display: flex; flex-direction: column; gap: 8px; }
+.mcq-vazia { margin: 4px 0 0; }
+
+.mcq-cartao { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: 6px; padding: 9px 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mcq-cartao[data-status="EXECUTANDO"] { border-left-color: var(--brand); }
+.mcq-cartao[data-status="BLOQUEADO"] { border-left-color: var(--neg); }
+.mcq-cartao[data-status="AGUARDANDO_HUMANO"] { border-left-color: var(--warn); }
+.mcq-cartao-topo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mcq-id { font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
+.mcq-titulo { font-size: var(--text-sm); line-height: 1.35; overflow-wrap: anywhere; }
+.mcq-estado { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.mcq-cru { font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mcq-resp { display: flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--muted); }
+
+.mcq-elos { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: var(--text-xs); }
+.mcq-elo { display: contents; }
+.mcq-elo-rotulo { color: var(--muted); }
+.mcq-elo a, .mcq-elo span:not(.mcq-elo-rotulo) { overflow-wrap: anywhere; }
+
+.mcq-bloqueio { display: flex; align-items: flex-start; gap: 5px; font-size: var(--text-xs);
+  color: var(--neg); line-height: 1.35; overflow-wrap: anywhere; }
+.mcq-bloqueio.por-desenho { color: var(--muted); }
+
+.mcq-rodape { display: flex; gap: 10px; flex-wrap: wrap; padding-top: 5px; border-top: 1px solid var(--border); }
+.mcq-rodape-nota { margin-top: var(--space-3); }
+
+@media (max-width: 900px) {
+  .mcq-coluna { flex-basis: 240px; min-width: 240px; }
+}

@@ -1,6 +1,9 @@
 # Mission Control Live — contrato arquitetural
 
-Status: **MC-LIVE-1 concluída (22/09/2026)** — o endpoint agregador existe, o GitHub é a primeira fonte viva e o
+Status: **MC-LIVE-2A concluída (22/09/2026)** — o `#/mission-control` tem o **quadro operacional V0** (§ 14):
+Kanban de projeção sobre `MissionControlWorkItem`, com filtros, busca e contadores, no mesmo polling de 60 s.
+
+Status anterior: **MC-LIVE-1 concluída (22/09/2026)** — o endpoint agregador existe, o GitHub é a primeira fonte viva e o
 painel mostra `main`, CI, PRs e a projeção da Factory com LIVE × SNAPSHOT × STALE × UNAVAILABLE. Sem migration,
 sem dependência nova, sem escrita externa. **O primeiro smoke com dados reais ainda não foi feito**: depende do
 PAT `GITHUB_READ_TOKEN` ser criado e cadastrado no painel do Netlify (§ 11).
@@ -496,3 +499,98 @@ MISSION CONTROL         (ver_mission_control, server-side)
         ↓
 Mapa Vivo / Kanban / Eventos
 ```
+
+---
+
+## 14. MC-LIVE-2A — Mission Control Operational V0
+
+Entrega antecipada a pedido do proprietário (22/09/2026): a necessidade operacional passou a ser **abrir o
+`#/mission-control` e acompanhar a produção em paralelo**, sem consultar terminal nem GitHub. A correlação
+completa, o Mapa Vivo e o realtime continuam no roadmap, mas deixaram de bloquear isso.
+
+### 14.1 O que entrou
+
+Um **quadro operacional** (`src/screens/MissionControlQuadro.tsx`) alimentado por uma projeção pura
+(`src/core/central/quadroOperacional.ts`), abaixo da faixa "Desenvolvimento ao vivo".
+
+- **Colunas** = exatamente `MC_STATUS`, na ordem de `ORDEM_MC_STATUS`. Oito, não sete: `PROXIMO` entra porque
+  esconder uma coluna faria itens **sumirem** do quadro, e a tela não pode omitir o que a fonte informou.
+- **Cartão**: taskId (`correlationId` quando existe, senão `sourceId`), título, status normalizado **ao lado do
+  estado cru**, responsável, issue/branch/PR/CI, bloqueio, e **duas datas distintas** — `Alterado` (quando o estado
+  mudou na fonte, `updatedAt`) e `Observado` (quando nós lemos, `frescor.observadoEm`).
+- **Procedência explícita** no rodapé de cada cartão: item de fábrica lido por issue mostra
+  **"GitHub projection of Factory"**, nunca "estado operacional da Factory".
+- **Barra superior**: contadores de Em execução, Aguardando humano, Bloqueado, Em validação e Concluído (cada um
+  é um filtro de um clique), situação do GitHub (LIVE/SNAPSHOT/STALE/UNAVAILABLE), procedência da Factory e
+  "Última atualização".
+- **Filtros**: escopo (Todos · Arquitetura · Factory), status, busca por taskId/título (sem caixa e sem acento) e
+  frente **apenas quando a fonte informa `workstreamId` de verdade** — `workstreamsDisponiveis` devolve vazio e a
+  UI não oferece o filtro, em vez de inventar frente.
+
+### 14.2 O que o quadro NÃO é
+
+É **projeção**. Não há drag-and-drop, não há botão que mova task, não há escrita: `quadroOperacional.ts` importa
+exatamente um módulo (`./workItem`) e um teste prende essa lista. Ele não cria regra de status — a única
+normalização continua sendo a do LE anterior — e não ordena por prioridade comercial. Dentro da coluna a ordem é
+"quem mexeu por último primeiro", com desempate por id para não tremer entre dois polls iguais; item **sem**
+`updatedAt` vai para o fim e nunca vira "agora".
+
+### 14.3 Atualização
+
+Um único `useStatusRemoto` agora vive no `MissionControl` e é passado por prop para a faixa ao vivo e para o
+quadro. Dois hooks seriam dois polls por minuto sobre a mesma API, que tem teto de chamadas por ciclo. Trocar por
+realtime depois é substituir a origem de `estado` — o quadro não muda.
+
+### 14.4 Dívidas encontradas
+
+- **Página rola de lado em 390 px.** Não é do quadro (que rola dentro do próprio contêiner): vem da tabela de
+  **"Frentes de trabalho"**, que não está em `.table-wrap`. Pré-existente, fora do escopo da 2A.
+- **Guardas de CSS do Commercial UX eram ilimitadas.** `comercialUX6.test.ts` recortava `styles.css` do início do
+  bloco até o **fim do arquivo**, o que funcionava só porque aquele bloco era o último. Qualquer CSS acrescentado
+  depois quebrava três testes — e quebrou. Corrigido com a sentinela `fim do bloco UX-6` em `styles.css` e os três
+  recortes limitados a ela; blocos novos entram depois da linha sem reabrir o problema.
+- O **smoke com dados reais** continua dependendo de `GITHUB_READ_TOKEN` no painel do Netlify (§ 11).
+
+## 15. MC-LIVE-2B — correções do smoke real
+
+O smoke real da 2A (endpoint 200, GitHub ao vivo, dados reais, polling único, filtros, nenhum segredo exposto,
+quadro legível em 390 px) devolveu dois defeitos de **apresentação** — nenhum deles de contrato. Corrigidos aqui,
+sem procedência nova, status novo, campo novo, tabela nova ou migration.
+
+### 15.1 Procedência agora depende de `source` **e** de `procedencia`
+
+A tela decidia o rótulo só pela procedência: qualquer `GITHUB_PROJECTION` era anunciado como
+`GitHub projection of Factory`. Um PR real do próprio `eiff-control` (`source: GITHUB`) aparecia, então, como
+projeção da Factory — uma afirmação falsa sobre uma fábrica que aquele cartão não representa.
+
+As duas perguntas são diferentes:
+
+| | significado |
+| --- | --- |
+| `source` | de **quem** é o item — `FACTORY` é job da fábrica; `GITHUB`, issue/PR do próprio GitHub |
+| `procedencia` | por **onde** o dado chegou até nós |
+
+Só o encontro dos dois — `FACTORY` + `GITHUB_PROJECTION`, item da fábrica observado através do GitHub — recebe o
+literal reservado. Todo o resto usa o rótulo canônico de `ROTULO_PROCEDENCIA`, que continua sendo a única
+autoridade de procedência: `rotuloProcedenciaDoItem` (em `quadroOperacional.ts`) é apresentação, não um segundo
+catálogo. Assim `GITHUB` + `GITHUB_PROJECTION` diz **"projeção do GitHub"**, e `FACTORY` + `FACTORY_API` — quando
+a API da fábrica existir — diz "estado operacional da Factory".
+
+### 15.2 CI não é inferido de `statusOrigem`
+
+O cartão mostrava `CI: pr:draft`. `pr:draft` é situação do **pull request**, não resultado de teste: o campo
+afirmava um CI que ninguém leu. O estado cru da fonte nunca vira CI por inferência — nem quando o nome lembra CI
+(`CI_RUNNING` é estado do job, não um check run correlacionado a este cartão).
+
+`MissionControlWorkItem` não carrega check run por item, e correlacionar PR/commit/check é outro assunto, de outro
+bloco. Enquanto essa correlação não existir, `ciDoItem` devolve ausência para todo item e a tela mostra
+**travessão**. O campo continua no cartão: some o dado, não a linha — quem lê precisa ver que CI é uma pergunta
+em aberto, não um espaço que nunca existiu. O CI do repositório continua sendo do repositório e não desce para
+cartão nenhum.
+
+### 15.3 O que não mudou
+
+`statusOrigem` segue impresso ao lado do status normalizado (`pr:draft`, `CODING`, `fechado`), PR continua
+virando `#5`, branch, commit e links seguem intactos no contrato, o polling continua único, as 8 colunas seguem
+com `PROXIMO` presente e o quadro continua read-only. A Factory **não** está LIVE: o que existe é a projeção do
+GitHub descrita na § 10.
