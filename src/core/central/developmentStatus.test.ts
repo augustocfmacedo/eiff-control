@@ -500,3 +500,72 @@ describe('projeção', () => {
     expect(r.repositorios[0].ci).toEqual(expect.objectContaining({ situacao: 'VERMELHO', statusOrigem: 'completed:failure' }));
   });
 });
+
+// ------------------------------------------------------- 10. o runtime da Function nao e o navegador
+
+describe('grafo de imports das funções Netlify', () => {
+  // O Deploy Preview 5 da MC-LIVE-1 respondeu 502 com
+  // "Cannot read properties of undefined (reading 'VITE_SUPABASE_URL')": a função importava `pode` de
+  // src/data/store.ts, que puxa src/data/supabase.ts, que lê `import.meta.env` no topo do módulo. No
+  // runtime da Function isso é undefined e o módulo nem carrega. Nenhum teste pegava — este pega.
+  // comentário que CITA o nome não é uso: a varredura olha o código, não a prosa
+  const semComentarios = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  const resolver = (de: string, spec: string): string | null => {
+    if (!spec.startsWith('.')) return null; // pacote do npm: fora do nosso grafo
+    const base = path.resolve(path.dirname(de), spec);
+    for (const c of [base, `${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')]) {
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+    }
+    return null;
+  };
+
+  const grafo = (entrada: string): string[] => {
+    const vistos = new Set<string>();
+    const fila = [path.resolve(entrada)];
+    while (fila.length) {
+      const f = fila.shift()!;
+      if (vistos.has(f)) continue;
+      vistos.add(f);
+      const t = fs.readFileSync(f, 'utf8');
+      for (const m of t.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
+        const alvo = resolver(f, m[1]);
+        if (alvo && !vistos.has(alvo)) fila.push(alvo);
+      }
+    }
+    return [...vistos];
+  };
+
+  const funcoes = fs.readdirSync('netlify/functions').filter((f) => f.endsWith('.ts')).map((f) => path.join('netlify/functions', f));
+
+  it('nenhuma função Netlify alcança um módulo que lê import.meta.env', () => {
+    const culpados: string[] = [];
+    for (const f of funcoes) {
+      for (const m of grafo(f)) {
+        if (/import\.meta\.env/.test(semComentarios(fs.readFileSync(m, 'utf8')))) culpados.push(`${path.basename(f)} → ${path.relative(process.cwd(), m)}`);
+      }
+    }
+    expect(culpados).toEqual([]);
+  });
+
+  it('a matriz de permissões é única e utilizável dos dois lados', () => {
+    const puro = semComentarios(fs.readFileSync('src/core/permissoes.ts', 'utf8'));
+    expect(puro).not.toMatch(/from 'react'/);
+    expect(puro).not.toMatch(/seed\.json/);
+    expect(puro).not.toMatch(/import\.meta\.env/);
+    expect(puro).not.toMatch(/from '\.\.\/\.\.\/data\//);
+    expect(puro).toMatch(/export function pode\(/);
+    // o store REEXPORTA a mesma funcao: continua existindo uma matriz so
+    const store = fs.readFileSync('src/data/store.ts', 'utf8');
+    expect(store).toMatch(/from '\.\.\/core\/permissoes'/);
+    expect(store).not.toMatch(/export function pode\(/);
+    expect(store.match(/const MATRIZ/g) ?? []).toEqual([]);
+  });
+
+  it('o endpoint continua autorizando pela MATRIZ, não por lista própria', () => {
+    const servidor = fs.readFileSync('src/core/central/statusServidor.ts', 'utf8');
+    expect(servidor).toMatch(/import \{ pode \} from '\.\.\/permissoes'/);
+    expect(servidor).toMatch(/pode\(usuario, 'ver_mission_control'\)/);
+    expect(servidor).not.toMatch(/\['Administrador', 'Diretoria'\]/); // nada de ACL paralela
+  });
+});

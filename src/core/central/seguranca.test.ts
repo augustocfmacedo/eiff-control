@@ -465,7 +465,7 @@ describe('ameaça 7: dado financeiro não autorizado', () => {
   it('cada intenção da Central usa uma ação REAL da matriz do Control (sem segunda ACL)', () => {
     actions.trocarUsuario('u-obra');
     const usuario = getState().usuario;
-    const fonte = ler('src/data/store.ts');
+    const fonte = ler('src/core/permissoes.ts'); // a matriz vive aqui desde a MC-LIVE-1; o store reexporta
     // a permissao vem da ACAO, nunca da intencao: cada acao do catalogo aponta para uma acao real da MATRIZ
     for (const a of CATALOGO_ACOES) {
       if (a.permissao === null) continue;

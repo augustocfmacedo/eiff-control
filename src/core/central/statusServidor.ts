@@ -12,7 +12,7 @@
 //
 // O que NUNCA sai daqui: token, header do GitHub, URL autenticada, payload cru, stack trace. A resposta e
 // montada campo a campo a partir do contrato, nunca serializando objeto de terceiro.
-import { pode } from '../../data/store';
+import { pode } from '../permissoes';
 import type { Papel, Usuario } from '../types';
 import {
   MAX_CHAMADAS_POR_CICLO, REPOSITORIOS_OBSERVADOS, lerGitHub,
