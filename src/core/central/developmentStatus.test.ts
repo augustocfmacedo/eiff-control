@@ -640,3 +640,64 @@ describe('degradação por capacidade', () => {
     expect(tela).toContain('issues indisponíveis');
   });
 });
+
+// ------------------------------------------------------ 12. SHA do build: capturado no BUILD, nunca no runtime
+
+describe('SHA do artefato publicado', () => {
+  // O Deploy Preview 5 provou que COMMIT_REF existe no BUILD do Netlify e não no runtime da Function.
+  // Ler process.env dentro da função devolvia sempre vazio e a comparação LIVE × SNAPSHOT ficava cega.
+  it('só COMMIT_REF alimenta o SHA; qualquer outra coisa é "desconhecido"', async () => {
+    const { shaDeAmbiente } = await import('../../../scripts/gerar-build-sha.mjs');
+    expect(shaDeAmbiente({ COMMIT_REF: 'abc1234abc1234abc1234abc1234abc1234abcd' })).toEqual({ sha: 'abc1234abc1234abc1234abc1234abc1234abcd', origem: 'COMMIT_REF' });
+    expect(shaDeAmbiente({ COMMIT_REF: '  ' })).toEqual({ sha: null, origem: null });
+    expect(shaDeAmbiente({ COMMIT_REF: 'nao-e-um-sha' })).toEqual({ sha: null, origem: null });
+    expect(shaDeAmbiente({})).toEqual({ sha: null, origem: null });
+    expect(shaDeAmbiente()).toEqual({ sha: null, origem: null });
+  });
+
+  it('o módulo gerado é determinístico e nunca traz SHA escrito à mão', async () => {
+    const { conteudoDoModulo, ARQUIVO, shaDeAmbiente } = await import('../../../scripts/gerar-build-sha.mjs');
+    const a = conteudoDoModulo({ sha: 'aaaaaaa1111', origem: 'COMMIT_REF' });
+    expect(a).toBe(conteudoDoModulo({ sha: 'aaaaaaa1111', origem: 'COMMIT_REF' }));
+    expect(conteudoDoModulo({ sha: null, origem: null })).toContain('SHA_DO_BUILD: string | null = null');
+    // o arquivo COMMITADO é exatamente o que o gerador produz para o ambiente atual (sem COMMIT_REF: null)
+    expect(fs.readFileSync(ARQUIVO, 'utf8')).toBe(conteudoDoModulo(shaDeAmbiente(process.env)));
+  });
+
+  it('a Function usa o módulo gerado e NÃO lê COMMIT_REF do runtime', () => {
+    // de novo: comentario que CITA a variavel nao e uso — o que vale e o codigo
+    const fn = fs.readFileSync('netlify/functions/development-status.ts', 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(fn).toContain("from '../../src/core/central/buildSha'");
+    expect(fn).toContain('build: { sha: SHA_DO_BUILD, origem: ORIGEM_DO_BUILD }');
+    expect(fn).not.toMatch(/process\.env\.COMMIT_REF/);
+    // e o build gera o módulo antes de qualquer verificação
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    expect(pkg.scripts.build.startsWith('node scripts/gerar-build-sha.mjs &&')).toBe(true);
+  });
+
+  it('build.sha e github.main.sha são coisas diferentes, e a comparação diz qual é qual', () => {
+    const publicado = 'ffffff0000000000000000000000000000000000';
+    const naMain = SHA_MAIN_CONTROL;
+    const v = avaliarStatusVivo({
+      disponivel: true, observadoEm: AGORA, agora: AGORA, limiteStaleSegundos: LIMITE_STALE_GITHUB_S,
+      build: { sha: publicado, origem: ORIGEM_SHA_BUILD }, shaMainObservado: naMain,
+    });
+    expect(v.situacao).toBe('SNAPSHOT');                       // preview publica a branch; main está adiante
+    expect(v.comparacaoBuild.shaBuild).toBe(publicado);
+    expect(v.comparacaoBuild.shaObservado).toBe(naMain);
+    expect(v.comparacaoBuild.comparacao).toBe('DESATUALIZADO');
+    // e o contrato carrega os dois separados, sem mistura
+    expect(v.comparacaoBuild.shaBuild).not.toBe(v.comparacaoBuild.shaObservado);
+  });
+
+  it('sem SHA do build a lacuna continua declarada — nunca um palpite', () => {
+    const v = avaliarStatusVivo({
+      disponivel: true, observadoEm: AGORA, agora: AGORA, limiteStaleSegundos: LIMITE_STALE_GITHUB_S,
+      build: { sha: null, origem: null }, shaMainObservado: SHA_MAIN_CONTROL,
+    });
+    expect(v.comparacaoBuild.comparacao).toBe('DESCONHECIDO');
+    expect(v.comparacaoBuild.texto).toContain('COMMIT_REF');
+    expect(v.situacao).toBe('LIVE'); // desconhecer o build não é acusar desatualização
+  });
+});

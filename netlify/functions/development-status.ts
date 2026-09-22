@@ -10,10 +10,14 @@
 // Repositórios: a allowlist é server-side (`REPOSITORIOS_OBSERVADOS`). Esta função NÃO aceita parâmetro de
 // repositório: não existe caminho para transformá-la em proxy do GitHub.
 //
+// Build SHA: NÃO é lido de process.env.COMMIT_REF — essa variável existe no build do Netlify e não no
+// runtime da Function (provado no Deploy Preview 5). Ele vem de src/core/central/buildSha.ts, gerado
+// durante `npm run build`, e é o commit DESTE artefato — coisa diferente de github.main.sha.
+//
 // Cache: `cacheEtag` é memória do processo — OPORTUNISTA, nunca requisito de consistência. Uma instância
 // nova simplesmente refaz as chamadas completas.
 import { tratarDevelopmentStatus } from '../../src/core/central/statusServidor';
-import { ORIGEM_SHA_BUILD } from '../../src/core/central/statusVivo';
+import { ORIGEM_DO_BUILD, SHA_DO_BUILD } from '../../src/core/central/buildSha';
 import type { CacheCondicional, EntradaCache } from '../../src/core/central/githubAdapter';
 
 const json = (corpo: unknown, status = 200) =>
@@ -33,8 +37,6 @@ export default async (req: Request): Promise<Response> => {
   const anon = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? req.headers.get('x-supabase-anon') ?? '';
   if (!anon) return json({ erro: 'nao_configurado', mensagem: 'Supabase não configurado na função.' }, 501);
 
-  // SHA do build publicado: vem do ambiente do Netlify, nunca de constante digitada à mão.
-  const sha = (process.env.COMMIT_REF ?? '').trim();
 
   try {
     const r = await tratarDevelopmentStatus(
@@ -45,7 +47,9 @@ export default async (req: Request): Promise<Response> => {
         githubToken: (process.env.GITHUB_READ_TOKEN ?? '').trim(),
         githubTimeoutMs: Number(process.env.GITHUB_TIMEOUT_MS ?? '') || undefined,
         cache: cacheEtag,
-        build: { sha: sha || null, origem: sha ? ORIGEM_SHA_BUILD : null },
+        // SHA capturado no BUILD (scripts/gerar-build-sha.mjs), onde COMMIT_REF existe de verdade.
+        // Lê-lo de process.env aqui devolveria sempre vazio: o runtime da Function não recebe COMMIT_REF.
+        build: { sha: SHA_DO_BUILD, origem: ORIGEM_DO_BUILD },
       },
     );
     return json(r.corpo, r.status);

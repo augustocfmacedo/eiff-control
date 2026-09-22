@@ -301,8 +301,24 @@ vazia.
 requisito de consistência: instância nova simplesmente refaz as chamadas completas. Não há Redis, banco de cache
 nem serviço externo. Cache persistente é MC-LIVE-5.
 
-Gate: `GITHUB_ADAPTER_READONLY` — **segue aberto**: o PAT ainda não existe, então não houve leitura real nem
-varredura do bundle publicado.
+### Degradação por capacidade (correção do smoke real)
+
+`Checks` **não é oferecido** na interface do Fine-grained PAT para estes repositórios. O PAT concedido em
+22/09/2026 tem Metadata, Contents, Issues e Pull requests — tudo Read — nos dois repositórios.
+
+Por isso o adapter trata cada capacidade separadamente:
+
+| Falhou | Resultado |
+| --- | --- |
+| commit de `main` | repositório **indisponível** — é a fundação: sem `main` não há o que observar |
+| check runs | repositório **LIVE**, `ci: null`, `erroCi: CHECKS_PERMISSION_UNAVAILABLE` |
+| pull requests | repositório **LIVE**, lista vazia **com** `erroPullRequests` |
+| issues | repositório **LIVE**, lista vazia **com** `erroIssues` |
+
+Lista vazia nunca significa "não há": significa "não foi lido", e o código diz por quê. Rate limit no endpoint
+de checks continua `RATE_LIMIT` — o motivo real nunca é substituído pelo genérico.
+
+Gate: `GITHUB_ADAPTER_READONLY` — segue aberto até a prova publicada completa.
 
 ## 12. Integração com a arquitetura
 
@@ -377,6 +393,25 @@ justificativa própria. A numeração livre é **0055** (0052 está reservada pa
 API e sobre a função. Em erro o intervalo dobra a cada falha seguida até `INTERVALO_MAXIMO_MS = 300 s`, e volta
 a 60 s na primeira leitura boa. `AbortController` em toda chamada, cancelamento no unmount, e uma guarda
 explícita impede duas chamadas sobrepostas. O botão "Atualizar" reinicia o ciclo.
+
+## 15-B. `build.sha` × `github.main.sha` — duas coisas diferentes
+
+| | O que é | De onde vem |
+| --- | --- | --- |
+| `build.sha` | o commit **deste artefato publicado** — a tela que você está olhando | `COMMIT_REF`, capturado no **build** por `scripts/gerar-build-sha.mjs`, que grava `src/core/central/buildSha.ts` |
+| `github.main.sha` | o commit **atual do `main`** no GitHub | leitura ao vivo do adapter (`GET /repos/{r}/commits/main`) |
+
+A comparação entre os dois é o que produz `LIVE` (iguais) ou `SNAPSHOT` (o artefato está atrás do main).
+Num **Deploy Preview isso é normalmente SNAPSHOT e não é erro**: o preview publica a branch do PR enquanto o
+`main` segue em outro commit. O que não pode acontecer é `DESCONHECIDO` em produção.
+
+**Por que a captura acontece no build.** O Deploy Preview 5 provou que `COMMIT_REF` existe no ambiente de
+**build** do Netlify e **não** no runtime da Function: `process.env.COMMIT_REF` dentro da função devolvia
+sempre vazio e a comparação ficava cega. O Netlify empacota as funções **depois** do comando de build, então o
+módulo gerado entra no bundle. Regras do gerador: nenhum SHA escrito à mão, nenhuma chamada extra ao GitHub,
+e ausência de informação vira `null` — a tela diz "desconhecido" em vez de mostrar um valor plausível. Fora do
+Netlify (desenvolvimento local, CI do GitHub) o arquivo gerado é sempre `null`, então ele fica estável no
+repositório e nenhum build local suja a árvore.
 
 ## 16. Frescor e stale
 
