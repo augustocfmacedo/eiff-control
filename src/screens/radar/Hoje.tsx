@@ -22,6 +22,7 @@ import { AtividadeForm, ConcluirTarefaForm, ScoreModal, TarefaCadenciaForm, Tare
 import ComercialPanorama from './ComercialPanorama';
 import ComercialFoco, { NOME_MODO, TOM_CATEGORIA, TOM_MODO, gavetaFailClosed, nomeEmpresaCM as nomeEmpresa } from './ComercialFoco';
 import ComercialModoFoco, { focoAoEntrarUX, focoInvalidadoUX, type AcaoFocoUX, type FocoTrabalhoUX } from './ComercialModoFoco';
+import { entradaComercialUX } from './comercialEntrada';
 import { pipelineAtivoUX } from './comercialPipeline';
 import { visaoComercialUX } from './comercialVisao';
 import { MENSAGEM_SEM_EXPECTATIVA_CM, abrirAgendamentoCM, ctaCadenciaCM, type AberturaAgendamentoCM } from './HojeCadencia';
@@ -122,6 +123,12 @@ export default function RadarHoje() {
     const entradas = base.flatMap((l) => { const conta = contaPorId.get(l.id); return conta ? [{ item: l.item, conta }] : []; });
     return pipelineAtivoUX(entradas, { oportunidades: r.oportunidades, historicoEstagios: r.historicoEstagios, atividades: r.atividades, hoje });
   }, [base, contasUX, r.oportunidades, r.historicoEstagios, r.atividades, hoje]);
+  // UX-5: a zona ENTRADA le sinal novo (detectadoEm), conta adicionada ao Radar (criadoEm) e enriquecimento (razoes
+  // que a fila ja produziu) sobre as empresas da `base`. Tres conceitos separados; falta de dado nunca vira "lead".
+  const entradaUX = useMemo(
+    () => entradaComercialUX({ linhas: base.map((l) => ({ itemId: l.id, item: l.item })), empresas: r.empresas, sinais: r.sinais, hoje }),
+    [base, r.empresas, r.sinais, hoje],
+  );
   // UX-3: a conta em foco saiu da base (acao, filtro ou recomputacao legitima). O efeito so INVALIDA o foco e
   // registra a perda; nunca seleciona outra conta — quem escolhe a proxima e o usuario, sempre por clique.
   useEffect(() => {
@@ -185,6 +192,7 @@ export default function RadarHoje() {
               onPorQue={(c) => setPorQue(c.itemId)}
               onVerTodos={() => setVisao('fila')}
               pipelineAtivo={pipelineUX}
+              entrada={entradaUX}
             />
           </div>
       ) : visao === 'foco' ? (

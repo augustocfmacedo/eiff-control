@@ -10,9 +10,10 @@ import React from 'react';
 import { TEXTO_BLOQUEIO_PLANO_CM, type CodigoBloqueioPlanoCM } from '../../core/radar/commercialActionPlan';
 import type { NaturezaToqueCM, RetomadaCadenciaCM } from '../../core/radar/commercialCadence';
 import { TEXTO_RAZAO_CM, TEXTO_TRAVA_CM, type CodigoRazaoCM, type CodigoTravaCM } from '../../core/radar/commercialMachine';
-import { NOME_ESTAGIO } from '../../core/radar/padroes';
+import { NOME_ESTAGIO, NOME_SINAL } from '../../core/radar/padroes';
 import { Badge, Link, money, type Tone } from '../../ui/components';
 import type { EstadoPipelineUX, OportunidadePipelineUX } from './comercialPipeline';
+import { entradaVaziaUX, textoDaRazaoEntradaUX, type EntradaComercialUX } from './comercialEntrada';
 import {
   ORCAMENTO_PANORAMA_COMERCIAL, contasDoHorizonteUX, contasEmRiscoUX, recorteUX, resumoComercialUX, resumoEsperaUX,
   type ContaComercialUX, type EsperaComercialUX, type ExcecaoComercialUX, type RecorteUX, type ResumoComercialUX, type SeveridadeExcecaoUX,
@@ -42,6 +43,19 @@ export const TOM_ESTADO_PIPELINE: Readonly<Record<EstadoPipelineUX, Tone>> = { P
 export const TEXTO_SEM_VALOR_PIPELINE = 'valor não informado';
 /** A inteligencia de pipeline ja existe no Command Center; o Panorama nao cria rota nova. */
 export const ROTA_PIPELINE_PANORAMA = '/radar';
+
+/** UX-5: a inteligencia ampla (sinais, contas, enriquecimento) ja vive no Command Center; nenhuma rota nova. */
+export const ROTA_ENTRADA_PANORAMA = '/radar';
+/** Rotulos da zona ENTRADA. "Conta adicionada ao Radar" e deliberado: nunca "empresa nova", nunca "lead". */
+export const TITULO_SINAL_ENTRADA = 'SINAL NOVO';
+export const TITULO_CONTA_ENTRADA = 'CONTA ADICIONADA AO RADAR';
+export const TITULO_ENRIQUECIMENTO_ENTRADA = 'ENRIQUECIMENTO';
+export const TEXTO_VERIFICADO_ENTRADA = 'Verificado';
+export const TEXTO_A_VERIFICAR_ENTRADA = 'A verificar';
+export const TEXTO_ENTRADA_VAZIA = 'Nenhuma entrada recente ou pendência de enriquecimento nesta visão.';
+/** Fato temporal em linguagem de DETECCAO: o evento pode ser antigo; o que e recente e o Radar ter sabido. */
+export const textoDeteccaoEntrada = (dias: number): string => (dias === 0 ? 'Detectado hoje' : `Detectado há ${dias} dia${dias === 1 ? '' : 's'}`);
+export const textoAdicaoEntrada = (dias: number): string => (dias === 0 ? 'Adicionada ao Radar hoje' : `Adicionada ao Radar há ${dias} dia${dias === 1 ? '' : 's'}`);
 const TOM_SEVERIDADE: Readonly<Record<SeveridadeExcecaoUX, Tone>> = { BLOQUEIO: 'bad', RISCO: 'bad', ATENCAO: 'warn' };
 const NOME_SEVERIDADE: Readonly<Record<SeveridadeExcecaoUX, string>> = { BLOQUEIO: 'Bloqueio', RISCO: 'Risco', ATENCAO: 'Atenção' };
 const ORDEM_SEVERIDADE: Readonly<Record<SeveridadeExcecaoUX, number>> = { BLOQUEIO: 0, RISCO: 1, ATENCAO: 2 };
@@ -109,9 +123,11 @@ export interface ComercialPanoramaProps {
   onVerTodos: () => void;
   /** UX-4: oportunidades de referencia ja projetadas (ordem do CM1-A). O Panorama nao le dataset. */
   pipelineAtivo: readonly OportunidadePipelineUX[];
+  /** UX-5: view-model da zona ENTRADA, ja projetado. O Panorama nao calcula recencia nem escolhe sinal/conta. */
+  entrada: EntradaComercialUX;
 }
 
-export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos, pipelineAtivo }: ComercialPanoramaProps) {
+export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, nomeCanal, acaoPrincipal, ctaCadencia, onPorQue, onVerTodos, pipelineAtivo, entrada }: ComercialPanoramaProps) {
   const { resumo, agora, programado, risco, espera } = zonasDoPanoramaUX(contas);
   const pipeline = recorteUX(pipelineAtivo, ORCAMENTO_PANORAMA_COMERCIAL.pipeline);
   const verTodos = (n: number, rotulo = 'Ver todos') => n > 0 ? <button className="btn sm" onClick={onVerTodos}>{`${rotulo} (${n}) ›`}</button> : null;
@@ -205,6 +221,54 @@ export default function ComercialPanorama({ contas, nomeEmpresa, nomeContato, no
             ))}
           </ul>}
         {pipeline.ocultos > 0 && <div className="small muted" style={{ marginTop: 8 }}>{`+${pipeline.ocultos} oportunidade(s) nesta visão · veja em Ver pipeline`}</div>}
+      </section>
+
+      <section className="card" aria-labelledby="zona-entrada" style={{ marginTop: 14 }}>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <h2 id="zona-entrada" style={{ margin: 0 }}>Entrada</h2>
+          <span className="small muted">{`últimos ${entrada.janelaDias} dias`}</span>
+          <span className="spacer" />
+          <Link to={ROTA_ENTRADA_PANORAMA} className="btn sm">Ver inteligência ›</Link>
+        </div>
+        <div className="small muted" style={{ marginTop: 6 }}>
+          {`${entrada.sinais.total} sinal(is) novo(s) · ${entrada.contas.total} conta(s) adicionada(s) · ${entrada.enriquecimento.total} para enriquecer`}
+          {entrada.enriquecimento.total > 0 && ` (${entrada.enriquecimento.semDecisor} sem decisor · ${entrada.enriquecimento.semCanal} sem canal)`}
+        </div>
+        {entradaVaziaUX(entrada)
+          ? <p className="small muted" style={{ margin: '10px 0 0' }}>{TEXTO_ENTRADA_VAZIA}</p>
+          : <div className="grid cols-3" style={{ gap: 10, marginTop: 10, alignItems: 'start' }}>
+            {entrada.sinais.destaque && (
+              <article className="card" style={{ padding: 12 }}>
+                <div className="small muted">{TITULO_SINAL_ENTRADA}</div>
+                <Link to={`/radar/empresas/${entrada.sinais.destaque.empresaId}`}><b>{nomeEmpresa(entrada.sinais.destaque.empresaId)}</b></Link>
+                <p style={{ margin: '4px 0 0' }}>{entrada.sinais.destaque.titulo}</p>
+                <p className="small muted" style={{ margin: '4px 0 0' }}>
+                  {NOME_SINAL[entrada.sinais.destaque.tipo]} · {textoDeteccaoEntrada(entrada.sinais.destaque.dias)} · {entrada.sinais.destaque.verificado ? TEXTO_VERIFICADO_ENTRADA : TEXTO_A_VERIFICAR_ENTRADA}
+                </p>
+              </article>
+            )}
+            {entrada.contas.destaque && (
+              <article className="card" style={{ padding: 12 }}>
+                <div className="small muted">{TITULO_CONTA_ENTRADA}</div>
+                <Link to={`/radar/empresas/${entrada.contas.destaque.empresaId}`}><b>{nomeEmpresa(entrada.contas.destaque.empresaId)}</b></Link>
+                <p className="small muted" style={{ margin: '4px 0 0' }}>
+                  {textoAdicaoEntrada(entrada.contas.destaque.dias)}
+                  {entrada.contas.destaque.cidade ? ` · ${entrada.contas.destaque.cidade}${entrada.contas.destaque.uf ? `/${entrada.contas.destaque.uf}` : ''}` : ''}
+                </p>
+              </article>
+            )}
+            {entrada.enriquecimento.destaque && (
+              <article className="card" style={{ padding: 12 }}>
+                <div className="small muted">{TITULO_ENRIQUECIMENTO_ENTRADA}</div>
+                <Link to={`/radar/empresas/${entrada.enriquecimento.destaque.empresaId}`}><b>{nomeEmpresa(entrada.enriquecimento.destaque.empresaId)}</b></Link>
+                <div className="row" style={{ gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                  {entrada.enriquecimento.destaque.semDecisor && <Badge tone="muted">SEM DECISOR</Badge>}
+                  {entrada.enriquecimento.destaque.semCanal && <Badge tone="muted">SEM CANAL</Badge>}
+                </div>
+                <p className="small muted" style={{ margin: '4px 0 0' }}>{textoDaRazaoEntradaUX(entrada.enriquecimento.destaque.codigos[0])}</p>
+              </article>
+            )}
+          </div>}
       </section>
 
       <section className="card" aria-labelledby="zona-programado" style={{ marginTop: 14 }}>

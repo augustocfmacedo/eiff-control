@@ -279,9 +279,15 @@ describe('UX-1 · guardas', () => {
       expect(gaveta, `a gaveta nao pode usar ${proibido}`).not.toContain(proibido);
     }
   });
-  it('UX-5 nao foi antecipado: sem ENTRADA e sem lead', () => {
-    for (const proibido of ['ENTRADA', 'Entrada', 'lead', 'Lead']) {
-      expect(CODIGO_PANORAMA, `nao pode antecipar ${proibido}`).not.toContain(proibido);
+  it('UX-5: a zona ENTRADA existe e NUNCA chama nada de lead', () => {
+    expect(CODIGO_PANORAMA).toContain('zona-entrada');
+    expect(CODIGO_PANORAMA).toContain('entrada: EntradaComercialUX');
+    for (const proibido of ['lead', 'Lead', 'LEAD']) {
+      expect(CODIGO_PANORAMA, `a zona nao pode dizer ${proibido}`).not.toContain(proibido);
+    }
+    // o Lead Engine continua fora: nenhuma pontuacao, nenhuma temperatura, nenhuma qualificacao nova
+    for (const proibido of ['temperatura', 'pressao', 'potencial', 'qualidade', 'quente']) {
+      expect(CODIGO_PANORAMA, `a zona nao pode inventar ${proibido}`).not.toContain(proibido);
     }
   });
   it('UX-4: o Panorama recebe o pipeline pronto e nao le dataset nem escolhe oportunidade', () => {
