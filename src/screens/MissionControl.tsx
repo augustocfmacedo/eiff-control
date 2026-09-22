@@ -41,9 +41,13 @@ function LinhaRepositorio({ r, agora }: { r: RepositorioStatus; agora: string })
       {r.disponivel ? (
         <div className="small muted">
           {r.main ? <>main <code>{r.main.shaCurto}</code></> : 'main não lido'}
+          {/* capacidade a capacidade: o que falhou diz o que falhou, e não apaga o que foi lido */}
           {r.ci && <> · {ROTULO_CI[r.ci.situacao]} <span className="mc-cru">{r.ci.statusOrigem}</span></>}
-          {' · '}{r.pullRequests.length} PR aberto(s)
-          {r.papel === 'fabrica' && <> · {r.issues.length} issue(s) de job</>}
+          {r.erroCi && <> · <span title={TEXTO_FALHA_FONTE[r.erroCi]}>CI indisponível</span></>}
+          {' · '}{r.erroPullRequests ? <span title={TEXTO_FALHA_FONTE[r.erroPullRequests]}>PRs indisponíveis</span> : <>{r.pullRequests.length} PR aberto(s)</>}
+          {r.papel === 'fabrica' && (r.erroIssues
+            ? <> · <span title={TEXTO_FALHA_FONTE[r.erroIssues]}>issues indisponíveis</span></>
+            : <> · {r.issues.length} issue(s) de job</>)}
           {vivo.idadeSegundos !== null && <> · observado há {humanizarIdade(vivo.idadeSegundos)}</>}
         </div>
       ) : (

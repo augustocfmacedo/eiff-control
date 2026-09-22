@@ -51,6 +51,7 @@ export const CODIGOS_FALHA_FONTE = [
   'NETWORK_FAILURE',
   'INVALID_PAYLOAD',
   'NOT_FOUND',
+  'CHECKS_PERMISSION_UNAVAILABLE',
   'SOURCE_UNAVAILABLE',
 ] as const;
 export type CodigoFalhaFonte = (typeof CODIGOS_FALHA_FONTE)[number];
@@ -63,6 +64,7 @@ export const TEXTO_FALHA_FONTE: Readonly<Record<CodigoFalhaFonte, string>> = {
   NETWORK_FAILURE: 'Não foi possível falar com o GitHub.',
   INVALID_PAYLOAD: 'O GitHub respondeu num formato que não reconhecemos.',
   NOT_FOUND: 'Recurso não encontrado no GitHub.',
+  CHECKS_PERMISSION_UNAVAILABLE: 'A credencial não tem a permissão Checks: o CI deste repositório não pode ser lido. O resto do repositório continua sendo lido.',
   SOURCE_UNAVAILABLE: 'GitHub indisponível.',
 };
 
@@ -143,8 +145,15 @@ export interface RepositorioStatus {
   erroCodigo?: CodigoFalhaFonte;
   main: CommitPrincipal | null;
   ci: CiPrincipal | null;
+  /**
+   * Falha SO do CI. O repositorio segue `disponivel`: perder o check run nao e perder o repositorio.
+   * Granularidade exigida na MC-LIVE-1 — uma capacidade indisponivel nao derruba as outras.
+   */
+  erroCi?: CodigoFalhaFonte;
   pullRequests: PullRequestObservado[];
+  erroPullRequests?: CodigoFalhaFonte;
   issues: IssueObservada[];
+  erroIssues?: CodigoFalhaFonte;
   /** quantas chamadas HTTP este repositorio custou nesta leitura (diagnostico de rate limit) */
   chamadas: number;
 }
@@ -366,43 +375,65 @@ export async function lerRepositorio(r: RepositorioObservavel, d: DepsGitHub): P
     disponivel: false, main: null, ci: null, pullRequests: [], issues: [], chamadas: 0,
   };
   let limite: LimiteGitHub | undefined;
+  const codigoDe = (e: unknown): CodigoFalhaFonte => (e instanceof ErroGitHub ? e.codigo : 'SOURCE_UNAVAILABLE');
+
+  // 1) FUNDACAO: sem o commit de `main` nao ha o que observar — e so aqui que o repositorio cai inteiro.
+  let main: CommitPrincipal | null;
   try {
     const commit = await obter<unknown>(`/repos/${r.repository}/commits/${r.ramoPrincipal}`, d, contador);
     limite = commit.limite ?? limite;
-    const main = lerCommit(commit.dados);
+    main = lerCommit(commit.dados);
+  } catch (e) {
+    return { status: { ...base, erroCodigo: codigoDe(e), chamadas: contador.n }, limite };
+  }
 
-    const checks = main
-      ? await obter<unknown>(`/repos/${r.repository}/commits/${main.sha}/check-runs?per_page=30`, d, contador)
-      : null;
-    limite = checks?.limite ?? limite;
-    const runs = (arr(obj(checks?.dados)?.check_runs) ?? []).map((x) => ({ status: txt(x.status), conclusion: txt(x.conclusion) ?? null, name: txt(x.name), completed_at: txt(x.completed_at), html_url: txt(x.html_url) }));
-    const sit = situacaoDoCi(runs);
-    const primeiro = runs[0];
+  // 2) CAPACIDADES INDEPENDENTES. Cada uma falha sozinha, com o proprio codigo, e o repositorio segue
+  //    disponivel. Perder o CI nao e perder o repositorio: `Checks` e uma permissao a parte do PAT e pode
+  //    simplesmente nao ter sido concedida — isso nao pode apagar main, PRs e issues.
+  let ci: CiPrincipal | null = null;
+  let erroCi: CodigoFalhaFonte | undefined;
+  if (main) {
+    try {
+      const checks = await obter<unknown>(`/repos/${r.repository}/commits/${main.sha}/check-runs?per_page=30`, d, contador);
+      limite = checks.limite ?? limite;
+      const runs = (arr(obj(checks.dados)?.check_runs) ?? []).map((x) => ({ status: txt(x.status), conclusion: txt(x.conclusion) ?? null, name: txt(x.name), completed_at: txt(x.completed_at), html_url: txt(x.html_url) }));
+      const sit = situacaoDoCi(runs);
+      const primeiro = runs[0];
+      ci = { situacao: sit.situacao, statusOrigem: sit.statusOrigem, nome: primeiro?.name, concluidoEm: primeiro?.completed_at, url: primeiro?.html_url };
+    } catch (e) {
+      const c = codigoDe(e);
+      // 403/404 no endpoint de check runs = a credencial nao tem `Checks`; e um caso proprio, nao
+      // "repositorio sem permissao" e muito menos "CI verde por omissao".
+      erroCi = c === 'PERMISSION_FAILURE' || c === 'NOT_FOUND' ? 'CHECKS_PERMISSION_UNAVAILABLE' : c;
+    }
+  }
 
+  let pullRequests: PullRequestObservado[] = [];
+  let erroPullRequests: CodigoFalhaFonte | undefined;
+  try {
     const pulls = await obter<unknown>(`/repos/${r.repository}/pulls?state=open&per_page=${LIMITE_PR}&sort=updated&direction=desc`, d, contador);
     limite = pulls.limite ?? limite;
-
-    const issues = r.observarIssues
-      ? await obter<unknown>(`/repos/${r.repository}/issues?state=open&labels=factory:task&per_page=${LIMITE_ISSUES}&sort=updated&direction=desc`, d, contador)
-      : null;
-    limite = issues?.limite ?? limite;
-
-    return {
-      status: {
-        ...base,
-        disponivel: true,
-        main,
-        ci: main ? { situacao: sit.situacao, statusOrigem: sit.statusOrigem, nome: primeiro?.name, concluidoEm: primeiro?.completed_at, url: primeiro?.html_url } : null,
-        pullRequests: lerPulls(pulls.dados),
-        issues: issues ? lerIssues(issues.dados) : [],
-        chamadas: contador.n,
-      },
-      limite,
-    };
+    pullRequests = lerPulls(pulls.dados);
   } catch (e) {
-    const codigo = e instanceof ErroGitHub ? e.codigo : 'SOURCE_UNAVAILABLE';
-    return { status: { ...base, erroCodigo: codigo, chamadas: contador.n }, limite };
+    erroPullRequests = codigoDe(e); // lista vazia COM codigo: ausencia de leitura, nunca "nenhum PR"
   }
+
+  let issues: IssueObservada[] = [];
+  let erroIssues: CodigoFalhaFonte | undefined;
+  if (r.observarIssues) {
+    try {
+      const lidas = await obter<unknown>(`/repos/${r.repository}/issues?state=open&labels=factory:task&per_page=${LIMITE_ISSUES}&sort=updated&direction=desc`, d, contador);
+      limite = lidas.limite ?? limite;
+      issues = lerIssues(lidas.dados);
+    } catch (e) {
+      erroIssues = codigoDe(e);
+    }
+  }
+
+  return {
+    status: { ...base, disponivel: true, main, ci, erroCi, pullRequests, erroPullRequests, issues, erroIssues, chamadas: contador.n },
+    limite,
+  };
 }
 
 /** Le a allowlist inteira. Um repositorio indisponivel NAO derruba o outro (resposta parcial). */

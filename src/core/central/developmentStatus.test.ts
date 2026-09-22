@@ -569,3 +569,74 @@ describe('grafo de imports das funções Netlify', () => {
     expect(servidor).not.toMatch(/\['Administrador', 'Diretoria'\]/); // nada de ACL paralela
   });
 });
+
+// ------------------------------------------- 11. granularidade: uma capacidade nao derruba as outras
+
+describe('degradação por capacidade', () => {
+  // Regra do proprietário (MC-LIVE-1, smoke real): `Checks` é uma permissão à parte do PAT e pode
+  // simplesmente não ter sido concedida. Perder o CI NÃO pode apagar main, PRs e issues do repositório.
+  const so = (caminho: string, resposta: { status: number; corpo?: unknown; headers?: Record<string, string> }): Rotas => ({ ...ROTAS_SAUDAVEIS, [caminho]: resposta });
+
+  it('403 no check-runs deixa o repositório LIVE e marca só o CI', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/commits/${SHA_MAIN_CONTROL}/check-runs`, { status: 403, corpo: { message: 'Resource not accessible by personal access token' } });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const control = r.repositorios.find((x) => x.papel === 'produto')!;
+    expect(control.disponivel).toBe(true);                       // o repositório NÃO cai
+    expect(control.main?.sha).toBe(SHA_MAIN_CONTROL);            // main continua
+    expect(control.pullRequests).toHaveLength(2);                // PRs continuam
+    expect(control.ci).toBeNull();
+    expect(control.erroCi).toBe('CHECKS_PERMISSION_UNAVAILABLE'); // e o CI diz por que sumiu
+    expect(control.erroCodigo).toBeUndefined();
+  });
+
+  it('404 no check-runs é tratado igual: a credencial não enxerga Checks', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/commits/${SHA_MAIN_CONTROL}/check-runs`, { status: 404, corpo: {} });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const control = r.repositorios.find((x) => x.papel === 'produto')!;
+    expect(control.disponivel).toBe(true);
+    expect(control.erroCi).toBe('CHECKS_PERMISSION_UNAVAILABLE');
+  });
+
+  it('rate limit no check-runs NÃO vira falta de permissão: o código real é preservado', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/commits/${SHA_MAIN_CONTROL}/check-runs`, { status: 403, corpo: {}, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-limit': '5000' } });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    expect(r.repositorios[0].erroCi).toBe('RATE_LIMIT');
+  });
+
+  it('403 nas issues não derruba a fábrica: main, CI e PRs continuam; a lista vazia vem COM código', async () => {
+    const rotas = so(`${CAMINHOS.FACTORY}/issues`, { status: 403, corpo: {} });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const fab = r.repositorios.find((x) => x.papel === 'fabrica')!;
+    expect(fab.disponivel).toBe(true);
+    expect(fab.main).not.toBeNull();
+    expect(fab.issues).toEqual([]);
+    expect(fab.erroIssues).toBe('PERMISSION_FAILURE'); // ausência de leitura, nunca "nenhuma issue"
+    expect(r.factory.contagens.EXECUTANDO).toBe(0);
+  });
+
+  it('403 nos PRs não derruba o repositório', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/pulls`, { status: 403, corpo: {} });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const control = r.repositorios.find((x) => x.papel === 'produto')!;
+    expect(control.disponivel).toBe(true);
+    expect(control.ci?.situacao).toBe('VERDE');
+    expect(control.pullRequests).toEqual([]);
+    expect(control.erroPullRequests).toBe('PERMISSION_FAILURE');
+  });
+
+  it('só a falha do commit de main derruba o repositório inteiro', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/commits/main`, { status: 403, corpo: {} });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const control = r.repositorios.find((x) => x.papel === 'produto')!;
+    expect(control.disponivel).toBe(false);
+    expect(control.erroCodigo).toBe('PERMISSION_FAILURE');
+    expect(control.main).toBeNull();
+  });
+
+  it('a tela distingue as três ausências em texto, não só por cor', () => {
+    const tela = fs.readFileSync('src/screens/MissionControl.tsx', 'utf8');
+    expect(tela).toContain('CI indisponível');
+    expect(tela).toContain('PRs indisponíveis');
+    expect(tela).toContain('issues indisponíveis');
+  });
+});
