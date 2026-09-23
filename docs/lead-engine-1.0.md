@@ -1,6 +1,6 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34), **LE3-B fechado** (perfil do universo, §35) , **LE3-C fechado** (política piloto V1 e lote de 50, §36) e **LE3-D fechado** (fronteira de intake PENDING e rehearsal read-only dos 50 contra a produção, §37; nenhuma escrita realizada). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34), **LE3-B fechado** (perfil do universo, §35) , **LE3-C fechado** (política piloto V1 e lote de 50, §36) , **LE3-D fechado** (fronteira de intake, §37) e **ingestão piloto executada em produção em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, promoção humana pendente. **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
@@ -1689,3 +1689,54 @@ nunca aparecem no core nem no runner, e o runner só emite INSERT em `radar_sour
 Não gravou os 50. Não criou empresa, projeto, sinal, oportunidade, tarefa, atividade ou comunicação. Não
 alterou o store. Não abriu PR, não mesclou, não deployou. Não iniciou LE3-E, PNCP, scheduler ou outra fonte.
 A ingestão real dos 50 — `--executar --confirmar CNO_PILOT_V1` — é decisão sua, em gate próprio.
+
+---
+
+## 38. Ingestão piloto do CNO — executada em produção
+
+23/09/2026, 21:31 UTC. Autorização explícita ("INGESTÃO CNO PILOTO AUTORIZADA") depois do rehearsal do
+§37. Comando: `scripts/cno-intake-producao.mts -- … --executar --confirmar CNO_PILOT_V1`. O runner refez, no
+modo ESCRITA, todas as conferências do rehearsal antes de tocar o banco e só então aplicou o SQL numa única
+transação.
+
+### 38.1 Pré-voo (imediatamente antes)
+
+Git: `d9538fd` = remoto, árvore limpa, behind main 0. Produção (read-only): 0 registros CNO, 108
+`radar_source_record` no total, fonte `7c2665b5-…` ativa, perfil ativo, trigger `radar_source_record_evidencia`
+presente. Estado idêntico ao do rehearsal.
+
+### 38.2 Execução
+
+```
+SNAPSHOT_MATCH 50/50 · FINGERPRINT_MATCH 50/50 · POLICY_MATCH 50/50
+produção antes: 0 existentes → plano NOVO_REGISTRO 50 · WOULD_INSERT 50
+efeitos colaterais planejados: todos 0
+SQL: 50 × insert into radar_source_record, uma transação
+registros CNO após a carga: 50
+```
+
+### 38.3 O que ficou no banco (verificado read-only)
+
+```
+total 50 · PENDING 50 · entity_id NULL 50 · record_type projeto 50 · CNOs distintos 50
+payload.schema = CNO_OPEN_DATA_V1: 50 · com evidence + canonical: 50 · sem decisão: 50
+received_at único para o lote: 2026-09-23 21:31:57.062+00
+CNO + payload_fingerprint iguais ao manifest: 50/50
+radar_source_record total: 108 → 158 (+50 exatos)
+radar_company 91 · radar_project 0 · radar_opportunity 0  (inalterados)
+```
+
+Sinal 2, atividade 2, tarefa 1 e comunicação 3 são registros pré-existentes do Signal Pilot; o SQL aplicado
+não continha nenhuma outra tabela (auditado antes da execução, §37.4).
+
+### 38.4 Idempotência real
+
+Nova simulação contra a produção, com os 50 já gravados: **50 `IDEMPOTENT_NOOP`, 0 inserts**. Reler o mesmo
+snapshot não cria nada. A observação alterada continua produzindo exatamente 1 `NOVA_OBSERVACAO`.
+
+### 38.5 O que acontece agora
+
+Os 50 são candidatos **PENDING** na aba **Candidatos** do Command Center (LE2-E), na produção que já roda o
+LE-2. Nenhuma Empresa, Projeto ou Sinal nasceu. A promoção é humana — `ASSOCIATE_EXISTING`, `CREATE_COMPANY`,
+`KEEP_REVIEW` ou `REJECT` — pela porta governada `processarCandidatoLeadEngine`. Este documento não faz mais
+nenhuma promessa sobre eles: o que converte, e quais destinações convertem, é o que o piloto vai medir.
