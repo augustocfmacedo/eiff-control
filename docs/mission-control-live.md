@@ -232,7 +232,7 @@ O papel **nunca** vem do navegador. O corpo (`DevelopmentStatusResposta` em `sta
                    pullRequests: [...], issues: [...], chamadas }],
   workItems: MissionControlWorkItem[],       // contrato da MC-LIVE-0
   contagens: Record<McStatus, number>,
-  factory: { procedencia: 'GITHUB_PROJECTION', aviso, repositorio, contagens },
+  factory: { procedencia: 'GITHUB_PROJECTION', aviso, repositorio, repositorios, contagens },
   limiteStaleSegundos: number
 }
 ```
@@ -282,13 +282,77 @@ manter para economizar 4 requisições dentro de um orçamento de 5.000/h. Escol
 
 ### Chamadas por ciclo e rate limit
 
-**Teto de 7 chamadas por ciclo** (`MAX_CHAMADAS_POR_CICLO`), e o número real vai na resposta
+**Teto de 8 chamadas por ciclo** (`MAX_CHAMADAS_POR_CICLO`), e o número real vai na resposta
 (`fontes.github.chamadas`):
 
 | Repositório | Chamadas |
 | --- | --- |
-| `eiff-control` | commit de `main`, check-runs do SHA, pulls = **3** |
-| `eiff-dev-factory` | as três acima + issues com `factory:task` = **4** |
+| `eiff-control` | commit de `main`, check-runs do SHA, pulls, issues com `factory:task` = **4** |
+| `eiff-dev-factory` | as mesmas quatro = **4** |
+
+Era 7 até a **ponte de visibilidade da fábrica**: o produto não lia issues. O número é DERIVADO da
+allowlist (`observarIssues ? 4 : 3`), nunca digitado — ligar issues num repositório recalcula o teto e o
+teste que compara teto × chamadas reais acompanha sozinho. O custo por ciclo não depende da quantidade de
+cartões: **não existe chamada por item**.
+
+### Onde um job vive (ponte de visibilidade da fábrica)
+
+O contrato canônico da fábrica é explícito na primeira linha de `JOB_CONTRACT.md`:
+
+> Um job é **uma issue** no repositório-alvo (não no repositório da fábrica)
+
+e o próprio YAML do job carrega `repository: augustocfmacedo/eiff-control`. Logo um job real do produto
+nasce como issue **no `eiff-control`**. Enquanto o Mission Control só lia issues do `eiff-dev-factory`, um
+job com `factory:task` + `factory:state:CODING` no produto ficava **invisível** — uma lacuna silenciosa,
+que não aparecia como erro nem como lista vazia suspeita: simplesmente não era procurado.
+
+Duas correções, nenhuma delas nova fonte de verdade:
+
+1. **todo repositório-alvo da allowlist é observado** (`observarIssues: true` nos dois). Isso não amplia a
+   allowlist, não aceita repositório do cliente e não cria `?repo=`: continua a mesma lista fixa server-side;
+2. **Factory passa a significar a FONTE do item, não o endereço dele.** A contagem filtra
+   `source === 'FACTORY'` — que a normalização atribui quando a issue carrega `factory:state:*`, esteja ela
+   onde estiver. Filtrar por `links.repository` fazia "fábrica" querer dizer "mora no repositório da
+   fábrica", e escondia justamente os jobs do produto. `factory.repositorios` (plural) diz onde as issues
+   são procuradas; `factory.contagens` diz o que a fábrica produziu, em qualquer repositório.
+
+A projeção segue idêntica — `issue → factory:task → factory:state:* → normalização →
+MissionControlWorkItem` — e continua sem escrita.
+
+### Identidade canônica da tarefa (bloco `factory-task:v1`)
+
+Pelo `JOB_CONTRACT.md`, o título da issue é `[factory] <título curto>` e a identidade do job é o campo
+`taskId` **dentro do bloco delimitado** no corpo:
+
+```
+<!-- factory-task:v1 -->
+```yaml
+taskId: EC-0042                # comentário inline permitido
+repository: augustocfmacedo/eiff-control
+…
+```
+<!-- /factory-task -->
+```
+
+Extrair o `taskId` do título, como a primeira versão da ponte fazia, só funcionava para issues fora do
+contrato — uma issue canônica e o PR dela viravam **dois cartões**. Agora `lerIdentidadeCanonica`
+(`githubAdapter.ts`) lê o bloco no servidor, em trânsito, e o corpo **nunca** entra em `IssueObservada` nem
+na resposta. Não existe leitor executável desse bloco na fábrica (`parseJobContract` valida um objeto já
+extraído; `lerRelatorioDoPr` lê o bloco JSON do PR), então a extração aqui é mínima e explícita: só `taskId`
+e `repository`, escalares de nível superior, sem parser YAML e sem dependência nova.
+
+Regras, todas com teste: exatamente um bloco; `taskId` e `repository` uma vez cada; `taskId` no formato
+canônico ancorado (espelho de `TASK_ID` em `texto.ts`); `repository` igual ao repositório onde a issue está.
+Qualquer desvio devolve `taskId: null` com uma recusa do catálogo fechado (`SEM_BLOCO`, `BLOCOS_AMBIGUOS`,
+`CHAVE_DUPLICADA`, `SEM_TASK_ID`, `TASK_ID_INVALIDO`, `SEM_REPOSITORIO`, `REPOSITORIO_DIVERGENTE`) — e a
+issue fica referenciada por `repositório#número`, sem correlação inventada. Um identificador solto no título
+ou na prosa nunca é consultado; um `[EC-0099]` no título não vence um `EC-0042` no bloco.
+
+Para o PR, a identidade é a **branch** `factory/<taskId>-a<n>` (espelho de `lerBranchDoJob` em `refs.ts`),
+porque a fábrica a gera a partir do `taskId`; o título é último recurso para PR humano fora do padrão e nunca
+vence a branch. Com issue canônica e PR na branch canônica, o resultado é **um cartão só**: a fábrica tem
+precedência sobre o GitHub, então o PR enriquece os links sem nunca sobrescrever o estado operacional do job.
+O corpo já vem na listagem `GET /issues`: nenhuma chamada por issue, teto inalterado em 8.
 
 **Nunca há chamada por cartão**: PRs e issues vêm em lista, e o CI lido é o do `main` de cada repositório — o CI
 por PR exigiria uma chamada por PR e por isso não é lido nesta fase. Só o servidor fala com o GitHub; o navegador
@@ -439,6 +503,10 @@ commit `11dfd95`, deploy `6ab2c4c4e5f64e000804d36e`, contexto `deploy-preview`, 
 | correlação real | **parcial** — nenhum PR carrega `taskId` e a fábrica ainda não tem issue de job, então a cadeia issue → taskId → PR não existe naturalmente. Nada foi fabricado para completá-la |
 | bundle publicado | **40 chunks** varridos: sem `GITHUB_READ_TOKEN`, sem `api.github.com`, sem `Authorization: Bearer`, sem `x-github-api-version`, sem padrão de PAT. O único chunk que fala de rede de status é `MissionControl-*.js`, e só com `api/development-status` |
 | logs da Function | **nenhuma linha** em 30 minutos, cobrindo todo o smoke — coerente com o código, cuja única saída é `console.error('[development-status]', e.name)` |
+
+> Registro datado, preservado como estava. **O teto passou a 8 depois**, com a ponte de visibilidade da
+> fábrica (o produto passou a ter suas issues `factory:task` lidas). Um smoke novo deve esperar
+> **8 (teto 8)** — e a correlação issue → taskId → PR deixa de ser estruturalmente impossível no produto.
 
 **`Checks` não é oferecido no PAT fine-grained** destes repositórios. O CI da fábrica aparece como
 indisponível e **o repositório continua LIVE**: é a degradação por capacidade do § 11 funcionando em

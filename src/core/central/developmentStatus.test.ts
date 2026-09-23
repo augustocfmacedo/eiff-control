@@ -13,14 +13,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_CHAMADAS_POR_CICLO, REPOSITORIOS_OBSERVADOS, classificarRespostaGitHub, ehRepositorioObservado,
-  estadoDaLabel, extrairTaskId, lerGitHub, semCache, situacaoDoCi, type CacheCondicional, type EntradaCache,
+  MAX_CHAMADAS_POR_CICLO, RECUSAS_IDENTIDADE, REPOSITORIOS_OBSERVADOS, classificarRespostaGitHub, ehRepositorioObservado,
+  estadoDaLabel, extrairTaskId, lerGitHub, lerIdentidadeCanonica, semCache, situacaoDoCi, taskIdDaBranchDoJob,
+  type CacheCondicional, type EntradaCache,
 } from './githubAdapter';
 import { avaliarStatusVivo, compararBuild, humanizarIdade, LIMITE_STALE_GITHUB_S, ORIGEM_SHA_BUILD } from './statusVivo';
 import { autenticarStatus, laneDasLabels, projetarWorkItems, tratarDevelopmentStatus, type DepsStatus, type DevelopmentStatusResposta } from './statusServidor';
 import { lerStatusRemoto, proximoIntervalo, INTERVALO_STATUS_MS, INTERVALO_MAXIMO_MS } from '../../data/statusRemoto';
+import { ESPELHO_JOB_STATES, STATUS_POR_ESTADO_FACTORY } from './workItem';
 import {
-  CAMINHOS, CHECKS_VERMELHO, ISSUES_FACTORY, ROTAS_SAUDAVEIS, SHA_MAIN_CONTROL, criarFetchGitHub, type Rotas,
+  CAMINHOS, CHECKS_VERMELHO, ISSUES_CONTROL, ISSUES_FACTORY, PULLS_CONTROL, ROTAS_SAUDAVEIS, SHA_MAIN_CONTROL,
+  blocoFactoryTask, criarFetchGitHub, type Rotas,
 } from './__fixtures__/github';
 
 const AGORA = '2026-09-22T09:10:00.000Z';
@@ -204,21 +207,26 @@ describe('GitHub saudável', () => {
     expect(control.main?.shaCurto).toBe(SHA_MAIN_CONTROL.slice(0, 7));
     expect(control.main?.commitadoEm).toBe('2026-09-22T09:00:00Z');
     expect(control.ci).toEqual(expect.objectContaining({ situacao: 'VERDE', statusOrigem: 'completed:success' }));
-    expect(control.pullRequests).toHaveLength(2);
-    expect(control.issues).toHaveLength(0); // so a fabrica tem issues de job
+    expect(control.pullRequests).toHaveLength(3);
+    // o job canonico vive no repositorio-ALVO (JOB_CONTRACT.md), entao o produto TEM issue de job
+    expect(control.issues).toHaveLength(1);
+    expect(control.issues[0].taskId).toBe('EC-0042');
 
     expect(factory.ci?.situacao).toBe('RODANDO');
     expect(factory.ci?.statusOrigem).toBe('in_progress');
     expect(factory.issues).toHaveLength(3); // o PR devolvido pela API de issues foi descartado
   });
 
-  it('no máximo 7 chamadas por ciclo: nenhuma chamada por cartão', async () => {
+  it('no máximo 8 chamadas por ciclo: nenhuma chamada por cartão', async () => {
     const d = deps();
     const r = corpo(await tratarDevelopmentStatus(req(), d));
-    expect(MAX_CHAMADAS_POR_CICLO).toBe(7);
+    // 4 por repositorio que observa issues (main + check-runs + pulls + issues), nos dois: 4 + 4.
+    // Era 7 enquanto o produto nao lia issues; o numero e derivado da allowlist, nao digitado.
+    expect(MAX_CHAMADAS_POR_CICLO).toBe(8);
+    expect(MAX_CHAMADAS_POR_CICLO).toBe(REPOSITORIOS_OBSERVADOS.reduce((n, x) => n + (x.observarIssues ? 4 : 3), 0));
     expect(d.chamadasGitHub()).toBeLessThanOrEqual(MAX_CHAMADAS_POR_CICLO);
     expect(r.fontes.github.chamadas).toBe(d.chamadasGitHub());
-    // 5 cartoes (3 issues + 2 PRs) e ainda assim 7 chamadas: N+1 nao existe aqui
+    // varios cartoes (issues dos dois repos + PRs) e ainda assim 8 chamadas: N+1 nao existe aqui
     expect(r.workItems.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -260,8 +268,17 @@ describe('GitHub saudável', () => {
     expect(r.factory.procedencia).toBe('GITHUB_PROJECTION');
     expect(r.factory.aviso).toMatch(/Não é o estado operacional da Factory/);
     expect(r.factory.contagens.EM_VALIDACAO).toBe(1);
-    expect(r.factory.contagens.EXECUTANDO).toBe(1);
+    // 2 em execução: DF-0418 (issue no repositório da fábrica) + EC-0042 (issue no repositório-ALVO).
+    // Fábrica é a FONTE do item, não o endereço dele — contar por repositório escondia o job do produto.
+    expect(r.factory.contagens.EXECUTANDO).toBe(2);
     expect(r.factory.contagens.AGUARDANDO_HUMANO).toBe(1);
+    // e a resposta diz onde as issues de job são procuradas: os dois repositórios, não só o da fábrica
+    expect(r.factory.repositorios).toEqual([...REPOSITORIOS_OBSERVADOS.filter((x) => x.observarIssues).map((x) => x.repository)]);
+    expect(r.factory.repositorios).toContain('augustocfmacedo/eiff-control');
+    // MUDANÇA ADITIVA: `repositorio` (singular) continua no contrato, com o mesmo significado de sempre —
+    // o repositório da própria fábrica. Quem já lia o campo não quebra; quem quer saber onde os jobs
+    // moram passa a ter `repositorios`. O bridge não exigia renomear, então não renomeia.
+    expect(r.factory.repositorio).toBe('augustocfmacedo/eiff-dev-factory');
     // o aviso CITA esses campos para dizer que não existem nesta fonte; o DADO nunca os traz
     expect(JSON.stringify({ repositorios: r.repositorios, workItems: r.workItems })).not.toMatch(/heartbeat|lastTool|leaseExpires|costUsd/i);
   });
@@ -583,7 +600,8 @@ describe('degradação por capacidade', () => {
     const control = r.repositorios.find((x) => x.papel === 'produto')!;
     expect(control.disponivel).toBe(true);                       // o repositório NÃO cai
     expect(control.main?.sha).toBe(SHA_MAIN_CONTROL);            // main continua
-    expect(control.pullRequests).toHaveLength(2);                // PRs continuam
+    expect(control.pullRequests).toHaveLength(3);                // PRs continuam
+    expect(control.issues).toHaveLength(1);                      // e as issues de job tambem
     expect(control.ci).toBeNull();
     expect(control.erroCi).toBe('CHECKS_PERMISSION_UNAVAILABLE'); // e o CI diz por que sumiu
     expect(control.erroCodigo).toBeUndefined();
@@ -611,7 +629,26 @@ describe('degradação por capacidade', () => {
     expect(fab.main).not.toBeNull();
     expect(fab.issues).toEqual([]);
     expect(fab.erroIssues).toBe('PERMISSION_FAILURE'); // ausência de leitura, nunca "nenhuma issue"
-    expect(r.factory.contagens.EXECUTANDO).toBe(0);
+    // O outro repositório NÃO cai junto: o job EC-0042, que vive no eiff-control, continua contado.
+    // Antes da ponte este número era 0 — e um 0 aqui seria mentira sobre a fábrica inteira.
+    const control = r.repositorios.find((x) => x.papel === 'produto')!;
+    expect(control.issues).toHaveLength(1);
+    expect(control.erroIssues).toBeUndefined();
+    expect(r.factory.contagens.EXECUTANDO).toBe(1);
+  });
+
+  it('403 nas issues do PRODUTO não derruba a fábrica: o job que vive no repo da fábrica continua', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/issues`, { status: 403, corpo: {} });
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const control = r.repositorios.find((x) => x.papel === 'produto')!;
+    const fab = r.repositorios.find((x) => x.papel === 'fabrica')!;
+    expect(control.disponivel).toBe(true);           // o produto não cai
+    expect(control.main?.sha).toBe(SHA_MAIN_CONTROL);
+    expect(control.pullRequests).toHaveLength(3);
+    expect(control.issues).toEqual([]);
+    expect(control.erroIssues).toBe('PERMISSION_FAILURE');
+    expect(fab.erroIssues).toBeUndefined();          // a fábrica segue íntegra
+    expect(r.factory.contagens.EXECUTANDO).toBe(1);  // sobra DF-0418, some EC-0042
   });
 
   it('403 nos PRs não derruba o repositório', async () => {
@@ -699,5 +736,219 @@ describe('SHA do artefato publicado', () => {
     expect(v.comparacaoBuild.comparacao).toBe('DESCONHECIDO');
     expect(v.comparacaoBuild.texto).toContain('COMMIT_REF');
     expect(v.situacao).toBe('LIVE'); // desconhecer o build não é acusar desatualização
+  });
+});
+
+// ------------------------------------------------- 7. ponte de visibilidade da fábrica (cross-repo)
+
+// O contrato canônico da fábrica (JOB_CONTRACT.md, primeira linha) diz que um job é uma issue no
+// repositório-ALVO, não no da fábrica. Enquanto o Mission Control só lia issues do eiff-dev-factory,
+// todo job real do produto ficava invisível. Estes testes prendem a ponte nos dois sentidos: o job é
+// visto onde quer que viva, e "Factory" passa a significar a FONTE do item, nunca o endereço dele.
+describe('ponte de visibilidade da fábrica', () => {
+  const so = (caminho: string, corpoIssues: unknown): Rotas => ({ ...ROTAS_SAUDAVEIS, [caminho]: { status: 200, corpo: corpoIssues } });
+  const issue = (over: Record<string, unknown> = {}) => ({
+    number: 90, title: '[factory] Job de exemplo', state: 'open',
+    body: blocoFactoryTask({ taskId: 'EC-0099', repository: 'augustocfmacedo/eiff-control', titulo: 'Job de exemplo' }),
+    created_at: '2026-09-22T05:00:00Z', updated_at: '2026-09-22T08:00:00Z', closed_at: null,
+    html_url: 'https://github.com/augustocfmacedo/eiff-control/issues/90',
+    labels: [{ name: 'factory:task' }, { name: 'factory:state:READY' }],
+    ...over,
+  });
+
+  it('a allowlist observa issues nos dois repositórios — e continua sendo só ela', async () => {
+    expect(REPOSITORIOS_OBSERVADOS.map((r) => r.repository)).toEqual([
+      'augustocfmacedo/eiff-control', 'augustocfmacedo/eiff-dev-factory',
+    ]);
+    expect(REPOSITORIOS_OBSERVADOS.every((r) => r.observarIssues)).toBe(true);
+    expect(ehRepositorioObservado('augustocfmacedo/qualquer-outro')).toBe(false);
+
+    const d = deps();
+    await tratarDevelopmentStatus(req(), d);
+    expect(d.chamadasGitHub()).toBe(MAX_CHAMADAS_POR_CICLO); // gasta o orçamento inteiro, e nada além
+  });
+
+  it('job no repositório-ALVO vira cartão da fábrica com o estado cru preservado', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps()));
+    const job = r.workItems.find((i) => i.correlationId === 'EC-0042')!;
+    expect(job).toBeDefined();
+    expect(job.source).toBe('FACTORY');
+    expect(job.links?.repository).toBe('augustocfmacedo/eiff-control'); // mora no alvo, não na fábrica
+    expect(job.status).toBe('EXECUTANDO');
+    expect(job.statusOrigem).toBe('CODING');
+  });
+
+  it('issue + PR com o mesmo taskId viram UM cartão: o PR enriquece, nunca substitui o estado', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps()));
+    const cartoes = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(cartoes).toHaveLength(1);                       // um só cartão, não dois
+
+    const [c] = cartoes;
+    expect(c.correlationId).toBe('EC-0042');               // identidade canônica, não id gerado
+    expect(c.source).toBe('FACTORY');                      // a fábrica vence o GitHub na precedência
+    expect(c.status).toBe('EXECUTANDO');                   // CODING, o estado do JOB
+    expect(c.statusOrigem).toBe('CODING');                 // e não 'pr:open': o PR não sobrescreve
+    expect(c.links?.issue).toBe('https://github.com/augustocfmacedo/eiff-control/issues/7');
+    expect(c.links?.pullRequest).toBe('https://github.com/augustocfmacedo/eiff-control/pull/24');
+    expect(c.links?.branch).toBe('factory/EC-0042-a1');    // o taskId veio da branch
+  });
+
+  it('contagem da fábrica é cross-repository: soma job do alvo com job do repo da fábrica', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps()));
+    const daFabrica = r.workItems.filter((i) => i.source === 'FACTORY');
+    const repos = new Set(daFabrica.map((i) => i.links?.repository));
+    expect(repos.has('augustocfmacedo/eiff-control')).toBe(true);
+    expect(repos.has('augustocfmacedo/eiff-dev-factory')).toBe(true);
+    // a contagem publicada bate exatamente com o filtro por FONTE
+    const soma = Object.values(r.factory.contagens).reduce((a, b) => a + b, 0);
+    expect(soma).toBe(daFabrica.length);
+    // e NÃO é o filtro por repositório, que esconderia o job do produto
+    expect(soma).toBeGreaterThan(daFabrica.filter((i) => i.links?.repository === 'augustocfmacedo/eiff-dev-factory').length);
+  });
+
+  it('issue com factory:task mas SEM factory:state:* é demanda de arquitetura, não job em execução', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/issues`, [issue({ labels: [{ name: 'factory:task' }] })]);
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const it0 = r.workItems.find((i) => i.correlationId === 'EC-0099')!;
+    expect(it0.source).toBe('ARCHITECTURE');          // sem estado declarado não é job da fábrica
+    expect(it0.status).toBe('ARQUITETURA');
+    expect(it0.statusOrigem).toBe('issue:open');      // o fato bruto continua sendo o estado da issue
+    expect(r.factory.contagens.PRONTO).toBe(0);       // e não entra na contagem da fábrica
+  });
+
+  it('estado desconhecido não vira status inventado: a issue não é lida como job', async () => {
+    const rotas = so(`${CAMINHOS.CONTROL}/issues`, [issue({ labels: [{ name: 'factory:task' }, { name: 'factory:state:TELEPORTANDO' }] })]);
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas })));
+    const it0 = r.workItems.find((i) => i.correlationId === 'EC-0099')!;
+    expect(ESPELHO_JOB_STATES).not.toContain('TELEPORTANDO');
+    expect(it0.source).toBe('ARCHITECTURE');          // estado fora do catálogo = nenhum estado
+    expect(it0.statusOrigem).not.toContain('TELEPORTANDO');
+    expect(Object.keys(STATUS_POR_ESTADO_FACTORY)).toHaveLength(15); // catálogo fechado, sem status novo
+  });
+});
+
+// ------------------------------------------- 8. identidade canônica da tarefa (bloco factory-task:v1)
+
+// JOB_CONTRACT.md: o título da issue é `[factory] <título curto>` e a identidade do job é o campo `taskId`
+// DENTRO do bloco delimitado `<!-- factory-task:v1 -->` no corpo. Extrair o taskId do título, portanto, só
+// funcionava para issues fora do contrato. Estes testes prendem a leitura canônica — e as recusas.
+describe('identidade canônica da tarefa (bloco factory-task:v1)', () => {
+  it('título [factory] sem taskId + bloco canônico + PR na branch factory/EC-0042-a1 → UM cartão', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps()));
+    const cartoes = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(cartoes).toHaveLength(1);
+    const [c] = cartoes;
+    expect(c.source).toBe('FACTORY');
+    expect(c.status).toBe('EXECUTANDO');
+    expect(c.statusOrigem).toBe('CODING');
+    expect(c.links?.issue).toBe('https://github.com/augustocfmacedo/eiff-control/issues/7');
+    expect(c.links?.pullRequest).toBe('https://github.com/augustocfmacedo/eiff-control/pull/24');
+    // e o corpo da issue NUNCA sai no contrato de resposta
+    expect(JSON.stringify(r)).not.toContain('factory-task:v1');
+    expect(JSON.stringify(r)).not.toContain('baseSha');
+  });
+});
+
+// As recusas: nenhuma delas pode virar taskId por palpite. Cada caso abaixo é um jeito de a identidade estar
+// ausente, ambígua ou contraditória — e em todos a issue fica referenciada por `repositório#número`.
+describe('identidade canônica — recusas (nunca palpite)', () => {
+  const REPO = 'augustocfmacedo/eiff-control';
+  const OUTRO = 'augustocfmacedo/eiff-dev-factory';
+  const ISSUE_URL = 'https://github.com/augustocfmacedo/eiff-control/issues/7';
+  const bloco = (o: Partial<Parameters<typeof blocoFactoryTask>[0]> = {}) => blocoFactoryTask({ taskId: 'EC-0042', repository: REPO, ...o });
+  const rotas = (issue: Record<string, unknown>): Rotas => ({
+    ...ROTAS_SAUDAVEIS, [`${CAMINHOS.CONTROL}/issues`]: { status: 200, corpo: [{ ...ISSUES_CONTROL[0], ...issue }] },
+  });
+
+  it('o leitor aceita o bloco canônico completo: comentários inline, cerca yaml, fim opcional, aspas', () => {
+    expect(lerIdentidadeCanonica(bloco(), REPO)).toEqual({ taskId: 'EC-0042' });
+    expect(lerIdentidadeCanonica(bloco({ fechar: false }), REPO)).toEqual({ taskId: 'EC-0042' });
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: "EC-0042"\nrepository: '${REPO}'\n<!-- /factory-task -->`, REPO))
+      .toEqual({ taskId: 'EC-0042' });
+    expect(RECUSAS_IDENTIDADE).toHaveLength(7); // catálogo fechado
+  });
+
+  it('corpo sem marcador, vazio ou nulo → SEM_BLOCO (mesmo com taskId em texto solto)', () => {
+    expect(lerIdentidadeCanonica(`taskId: EC-0042\nrepository: ${REPO}`, REPO)).toEqual({ taskId: null, recusa: 'SEM_BLOCO' });
+    expect(lerIdentidadeCanonica('Referente ao EC-0042.', REPO).recusa).toBe('SEM_BLOCO');
+    expect(lerIdentidadeCanonica('', REPO).recusa).toBe('SEM_BLOCO');
+    expect(lerIdentidadeCanonica(null, REPO).recusa).toBe('SEM_BLOCO');
+  });
+
+  it('taskId fora do formato canônico → TASK_ID_INVALIDO; ausente → SEM_TASK_ID', () => {
+    for (const ruim of ['ec-0042', 'EC-42', 'EC-00420', 'E-0042', 'EC_0042', 'EC-0042 EXTRA', 'factory/EC-0042-a1']) {
+      expect(lerIdentidadeCanonica(bloco({ taskId: ruim }), REPO), ruim).toEqual({ taskId: null, recusa: 'TASK_ID_INVALIDO' });
+    }
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\nrepository: ${REPO}\n`, REPO).recusa).toBe('SEM_TASK_ID');
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId:   # vazio\nrepository: ${REPO}\n`, REPO).recusa).toBe('SEM_TASK_ID');
+  });
+
+  it('repository do bloco diferente do repositório da issue → REPOSITORIO_DIVERGENTE; ausente → SEM_REPOSITORIO', () => {
+    expect(lerIdentidadeCanonica(bloco({ repository: OUTRO }), REPO)).toEqual({ taskId: null, recusa: 'REPOSITORIO_DIVERGENTE' });
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\n`, REPO).recusa).toBe('SEM_REPOSITORIO');
+  });
+
+  it('dois blocos → BLOCOS_AMBIGUOS; chave repetida → CHAVE_DUPLICADA', () => {
+    expect(lerIdentidadeCanonica(bloco() + bloco({ taskId: 'EC-0043' }), REPO).recusa).toBe('BLOCOS_AMBIGUOS');
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\ntaskId: EC-0043\nrepository: ${REPO}\n`, REPO).recusa).toBe('CHAVE_DUPLICADA');
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\nrepository: ${REPO}\nrepository: ${OUTRO}\n`, REPO).recusa).toBe('CHAVE_DUPLICADA');
+    // chave INDENTADA não é nível superior: não conta como duplicata nem como valor
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\nrepository: ${REPO}\ndeps:\n  taskId: EC-0043\n`, REPO)).toEqual({ taskId: 'EC-0042' });
+  });
+
+  it('identificador só em texto livre (título e prosa) NÃO vira identidade: a issue fica em repositório#número', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: rotas({
+      title: '[EC-0042] Rateio de faturamento por etapa', body: 'Referente ao job EC-0042; contrato em outro lugar.',
+    }) })));
+    const daIssue = r.workItems.find((i) => i.links?.issue === ISSUE_URL)!;
+    expect(daIssue.correlationId).toBe('augustocfmacedo/eiff-control#7'); // referência preservada, sem palpite
+    expect(daIssue.source).toBe('FACTORY');                                // a label de estado continua valendo
+    expect(daIssue.links?.pullRequest).toBeUndefined();                    // e NÃO se fundiu com o PR
+    const doPr = r.workItems.find((i) => i.correlationId === 'EC-0042')!;
+    expect(doPr.source).toBe('GITHUB');                                    // o EC-0042 que sobra é só o do PR
+  });
+
+  it('título divergente não vence o bloco: [EC-0099] no título + EC-0042 no bloco → EC-0042, um cartão', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: rotas({ title: '[EC-0099] Rateio de faturamento por etapa' }) })));
+    expect(r.workItems.some((i) => i.correlationId === 'EC-0099')).toBe(false);
+    const c = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(c).toHaveLength(1);
+    expect(c[0].source).toBe('FACTORY');
+    expect(c[0].links?.issue).toBe(ISSUE_URL);
+    expect(c[0].links?.pullRequest).toBe('https://github.com/augustocfmacedo/eiff-control/pull/24');
+  });
+
+  it('repositório divergente no bloco → sem identidade mesmo com taskId perfeito; PR segue sozinho', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: rotas({ body: bloco({ repository: OUTRO }) }) })));
+    expect(r.workItems.find((i) => i.links?.issue === ISSUE_URL)!.correlationId).toBe('augustocfmacedo/eiff-control#7');
+    const c = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(c).toHaveLength(1);
+    expect(c[0].source).toBe('GITHUB');
+  });
+
+  it('PR: a branch canônica é a identidade; título é último recurso e nunca vence a branch', async () => {
+    expect(taskIdDaBranchDoJob('factory/EC-0042-a1')).toBe('EC-0042');
+    expect(taskIdDaBranchDoJob('factory/EC-0042-a0')).toBeNull();   // attempt ≥ 1 (lerBranchDoJob)
+    expect(taskIdDaBranchDoJob('factory/EC-0042')).toBeNull();
+    expect(taskIdDaBranchDoJob('feature/EC-0042-a1')).toBeNull();
+    expect(taskIdDaBranchDoJob(null)).toBeNull();
+
+    const pulls = PULLS_CONTROL.map((p) => (p.number === 24 ? { ...p, title: '[EC-0099] Rateio' } : p));
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: { ...ROTAS_SAUDAVEIS, [`${CAMINHOS.CONTROL}/pulls`]: { status: 200, corpo: pulls } } })));
+    const pr = r.repositorios.find((x) => x.papel === 'produto')!.pullRequests.find((p) => p.numero === 24)!;
+    expect(pr.taskId).toBe('EC-0042');
+    expect(r.workItems.filter((i) => i.correlationId === 'EC-0042')).toHaveLength(1);
+  });
+
+  it('o corpo é lido em trânsito: nenhuma chamada por issue, teto segue 8, corpo nunca sai na resposta', async () => {
+    const d = deps();
+    const r = corpo(await tratarDevelopmentStatus(req(), d));
+    expect(d.chamadasGitHub()).toBe(8);
+    expect(r.fontes.github.chamadas).toBe(8);
+    const json = JSON.stringify(r);
+    expect(json).not.toContain('factory-task:v1');
+    expect(json).not.toContain('Descrição livre para humanos');
+    expect(Object.keys(r.repositorios[0].issues[0])).not.toContain('body');
+    expect(Object.keys(r.repositorios[0].issues[0])).not.toContain('corpo');
   });
 });

@@ -363,11 +363,11 @@ describe('MC-LIVE-2B · ausência de CI é explicada, não só desenhada', () =>
     dados: {
       observadoEm: AGORA,
       build: { sha: null, origem: null },
-      fontes: { github: { fonte: 'GITHUB' as const, disponivel: true, stale: false, observadoEm: AGORA, chamadas: 7, maxChamadasPorCiclo: 7 } },
+      fontes: { github: { fonte: 'GITHUB' as const, disponivel: true, stale: false, observadoEm: AGORA, chamadas: 8, maxChamadasPorCiclo: 8 } },
       repositorios: [],
       workItems: [i],
       contagens: Object.fromEntries(MC_STATUS.map((s) => [s, 0])) as Record<McStatus, number>,
-      factory: { procedencia: 'GITHUB_PROJECTION' as const, aviso: 'projeção', repositorio: 'x/y', contagens: Object.fromEntries(MC_STATUS.map((s) => [s, 0])) as Record<McStatus, number> },
+      factory: { procedencia: 'GITHUB_PROJECTION' as const, aviso: 'projeção', repositorio: 'x/y', repositorios: ['x/y'], contagens: Object.fromEntries(MC_STATUS.map((s) => [s, 0])) as Record<McStatus, number> },
       limiteStaleSegundos: 180,
     },
     recebidoEm: AGORA, carregando: false, erro: null, falhasSeguidas: 0, recarregar: () => {},
