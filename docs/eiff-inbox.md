@@ -155,3 +155,121 @@ própria linha (regra do CLAUDE.md). Escrita da entrada só server-side (webhook
 6. `FactoryProvider` quando a fábrica expuser API; até lá, jobs MANUAL com resultado registrado por pessoa.
 7. Vínculos automáticos com Radar (contato por telefone/e-mail), obra (por contato) e Diretor Financeiro
    (`registrar_previsao` → `registrarPrevisaoDF`).
+
+## 11. Fase 2 — persistência real, ingestão da Central e estrutura operacional (23/09/2026)
+
+Bootstrap `014c867` aprovado conceitualmente; a fase 2 troca o slice em memória por persistência real sem duplicar a
+Central. Baseline: `origin/main` avançou 3 commits (PR #11, piloto Financeiro compacto) e o único arquivo em comum é
+`src/App.tsx` (aditivo dos dois lados); não foi incorporado.
+
+### 11.1 Decisões de produto tomadas nesta fase
+
+| Decisão | Resultado |
+| --- | --- |
+| Texto das mensagens | O Inbox persiste o conteúdo operacional em `inbox_message.body` (até 20 000 caracteres), com tipo, remetente, ids externos, `reply_to_external_id`, `central_message_id` (referência lógica), anexos (`attachments` jsonb), direção, origem (`provider`), estado de entrega e `body_search` (tsvector) para busca. A Central mantém a política dela (nenhum corpo em `central_message`). |
+| Metadados técnicos | `inbox_message.meta` jsonb com CHECK que recusa chaves como `authorization`, `token`, `headers`, `cookie`, `raw_payload` em qualquer nível. Attachments, classification, params e result passam pelo mesmo `inbox_jsonb_seguro`. |
+| Dados pessoais | Identidades em `inbox_contact_identity` (única por organização + canal + identificador normalizado). Telefone nunca inteiro em evento (CHECK `detail !~ '[0-9]{9,}'`), em log (mascarado) ou em tela (`identificadorMascarado`). |
+| Evidências | Só em `inbox_job.result` (referências: PR, commit, link), nunca texto livre longo. |
+| Auditoria | `audit_log` recebe ids, estados, contagens e motivos pela aplicação (`registrar()`); nenhum trigger de auditoria em `inbox_message`. O histórico operacional é `inbox_thread_event`: append-only, ≤ 500 caracteres, sem corpo de mensagem. Testes provam que o texto de uma resposta ou nota não aparece na auditoria. |
+| Approval | Continua dentro de `inbox_action` (colunas `approval_required`, `approver_role`, `decision`, `decided_by`, `decided_at`, `decision_reason`). Sugestão da IA = ação `responder` em estado `proposta` (a entidade `Sugestao` do bootstrap foi absorvida). |
+| Projeto/obra | Contexto separado (`inbox_thread.project_id` → `project`), não equipe nem regra. |
+| Dados de exemplo | Só no modo local. `inboxCarregarExemplo` é recusado no modo remoto: em produção o Inbox lê e grava as tabelas `inbox_*`. |
+
+### 11.2 Migration `0056_inbox.sql`
+
+Dependências: 0001 (organization, profile, project, role_kind, `touch_updated_at`), 0003 (`current_org`, `has_role`), 0008 (worker),
+0031 (radar_contact, radar_company). **Não** depende de 0049–0051: `central_conversation_id` e `central_message_id` são
+referências lógicas sem FK, para o Inbox poder ser aplicado antes ou depois da Central. Ordem em produção: 0056 pode ir
+sozinha; 0049–0051 continuam pendentes e independentes. Nada foi aplicado remotamente.
+
+| Tabela | Papel | Garantias no banco |
+| --- | --- | --- |
+| `inbox_sector`, `inbox_team`, `inbox_member`, `inbox_config` | setores (chave `code`), equipes por setor, membros (setor + equipe opcional + `atendente`/`gestor`), uma linha de configuração por organização (fallback, escalação, SLA, regras em jsonb) | unique `(organization_id, code)`; unique `(org, profile, sector, coalesce(team))`; coerência perfil/setor/equipe por trigger |
+| `inbox_contact`, `inbox_contact_identity` | pessoa → N identidades (WhatsApp, e-mail, portal…), pontes para Radar/equipe/perfil, `project_codes` | unique `(org, channel, identifier)` |
+| `inbox_thread` | unidade central: canal, provider, contexto, contato, assunto, status, prioridade, nível, setor, equipe, responsável, `participant_ids`, obra, labels, `classification` jsonb, `summary`, SLA, marcas de tempo, `resolved_by`, `origin` | CHECKs de status × timestamps; coerência contato/setor/equipe/responsável da organização |
+| `inbox_message` | conteúdo operacional | unique parcial `(org, provider, external_message_id)`; trigger imutabilidade (só `delivery_state`/`meta` mudam); delete recusado; `body_search` GIN |
+| `inbox_assignment` | histórico de setor/equipe/pessoa com `assigned_at`, `released_at`, `reason`, `origin`, `actor_id` | — |
+| `inbox_thread_event` | 24 tipos (`THREAD_CREATED`, `THREAD_REOPENED`, `MESSAGE_RECEIVED`, `MESSAGE_REGISTERED`, `NOTE_ADDED`, `AI_ANALYZED`, `TRIAGED`, `ROUTED`, `ASSIGNED`, `REASSIGNED`, `RELEASED`, `STATUS_CHANGED`, `PRIORITY_CHANGED`, `LABELS_CHANGED`, `SLA_ESCALATED`, `ACTION_*`, `JOB_*`, `RESOLVED`, `CLOSED`) | append-only por trigger; detalhe curto e sem dígitos longos |
+| `inbox_action`, `inbox_job` | ação com aprovação embutida; job com `result` jsonb (evidências) | `inbox_job.action_id` FK; `inbox_action.job_id` referência lógica |
+
+Índices: thread por (org, status, last_message_at), (org, contact, channel, context), (org, sector, status), (org, assignee, status);
+mensagem por thread/ocorrência e GIN de busca; evento/atribuição/ação/job por thread.
+
+**Idempotência**: função `inbox_ingest(...)` (SECURITY DEFINER, EXECUTE só para `service_role`) deduplica pela unique,
+resolve identidade → contato (cria "Contato não identificado" quando nova), reutiliza a thread não fechada do mesmo
+contato + canal + contexto (a mais recente), reabre a fechada mais recente (evento `THREAD_REOPENED`) ou abre uma nova
+(`THREAD_CREATED`, SLA da configuração), grava mensagem + `MESSAGE_RECEIVED` — tudo numa transação. Corrida entre dois
+webhooks: `unique_violation` é capturada e devolve a mensagem vencedora como duplicada.
+
+**RLS** (mesma matriz de `src/core/permissoes.ts`, sem segundo RBAC): `inbox_role()` = papéis com `inbox`;
+`inbox_config_role()` = Administrador/Diretoria. Configuração: `inbox` lê, `inbox_config` escreve. Contato/identidade: `inbox`
+lê e cadastra. Thread: visível se transversal, ou `assignee_id = auth.uid()`, ou participante, ou sem setor (triagem), ou
+setor em `inbox_user_sectors()` (lê só `inbox_member`). Filhos herdam por `EXISTS` na thread. Regra descoberta e provada:
+no Postgres a linha ATUALIZADA também precisa passar pela política de SELECT, então quem transfere uma conversa para fora
+do próprio recorte precisa continuar participante — o store faz exatamente isso (`entrar(novo, ator)`) e o adapter atualiza
+thread **sem RETURNING**. `authenticated` não tem DELETE (exceto `inbox_member`).
+
+### 11.3 Fluxo de ingestão
+
+```
+Meta WhatsApp Cloud → /api/channel/meta/webhook (Central: assinatura, teto, normalização — inalterados)
+  → ChannelInboundEvent[] + extrairConteudosMeta(payload) (o texto sai só aqui; a Central segue sem transportá-lo)
+  → ingerirEventosCentral (src/core/inbox/ingestaoServidor.ts, puro, portas injetadas)
+      → deEventoCentral (adapter: só MESSAGE_RECEIVED inbound com contexto conhecido; WHATSAPP; identidade = telefone E.164)
+      → portaIngestRpc (src/core/inbox/ingestaoPorta.ts: RPC inbox_ingest com SUPABASE_SERVICE_ROLE_KEY, só no servidor)
+          → identidade → contato → thread (reutiliza / reabre / cria) → mensagem → eventos
+      → inteligência? (porta opcional) → classificarSeguro → aplicarClassificacao
+         └ indisponível/erro/não auditável → nada muda: thread NOVA em "Não atribuídos" (triagem humana)
+  → 200 (ok) · 500 se alguma ingestão falhou (a Meta reenvia; a RPC completa só o que faltou)
+```
+
+Variáveis novas (só no painel do Netlify): `SUPABASE_SERVICE_ROLE_KEY` (já existia para o Vibe) e `EIFF_INBOX_ORGANIZATION_ID`.
+Sem elas o webhook mantém o comportamento anterior. A Central continua sem chave e sem cliente de banco
+(`seguranca.test.ts` prende: o webhook só chama `ingerirEventosCentral`).
+
+### 11.4 Estados, autoridade e eventos
+
+Máquina inalterada (NOVA → TRIADA → ATRIBUIDA → EM_ATENDIMENTO → AGUARDANDO_* → RESOLVIDA → FECHADA; reabrir com motivo).
+`eventoDaTransicao` gera `THREAD_REOPENED`, `RESOLVED`, `CLOSED` ou `STATUS_CHANGED`. Quem pode (`podeMudarStatus` /
+`podeAtribuir`, espelhados no RLS): transversal; responsável; gestor do setor; e, para conversa **sem** responsável no
+próprio recorte, qualquer membro assume ou tria. Perder o responsável numa thread em espera volta para TRIADA.
+
+### 11.5 Setores, equipes, membros e configuração
+
+`Setor` (código estável) › `Equipe` (por setor, opcional) › `MembroSetor` (usuário × setor × equipe? × papel). Roteamento
+e visibilidade são por setor; a equipe refina responsável padrão e exibição. Tela `#/atendimento/configuracao`
+(permissão `inbox_config`): setores (código, nome, ordem, responsável padrão, ativo), equipes, membros (com remoção),
+fallback, escalação, nível padrão e SLA por prioridade; regras de nível/roteamento aparecem somente leitura.
+
+### 11.6 Inteligência
+
+Contrato fechado: `IntelligenceProvider.analisar(InboxAnalysisInput) → { ok, resultado: InboxAnalysisResult } | { ok: false }`.
+Entrada: thread, mensagem, histórico limitado, contato, organização, contexto, setores disponíveis. Saída: intenção, assunto,
+entidades, resumo, prioridade, nível, setor/responsável recomendados, ação sugerida, confiança, sinais, motivo operacional,
+provedor/versão/modelo. `classificarSeguro` nunca lança e recusa resultado não auditável. Implementações: `SEM_INTELIGENCIA`
+(indisponível) e triagem humana. **Nenhum LLM real** nesta fase; o provedor entrará por função Netlify.
+
+### 11.7 Factory
+
+`ExecutionProvider` inalterado: MANUAL (job ENVIADO, resultado registrado por pessoa) e FACTORY reservado (recusa
+explícita). Action, Approval, Job, Result e Evidence persistidos (`inbox_action`, `inbox_job.result`). Nenhum import de
+`src/core/central/`, `githubAdapter` ou do repositório da fábrica no Inbox (teste de pureza).
+
+### 11.8 Testes e gates
+
+`src/core/inbox/inbox.test.ts` (máquina, roteamento, SLA, visibilidade, caixas, gateway idempotente, autoridade,
+resolução de thread, fallback sem IA, seed/higiene), `src/core/inbox/ingestaoServidor.test.ts` (adapter, porta RPC,
+duplicidade, falha da porta, fallback), `src/data/inbox.store.test.ts` (permissão, atribuição com histórico, status,
+rascunho/nota persistidos, triagem, ações/jobs, autoridade, configuração), `src/data/inbox.supabase.test.ts` (adapter:
+ordem, insert-only, update sem select, texto só em `inbox_message`, leitura). **RLS** provado em PostgreSQL de verdade por
+`scripts/pg-smoke-inbox.mjs` (PGlite, 12 provas A–L, rollback ao final; step "PostgreSQL Smoke (EIFF Inbox)" no CI) e
+o preflight da fila inteira aplica 0001..0056. Limitação: a suíte vitest não sobe Postgres; o RLS é provado pelo smoke.
+
+### 11.9 Pendências reais
+
+1. Aplicar 0056 em produção (e, separadamente, 0049–0051 da Central) e configurar `EIFF_INBOX_ORGANIZATION_ID`.
+2. Provedor de WhatsApp: a Meta Cloud já está na Central; a Evolution API citada não foi avaliada nem escolhida.
+3. Editor de regras de nível/roteamento (hoje somente leitura na configuração).
+4. Escalação por SLA como execução automática (hoje só decisão `escalacoesPendentes`).
+5. `IntelligenceProvider` real por função Netlify; `FactoryProvider` quando a fábrica expuser API.
+6. Vínculo automático contato ↔ Radar/obra e uso de `body_search` na busca da tela.

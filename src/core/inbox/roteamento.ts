@@ -4,7 +4,7 @@
 // setor -> responsavel padrao -> prioridade -> nivel -> SLA. A decisao vem com os motivos, porque a tela mostra
 // "por que foi para cá" e a auditoria precisa reler isso sem reexecutar nada.
 import type { Usuario } from '../types';
-import { ehAberta } from './estados';
+import { ehAberta, type RecorteUsuario } from './estados';
 import type { Classificacao, ConfiguracaoInbox, ContatoInbox, InboxDataset, InboxThread, MembroSetor, NivelAtendimento, Prioridade, RegraNivel, RegraRoteamento, Setor } from './tipos';
 
 // ---------------------------------------------------------------------------
@@ -131,6 +131,8 @@ export function visibilidadeDe(usuario: Pick<Usuario, 'id' | 'papel'>, membros: 
     gestorDe: meus.filter((m) => m.papel === 'gestor').map((m) => m.setorCodigo),
   };
 }
+/** Recorte do usuario para as regras de autoridade (estados.ts): a mesma leitura de membros usada pela visibilidade. */
+export const recorteDe = (usuario: Pick<Usuario, 'id' | 'papel'>, membros: MembroSetor[]): RecorteUsuario => ({ id: usuario.id, ...visibilidadeDe(usuario, membros) });
 /** A thread e visivel se e do meu setor, se sou responsavel/participante, se ainda nao tem setor (triagem) ou se vejo tudo. */
 export function threadVisivel(t: InboxThread, usuarioId: string, v: Visibilidade): boolean {
   if (v.transversal) return true;

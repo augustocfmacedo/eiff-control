@@ -9,14 +9,15 @@ import {
   CONFIGURACAO_PADRAO, EXECUCAO_FACTORY_RESERVADA, EXECUCAO_MANUAL, FACTORY_INDISPONIVEL, PROVEDOR_MANUAL, SEM_INTELIGENCIA, SETORES_PADRAO, STATUS_THREAD, TRANSICOES_THREAD,
   aoReceberMensagem, aoResponder, aplicarStatus, caixasVirtuais, classificacaoAuditavel, deEventoCentral, escalacoesPendentes, estadoSla, identificadorMascarado, inboxVazio,
   nivelMaisRestritivo, nivelPara, ordenarParaTrabalho, provedorExecucao, receberMensagem, resumoExecutivo, rotear, seedInbox, statusAposAtribuicao, threadVisivel,
-  threadsDaCaixa, triagemHumana, validarTransicao, visibilidadeDe, type Classificacao, type InboxJob, type InboxThread, type MensagemRecebida, type Relogio,
+  threadsDaCaixa, triagemHumana, validarTransicao, visibilidadeDe, classificarSeguro, eventoDaTransicao, normalizarIdentificador, podeAtribuir, podeMudarStatus, recorteDe, threadDoContato,
+  type Classificacao, type InboxJob, type InboxThread, type IntelligenceProvider, type MensagemRecebida, type Relogio,
 } from './index';
 
 const AGORA = '2026-09-23T12:00:00.000Z';
 const usuario = (id: string, papel: Usuario['papel']): Usuario => ({ id, nome: id, email: `${id}@x`, papel, obras: '*', ativo: true });
 const thread = (p: Partial<InboxThread> = {}): InboxThread => ({
   id: 'THR-1', canal: 'WHATSAPP', provider: 'MANUAL', contexto: 'EXTERNAL', contatoId: 'CTI-1', assunto: 'teste', status: 'NOVA', prioridade: 'Normal', nivel: 'C', participantes: [], labels: [],
-  abertaEm: '2026-09-23T10:00:00.000Z', ultimaMensagemEm: '2026-09-23T10:00:00.000Z', ...p,
+  abertaEm: '2026-09-23T10:00:00.000Z', ultimaMensagemEm: '2026-09-23T10:00:00.000Z', origem: 'MANUAL', ...p,
 });
 const classif = (p: Partial<Classificacao> = {}): Classificacao => ({ intencao: 'consultar_pagamento', assunto: 'NF', entidades: [], prioridadeRecomendada: 'Normal', nivelRecomendado: 'B', confianca: 0.9, sinais: ['x'], evidencias: [], provedor: 'HUMANO', versao: 't', em: AGORA, ...p });
 function relogio(): Relogio { let n = 0; return { agora: AGORA, novoId: (p) => `${p}-T${String(++n).padStart(3, '0')}` }; }
@@ -157,7 +158,7 @@ describe('visibilidade e caixas virtuais', () => {
   });
   it('"precisa de mim" inclui aprovação pendente do meu papel mesmo sem ser o responsável', () => {
     const dir = threadsDaCaixa(ds, usuario('u-augusto', 'Diretoria'), 'precisa_de_mim').map((t) => t.id);
-    expect(dir).toContain('THR-00003'); // ACT-00001 aguarda Diretoria
+    expect(dir).toContain('THR-00003'); // ACT-00002 aguarda Diretoria
     expect(dir).toContain('THR-00004'); // responsavel u-augusto, ATRIBUIDA
   });
   it('resumo executivo bate com as caixas', () => {
@@ -172,7 +173,7 @@ describe('gateway de entrada (idempotente) e fronteiras', () => {
     const r1 = receberMensagem(inboxVazio(), recebida(), relogio());
     expect(r1.novaThread && r1.novoContato && !r1.duplicada).toBe(true);
     expect(r1.contato?.tipoRelacao).toBe('desconhecido'); expect(r1.thread?.status).toBe('NOVA'); expect(r1.thread?.nivel).toBe('C');
-    expect(r1.ds.eventos.map((e) => e.tipo)).toEqual(['ABERTA', 'MENSAGEM']);
+    expect(r1.ds.eventos.map((e) => e.tipo)).toEqual(['THREAD_CREATED', 'MESSAGE_RECEIVED']);
     const r2 = receberMensagem(r1.ds, recebida(), relogio());
     expect(r2.duplicada).toBe(true); expect(r2.ds).toBe(r1.ds);
   });
@@ -187,7 +188,7 @@ describe('gateway de entrada (idempotente) e fronteiras', () => {
     const r1 = receberMensagem(inboxVazio(), recebida(), relogio());
     const fechada = { ...r1.ds, threads: r1.ds.threads.map((t) => ({ ...t, status: 'FECHADA' as const })) };
     const r2 = receberMensagem(fechada, recebida({ externalMessageId: 'wamid.3' }), relogio());
-    expect(r2.thread?.status).toBe('EM_ATENDIMENTO'); expect(r2.ds.eventos.some((e) => e.tipo === 'STATUS' && e.depois === 'EM_ATENDIMENTO')).toBe(true);
+    expect(r2.thread?.status).toBe('EM_ATENDIMENTO'); expect(r2.reaberta).toBe(true); expect(r2.ds.eventos.some((e) => e.tipo === 'THREAD_REOPENED' && e.depois === 'EM_ATENDIMENTO')).toBe(true);
   });
   it('evento da EIFF Central vira entrada do Inbox; sem contexto, telefone ou id externo é recusado', () => {
     const base = { provider: 'META_CLOUD' as const, externalConversationId: 'c1', externalMessageId: 'm1', direction: 'inbound' as const, eventType: 'MESSAGE_RECEIVED' as const, occurredAt: AGORA, contactPhone: '5562900000001', contexto: 'EXTERNAL' as const };
@@ -200,7 +201,7 @@ describe('gateway de entrada (idempotente) e fronteiras', () => {
   it('canal MANUAL só registra; inteligência ausente não inventa; Factory reservada recusa', async () => {
     const env = await PROVEDOR_MANUAL.enviar({ thread: thread(), contato: seedInbox(AGORA).contatos[0], texto: 'oi' });
     expect(env.entrega).toBe('registrada'); expect(env.externalMessageId).toBeUndefined();
-    const ia = await SEM_INTELIGENCIA.analisar({ thread: thread(), mensagens: [], setoresAtivos: [] });
+    const ia = await SEM_INTELIGENCIA.analisar({ thread: thread(), mensagem: seedInbox(AGORA).mensagens[0], historico: [], organizacaoId: 'org', contexto: 'EXTERNAL', setoresDisponiveis: [] });
     expect(ia.ok).toBe(false);
     const job: InboxJob = { id: 'J', threadId: 'T', acaoId: 'A', titulo: 't', objetivo: 'o', contexto: [], criteriosAceite: [], provider: 'FACTORY', estado: 'RASCUNHO', criadoEm: AGORA, criadoPor: 'u' };
     const f = await EXECUCAO_FACTORY_RESERVADA.execute(job); expect(f.estado).toBe('RASCUNHO'); expect(f.motivo).toBe(FACTORY_INDISPONIVEL); expect(f.referenciaExterna).toBeUndefined();
@@ -216,10 +217,62 @@ describe('gateway de entrada (idempotente) e fronteiras', () => {
   });
 });
 
+describe('quem pode agir (recorte dentro da permissão)', () => {
+  const ds = seedInbox(AGORA);
+  const rec = (id: string, papel: Usuario['papel']) => recorteDe(usuario(id, papel), ds.membros);
+  it('transversal muda tudo; responsável e gestor do setor mudam a sua; atendente de outro setor não', () => {
+    const t = ds.threads.find((x) => x.id === 'THR-00001')!; // FINANCEIRO, responsavel u-fin
+    expect(podeMudarStatus(rec('u-augusto', 'Diretoria'), t, 'AGUARDANDO_CONTATO').ok).toBe(true);
+    expect(podeMudarStatus(rec('u-fin', 'Financeiro'), t, 'AGUARDANDO_CONTATO').ok).toBe(true);
+    expect(podeMudarStatus(rec('u-contab', 'Contabilidade'), t, 'AGUARDANDO_CONTATO').ok).toBe(false); // atendente do setor, nao responsavel
+    expect(podeMudarStatus(rec('u-obra', 'Gestor de obra'), t, 'AGUARDANDO_CONTATO').ok).toBe(false);
+  });
+  it('conversa sem responsável: quem a enxerga assume ou tria; transferir para outra pessoa exige gestor/responsável', () => {
+    const t = ds.threads.find((x) => x.id === 'THR-00007')!; // NOVA, sem setor
+    expect(podeAtribuir(rec('u-contab', 'Contabilidade'), t, { responsavelId: 'u-contab' }).ok).toBe(true);
+    expect(podeAtribuir(rec('u-contab', 'Contabilidade'), t, { setorCodigo: 'OBRAS' }).ok).toBe(true); // triagem de conversa sem setor
+    const t10 = ds.threads.find((x) => x.id === 'THR-00010')!; // JURIDICO, sem responsavel
+    expect(podeAtribuir(rec('u-contab', 'Contabilidade'), t10, { responsavelId: 'u-obra' }).ok).toBe(false);
+    expect(podeAtribuir(rec('u-fin', 'Financeiro'), ds.threads.find((x) => x.id === 'THR-00001')!, { responsavelId: 'u-contab' }).ok).toBe(true); // gestor do setor
+  });
+  it('a transição gera o evento certo', () => {
+    expect(eventoDaTransicao('EM_ATENDIMENTO', 'RESOLVIDA')).toBe('RESOLVED');
+    expect(eventoDaTransicao('RESOLVIDA', 'FECHADA')).toBe('CLOSED');
+    expect(eventoDaTransicao('FECHADA', 'EM_ATENDIMENTO')).toBe('THREAD_REOPENED');
+    expect(eventoDaTransicao('ATRIBUIDA', 'AGUARDANDO_CONTATO')).toBe('STATUS_CHANGED');
+  });
+});
+
+describe('resolução de thread e fallback sem IA', () => {
+  it('mesma identidade + canal + contexto + thread não fechada reutiliza; fechada reabre; contexto diferente cria', () => {
+    const ds = seedInbox(AGORA);
+    const t = threadDoContato(ds.threads, 'CTI-00003', 'WHATSAPP', 'EXTERNAL'); expect(t?.id).toBe('THR-00003');
+    expect(threadDoContato(ds.threads, 'CTI-00003', 'EMAIL', 'EXTERNAL')?.id).toBe('THR-00008'); // RESOLVIDA (nao fechada) reusa
+    expect(threadDoContato(ds.threads, 'CTI-00003', 'WHATSAPP', 'INTERNAL')).toBeUndefined();
+    expect(normalizarIdentificador('WHATSAPP', '+55 (62) 90000-0101')).toBe('5562900000101');
+    expect(normalizarIdentificador('EMAIL', ' Renata.Campos@Horizontenorte.exemplo ')).toBe('renata.campos@horizontenorte.exemplo');
+    const r = receberMensagem(ds, recebida({ identidade: { canal: 'WHATSAPP', identificador: '+55 62 90000-0103', verificada: false }, externalMessageId: 'wamid.novo' }), relogio());
+    expect(r.novoContato).toBe(false); expect(r.thread?.id).toBe('THR-00003');
+  });
+  it('inteligência indisponível, quebrada ou não auditável nunca lança: a mensagem já está persistida e a thread fica NOVA', async () => {
+    const ds = seedInbox(AGORA);
+    const entrada = { thread: ds.threads[6], mensagem: ds.mensagens.find((m) => m.threadId === 'THR-00007')!, historico: [], organizacaoId: 'org', contexto: 'EXTERNAL' as const, setoresDisponiveis: [] };
+    expect((await classificarSeguro(undefined, entrada, AGORA)).ok).toBe(false);
+    expect((await classificarSeguro(SEM_INTELIGENCIA, entrada, AGORA)).ok).toBe(false);
+    const quebrada: IntelligenceProvider = { codigo: 'LLM', async analisar() { throw new Error('timeout'); } };
+    const q = await classificarSeguro(quebrada, entrada, AGORA); expect(q.ok).toBe(false); expect(!q.ok && q.motivo).toMatch(/timeout/);
+    const tagarela: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'x', assunto: 'y', entidades: [], prioridade: 'Normal', confianca: 0.9, sinais: ['z'.repeat(500)], provedor: 'LLM', versao: 'v' } }; } };
+    const tg = await classificarSeguro(tagarela, entrada, AGORA); expect(tg.ok).toBe(false); expect(!tg.ok && tg.motivo).toMatch(/raciocínio/);
+    const boa: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'solicitar_orcamento', assunto: 'Mezanino', entidades: [], resumo: 'pede mezanino', prioridade: 'Normal', nivel: 'B', setorRecomendado: 'COMERCIAL', confianca: 0.8, sinais: ['pede prazo'], motivoOperacional: 'pedido comercial', provedor: 'LLM', versao: 'v1', modelo: 'm' } }; } };
+    const ok = await classificarSeguro(boa, entrada, AGORA);
+    expect(ok.ok && ok.classificacao.provedor).toBe('LLM'); expect(ok.ok && ok.classificacao.evidencias[0]?.mensagemId).toBe(entrada.mensagem.id); expect(ok.ok && ok.resumo).toBe('pede mezanino');
+  });
+});
+
 describe('seed e higiene', () => {
   const ds = seedInbox(AGORA);
   it('seed íntegro: referências fecham, ids únicos, telefone mascarado em qualquer saída', () => {
-    const ids = [...ds.contatos, ...ds.threads, ...ds.mensagens, ...ds.eventos, ...ds.sugestoes, ...ds.acoes, ...ds.jobs].map((x) => x.id);
+    const ids = [...ds.contatos, ...ds.threads, ...ds.mensagens, ...ds.eventos, ...ds.atribuicoes, ...ds.acoes, ...ds.jobs, ...ds.equipes, ...ds.membros].map((x) => x.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const t of ds.threads) { expect(ds.contatos.some((c) => c.id === t.contatoId), t.id).toBe(true); if (t.setorCodigo) expect(ds.setores.some((s) => s.codigo === t.setorCodigo), t.id).toBe(true); }
     for (const m of ds.mensagens) expect(ds.threads.some((t) => t.id === m.threadId), m.id).toBe(true);
@@ -230,11 +283,14 @@ describe('seed e higiene', () => {
   });
   it('o seed não afirma envio: toda saída está apenas registrada e nenhum job foi à Factory', () => {
     for (const m of ds.mensagens.filter((m) => m.direcao === 'outbound')) expect(m.entrega).toBe('registrada');
+    // evento nunca carrega corpo de mensagem nem telefone inteiro (regra espelhada no CHECK da 0056)
+    for (const e of ds.eventos) { expect(e.detalhe.length).toBeLessThanOrEqual(500); expect(e.detalhe).not.toMatch(/[0-9]{9,}/); }
     for (const j of ds.jobs) { expect(j.provider).toBe('MANUAL'); expect(j.referenciaExterna).toBeUndefined(); }
   });
   it('o domínio é puro: nada de React, fetch, Supabase, GSAP ou Factory/Mission Control no core do Inbox', () => {
     const dir = path.join(process.cwd(), 'src/core/inbox');
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.ts') && !x.endsWith('.test.ts'))) {
+    // ingestaoPorta.ts e a UNICA excecao declarada: porta server-side (fetch injetado, chave do ambiente), como vibeServidor
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.ts') && !x.endsWith('.test.ts') && x !== 'ingestaoPorta.ts')) {
       const s = fs.readFileSync(path.join(dir, f), 'utf8');
       for (const proibido of ["from 'react'", 'fetch(', 'supabase', 'gsap', '../central/', 'eiff-dev-factory', 'githubAdapter', 'localStorage', 'import.meta.env']) expect(s, `${f} contém ${proibido}`).not.toContain(proibido);
     }

@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   CANAIS_INBOX, NIVEIS_ATENDIMENTO, NOME_STATUS, PRIORIDADES, TIPOS_ACAO, TRANSICOES_THREAD, caixasVirtuais, ehAberta, escalacoesPendentes, estadoSla,
   identificadorMascarado, ordenarParaTrabalho, resumoExecutivo, threadsDaCaixa, validarTransicao,
-  type CanalInbox, type EstadoSla, type InboxAction, type InboxJob, type InboxThread, type NivelAtendimento, type Prioridade, type StatusThread, type TipoAcao,
+  type CanalInbox, type EstadoSla, type InboxAction, type InboxJob, type InboxThread, type NivelAtendimento, type Prioridade, type StatusThread, type TipoAcao, type TipoEventoThread,
 } from '../core/inbox';
 import { RegraDeNegocioError, actions, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, dataHora, useToast, type Tone } from '../ui/components';
@@ -22,6 +22,7 @@ const TOM_SLA: Record<EstadoSla, Tone> = { sem_sla: 'muted', no_prazo: 'ok', ven
 const NOME_NIVEL: Record<NivelAtendimento, string> = { A: 'A · IA responde', B: 'B · IA prepara, humano aprova', C: 'C · humano obrigatório' };
 const NOME_ACAO: Record<TipoAcao, string> = { responder: 'Responder', encaminhar: 'Encaminhar', criar_tarefa: 'Criar tarefa', consultar_sistema: 'Consultar sistema', registrar_previsao: 'Registrar previsão', criar_job: 'Criar job' };
 const TOM_ACAO: Record<InboxAction['estado'], Tone> = { proposta: 'muted', aguardando_aprovacao: 'warn', aprovada: 'info', rejeitada: 'bad', executada: 'ok', falhou: 'bad' };
+const NOME_EVENTO: Partial<Record<TipoEventoThread, string>> = { THREAD_CREATED: 'conversa aberta', THREAD_REOPENED: 'reaberta', MESSAGE_RECEIVED: 'mensagem recebida', MESSAGE_REGISTERED: 'rascunho registrado', NOTE_ADDED: 'nota interna', AI_ANALYZED: 'analisada pela IA', TRIAGED: 'triada', ROUTED: 'roteada', ASSIGNED: 'atribuída', REASSIGNED: 'transferida', RELEASED: 'liberada', STATUS_CHANGED: 'status', PRIORITY_CHANGED: 'prioridade', ACTION_PROPOSED: 'ação proposta', ACTION_APPROVED: 'ação aprovada', ACTION_REJECTED: 'ação rejeitada', ACTION_EXECUTED: 'ação executada', JOB_CREATED: 'job criado', JOB_COMPLETED: 'job concluído', JOB_FAILED: 'job falhou', RESOLVED: 'resolvida', CLOSED: 'fechada', SLA_ESCALATED: 'escalada por SLA', LABELS_CHANGED: 'etiquetas' };
 const TOM_JOB: Record<InboxJob['estado'], Tone> = { RASCUNHO: 'muted', ENVIADO: 'info', EM_EXECUCAO: 'info', CONCLUIDO: 'ok', FALHOU: 'bad', CANCELADO: 'muted' };
 
 function haQuanto(iso: string, agoraIso: string): string {
@@ -61,7 +62,9 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
   const eventos = useMemo(() => (thread ? (inbox?.eventos ?? []).filter((e) => e.threadId === thread.id).sort((a, b) => (a.em < b.em ? 1 : -1)) : []), [inbox, thread]);
   const acoes = thread ? (inbox?.acoes ?? []).filter((a) => a.threadId === thread.id) : [];
   const jobs = thread ? (inbox?.jobs ?? []).filter((j) => j.threadId === thread.id) : [];
-  const sugestao = thread ? inbox?.sugestoes.find((s) => s.threadId === thread.id && s.estado === 'pendente') : undefined;
+  // sugestao de resposta = acao `responder` em estado `proposta` (proposta pela IA ou por regra)
+  const sugestao = thread ? acoes.find((a) => a.tipo === 'responder' && a.estado === 'proposta') : undefined;
+  const atribuicaoVigente = thread ? (inbox?.atribuicoes ?? []).find((a) => a.threadId === thread.id && !a.liberadaEm) : undefined;
   const escalacoes = useMemo(() => (inbox ? escalacoesPendentes(inbox.threads.filter((t) => ehAberta(t.status)), inbox.configuracao, agora) : []), [inbox, agora]);
   const nomeUsuario = (id?: string) => (id ? ds.usuarios.find((u) => u.id === id)?.nome ?? id : '—');
   // a conversa vai na query (nao no path) para o tour da rota ser visto uma vez so e a rota continuar sendo /atendimento
@@ -73,9 +76,8 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
       <>
         <PageHead title="EIFF Inbox" subtitle="Central de comunicação, atendimento e decisão. Uma EIFF para quem está fora; setores e pessoas por dentro." />
         <div className="card">
-          <Empty icone="atendimento" titulo="Nenhum canal conectado ainda" acao={podeConfigurar ? <button className="btn primary" onClick={() => tentar(() => actions.inboxCarregarExemplo(), 'Exemplo carregado neste navegador')}>Carregar dados de exemplo</button> : undefined}>
-            O Inbox está na fase de fundação: modelo, fronteiras e tela existem; WhatsApp, e-mail e a persistência no banco entram nas próximas etapas.
-            {podeConfigurar ? ' Carregue o exemplo fictício para navegar pela central (fica só neste navegador).' : ''}
+          <Empty icone="atendimento" titulo="Nenhuma conversa ainda" acao={podeConfigurar ? <div className="actions">{modo === 'local' && <button className="btn primary" onClick={() => tentar(() => actions.inboxCarregarExemplo(), 'Exemplo carregado')}>Carregar dados de exemplo</button>}<button className="btn" onClick={() => setModal('simular')}>Simular mensagem recebida</button><Link to="/atendimento/configuracao" className="btn">Configuração</Link></div> : undefined}>
+            As conversas chegam pela EIFF Central (WhatsApp) e ficam persistidas nas tabelas do Inbox. Enquanto nenhum canal está ligado, Administrador e Diretoria podem simular uma mensagem recebida ou configurar setores e membros.
           </Empty>
         </div>
         {el}
@@ -86,7 +88,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
   const enviar = () => {
     if (!thread || !texto.trim()) return;
     if (nota) tentar(() => { actions.inboxAnotar(thread.id, texto); setTexto(''); }, 'Nota registrada');
-    else tentar(async () => { const m = await actions.inboxResponder(thread.id, texto, { sugestaoId: sugestao && texto.trim() === sugestao.texto ? sugestao.id : undefined }); setTexto(''); toast(m.entrega === 'registrada' ? 'Resposta registrada. Canal não conectado: nada foi enviado.' : `Resposta ${m.entrega}`); });
+    else tentar(async () => { const m = await actions.inboxResponder(thread.id, texto, { propostaId: sugestao && texto.trim() === sugestao.descricao.trim() ? sugestao.id : undefined }); setTexto(''); toast(m.entrega === 'registrada' ? 'Rascunho registrado. Canal não conectado: nada foi enviado.' : `Resposta ${m.entrega}`); });
   };
   const mudarStatus = (para: StatusThread) => {
     if (!thread) return;
@@ -98,9 +100,10 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
 
   return (
     <>
-      <PageHead title="EIFF Inbox" subtitle={<>Central de comunicação, atendimento e decisão. {inbox.origem === 'seed' && <Badge tone="warn">dados de exemplo{modo === 'remoto' ? ' · só neste navegador' : ''}</Badge>}</>}>
+      <PageHead title="EIFF Inbox" subtitle={<>Central de comunicação, atendimento e decisão. {inbox.origem === 'seed' && <Badge tone="warn">dados de exemplo (modo local)</Badge>}{inbox.origem === 'remoto' && <Badge tone="ok">persistido</Badge>}</>}>
         {podeConfigurar && <button className="btn sm" onClick={() => setModal('simular')} title="Entra pelo mesmo gateway que o canal real usará">Simular mensagem recebida</button>}
-        {podeConfigurar && <button className="btn sm" onClick={() => { if (window.confirm('Substituir o Inbox pelo exemplo fictício?')) tentar(() => actions.inboxCarregarExemplo(), 'Exemplo carregado'); }}>Recarregar exemplo</button>}
+        {podeConfigurar && modo === 'local' && <button className="btn sm" onClick={() => { if (window.confirm('Substituir o Inbox pelo exemplo fictício?')) tentar(() => actions.inboxCarregarExemplo(), 'Exemplo carregado'); }}>Recarregar exemplo</button>}
+        {podeConfigurar && <Link to="/atendimento/configuracao" className="btn sm">Configuração</Link>}
       </PageHead>
       {resumo && (
         <KpiStrip itens={[
@@ -161,7 +164,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                   <Badge tone={TOM_SLA[estadoSla(thread, agora)]}>{NOME_SLA[estadoSla(thread, agora)]}</Badge>
                 </div>
               </div>
-              {thread.resumoIa && <div className="inbox-resumo small"><Icon name="chat" size={14} /> {thread.resumoIa}</div>}
+              {thread.resumo && <div className="inbox-resumo small"><Icon name="chat" size={14} /> {thread.resumo}</div>}
               <div className="inbox-msgs">
                 {mensagens.map((m) => (
                   <div key={m.id} className={`chat-msg ${m.direcao === 'outbound' ? 'usuario' : m.direcao === 'interna' ? 'interna' : 'assistente'}`}>
@@ -175,19 +178,19 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
               </div>
               {sugestao && !nota && (
                 <div className="inbox-sugestao">
-                  <div className="small"><b>Sugestão de resposta</b> <span className="muted">· {sugestao.provedor} · nível {thread.nivel}: {thread.nivel === 'A' ? 'poderia ir sozinha' : 'precisa da sua aprovação'}</span></div>
-                  <p className="small">{sugestao.texto}</p>
-                  <div className="actions"><button className="btn sm" onClick={() => setTexto(sugestao.texto)}>Usar esta</button><button className="btn sm" onClick={() => tentar(() => actions.inboxDescartarSugestao(sugestao.id), 'Sugestão descartada')}>Descartar</button></div>
+                  <div className="small"><b>Sugestão de resposta</b> <span className="muted">· {sugestao.propostaPor.nome} · nível {thread.nivel}: {thread.nivel === 'A' ? 'poderia ir sozinha' : 'precisa da sua aprovação'}</span></div>
+                  <p className="small">{sugestao.descricao}</p>
+                  <div className="actions"><button className="btn sm" onClick={() => setTexto(sugestao.descricao)}>Usar esta</button><button className="btn sm" onClick={() => tentar(() => actions.inboxDescartarSugestao(sugestao.id), 'Sugestão descartada')}>Descartar</button></div>
                 </div>
               )}
               <div className="inbox-composer">
                 <div className="actions small">
                   <label><input type="checkbox" checked={nota} onChange={(e) => setNota(e.target.checked)} /> Nota interna (o contato não vê)</label>
-                  {!nota && <span className="muted">Canal não conectado nesta fase: a resposta fica registrada, nada é enviado.</span>}
+                  {!nota && <span className="muted">Rascunho de resposta: fica registrado na conversa; nenhum canal envia nesta fase.</span>}
                 </div>
                 <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} placeholder={nota ? 'Anotar para a equipe…' : `Responder a ${contato?.nome ?? 'contato'}…`} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') enviar(); }} disabled={thread.status === 'FECHADA'} />
                 <div className="actions">
-                  <button className="btn primary" onClick={enviar} disabled={!texto.trim() || thread.status === 'FECHADA'}>{nota ? 'Registrar nota' : 'Registrar resposta'}</button>
+                  <button className="btn primary" onClick={enviar} disabled={!texto.trim() || thread.status === 'FECHADA'}>{nota ? 'Registrar nota interna' : 'Registrar rascunho de resposta'}</button>
                   <span className="muted small">Ctrl+Enter</span>
                   <div className="spacer" />
                   {thread.status === 'FECHADA' ? <button className="btn sm" onClick={() => mudarStatus('EM_ATENDIMENTO')}>Reabrir</button> : (
@@ -208,6 +211,13 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
               <Tabs value={aba} onChange={setAba} items={[{ id: 'contexto', label: 'Contexto' }, { id: 'acoes', label: `Ações${acoes.length ? ` (${acoes.length})` : ''}` }, { id: 'historico', label: 'Histórico' }]} />
               {aba === 'contexto' && (
                 <>
+                  <div className="inbox-decisao">
+                    <div><span className="muted small">Quem é</span><b>{contato?.nome}{contato?.empresaNome ? ` · ${contato.empresaNome}` : ''}</b></div>
+                    <div><span className="muted small">Sobre o quê</span><b>{thread.classificacao?.assunto ?? thread.assunto}</b></div>
+                    <div><span className="muted small">Responsável</span><b>{thread.responsavelId ? nomeUsuario(thread.responsavelId) : 'ninguém ainda'}{thread.setorCodigo ? ` · ${inbox.setores.find((s) => s.codigo === thread.setorCodigo)?.nome ?? thread.setorCodigo}${thread.equipeId ? ` / ${inbox.equipes.find((e) => e.id === thread.equipeId)?.nome ?? ''}` : ''}` : ''}</b></div>
+                    <div><span className="muted small">Esperando</span><b>{thread.status === 'AGUARDANDO_CONTATO' ? 'o contato responder' : thread.status === 'AGUARDANDO_APROVACAO' ? `aprovação de ${acoes.find((a) => a.estado === 'aguardando_aprovacao')?.aprovacao.papelDecisor ?? 'alguém'}` : thread.status === 'AGUARDANDO_INTERNO' ? 'a EIFF (interno)' : thread.status === 'NOVA' ? 'triagem' : thread.status === 'TRIADA' ? 'alguém assumir' : thread.status === 'ATRIBUIDA' ? 'a primeira resposta' : ehAberta(thread.status) ? 'o atendimento avançar' : 'nada: encerrada'}</b></div>
+                    <div><span className="muted small">Próxima ação</span><b>{sugestao ? 'revisar a resposta sugerida' : thread.classificacao?.acaoSugerida ?? (thread.status === 'NOVA' ? 'triar e rotear' : !thread.responsavelId ? 'assumir a conversa' : 'responder')}</b></div>
+                  </div>
                   <h3>Contato</h3>
                   <dl className="kv">
                     <dt>Nome</dt><dd>{contato?.nome}</dd>
@@ -231,7 +241,8 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                     </dl>
                   ) : <div className="small muted">Sem classificação: inteligência não configurada. Faça a triagem para rotear.</div>}
                   <h3>Atribuição</h3>
-                  <Atribuicao thread={thread} setores={inbox.setores} usuarios={ds.usuarios} onAplicar={(setorCodigo, responsavelId) => tentar(() => actions.inboxAtribuir(thread.id, { setorCodigo, responsavelId }), 'Atribuição aplicada')} />
+                  <Atribuicao thread={thread} setores={inbox.setores} equipes={inbox.equipes} usuarios={ds.usuarios} onAplicar={(setorCodigo, equipeId, responsavelId) => tentar(() => actions.inboxAtribuir(thread.id, { setorCodigo, equipeId, responsavelId }), 'Atribuição aplicada')} />
+                  {atribuicaoVigente && <div className="small muted" style={{ marginTop: 6 }}>desde {dataHora(atribuicaoVigente.atribuidaEm)} · origem {atribuicaoVigente.origem}{atribuicaoVigente.motivo ? ` · ${atribuicaoVigente.motivo}` : ''}</div>}
                   {thread.sla && <div className="small muted" style={{ marginTop: 8 }}>SLA de primeira resposta: {dataHora(thread.sla.primeiraRespostaAte)}{thread.sla.primeiraRespostaEm ? ` · respondida ${dataHora(thread.sla.primeiraRespostaEm)}` : ''}</div>}
                   {thread.labels.length > 0 && <div className="actions" style={{ marginTop: 8 }}>{thread.labels.map((l) => <Badge key={l} tone="muted">{l}</Badge>)}</div>}
                 </>
@@ -268,7 +279,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
               )}
               {aba === 'historico' && (
                 <ul className="timeline">
-                  {eventos.map((e) => <li key={e.id}><div>{e.detalhe}</div><div className="meta">{e.tipo} · {e.ator.nome} · {dataHora(e.em)}</div></li>)}
+                  {eventos.map((e) => <li key={e.id}><div>{e.detalhe}</div><div className="meta">{NOME_EVENTO[e.tipo] ?? e.tipo} · {e.ator.nome} · {dataHora(e.em)}</div></li>)}
                 </ul>
               )}
             </>
@@ -286,16 +297,19 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
   );
 }
 
-function Atribuicao({ thread, setores, usuarios, onAplicar }: { thread: InboxThread; setores: { codigo: string; nome: string; ativo: boolean }[]; usuarios: { id: string; nome: string; ativo: boolean }[]; onAplicar: (setor: string, responsavel: string) => void }) {
+function Atribuicao({ thread, setores, equipes, usuarios, onAplicar }: { thread: InboxThread; setores: { codigo: string; nome: string; ativo: boolean }[]; equipes: { id: string; setorCodigo: string; nome: string; ativo: boolean }[]; usuarios: { id: string; nome: string; ativo: boolean }[]; onAplicar: (setor: string, equipe: string, responsavel: string) => void }) {
   const [setor, setSetor] = useState(thread.setorCodigo ?? '');
+  const [equipe, setEquipe] = useState(thread.equipeId ?? '');
   const [resp, setResp] = useState(thread.responsavelId ?? '');
-  useEffect(() => { setSetor(thread.setorCodigo ?? ''); setResp(thread.responsavelId ?? ''); }, [thread.id, thread.setorCodigo, thread.responsavelId]);
-  const mudou = setor !== (thread.setorCodigo ?? '') || resp !== (thread.responsavelId ?? '');
+  useEffect(() => { setSetor(thread.setorCodigo ?? ''); setEquipe(thread.equipeId ?? ''); setResp(thread.responsavelId ?? ''); }, [thread.id, thread.setorCodigo, thread.equipeId, thread.responsavelId]);
+  const mudou = setor !== (thread.setorCodigo ?? '') || equipe !== (thread.equipeId ?? '') || resp !== (thread.responsavelId ?? '');
+  const equipesDoSetor = equipes.filter((e) => e.ativo && e.setorCodigo === setor);
   return (
     <div className="form">
-      <Field label="Setor"><Select value={setor} onChange={setSetor} allowEmpty="— sem setor —" options={setores.filter((s) => s.ativo).map((s) => ({ value: s.codigo, label: s.nome }))} /></Field>
+      <Field label="Setor"><Select value={setor} onChange={(v) => { setSetor(v); setEquipe(''); }} allowEmpty="— sem setor —" options={setores.filter((s) => s.ativo).map((s) => ({ value: s.codigo, label: s.nome }))} /></Field>
+      {equipesDoSetor.length > 0 && <Field label="Equipe"><Select value={equipe} onChange={setEquipe} allowEmpty="— setor inteiro —" options={equipesDoSetor.map((e) => ({ value: e.id, label: e.nome }))} /></Field>}
       <Field label="Responsável"><Select value={resp} onChange={setResp} allowEmpty="— não atribuído —" options={usuarios.filter((u) => u.ativo).map((u) => ({ value: u.id, label: u.nome }))} /></Field>
-      <div className="full actions"><button className="btn sm primary" disabled={!mudou} onClick={() => onAplicar(setor, resp)}>Aplicar</button></div>
+      <div className="full actions"><button className="btn sm primary" disabled={!mudou} onClick={() => onAplicar(setor, equipe, resp)}>Aplicar</button></div>
     </div>
   );
 }

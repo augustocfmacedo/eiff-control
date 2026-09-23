@@ -57,7 +57,7 @@ import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { MATRIZ, pode, type Acao } from '../core/permissoes';
-import { NOME_STATUS, aoResponder, aplicarStatus, classificacaoAuditavel, inboxVazio, maiorPrioridade, nivelMaisRestritivo, provedorCanal, provedorExecucao, receberMensagem, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
+import { NOME_STATUS, aoResponder, aplicarStatus, classificacaoAuditavel, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
@@ -372,12 +372,11 @@ function exigirProximaAcao(o: Oportunidade, tarefas: TarefaRadar[]) {
 // EIFF Inbox: normalizacao do slice e helpers (docs/eiff-inbox.md)
 // ---------------------------------------------------------------------------
 /**
- * Garante o slice do Inbox. Modo local sem slice: exemplo (seed ficticio do Inbox). Modo remoto sem slice: vazio —
- * o banco ainda nao persiste o Inbox (fase de fundacao) e nenhum exemplo aparece em producao sem pedido explicito
- * (`actions.inboxCarregarExemplo`, so Administrador/Diretoria, e so na memoria deste navegador).
+ * Garante o slice do Inbox. Modo local sem slice: exemplo (seed ficticio). Modo remoto: o slice vem das tabelas
+ * inbox_* (migration 0056) — sem elas, vazio. Nenhum exemplo entra em producao: `inboxCarregarExemplo` so no modo local.
  */
 export function garantirInbox(ds: Dataset, modo: 'local' | 'remoto'): Dataset {
-  if (ds.inbox && Array.isArray(ds.inbox.threads) && ds.inbox.configuracao) return ds;
+  if (ds.inbox && Array.isArray(ds.inbox.threads) && Array.isArray(ds.inbox.atribuicoes) && ds.inbox.configuracao) return ds;
   // new Date() direto: esta funcao roda em carregar(), na inicializacao do modulo, antes de `agora` existir
   return { ...ds, inbox: modo === 'local' ? seedInbox(new Date().toISOString()) : inboxVazio() };
 }
@@ -385,7 +384,7 @@ const inboxDe = (ds: Dataset): InboxDataset => ds.inbox ?? inboxVazio();
 const comInbox = (ds: Dataset, inbox: InboxDataset): Dataset => ({ ...ds, inbox });
 const trocar = <T extends { id: string }>(lista: T[], item: T): T[] => lista.map((x) => (x.id === item.id ? item : x));
 function idsInbox(i: InboxDataset): Relogio {
-  const usados = new Set<string>([...i.contatos, ...i.threads, ...i.mensagens, ...i.eventos, ...i.sugestoes, ...i.acoes, ...i.jobs].map((x) => x.id));
+  const usados = new Set<string>([...i.contatos, ...i.threads, ...i.mensagens, ...i.eventos, ...i.atribuicoes, ...i.acoes, ...i.jobs, ...i.equipes, ...i.membros].map((x) => x.id));
   const contagem: Record<string, number> = {};
   const novoId = (p: string) => {
     let k = contagem[p] ?? [...usados].filter((x) => x.startsWith(`${p}-`)).length;
@@ -402,10 +401,16 @@ function threadDoInbox(i: InboxDataset, id: string): InboxThread {
 }
 const atorAtual = () => ({ tipo: 'usuario' as const, id: state.usuario.id, nome: state.usuario.nome });
 const nomeUsuario = (ds: Dataset, id?: string) => (id ? ds.usuarios.find((u) => u.id === id)?.nome ?? id : '—');
-const eventoInbox = (ids: Relogio, threadId: string, tipo: ThreadEvent['tipo'], detalhe: string, antes?: string, depois?: string): ThreadEvent =>
-  ({ id: ids.novoId('EVT'), threadId, tipo, em: ids.agora, ator: atorAtual(), detalhe, antes, depois });
+/** Evento curto e seguro: nunca corpo de mensagem, nunca telefone inteiro (o banco tambem recusa). */
+const eventoInbox = (ids: Relogio, threadId: string, tipo: ThreadEvent['tipo'], detalhe: string, antes?: string, depois?: string, mensagemId?: string): ThreadEvent =>
+  ({ id: ids.novoId('EVT'), threadId, mensagemId, tipo, em: ids.agora, ator: atorAtual(), detalhe: detalhe.replace(/\d{9,}/g, (d) => `${d.slice(0, 4)}***${d.slice(-2)}`).slice(0, 500), antes, depois });
 const entrar = (t: InboxThread, usuarioId: string): InboxThread => (t.participantes.includes(usuarioId) ? t : { ...t, participantes: [...t.participantes, usuarioId] });
-
+const recorteAtual = (i: InboxDataset) => recorteDe(state.usuario, i.membros);
+/** Fecha a atribuicao vigente e abre a nova (historico de setor/equipe/pessoa). */
+function registrarAtribuicao(i: InboxDataset, ids: Relogio, threadId: string, alvo: { setorCodigo?: string; equipeId?: string; usuarioId?: string }, origem: Atribuicao['origem'], motivo?: string): Atribuicao[] {
+  const fechadas = i.atribuicoes.map((a) => (a.threadId === threadId && !a.liberadaEm ? { ...a, liberadaEm: ids.agora } : a));
+  return [...fechadas, { id: ids.novoId('ATR'), threadId, setorCodigo: alvo.setorCodigo, equipeId: alvo.equipeId, usuarioId: alvo.usuarioId, atribuidaEm: ids.agora, origem, motivo: motivo?.trim() || undefined, atorId: state.usuario.id }];
+}
 function registrar(ds: Dataset, acao: string, entidade: string, entidadeId: string, antes?: unknown, depois?: unknown, motivo?: string): Dataset {
   const a: Auditoria = { id: seq('AUD', ds.auditoria.map((x) => x.id)), ts: agora(), usuario: state.usuario.nome, acao, entidade, entidadeId, antes, depois, motivo };
   return { ...ds, auditoria: [a, ...ds.auditoria] };
@@ -2855,30 +2860,37 @@ export const actions = {
     commit(registrar(ds, 'restaurar_seed', 'dataset', 'seed'));
   },
   // -------------------------------------------------------------------------
-  // EIFF Inbox (fundacao): toda mutacao passa por aqui — permissao `inbox`, regra do core (src/core/inbox) e
-  // auditoria. Nada aqui envia mensagem, chama IA ou fala com a Factory: as fronteiras vivem em
-  // src/core/inbox/fronteiras.ts e, nesta fase, so o provider MANUAL existe (registra, nao envia).
+  // EIFF Inbox: toda mutacao passa por aqui — permissao `inbox` (portao), recorte de autoridade do core
+  // (podeAtribuir/podeMudarStatus, espelhado no RLS da 0056), regra do core e auditoria (ids e estados; nunca texto).
+  // Nada aqui envia mensagem, chama IA ou fala com a Factory: as fronteiras vivem em src/core/inbox/fronteiras.ts.
   // -------------------------------------------------------------------------
-  /** Setor e/ou responsavel. `''` limpa; `undefined` mantem. O status deriva da atribuicao (statusAposAtribuicao). */
-  inboxAtribuir(threadId: string, dados: { setorCodigo?: string; responsavelId?: string; motivo?: string }) {
+  /** Setor, equipe e/ou responsavel. `''` limpa; `undefined` mantem. Historico em `atribuicoes`; status deriva da atribuicao. */
+  inboxAtribuir(threadId: string, dados: { setorCodigo?: string; equipeId?: string; responsavelId?: string; motivo?: string; origem?: Atribuicao['origem'] }) {
     exigir('inbox');
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId);
     const setorCodigo = dados.setorCodigo === undefined ? t.setorCodigo : dados.setorCodigo || undefined;
     const responsavelId = dados.responsavelId === undefined ? t.responsavelId : dados.responsavelId || undefined;
+    let equipeId = dados.equipeId === undefined ? t.equipeId : dados.equipeId || undefined;
     if (setorCodigo && !i.setores.some((s) => s.codigo === setorCodigo && s.ativo)) throw new RegraDeNegocioError('Setor inválido ou inativo.');
+    if (setorCodigo !== t.setorCodigo && dados.equipeId === undefined) equipeId = undefined; // mudou de setor: a equipe antiga nao vale
+    if (equipeId) { const e = i.equipes.find((x) => x.id === equipeId); if (!e || !e.ativo || e.setorCodigo !== setorCodigo) throw new RegraDeNegocioError('Equipe inválida, inativa ou de outro setor.'); }
     if (responsavelId && !ds.usuarios.some((u) => u.id === responsavelId && u.ativo)) throw new RegraDeNegocioError('Responsável inválido ou inativo.');
-    if (setorCodigo === t.setorCodigo && responsavelId === t.responsavelId) return;
+    if (setorCodigo === t.setorCodigo && responsavelId === t.responsavelId && equipeId === t.equipeId) return;
+    const aut = podeAtribuir(recorteAtual(i), t, { setorCodigo, responsavelId });
+    if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
     const ids = idsInbox(i);
     const status = statusAposAtribuicao(t, setorCodigo, responsavelId);
     const sla = t.sla ?? { primeiraRespostaAte: slaDe(i.configuracao, t.prioridade, t.abertaEm) };
-    let novo: InboxThread = { ...t, setorCodigo, responsavelId, status, sla };
+    // quem transfere continua participante: mantem a visibilidade da conversa (e o RLS exige isso para a linha nova)
+    let novo: InboxThread = entrar({ ...t, setorCodigo, equipeId, responsavelId, status, sla }, state.usuario.id);
     if (responsavelId) novo = entrar(novo, responsavelId);
     const eventos: ThreadEvent[] = [];
     const motivo = dados.motivo?.trim() ? `: ${dados.motivo.trim()}` : '';
-    if (setorCodigo !== t.setorCodigo) eventos.push(eventoInbox(ids, t.id, t.setorCodigo ? 'TRANSFERIDA' : 'ROTEADA', `setor ${t.setorCodigo ?? '—'} → ${setorCodigo ?? '—'}${motivo}`, t.setorCodigo, setorCodigo));
-    if (responsavelId !== t.responsavelId) eventos.push(eventoInbox(ids, t.id, t.responsavelId ? 'TRANSFERIDA' : 'ATRIBUIDA', `responsável ${nomeUsuario(ds, t.responsavelId)} → ${nomeUsuario(ds, responsavelId)}${motivo}`, t.responsavelId, responsavelId));
-    if (status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS', 'status derivado da atribuição', t.status, status));
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos] }), 'inbox_atribuir', 'inbox_thread', t.id, { setorCodigo: t.setorCodigo, responsavelId: t.responsavelId, status: t.status }, { setorCodigo, responsavelId, status }, dados.motivo));
+    if (setorCodigo !== t.setorCodigo || equipeId !== t.equipeId) eventos.push(eventoInbox(ids, t.id, t.setorCodigo ? 'REASSIGNED' : 'ROUTED', `setor ${t.setorCodigo ?? '—'} → ${setorCodigo ?? '—'}${equipeId ? ` · equipe ${i.equipes.find((e) => e.id === equipeId)?.nome ?? equipeId}` : ''}${motivo}`, t.setorCodigo, setorCodigo));
+    if (responsavelId !== t.responsavelId) eventos.push(eventoInbox(ids, t.id, !responsavelId ? 'RELEASED' : t.responsavelId ? 'REASSIGNED' : 'ASSIGNED', `responsável ${nomeUsuario(ds, t.responsavelId)} → ${nomeUsuario(ds, responsavelId)}${motivo}`, t.responsavelId, responsavelId));
+    if (status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'status derivado da atribuição', t.status, status));
+    const atribuicoes = registrarAtribuicao(i, ids, t.id, { setorCodigo, equipeId, usuarioId: responsavelId }, dados.origem ?? 'manual', dados.motivo);
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos], atribuicoes }), 'inbox_atribuir', 'inbox_thread', t.id, { setorCodigo: t.setorCodigo, equipeId: t.equipeId, responsavelId: t.responsavelId, status: t.status }, { setorCodigo, equipeId, responsavelId, status }, dados.motivo));
   },
 
   inboxMudarStatus(threadId: string, para: StatusThread, motivo?: string) {
@@ -2886,14 +2898,30 @@ export const actions = {
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId);
     const v = validarTransicao(t, para, { motivo });
     if (!v.ok) throw new RegraDeNegocioError(v.motivo);
+    const aut = podeMudarStatus(recorteAtual(i), t, para);
+    if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
     const ids = idsInbox(i);
     const novo = entrar(aplicarStatus(t, para, ids.agora, 'humano'), state.usuario.id);
-    const ev = eventoInbox(ids, t.id, 'STATUS', motivo?.trim() || `${NOME_STATUS[t.status]} → ${NOME_STATUS[para]}`, t.status, para);
+    const ev = eventoInbox(ids, t.id, eventoDaTransicao(t.status, para), motivo?.trim() || `${NOME_STATUS[t.status]} → ${NOME_STATUS[para]}`, t.status, para);
     commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ev] }), 'inbox_mudar_status', 'inbox_thread', t.id, { status: t.status }, { status: para }, motivo));
   },
 
-  /** Resposta ao contato. O provider do canal decide a entrega; nesta fase so existe MANUAL: fica registrada, nada e enviado. */
-  async inboxResponder(threadId: string, texto: string, opcoes: { sugestaoId?: string } = {}): Promise<InboxMessage> {
+  inboxMudarPrioridade(threadId: string, prioridade: Prioridade, motivo?: string) {
+    exigir('inbox');
+    const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId);
+    if (t.prioridade === prioridade) return;
+    const aut = podeMudarStatus(recorteAtual(i), t, t.status === 'NOVA' ? 'TRIADA' : t.status);
+    if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
+    const ids = idsInbox(i);
+    const novo = entrar({ ...t, prioridade, sla: t.sla?.primeiraRespostaEm ? t.sla : { ...t.sla, primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } }, state.usuario.id);
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, eventoInbox(ids, t.id, 'PRIORITY_CHANGED', motivo?.trim() || `prioridade ${t.prioridade} → ${prioridade}`, t.prioridade, prioridade)] }), 'inbox_mudar_prioridade', 'inbox_thread', t.id, { prioridade: t.prioridade }, { prioridade }, motivo));
+  },
+
+  /**
+   * OUTBOUND_DRAFT: rascunho de resposta ao contato. O provider do canal decide a entrega; nesta fase so existe MANUAL,
+   * entao a mensagem fica `registrada` e NADA e enviado. `propostaId` = sugestao da IA aceita (a acao vira executada).
+   */
+  async inboxResponder(threadId: string, texto: string, opcoes: { propostaId?: string } = {}): Promise<InboxMessage> {
     exigir('inbox');
     if (!texto.trim()) throw new RegraDeNegocioError('Escreva a resposta.');
     const t0 = threadDoInbox(inboxDe(state.ds), threadId);
@@ -2903,33 +2931,40 @@ export const actions = {
     const envio = await provedorCanal(t0).enviar({ thread: t0, contato, texto: texto.trim() });
     // rele o estado depois do await: outra acao pode ter mudado a thread enquanto o canal respondia
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
-    const m: InboxMessage = { id: ids.novoId('MSG'), threadId: t.id, direcao: 'outbound', tipo: 'texto', autor: atorAtual(), texto: texto.trim(), anexos: [], em: ids.agora, entrega: envio.entrega, externalMessageId: envio.externalMessageId, sugestaoId: opcoes.sugestaoId };
+    const proposta = opcoes.propostaId ? i.acoes.find((a) => a.id === opcoes.propostaId && a.threadId === t.id) : undefined;
+    const m: InboxMessage = { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'outbound', tipo: 'texto', autor: atorAtual(), texto: texto.trim(), anexos: [], em: ids.agora, entrega: envio.entrega, externalMessageId: envio.externalMessageId, propostaId: proposta?.id };
     const novo = aoResponder(entrar(t, state.usuario.id), ids.agora);
-    const eventos = [eventoInbox(ids, t.id, 'MENSAGEM', `resposta ${envio.entrega}: ${envio.motivo}`)];
-    if (novo.status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS', 'primeira ação da EIFF na conversa', t.status, novo.status));
-    const sugestoes = opcoes.sugestaoId ? i.sugestoes.map((s) => (s.id === opcoes.sugestaoId ? { ...s, estado: 'aceita' as const, decididaPor: state.usuario.id, decididaEm: ids.agora } : s)) : i.sugestoes;
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos], sugestoes }), 'inbox_responder', 'inbox_thread', t.id, undefined, { mensagemId: m.id, entrega: envio.entrega, chars: m.texto.length, sugestaoId: opcoes.sugestaoId }));
+    const eventos = [eventoInbox(ids, t.id, 'MESSAGE_REGISTERED', `rascunho de resposta ${envio.entrega}: ${envio.motivo}`, undefined, undefined, m.id)];
+    if (novo.status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'primeira ação da EIFF na conversa', t.status, novo.status));
+    let acoes = i.acoes;
+    if (proposta && (proposta.estado === 'proposta' || proposta.estado === 'aprovada')) {
+      acoes = trocar(i.acoes, { ...proposta, estado: 'executada', executadaEm: ids.agora, referencia: m.id, aprovacao: { ...proposta.aprovacao, decisao: 'aprovada', decididaPor: state.usuario.id, decididaEm: ids.agora } });
+      eventos.push(eventoInbox(ids, t.id, 'ACTION_EXECUTED', `sugestão ${proposta.id} usada na resposta`));
+    }
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos], acoes }), 'inbox_responder', 'inbox_thread', t.id, undefined, { mensagemId: m.id, entrega: envio.entrega, chars: m.texto.length, propostaId: proposta?.id }));
     return m;
   },
 
+  /** INTERNAL_NOTE: nota interna persistente (o contato nao ve). */
   inboxAnotar(threadId: string, texto: string) {
     exigir('inbox');
     if (!texto.trim()) throw new RegraDeNegocioError('Escreva a nota.');
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
-    const m: InboxMessage = { id: ids.novoId('MSG'), threadId: t.id, direcao: 'interna', tipo: 'nota', autor: atorAtual(), texto: texto.trim(), anexos: [], em: ids.agora };
+    const m: InboxMessage = { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'interna', tipo: 'nota', autor: atorAtual(), texto: texto.trim(), anexos: [], em: ids.agora };
     const novo = { ...entrar(t, state.usuario.id), ultimaMensagemEm: ids.agora };
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, eventoInbox(ids, t.id, 'NOTA', 'nota interna')] }), 'inbox_anotar', 'inbox_thread', t.id, undefined, { mensagemId: m.id }));
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, eventoInbox(ids, t.id, 'NOTE_ADDED', 'nota interna', undefined, undefined, m.id)] }), 'inbox_anotar', 'inbox_thread', t.id, undefined, { mensagemId: m.id }));
   },
 
-  inboxDescartarSugestao(sugestaoId: string, motivo?: string) {
+  /** Descarta uma sugestao (acao em `proposta`). */
+  inboxDescartarSugestao(acaoId: string, motivo?: string) {
     exigir('inbox');
     const ds = state.ds; const i = inboxDe(ds);
-    const s = i.sugestoes.find((x) => x.id === sugestaoId);
-    if (!s) throw new RegraDeNegocioError('Sugestão não encontrada.');
-    if (s.estado !== 'pendente') throw new RegraDeNegocioError('Sugestão já decidida.');
+    const a = i.acoes.find((x) => x.id === acaoId);
+    if (!a) throw new RegraDeNegocioError('Sugestão não encontrada.');
+    if (a.estado !== 'proposta') throw new RegraDeNegocioError('Sugestão já decidida.');
     const ids = idsInbox(i);
-    const nova = { ...s, estado: 'descartada' as const, decididaPor: state.usuario.id, decididaEm: ids.agora };
-    commit(registrar(comInbox(ds, { ...i, sugestoes: trocar(i.sugestoes, nova), eventos: [...i.eventos, eventoInbox(ids, s.threadId, 'SUGESTAO', `sugestão descartada${motivo ? `: ${motivo}` : ''}`)] }), 'inbox_descartar_sugestao', 'inbox_thread', s.threadId, { sugestaoId, estado: s.estado }, { estado: 'descartada' }, motivo));
+    const nova: InboxAction = { ...a, estado: 'rejeitada', aprovacao: { ...a.aprovacao, decisao: 'rejeitada', decididaPor: state.usuario.id, decididaEm: ids.agora, motivo: motivo?.trim() || undefined } };
+    commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), eventos: [...i.eventos, eventoInbox(ids, a.threadId, 'ACTION_REJECTED', `sugestão descartada${motivo ? `: ${motivo}` : ''}`)] }), 'inbox_descartar_sugestao', 'inbox_acao', a.id, { estado: a.estado }, { estado: 'rejeitada' }, motivo));
   },
 
   /**
@@ -2937,29 +2972,33 @@ export const actions = {
    * pessoa prevalece sobre as regras; o nivel nunca fica MENOS restritivo que a politica; responsavel e status so
    * sao preenchidos quando estao vazios (quem ja atende continua atendendo).
    */
-  inboxTriar(threadId: string, dados: { intencao: string; assunto: string; setorCodigo?: string; prioridade: Prioridade; nivel: NivelAtendimento; acaoSugerida?: string; sinais?: string[] }) {
+  inboxTriar(threadId: string, dados: { intencao: string; assunto: string; setorCodigo?: string; equipeId?: string; prioridade: Prioridade; nivel: NivelAtendimento; acaoSugerida?: string; sinais?: string[] }) {
     exigir('inbox');
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
     if (dados.setorCodigo && !i.setores.some((s) => s.codigo === dados.setorCodigo && s.ativo)) throw new RegraDeNegocioError('Setor inválido ou inativo.');
+    const aut = podeAtribuir(recorteAtual(i), t, { setorCodigo: dados.setorCodigo ?? t.setorCodigo, responsavelId: t.responsavelId });
+    if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
     const classificacao = triagemHumana({ ...dados, setorRecomendado: dados.setorCodigo }, ids.agora);
     const audit = classificacaoAuditavel(classificacao);
     if (!audit.ok) throw new RegraDeNegocioError(audit.motivo);
     const contato = i.contatos.find((c) => c.id === t.contatoId);
     const decisao = rotear({ thread: { ...t, prioridade: dados.prioridade }, classificacao, contato, setores: i.setores, config: i.configuracao });
     const setorCodigo = dados.setorCodigo ?? decisao.setorCodigo;
-    const responsavelId = t.responsavelId ?? (dados.setorCodigo ? i.setores.find((s) => s.codigo === setorCodigo)?.responsavelPadraoId : decisao.responsavelId);
+    const equipeId = dados.equipeId && i.equipes.some((e) => e.id === dados.equipeId && e.setorCodigo === setorCodigo && e.ativo) ? dados.equipeId : setorCodigo === t.setorCodigo ? t.equipeId : undefined;
+    const responsavelId = t.responsavelId ?? (dados.setorCodigo ? i.equipes.find((e) => e.id === equipeId)?.responsavelPadraoId ?? i.setores.find((s) => s.codigo === setorCodigo)?.responsavelPadraoId : decisao.responsavelId);
     const nivel = nivelMaisRestritivo(dados.nivel, decisao.nivel);
     const prioridade = maiorPrioridade(dados.prioridade, t.prioridade === 'Normal' ? dados.prioridade : t.prioridade);
     const status = statusAposAtribuicao(t, setorCodigo, responsavelId);
-    let novo: InboxThread = { ...t, classificacao, setorCodigo, responsavelId, nivel, prioridade, status, assunto: dados.assunto.trim() || t.assunto, sla: t.sla ?? { primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } };
+    let novo: InboxThread = entrar({ ...t, classificacao, setorCodigo, equipeId, responsavelId, nivel, prioridade, status, assunto: dados.assunto.trim() || t.assunto, sla: t.sla ?? { primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } }, state.usuario.id);
     if (responsavelId) novo = entrar(novo, responsavelId);
     const eventos = [
-      eventoInbox(ids, t.id, 'CLASSIFICADA', `triagem humana: intenção ${classificacao.intencao} · prioridade ${prioridade} · nível ${nivel}`),
-      eventoInbox(ids, t.id, 'ROTEADA', `${dados.setorCodigo ? `setor escolhido na triagem: ${setorCodigo}` : decisao.motivos.join(' · ')}`, t.setorCodigo, setorCodigo),
+      eventoInbox(ids, t.id, 'TRIAGED', `triagem humana: intenção ${classificacao.intencao} · prioridade ${prioridade} · nível ${nivel}`),
+      eventoInbox(ids, t.id, 'ROUTED', `${dados.setorCodigo ? `setor escolhido na triagem: ${setorCodigo}` : decisao.motivos.join(' · ')}`, t.setorCodigo, setorCodigo),
     ];
-    if (responsavelId !== t.responsavelId) eventos.push(eventoInbox(ids, t.id, 'ATRIBUIDA', `responsável ${nomeUsuario(ds, responsavelId)} (padrão do setor)`, t.responsavelId, responsavelId));
-    if (status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS', 'status derivado da triagem', t.status, status));
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos] }), 'inbox_triar', 'inbox_thread', t.id, { status: t.status, setorCodigo: t.setorCodigo, nivel: t.nivel }, { intencao: classificacao.intencao, setorCodigo, responsavelId, prioridade, nivel, status, regra: decisao.regraRoteamentoId }));
+    if (responsavelId !== t.responsavelId) eventos.push(eventoInbox(ids, t.id, 'ASSIGNED', `responsável ${nomeUsuario(ds, responsavelId)} (padrão do setor)`, t.responsavelId, responsavelId));
+    if (status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'status derivado da triagem', t.status, status));
+    const atribuicoes = setorCodigo !== t.setorCodigo || responsavelId !== t.responsavelId || equipeId !== t.equipeId ? registrarAtribuicao(i, ids, t.id, { setorCodigo, equipeId, usuarioId: responsavelId }, 'triagem') : i.atribuicoes;
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos], atribuicoes }), 'inbox_triar', 'inbox_thread', t.id, { status: t.status, setorCodigo: t.setorCodigo, nivel: t.nivel }, { intencao: classificacao.intencao, setorCodigo, equipeId, responsavelId, prioridade, nivel, status, regra: decisao.regraRoteamentoId }));
   },
 
   /** Propoe uma acao a partir da conversa. Com aprovacao exigida, a thread vai para AGUARDANDO_APROVACAO (se a transicao valer). */
@@ -2970,8 +3009,8 @@ export const actions = {
     const exigida = !!dados.papelDecisor;
     const acao: InboxAction = { id: ids.novoId('ACT'), threadId: t.id, tipo: dados.tipo, titulo: dados.titulo.trim(), descricao: dados.descricao.trim(), parametros: dados.parametros ?? {}, estado: exigida ? 'aguardando_aprovacao' : 'aprovada', aprovacao: { exigida, papelDecisor: dados.papelDecisor }, propostaPor: atorAtual(), criadaEm: ids.agora };
     let novo = entrar(t, state.usuario.id);
-    const eventos = [eventoInbox(ids, t.id, 'ACAO', `ação proposta: ${acao.titulo}${exigida ? ` (aguarda ${dados.papelDecisor})` : ''}`)];
-    if (exigida && validarTransicao(novo, 'AGUARDANDO_APROVACAO').ok) { eventos.push(eventoInbox(ids, t.id, 'STATUS', `aguardando aprovação de ${dados.papelDecisor}`, novo.status, 'AGUARDANDO_APROVACAO')); novo = aplicarStatus(novo, 'AGUARDANDO_APROVACAO', ids.agora); }
+    const eventos = [eventoInbox(ids, t.id, 'ACTION_PROPOSED', `ação proposta: ${acao.titulo}${exigida ? ` (aguarda ${dados.papelDecisor})` : ''}`)];
+    if (exigida && validarTransicao(novo, 'AGUARDANDO_APROVACAO').ok) { eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', `aguardando aprovação de ${dados.papelDecisor}`, novo.status, 'AGUARDANDO_APROVACAO')); novo = aplicarStatus(novo, 'AGUARDANDO_APROVACAO', ids.agora); }
     commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), acoes: [...i.acoes, acao], eventos: [...i.eventos, ...eventos] }), 'inbox_propor_acao', 'inbox_acao', acao.id, undefined, { threadId: t.id, tipo: acao.tipo, estado: acao.estado, papelDecisor: dados.papelDecisor }));
     return acao;
   },
@@ -2990,9 +3029,9 @@ export const actions = {
     const t = threadDoInbox(i, a.threadId); const ids = idsInbox(i);
     const nova: InboxAction = { ...a, estado: decisao, aprovacao: { ...a.aprovacao, decisao, decididaPor: state.usuario.id, decididaEm: ids.agora, motivo: motivo?.trim() || undefined } };
     let novo = entrar(t, state.usuario.id);
-    const eventos = [eventoInbox(ids, t.id, 'APROVACAO', `ação ${decisao}: ${a.titulo}${motivo ? ` — ${motivo.trim()}` : ''}`, a.estado, decisao)];
+    const eventos = [eventoInbox(ids, t.id, decisao === 'aprovada' ? 'ACTION_APPROVED' : 'ACTION_REJECTED', `ação ${decisao}: ${a.titulo}${motivo ? ` — ${motivo.trim()}` : ''}`, a.estado, decisao)];
     const aindaAguarda = i.acoes.some((x) => x.id !== a.id && x.threadId === t.id && x.estado === 'aguardando_aprovacao');
-    if (t.status === 'AGUARDANDO_APROVACAO' && !aindaAguarda && validarTransicao(novo, 'EM_ATENDIMENTO').ok) { eventos.push(eventoInbox(ids, t.id, 'STATUS', 'aprovação decidida: volta ao atendimento', t.status, 'EM_ATENDIMENTO')); novo = aplicarStatus(novo, 'EM_ATENDIMENTO', ids.agora); }
+    if (t.status === 'AGUARDANDO_APROVACAO' && !aindaAguarda && validarTransicao(novo, 'EM_ATENDIMENTO').ok) { eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'aprovação decidida: volta ao atendimento', t.status, 'EM_ATENDIMENTO')); novo = aplicarStatus(novo, 'EM_ATENDIMENTO', ids.agora); }
     commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), acoes: trocar(i.acoes, nova), eventos: [...i.eventos, ...eventos] }), `inbox_acao_${decisao}`, 'inbox_acao', a.id, { estado: a.estado }, { estado: decisao }, motivo));
   },
 
@@ -3014,7 +3053,7 @@ export const actions = {
       const tarefa = state.ds.tarefas[state.ds.tarefas.length - 1];
       const ds = state.ds; const i = inboxDe(ds); const ids = idsInbox(i);
       const nova: InboxAction = { ...a, estado: 'executada', executadaEm: ids.agora, referencia: tarefa.id };
-      commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), eventos: [...i.eventos, eventoInbox(ids, t.id, 'ACAO', `tarefa ${tarefa.id} criada no EIFF Control`)] }), 'inbox_executar_acao', 'inbox_acao', a.id, { estado: a.estado }, { estado: 'executada', referencia: tarefa.id }));
+      commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), eventos: [...i.eventos, eventoInbox(ids, t.id, 'ACTION_EXECUTED', `tarefa ${tarefa.id} criada no EIFF Control`)] }), 'inbox_executar_acao', 'inbox_acao', a.id, { estado: a.estado }, { estado: 'executada', referencia: tarefa.id }));
       return;
     }
     if (a.tipo === 'criar_job') {
@@ -3026,13 +3065,13 @@ export const actions = {
       const enviado = r.estado !== 'RASCUNHO';
       const jobFinal: InboxJob = { ...job, estado: r.estado, referenciaExterna: r.referenciaExterna, resultado: r.resultado };
       const nova: InboxAction = enviado ? { ...a, estado: 'executada', executadaEm: ids.agora, jobId: job.id } : { ...a, estado: 'falhou', jobId: job.id };
-      commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), jobs: [...i.jobs, jobFinal], eventos: [...i.eventos, eventoInbox(ids, t.id, 'JOB', `job ${job.id} · ${provider} · ${r.estado}: ${r.motivo}`)] }), 'inbox_executar_acao', 'inbox_acao', a.id, { estado: a.estado }, { estado: nova.estado, jobId: job.id, provider, jobEstado: r.estado }));
+      commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), jobs: [...i.jobs, jobFinal], eventos: [...i.eventos, eventoInbox(ids, t.id, enviado ? 'JOB_CREATED' : 'JOB_FAILED', `job ${job.id} · ${provider} · ${r.estado}: ${r.motivo}`)] }), 'inbox_executar_acao', 'inbox_acao', a.id, { estado: a.estado }, { estado: nova.estado, jobId: job.id, provider, jobEstado: r.estado }));
       if (!enviado) throw new RegraDeNegocioError(r.motivo);
       return;
     }
     const ds = state.ds; const i = inboxDe(ds); const ids = idsInbox(i);
     const nova: InboxAction = { ...a, estado: 'executada', executadaEm: ids.agora };
-    commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), eventos: [...i.eventos, eventoInbox(ids, t.id, 'ACAO', `ação executada: ${a.titulo}`)] }), 'inbox_executar_acao', 'inbox_acao', a.id, { estado: a.estado }, { estado: 'executada' }));
+    commit(registrar(comInbox(ds, { ...i, acoes: trocar(i.acoes, nova), eventos: [...i.eventos, eventoInbox(ids, t.id, 'ACTION_EXECUTED', `ação executada: ${a.titulo}`)] }), 'inbox_executar_acao', 'inbox_acao', a.id, { estado: a.estado }, { estado: 'executada' }));
   },
 
   /** Resultado de um job registrado por uma pessoa (provider MANUAL). Evidencias sao referencias, nao texto livre longo. */
@@ -3045,12 +3084,13 @@ export const actions = {
     if (!resultado.resumo.trim()) throw new RegraDeNegocioError('Descreva o resultado.');
     const ids = idsInbox(i);
     const novo: InboxJob = { ...j, estado: resultado.ok ? 'CONCLUIDO' : 'FALHOU', resultado: { ok: resultado.ok, resumo: resultado.resumo.trim(), evidencias: resultado.evidencias ?? [], concluidoEm: ids.agora } };
-    commit(registrar(comInbox(ds, { ...i, jobs: trocar(i.jobs, novo), eventos: [...i.eventos, eventoInbox(ids, j.threadId, 'JOB', `job ${j.id} ${novo.estado}: ${novo.resultado?.resumo}`, j.estado, novo.estado)] }), 'inbox_resultado_job', 'inbox_job', j.id, { estado: j.estado }, { estado: novo.estado, ok: resultado.ok, evidencias: (resultado.evidencias ?? []).length }));
+    commit(registrar(comInbox(ds, { ...i, jobs: trocar(i.jobs, novo), eventos: [...i.eventos, eventoInbox(ids, j.threadId, resultado.ok ? 'JOB_COMPLETED' : 'JOB_FAILED', `job ${j.id} ${novo.estado}: ${novo.resultado?.resumo}`, j.estado, novo.estado)] }), 'inbox_resultado_job', 'inbox_job', j.id, { estado: j.estado }, { estado: novo.estado, ok: resultado.ok, evidencias: (resultado.evidencias ?? []).length }));
   },
 
   /**
-   * Gateway de entrada (idempotente por provider + externalMessageId). Nesta fase so e chamado a mao (simulacao pela
-   * tela, permissao `inbox_config`); quando o canal real entrar, o adapter server-side chama a MESMA funcao do core.
+   * Gateway de entrada em memoria (idempotente por provider + externalMessageId). Pela tela e simulacao (permissao
+   * `inbox_config`); no modo remoto a linha e persistida pelo adapter. O canal REAL entra pelo servidor
+   * (inbox_ingest, RPC da 0056), nunca por aqui.
    */
   inboxReceber(m: MensagemRecebida) {
     exigir('inbox_config');
@@ -3060,13 +3100,73 @@ export const actions = {
     if (r.duplicada || !r.thread) return r;
     const t = r.thread;
     const threads = t.sla ? r.ds.threads : trocar(r.ds.threads, { ...t, sla: { primeiraRespostaAte: slaDe(i.configuracao, t.prioridade, t.abertaEm) } });
-    commit(registrar(comInbox(ds, { ...r.ds, threads }), 'inbox_receber', 'inbox_thread', t.id, undefined, { mensagemId: r.mensagem?.id, novaThread: r.novaThread, novoContato: r.novoContato, canal: m.canal, contexto: m.contexto }));
+    commit(registrar(comInbox(ds, { ...r.ds, threads }), 'inbox_receber', 'inbox_thread', t.id, undefined, { mensagemId: r.mensagem?.id, novaThread: r.novaThread, novoContato: r.novoContato, reaberta: r.reaberta, canal: m.canal, contexto: m.contexto }));
     return r;
   },
 
-  /** Substitui o slice do Inbox pelo exemplo ficticio. Modo remoto: so na memoria deste navegador (nada vai ao banco). */
+  /** Substitui o slice do Inbox pelo exemplo ficticio. SO no modo local: no remoto o slice vem das tabelas inbox_*. */
   inboxCarregarExemplo() {
     exigir('inbox_config');
+    if (state.modo === 'remoto') throw new RegraDeNegocioError('Dados de exemplo só no modo local: em produção o Inbox lê as tabelas inbox_*.');
     commit(registrar(comInbox(state.ds, seedInbox(agora())), 'inbox_carregar_exemplo', 'inbox', 'seed', { origem: inboxDe(state.ds).origem }, { origem: 'seed' }));
+  },
+
+  // --- configuracao (permissao inbox_config): setores, equipes, membros, fallback/escalacao/SLA
+  inboxSalvarSetor(s: Setor) {
+    exigir('inbox_config');
+    const codigo = s.codigo.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+    if (!/^[A-Z][A-Z0-9_]{1,39}$/.test(codigo)) throw new RegraDeNegocioError('Código do setor: letras maiúsculas, números e _ (2 a 40 caracteres).');
+    if (!s.nome.trim()) throw new RegraDeNegocioError('Nome do setor é obrigatório.');
+    if (s.responsavelPadraoId && !state.ds.usuarios.some((u) => u.id === s.responsavelPadraoId && u.ativo)) throw new RegraDeNegocioError('Responsável padrão inválido.');
+    const ds = state.ds; const i = inboxDe(ds);
+    const atual = i.setores.find((x) => x.codigo === codigo);
+    const novo: Setor = { ...s, codigo, nome: s.nome.trim(), ordem: Number(s.ordem) || 0, responsavelPadraoId: s.responsavelPadraoId || undefined };
+    const setores = atual ? i.setores.map((x) => (x.codigo === codigo ? novo : x)) : [...i.setores, novo];
+    commit(registrar(comInbox(ds, { ...i, setores }), atual ? 'inbox_alterar_setor' : 'inbox_criar_setor', 'inbox_setor', codigo, atual, novo));
+  },
+
+  inboxSalvarEquipe(e: Omit<Equipe, 'id'> & { id?: string }) {
+    exigir('inbox_config');
+    const ds = state.ds; const i = inboxDe(ds);
+    if (!e.nome.trim()) throw new RegraDeNegocioError('Nome da equipe é obrigatório.');
+    if (!i.setores.some((s) => s.codigo === e.setorCodigo)) throw new RegraDeNegocioError('Setor da equipe não existe.');
+    if (e.responsavelPadraoId && !ds.usuarios.some((u) => u.id === e.responsavelPadraoId && u.ativo)) throw new RegraDeNegocioError('Responsável padrão inválido.');
+    if (i.equipes.some((x) => x.id !== e.id && x.setorCodigo === e.setorCodigo && x.nome.trim().toLowerCase() === e.nome.trim().toLowerCase())) throw new RegraDeNegocioError('Já existe equipe com esse nome no setor.');
+    const ids = idsInbox(i);
+    const atual = e.id ? i.equipes.find((x) => x.id === e.id) : undefined;
+    const nova: Equipe = { id: atual?.id ?? ids.novoId('EQP'), setorCodigo: e.setorCodigo, nome: e.nome.trim(), ativo: e.ativo, ordem: Number(e.ordem) || 0, responsavelPadraoId: e.responsavelPadraoId || undefined };
+    commit(registrar(comInbox(ds, { ...i, equipes: atual ? trocar(i.equipes, nova) : [...i.equipes, nova] }), atual ? 'inbox_alterar_equipe' : 'inbox_criar_equipe', 'inbox_equipe', nova.id, atual, nova));
+    return nova;
+  },
+
+  inboxSalvarMembro(m: Omit<MembroSetor, 'id'> & { id?: string }) {
+    exigir('inbox_config');
+    const ds = state.ds; const i = inboxDe(ds);
+    if (!ds.usuarios.some((u) => u.id === m.usuarioId && u.ativo)) throw new RegraDeNegocioError('Usuário inválido ou inativo.');
+    if (!i.setores.some((s) => s.codigo === m.setorCodigo)) throw new RegraDeNegocioError('Setor não existe.');
+    if (m.equipeId && !i.equipes.some((e) => e.id === m.equipeId && e.setorCodigo === m.setorCodigo)) throw new RegraDeNegocioError('Equipe não é do setor informado.');
+    if (i.membros.some((x) => x.id !== m.id && x.usuarioId === m.usuarioId && x.setorCodigo === m.setorCodigo && (x.equipeId ?? '') === (m.equipeId ?? ''))) throw new RegraDeNegocioError('Este usuário já é membro deste setor/equipe.');
+    const ids = idsInbox(i);
+    const atual = m.id ? i.membros.find((x) => x.id === m.id) : undefined;
+    const novo: MembroSetor = { id: atual?.id ?? ids.novoId('MBR'), usuarioId: m.usuarioId, setorCodigo: m.setorCodigo, equipeId: m.equipeId || undefined, papel: m.papel };
+    commit(registrar(comInbox(ds, { ...i, membros: atual ? trocar(i.membros, novo) : [...i.membros, novo] }), atual ? 'inbox_alterar_membro' : 'inbox_criar_membro', 'inbox_membro', novo.id, atual, novo));
+    return novo;
+  },
+
+  inboxRemoverMembro(id: string) {
+    exigir('inbox_config');
+    const ds = state.ds; const i = inboxDe(ds);
+    const m = i.membros.find((x) => x.id === id);
+    if (!m) throw new RegraDeNegocioError('Membro não encontrado.');
+    commit(registrar(comInbox(ds, { ...i, membros: i.membros.filter((x) => x.id !== id) }), 'inbox_remover_membro', 'inbox_membro', id, m, undefined));
+  },
+
+  inboxSalvarConfiguracao(c: Partial<Pick<ConfiguracaoInbox, 'setorFallback' | 'setorEscalacao' | 'slaHorasPorPrioridade' | 'nivelPadrao'>>) {
+    exigir('inbox_config');
+    const ds = state.ds; const i = inboxDe(ds);
+    const nova: ConfiguracaoInbox = { ...i.configuracao, ...c };
+    for (const k of ['setorFallback', 'setorEscalacao'] as const) if (!i.setores.some((s) => s.codigo === nova[k] && s.ativo)) throw new RegraDeNegocioError(`${k === 'setorFallback' ? 'Setor de fallback' : 'Setor de escalação'} precisa ser um setor ativo.`);
+    for (const p of Object.keys(nova.slaHorasPorPrioridade) as Prioridade[]) if (!(nova.slaHorasPorPrioridade[p] > 0)) throw new RegraDeNegocioError(`SLA de ${p} precisa ser maior que zero.`);
+    commit(registrar(comInbox(ds, { ...i, configuracao: nova }), 'inbox_alterar_configuracao', 'inbox_config', 'configuracao', i.configuracao, nova));
   },
 };

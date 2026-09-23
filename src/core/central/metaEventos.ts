@@ -63,6 +63,35 @@ const erroDe = (linha: Row | undefined): { erroCodigo?: string; erroTitulo?: str
   };
 };
 /**
+ * CONTEUDO das mensagens recebidas, separado do evento de proposito: a Central nao transporta texto no
+ * ChannelInboundEvent (decisao de docs/eiff-central.md). Quem precisa do corpo — o EIFF Inbox — recebe esta lista
+ * ao lado dos eventos, casada pelo id externo. So o texto/legenda e o nome informado saem daqui; nunca o payload.
+ */
+export interface ConteudoMensagemMeta { externalMessageId: string; texto: string; replyToExternalId?: string; nomeInformado?: string }
+export function extrairConteudosMeta(payload: unknown): ConteudoMensagemMeta[] {
+  const p = (payload ?? {}) as Row;
+  if (txt(p.object) !== 'whatsapp_business_account') return [];
+  const out: ConteudoMensagemMeta[] = [];
+  for (const entrada of arr(p.entry)) {
+    for (const mudanca of arr(entrada.changes)) {
+      if (txt(mudanca.field) !== 'messages') continue;
+      const valor = (mudanca.value ?? {}) as Row;
+      const nomes = new Map<string, string>();
+      for (const c of arr(valor.contacts)) { const wa = txt(c.wa_id); const nome = txt((c.profile as Row | undefined)?.name); if (wa && nome) nomes.set(wa, nome); }
+      for (const m of arr(valor.messages)) {
+        const id = txt(m.id);
+        if (!id) continue;
+        const tipo = txt(m.type) ?? '';
+        const midia = (m[tipo] ?? {}) as Row;
+        const texto = txt((m.text as Row | undefined)?.body) ?? txt(midia.caption) ?? (tipo && tipo !== 'text' ? `[${tipo}]` : '');
+        out.push({ externalMessageId: id, texto, replyToExternalId: txt((m.context as Row | undefined)?.id), nomeInformado: nomes.get(txt(m.from) ?? '') });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Normaliza a notificacao do webhook. Estrutura oficial:
  * { object: 'whatsapp_business_account', entry: [{ id, changes: [{ field: 'messages', value: { metadata, messages[], statuses[] } }] }] }
  * Payload de outro `object`, ou change de outro `field`, e ignorado em silencio (nao e erro: a Meta manda varios).

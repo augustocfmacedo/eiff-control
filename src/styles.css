@@ -953,3 +953,6 @@ tr.arrastando td { opacity: 0.55; }
 .inbox-acao p { margin: 0; }
 @media (max-width: 1200px) { .inbox-layout { grid-template-columns: 260px minmax(0, 1fr); } .inbox-contexto { grid-column: 1 / -1; max-height: none; } }
 @media (max-width: 800px) { .inbox-layout { grid-template-columns: 1fr; } .inbox-lista { max-height: 320px; } }
+.inbox-decisao { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); border-left: 3px solid var(--brand); margin-bottom: 6px; }
+.inbox-decisao > div { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: baseline; font-size: 13px; }
+.inbox-decisao b { font-weight: 600; }

@@ -4,3 +4,4 @@ export * from './estados';
 export * from './roteamento';
 export * from './fronteiras';
 export * from './seed';
+export * from './ingestaoServidor';
