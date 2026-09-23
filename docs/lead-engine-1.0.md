@@ -1,7 +1,7 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
 Estado: **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
-(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C não iniciado.**
+(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E (UI) não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch: `feature/lead-engine-1` · baseline do LE-0: `main @ 88c9ccc` · baseline do LE-1: `98636bd`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
@@ -901,3 +901,73 @@ sem Vibe, sem CNO/PNCP/RFB. Não toca score, `priorityScore`, `priorityClass`, C
 
 O barril `src/core/radar/index.ts` passou a exportar `leadEngineIntake` e `leadEngineReview` (sem ciclo; `tsc`
 limpo), com guarda de export no teste.
+
+---
+
+## 30. LE2-C — fronteira governada do store
+
+`actions.processarCandidatoLeadEngine` em `src/data/store.ts`. **O store é fronteira, não autoridade.**
+
+```text
+permissão → lê o estado ATUAL → o CORE revalida e decide → auditoria → um commit
+```
+
+Nenhuma regra do Lead Engine foi copiada para o store. Identidade forte, supressão, match, fingerprint,
+observação desatualizada, transições e as regras de `CREATE`/`ASSOCIATE` continuam em `leadEngineReview.ts` — e
+testes estruturais varrem o bloco da action para garantir que não voltem a aparecer ali.
+
+### 30.1 Uma única porta
+
+```ts
+type ComandoLeadEngine =
+  | { tipo: 'DECISAO'; pedido: PedidoDecisao }
+  | { tipo: 'TERMINALIZAR_SUPRIMIDO'; registroFonteId: string };
+```
+
+União discriminada em vez de duas actions: existe **um** entrypoint, e um teste conta os métodos públicos com
+`leadEngine` no nome para que continue sendo um só.
+
+### 30.2 Revalidação no estado atual
+
+A action lê `state.ds.radar` no momento da chamada. Nunca aceita dataset, análise, fila pré-calculada ou empresa
+já resolvida vindos da tela. O `ContextoDecisao` sai inteiro de `idsRadar(state.ds.radar)` — ids, data-base,
+relógio e usuário são do **store**; a UI não fornece nenhum deles.
+
+Chama `aplicarDecisao` (que já revalida por dentro) ou `terminalizarSuprimido`. Não há `validarDecisao` seguido
+de `aplicarDecisao`: uma autoridade só, chamada uma vez.
+
+### 30.3 Falha fechada e commit único
+
+Recusa do core vira `RegraLeadEngineError` — subclasse de `RegraDeNegocioError`, então quem só mostra a mensagem
+não muda, e quem precisa decidir lê `motivos`, `registroFonteId` e `operacao` sem parsing de texto. Em qualquer
+recusa: **nada é registrado, nada é commitado, nada é aplicado pela metade** — provado comparando a referência de
+`state.ds` antes e depois.
+
+No sucesso, o `RadarDataset` que o core devolveu substitui `ds.radar` de uma vez, com **um** `registrar` e **um**
+`commit`. A action não encadeia `criarEmpresa` + `criarProjeto` + `registrarSinal`, o que produziria vários
+commits, estado intermediário e uma segunda validação divergente.
+
+**Commit vazio não existe:** quando o core devolve o mesmo dataset (`KEEP_REVIEW` já em `REVIEW`), a action
+retorna sem registrar nem commitar.
+
+### 30.4 Duplo clique é seguro
+
+A segunda chamada relê o estado, encontra `RESOLVED`/`REJECTED` e o core recusa com `STATUS_TERMINAL`. Não nasce
+segunda Empresa, Projeto, Sinal nem auditoria de sucesso. Vale igualmente para `TERMINALIZAR_SUPRIMIDO`.
+
+### 30.5 Auditoria
+
+Uma entrada por operação, distinguindo `lead_engine_decisao_<decisao>` de `lead_engine_terminalizar_suprimido`.
+Guarda a **decisão** (status, entidade, empresa, projeto, sinais, `empresaCriada`, decisão humana e empresa
+escolhida), com o motivo humano em `REJECT` e `SUPRIMIDO` na terminalização. **Não regrava o payload bruto** — a
+evidência já está em `RegistroFonte`.
+
+### 30.6 Fronteiras
+
+Zero efeito externo: sem Supabase direto, sem `persistirRadar`, sem RPC, sem SQL — a persistência segue pelo
+`commit(ds)` normal, que passa pelo adapter corrigido no LE2-A. Nenhuma varredura automática de suprimidos: não
+há `useEffect`, timer, cron nem hook de startup. A porta existe; quem a chama é decisão do wiring de UI.
+
+- **UI ainda não ligada** — Command Center, Hoje, Panorama, Modo Foco, Pipeline e Entrada intocados (LE2-E).
+- **Persistência não tocada neste gate** — `radar.supabase.ts` e a migration 0055 seguem como o LE2-A os deixou.
+- **Migration 0055 ainda não aplicada remotamente.**
