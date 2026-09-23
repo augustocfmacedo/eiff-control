@@ -18,14 +18,28 @@ import { ESPELHO_JOB_STATES, type EstadoJobFactory } from './workItem';
 
 // ------------------------------------------------------------------------------------- allowlist
 
-/** Papel do repositorio para o Mission Control. `fabrica` e o unico com issues de job. */
+/**
+ * Papel do repositorio para o Mission Control. `papel` diz o que o repositorio E (o produto, ou a fabrica
+ * que o constroi) — NAO diz onde os jobs moram. Ver `observarIssues`.
+ */
 export type PapelRepositorio = 'produto' | 'fabrica';
 
 export interface RepositorioObservavel {
   repository: string;
   papel: PapelRepositorio;
   ramoPrincipal: string;
-  /** so a fabrica publica jobs como issue com label `factory:state:*` */
+  /**
+   * Ler as issues `factory:task` deste repositorio.
+   *
+   * O contrato canonico da fabrica (`JOB_CONTRACT.md`, primeira linha) diz: "Um job e uma issue no
+   * repositorio-ALVO (nao no repositorio da fabrica)" — e o proprio YAML do job carrega
+   * `repository: augustocfmacedo/eiff-control`. Logo um job real do produto nasce como issue AQUI, no
+   * eiff-control, e nao no eiff-dev-factory. Enquanto isto era `false` para o produto, um job com
+   * `factory:task` + `factory:state:CODING` no eiff-control ficava INVISIVEL ao painel.
+   *
+   * Por isso todo repositorio-alvo da allowlist e observado. Isto NAO amplia a allowlist nem aceita
+   * repositorio do cliente: continua sendo esta lista fixa, server-side.
+   */
   observarIssues: boolean;
 }
 
@@ -34,7 +48,7 @@ export interface RepositorioObservavel {
  * aceita `?repo=` e nao ha como transformar a funcao num proxy do GitHub.
  */
 export const REPOSITORIOS_OBSERVADOS: readonly RepositorioObservavel[] = [
-  { repository: 'augustocfmacedo/eiff-control', papel: 'produto', ramoPrincipal: 'main', observarIssues: false },
+  { repository: 'augustocfmacedo/eiff-control', papel: 'produto', ramoPrincipal: 'main', observarIssues: true },
   { repository: 'augustocfmacedo/eiff-dev-factory', papel: 'fabrica', ramoPrincipal: 'main', observarIssues: true },
 ];
 
@@ -449,5 +463,15 @@ export async function lerGitHub(d: DepsGitHub, repos: readonly RepositorioObserv
   };
 }
 
-/** Teto de chamadas por ciclo, para o orcamento de rate limit ser um numero e nao uma esperanca. */
+/**
+ * Teto de chamadas por ciclo, para o orcamento de rate limit ser um numero e nao uma esperanca.
+ *
+ * Por repositorio: `commits/{ramo}` + `check-runs` do sha + `pulls` = 3, mais `issues?labels=factory:task`
+ * quando `observarIssues` = 4. Com os dois repositorios observando issues: 4 + 4 = **8 por ciclo**.
+ * Era 7 enquanto o produto nao lia issues (3 + 4).
+ *
+ * O numero e DERIVADO da allowlist — nunca uma constante digitada — entao acrescentar repositorio ou
+ * ligar issues recalcula sozinho, e o teste que compara o teto com as chamadas reais acompanha.
+ * O custo por ciclo nao depende da quantidade de cartoes: nao existe chamada por item.
+ */
 export const MAX_CHAMADAS_POR_CICLO = REPOSITORIOS_OBSERVADOS.reduce((n, r) => n + (r.observarIssues ? 4 : 3), 0);

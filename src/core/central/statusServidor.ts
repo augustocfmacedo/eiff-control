@@ -52,15 +52,31 @@ export interface DevelopmentStatusResposta {
   factory: {
     procedencia: 'GITHUB_PROJECTION';
     aviso: string;
+    /**
+     * O repositorio da PROPRIA fabrica (onde a fabrica vive como software). Continua aqui por
+     * compatibilidade de contrato: o campo existe desde a MC-LIVE-1 e nao ha motivo para quebrar quem
+     * ja o le. NAO use para saber onde estao os jobs — para isso existe `repositorios`.
+     */
     repositorio: string;
+    /**
+     * Onde as issues de job sao PROCURADAS. Plural porque um job nasce no repositorio-ALVO
+     * (JOB_CONTRACT.md), entao a fabrica se espalha por todos os repositorios observados — nao e o
+     * endereco de um repositorio so. Nao confundir com o criterio de contagem: ver `contagens`.
+     */
+    repositorios: readonly string[];
+    /**
+     * Contagem do que a FABRICA produziu: itens cuja fonte canonica e FACTORY, em QUALQUER repositorio.
+     * Nunca "itens que moram no repositorio da fabrica" — um job `EC-0042` vive no eiff-control e conta aqui.
+     */
     contagens: Readonly<Record<McStatus, number>>;
   };
   limiteStaleSegundos: number;
 }
 
 export const AVISO_FACTORY_PROJECAO =
-  'Projeção do GitHub das issues da fábrica (labels factory:state:*). Não é o estado operacional da Factory: '
-  + 'heartbeat, turno, lease, custo e última ferramenta não existem nesta fonte e não são exibidos.';
+  'Projeção do GitHub das issues de job (labels factory:state:*) nos repositórios observados — o job nasce '
+  + 'no repositório-alvo, não no da fábrica. Não é o estado operacional da Factory: heartbeat, turno, lease, '
+  + 'custo e última ferramenta não existem nesta fonte e não são exibidos.';
 
 export type Resposta = { status: number; corpo: unknown };
 
@@ -163,7 +179,23 @@ export function laneDasLabels(labels: readonly string[]): 'GREEN' | 'AMBER' | 'R
 
 // ---------------------------------------------------------------------------------------- handler
 
+/**
+ * Onde issues de job sao procuradas. Deriva da allowlist: todo repositorio-alvo observado, porque o job
+ * canonico nasce no repositorio-ALVO e nao no da fabrica (JOB_CONTRACT.md).
+ */
+const REPOS_COM_ISSUES_DE_JOB: readonly string[] =
+  REPOSITORIOS_OBSERVADOS.filter((r) => r.observarIssues).map((r) => r.repository);
+
+/** O repositorio da propria fabrica. Fato estavel, mantido no contrato por compatibilidade. */
 const REPO_FABRICA = REPOSITORIOS_OBSERVADOS.find((r) => r.papel === 'fabrica')!.repository;
+
+/**
+ * O que conta como FABRICA. O criterio e a FONTE canonica do item, nunca o endereco dele: `source` vira
+ * 'FACTORY' quando a issue carrega `factory:state:*` (ver `normalizarIssueFactory`), esteja ela no
+ * eiff-control ou no eiff-dev-factory. Filtrar por `links.repository` era o bug: fazia "fabrica"
+ * significar "mora no repositorio da fabrica" e escondia todo job real do produto.
+ */
+const ehDaFabrica = (i: MissionControlWorkItem): boolean => i.source === 'FACTORY';
 
 /**
  * GET autenticado e autorizado. Uma fonte ruim nao derruba a resposta: o corpo distingue repositorio
@@ -187,7 +219,7 @@ export async function tratarDevelopmentStatus(req: RequisicaoStatus, d: DepsStat
     fonteIndisponivel: !algumDisponivel,
   };
   const workItems = projetarWorkItems(leitura, ctx);
-  const daFabrica = workItems.filter((i) => i.links?.repository === REPO_FABRICA);
+  const daFabrica = workItems.filter(ehDaFabrica);
 
   return resp(200, {
     observadoEm: agora,
@@ -211,6 +243,7 @@ export async function tratarDevelopmentStatus(req: RequisicaoStatus, d: DepsStat
       procedencia: 'GITHUB_PROJECTION',
       aviso: AVISO_FACTORY_PROJECAO,
       repositorio: REPO_FABRICA,
+      repositorios: REPOS_COM_ISSUES_DE_JOB,
       contagens: contarPorStatus(daFabrica),
     },
     limiteStaleSegundos: LIMITE_STALE_GITHUB_S,

@@ -44,6 +44,34 @@ export const PULLS_CONTROL = [
     html_url: 'https://github.com/augustocfmacedo/eiff-control/pull/23',
     head: { ref: 'ajuste/manual', sha: 'def5678def5678def5678def5678def5678defa' },
   },
+  {
+    // PR do job EC-0042, que vive como issue NESTE mesmo repositorio (o alvo). O taskId vem da branch,
+    // nao do titulo: e o caso que prova a correlacao issue+PR dentro do repositorio-alvo.
+    number: 24,
+    title: 'Rateio de faturamento por etapa',
+    draft: false,
+    created_at: '2026-09-22T06:00:00Z',
+    updated_at: '2026-09-22T08:45:00Z',
+    html_url: 'https://github.com/augustocfmacedo/eiff-control/pull/24',
+    head: { ref: 'factory/EC-0042-a1', sha: '9999888877776666555544443333222211110000' },
+  },
+];
+
+/**
+ * Issues de job no repositorio-ALVO. E onde o job canonico vive (JOB_CONTRACT.md): um job do produto
+ * nasce aqui, no eiff-control, e NAO no repositorio da fabrica.
+ */
+export const ISSUES_CONTROL = [
+  {
+    number: 7,
+    title: '[EC-0042] Rateio de faturamento por etapa',
+    state: 'open',
+    created_at: '2026-09-22T05:00:00Z',
+    updated_at: '2026-09-22T08:44:00Z',
+    closed_at: null,
+    html_url: 'https://github.com/augustocfmacedo/eiff-control/issues/7',
+    labels: [{ name: 'factory:task' }, { name: 'factory:state:CODING' }, { name: 'factory:risk:GREEN' }],
+  },
 ];
 
 export const ISSUES_FACTORY = [
@@ -129,6 +157,7 @@ export const ROTAS_SAUDAVEIS: Rotas = {
   [`${CONTROL}/commits/main`]: { status: 200, corpo: commitMain(SHA_MAIN_CONTROL, '2026-09-22T09:00:00Z', 'MC-LIVE-1'), headers: { etag: 'W/"c1"', 'x-ratelimit-remaining': '4990', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '1790000000' } },
   [`${CONTROL}/commits/${SHA_MAIN_CONTROL}/check-runs`]: { status: 200, corpo: CHECKS_VERDE },
   [`${CONTROL}/pulls`]: { status: 200, corpo: PULLS_CONTROL },
+  [`${CONTROL}/issues`]: { status: 200, corpo: ISSUES_CONTROL },
   [`${FACTORY}/commits/main`]: { status: 200, corpo: commitMain(SHA_MAIN_FACTORY, '2026-09-22T08:00:00Z', 'W1') },
   [`${FACTORY}/commits/${SHA_MAIN_FACTORY}/check-runs`]: { status: 200, corpo: CHECKS_RODANDO },
   [`${FACTORY}/pulls`]: { status: 200, corpo: [] },
