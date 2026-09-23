@@ -2,7 +2,8 @@
 //
 // Por que existe: a suite vitest prova o que o CORE decide (src/core/inbox) e o que o adapter MANDA (src/data); nao prova
 // o que o BANCO aceita. Aqui se prova a outra metade: idempotencia da ingestao, resolucao de thread, append-only,
-// imutabilidade da mensagem e — o ponto critico da fase 2 — o RLS por setor.
+// imutabilidade da mensagem, o RLS por setor e — gate final do PR #13 — a autoridade de transferencia no banco (RPC
+// inbox_assign_thread, privilegios de coluna e triggers): 18 provas A–R.
 //
 // Como rodar:  node scripts/pg-smoke-inbox.mjs        (imprime JSON; sai com 1 se qualquer prova falhar)
 //
@@ -82,7 +83,8 @@ async function comoUsuario(uid, sql, params = []) {
   let erro; let r;
   try { r = await db.query(sql, params); } catch (e) { erro = e; }
   // reset role pode falhar quando a transacao ja abortou: o erro que importa e o da consulta
-  await db.exec('reset role;').catch(() => {});
+  // reset role E do GUC de usuario: o que roda fora de comoUsuario e o 'servidor' (auth.uid() nulo), como o service_role
+  await db.exec("reset role; set local test.uid = '';").catch(() => {});
   if (erro) throw erro;
   return r;
 }
@@ -90,7 +92,7 @@ async function comoUsuarioFalha(uid, sql, params = []) {
   const nome = 's' + (++sp);
   await db.exec('savepoint ' + nome);
   try { await comoUsuario(uid, sql, params); await db.exec('release savepoint ' + nome); return null; }
-  catch (e) { await db.exec('rollback to savepoint ' + nome); await db.exec('reset role;').catch(() => {}); return String(e.message); }
+  catch (e) { await db.exec('rollback to savepoint ' + nome); await db.exec("reset role; set local test.uid = '';").catch(() => {}); return String(e.message); }
 }
 const ingest = (extra = {}) => db.query(
   `select inbox_ingest($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::timestamptz) j`,
@@ -143,14 +145,18 @@ async function main() {
     const f = await comoUsuarioFalha(DIR_A, `select inbox_ingest($1, 'META_CLOUD', 'WHATSAPP', 'EXTERNAL', '5562900000000', 'x', 'wamid.9', 'c', 'oi', 'texto', now())`, [ORG_A]);
     ok('F', !!f && /permission denied|permissão|denied/i.test(f), (f ?? 'PASSOU indevidamente').split('\n')[0]);
 
-    // ------------------------------------------------------------------- RLS por setor
-    // threads: T1 (a.thread_id) sem setor (triagem); T2 (c2) no FINANCEIRO; T3 (dInt) em OBRAS atribuida ao ENG; T4 em OBRAS sem responsavel
-    await db.query(`update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', status = 'TRIADA' where id = $1`, [c2.thread_id]);
-    await db.query(`update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000002', assignee_id = $2, participant_ids = array[$2::uuid], status = 'ATRIBUIDA' where id = $1`, [dInt.thread_id, ENG_A]);
+    // ------------------------------------------------------------------- RLS por setor + operacoes governadas
+    // threads: T1 (a.thread_id) sem setor (triagem); T2 (c2) FINANCEIRO atribuida a FIN; T3 (dInt) OBRAS atribuida a DIR; T4 OBRAS sem responsavel
+    await db.query(`update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', assignee_id = $2, status = 'ATRIBUIDA' where id = $1`, [c2.thread_id, FIN_A]);
+    await db.query(`update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000002', assignee_id = $2, status = 'ATRIBUIDA' where id = $1`, [dInt.thread_id, DIR_A]);
     const t4 = j(await ingest({ externalId: 'wamid.6', identifier: '5562933334444', nome: 'Quarto', body: 'obra' }));
     await db.query(`update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000002', status = 'TRIADA' where id = $1`, [t4.thread_id]);
     const contar = async (uid) => (await comoUsuario(uid, 'select count(*)::int n from inbox_thread')).rows[0].n;
     const vistos = async (uid) => (await comoUsuario(uid, 'select id from inbox_thread order by opened_at')).rows.map((r) => r.id);
+    const rpc = async (uid, args) => j(await comoUsuario(uid, `select inbox_assign_thread($1, $2, $3, $4, $5, $6) j`, args));
+    const thread = async (id) => (await db.query('select status, sector_id, team_id, assignee_id from inbox_thread where id = $1', [id])).rows[0];
+    const atribs = async (id) => (await db.query('select id, actor_id, assignee_id, sector_id, released_at from inbox_assignment where thread_id = $1 order by assigned_at, created_at', [id])).rows;
+    const eventos = async (id, desde) => (await db.query('select event_type from inbox_thread_event where thread_id = $1 and created_at >= $2 order by created_at', [id, desde])).rows.map((r) => r.event_type);
 
     // G) Diretoria transversal ve as 4; Financeiro ve a sem setor + a do seu setor (2); Engenharia ve OBRAS (2) + sem setor (1) = 3
     const g = { dir: await contar(DIR_A), fin: await contar(FIN_A), eng: await contar(ENG_A) };
@@ -165,41 +171,94 @@ async function main() {
     const finMsgsSuas = (await comoUsuario(FIN_A, 'select count(*)::int n from inbox_message where thread_id = $1', [a.thread_id])).rows[0].n;
     ok('H', h.aud === 0 && h.b === 0 && finMsgs === 0 && finEv === 0 && finMsgsSuas >= 3, `Auditoria ${h.aud} · outra org ${h.b} · Financeiro lê ${finMsgs} msg de OBRAS e ${finMsgsSuas} da sem setor`);
 
-    // I) atribuicao fora do recorte e recusada por RLS (UPDATE nao enxerga a linha); dentro do recorte passa e a linha some quando sai do recorte
-    const iFora = await comoUsuario(FIN_A, `update inbox_thread set assignee_id = $2 where id = $1 returning id`, [dInt.thread_id, FIN_A]);
-    const iDentro = await comoUsuario(FIN_A, `update inbox_thread set assignee_id = $2, status = 'ATRIBUIDA' where id = $1 returning id`, [c2.thread_id, FIN_A]);
-    // transferir para FORA do proprio recorte: a linha NOVA tambem passa pela politica de SELECT (regra do Postgres). Sem nada
-    // que ligue o autor a linha nova, o banco recusa. O caminho do adapter: primeiro a ATRIBUICAO vigente feita por mim
-    // (inbox_encaminhei), depois o UPDATE — sem tornar o autor participante. Quando a atribuicao e liberada, o acesso acaba.
-    const iEngSem = await comoUsuarioFalha(ENG_A, `update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', assignee_id = null, status = 'TRIADA' where id = $1`, [t4.thread_id]);
-    const atrId = (await comoUsuario(ENG_A, `insert into inbox_assignment (organization_id, thread_id, sector_id, origin, actor_id) values ($1, $2, 'cccccccc-0000-0000-0000-000000000001', 'manual', $3) returning id`, [ORG_A, t4.thread_id, ENG_A])).rows[0].id;
-    const iEng = await comoUsuario(ENG_A, `update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', assignee_id = null, status = 'TRIADA' where id = $1`, [t4.thread_id]);
-    const engAinda = await contar(ENG_A); // 3: ainda ve a que encaminhou (atribuicao vigente)
-    await db.query(`update inbox_assignment set released_at = now() where id = $1`, [atrId]); // alguem reatribuiu
-    const iEngRet = null;
-    const engDepois = await contar(ENG_A);
-    ok('I', iFora.rows.length === 0 && iDentro.rows.length === 1 && /row-level security/i.test(iEngSem ?? '') && iEng.affectedRows === 1 && engAinda === 3 && engDepois === 2 && iEngRet === null, `fora do recorte: ${iFora.rows.length} linha; dentro: ${iDentro.rows.length}; transferir sem atribuição: ${iEngSem ? 'recusado pelo RLS' : 'ACEITO'}; com atribuição vigente: ${iEng.affectedRows} (Engenharia ainda vê ${engAinda}); após liberar a atribuição vê ${engDepois}`);
+    // I) atendente permitido ASSUME thread sem responsavel do seu setor pela RPC: assignment criado, thread ATRIBUIDA, evento
+    const marcaI = (await db.query('select now() t')).rows[0].t;
+    const rI = await rpc(ENG_A, [t4.thread_id, 'OBRAS', null, ENG_A, 'assumindo', 'manual']);
+    const tI = await thread(t4.thread_id); const aI = await atribs(t4.thread_id); const eI = await eventos(t4.thread_id, marcaI);
+    ok('I', rI.ok === true && tI.status === 'ATRIBUIDA' && tI.assignee_id === ENG_A && aI.length === 1 && aI[0].actor_id === ENG_A && aI[0].released_at === null && eI.includes('ASSIGNED') && eI.includes('STATUS_CHANGED'),
+      `rpc=${JSON.stringify(rI).slice(0, 60)} · status ${tI.status} · atribuições ${aI.length} · eventos ${eI.join(',')}`);
 
-    // J) configuracao: Financeiro (sem inbox_config) nao cria setor nem membro; Diretoria cria; identidade duplicada e recusada
-    const jFin = await comoUsuarioFalha(FIN_A, `insert into inbox_sector (organization_id, code, name) values ($1, 'JURIDICO', 'Jurídico')`, [ORG_A]);
-    const jDir = await comoUsuarioFalha(DIR_A, `insert into inbox_sector (organization_id, code, name) values ($1, 'JURIDICO', 'Jurídico')`, [ORG_A]);
-    const jMembro = await comoUsuarioFalha(ENG_A, `insert into inbox_member (organization_id, profile_id, sector_id) values ($1, $2, 'cccccccc-0000-0000-0000-000000000001')`, [ORG_A, ENG_A]);
-    const jIdent = await deveFalhar(`insert into inbox_contact_identity (organization_id, contact_id, channel, identifier) values ($1, $2, 'WHATSAPP', $3)`, [ORG_A, a.contact_id, TEL]);
-    ok('J', /policy|permission/i.test(jFin ?? '') && jDir === null && /policy|permission/i.test(jMembro ?? '') && /unique|duplicate/i.test(jIdent ?? ''),
-      `Financeiro: ${(jFin ?? 'passou').split('\n')[0].slice(0, 60)} · Diretoria: ${jDir ?? 'ok'} · identidade duplicada: ${(jIdent ?? 'passou').slice(0, 40)}`);
+    // J) atendente SEM autoridade nao transfere: ENG (atendente de OBRAS) nao move a thread atribuida a DIR para FINANCEIRO; nem ve/move a do FINANCEIRO
+    const rJ1 = await rpc(ENG_A, [dInt.thread_id, 'FINANCEIRO', null, null, 'tentativa', 'manual']);
+    const rJ2 = await rpc(ENG_A, [c2.thread_id, 'OBRAS', null, ENG_A, 'tentativa', 'manual']);
+    const tJ = await thread(dInt.thread_id);
+    ok('J', rJ1.erro === 'sem_autoridade' && rJ2.erro === 'sem_acesso' && tJ.sector_id === 'cccccccc-0000-0000-0000-000000000002' && tJ.assignee_id === DIR_A, `${rJ1.erro} · ${rJ2.erro} · thread intacta`);
 
-    // K) participante ve a thread mesmo fora do setor (nota interna registrada por ele); evento com telefone inteiro e recusado
-    await db.query(`update inbox_thread set participant_ids = participant_ids || $2::uuid where id = $1`, [dInt.thread_id, FIN_A]);
-    const kFin = await contar(FIN_A);
-    const kEv = await deveFalhar(`insert into inbox_thread_event (organization_id, thread_id, event_type, actor_kind, actor_name, detail) values ($1, $2, 'NOTE_ADDED', 'usuario', 'x', 'ligar para ${TEL}')`, [ORG_A, dInt.thread_id]);
-    ok('K', kFin === 4 && /check/i.test(kEv ?? ''), `Financeiro passa a ver ${kFin} (as 3 de antes + a de OBRAS em que escreveu, como participante); detalhe com telefone inteiro: ${kEv ? 'recusado' : 'ACEITO'}`);
+    // K) gestor autorizado transfere para outro setor: atribuição anterior encerrada, nova criada, thread atualizada, eventos; quem encaminhou segue vendo enquanto vigente
+    const marcaK = (await db.query('select now() t')).rows[0].t;
+    const rK = await rpc(FIN_A, [c2.thread_id, 'OBRAS', null, null, 'é assunto da obra', 'manual']);
+    const tK = await thread(c2.thread_id); const aK = await atribs(c2.thread_id); const eK = await eventos(c2.thread_id, marcaK);
+    const finAinda = (await vistos(FIN_A)).includes(c2.thread_id);
+    ok('K', rK.ok === true && tK.sector_id === 'cccccccc-0000-0000-0000-000000000002' && tK.assignee_id === null && tK.status === 'TRIADA' && aK.length === 1 && aK[0].released_at === null && aK[0].actor_id === FIN_A && eK.includes('REASSIGNED') && eK.includes('RELEASED') && eK.includes('STATUS_CHANGED') && finAinda,
+      `status ${tK.status} · atribuições ${aK.length} (vigente do gestor) · eventos ${eK.join(',')} · gestor ainda vê: ${finAinda}`);
+    // ...e quando outro reatribui, o acesso de quem encaminhou acaba (historico fica na atribuição encerrada)
+    await rpc(DIR_A, [c2.thread_id, 'OBRAS', null, ENG_A, null, 'manual']);
+    const finDepois = (await vistos(FIN_A)).includes(c2.thread_id);
+    const aK2 = await atribs(c2.thread_id);
+    if (finDepois || aK2.length !== 2 || aK2[0].released_at === null) res.smoke.K += ` | ATENCAO: após reatribuição gestor vê=${finDepois}, atribuições=${aK2.length}`;
 
-    // L) reaplicacao: a migration e idempotente
+    // L) outra organizacao e usuario sem `inbox` nao operam; Diretoria opera transversalmente (thread de OBRAS -> FINANCEIRO com responsavel)
+    const rL1 = await rpc(ADM_B, [dInt.thread_id, 'OBRAS', null, ADM_B, null, 'manual']);
+    const rL2 = await rpc(AUD_A, [t4.thread_id, 'OBRAS', null, AUD_A, null, 'manual']);
+    const rL3 = await rpc(DIR_A, [dInt.thread_id, 'FINANCEIRO', null, FIN_A, 'transversal', 'manual']);
+    const tL = await thread(dInt.thread_id);
+    ok('L', rL1.erro === 'thread_nao_encontrada' && rL2.erro === 'sem_permissao_inbox' && rL3.ok === true && tL.sector_id === 'cccccccc-0000-0000-0000-000000000001' && tL.assignee_id === FIN_A,
+      `outra org: ${rL1.erro} · sem inbox: ${rL2.erro} · Diretoria: ok=${rL3.ok}`);
+
+    // M) destino invalido (equipe de outro setor, responsavel de outra org) e recusado antes de escrever
+    const eq = (await db.query(`insert into inbox_team (organization_id, sector_id, name) values ($1, 'cccccccc-0000-0000-0000-000000000001', 'Contas a pagar') returning id`, [ORG_A])).rows[0].id;
+    const rM1 = await rpc(DIR_A, [t4.thread_id, 'OBRAS', eq, ENG_A, null, 'manual']);
+    const rM2 = await rpc(DIR_A, [t4.thread_id, 'OBRAS', null, ADM_B, null, 'manual']);
+    const rM3 = await rpc(DIR_A, [t4.thread_id, 'NAO_EXISTE', null, null, null, 'manual']);
+    ok('M', rM1.erro === 'equipe_invalida' && rM2.erro === 'responsavel_invalido' && rM3.erro === 'setor_invalido', `${rM1.erro} · ${rM2.erro} · ${rM3.erro}`);
+
+    // N) falha intermediaria faz rollback integral: um trigger de teste derruba a insercao do evento; nada da RPC persiste
+    await db.exec(`create or replace function _falha_evento() returns trigger language plpgsql as $f$ begin if new.detail like '%__falha__%' then raise exception 'falha simulada'; end if; return new; end $f$;
+      create trigger _falha before insert on inbox_thread_event for each row execute function _falha_evento();`);
+    const antesN = { t: await thread(t4.thread_id), a: await atribs(t4.thread_id) };
+    const rN = await comoUsuarioFalha(DIR_A, `select inbox_assign_thread($1, 'FINANCEIRO', null, null, '__falha__', 'manual')`, [t4.thread_id]);
+    const depoisN = { t: await thread(t4.thread_id), a: await atribs(t4.thread_id) };
+    await db.exec('drop trigger _falha on inbox_thread_event; drop function _falha_evento();');
+    ok('N', /falha simulada/.test(rN ?? '') && JSON.stringify(antesN) === JSON.stringify(depoisN), `erro: ${(rN ?? 'PASSOU').split('\n')[0]} · thread e atribuições idênticas antes/depois: ${JSON.stringify(antesN) === JSON.stringify(depoisN)}`);
+
+    // O) UPDATE direto nao contorna: setor/responsavel sao colunas sem UPDATE; inbox_assignment sem INSERT; status por quem nao tem autoridade e recusado pelo trigger
+    const o1 = await comoUsuarioFalha(FIN_A, `update inbox_thread set assignee_id = $2 where id = $1`, [dInt.thread_id, ENG_A]);
+    const o2 = await comoUsuarioFalha(FIN_A, `update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000002' where id = $1`, [dInt.thread_id]);
+    const o3 = await comoUsuarioFalha(FIN_A, `insert into inbox_assignment (organization_id, thread_id, sector_id, origin, actor_id) values ($1, $2, 'cccccccc-0000-0000-0000-000000000001', 'manual', $3)`, [ORG_A, dInt.thread_id, FIN_A]);
+    // t4 esta atribuida a ENG em OBRAS; DIR e transversal; um atendente de OBRAS que nao e o responsavel: cria-se um e testa-se
+    const OUTRO_ENG = 'aaaaaaaa-0000-0000-0000-000000000005';
+    await db.query(`insert into profile (id, organization_id, name, email, role) values ($1, $2, 'Outro Engenheiro', 'o@eiff', 'Engenharia')`, [OUTRO_ENG, ORG_A]);
+    await db.query(`insert into inbox_member (organization_id, profile_id, sector_id, member_role) values ($1, $2, 'cccccccc-0000-0000-0000-000000000002', 'atendente')`, [ORG_A, OUTRO_ENG]);
+    const o4 = await comoUsuarioFalha(OUTRO_ENG, `update inbox_thread set status = 'FECHADA', resolved_at = now(), closed_at = now(), resolved_by = 'humano' where id = $1`, [t4.thread_id]);
+    const o5 = await comoUsuarioFalha(OUTRO_ENG, `update inbox_thread set participant_ids = participant_ids || $2::uuid where id = $1`, [t4.thread_id, DIR_A]);
+    const o6 = await comoUsuarioFalha(OUTRO_ENG, `update inbox_thread set participant_ids = participant_ids || $2::uuid where id = $1`, [t4.thread_id, OUTRO_ENG]);
+    const o7 = await comoUsuarioFalha(ENG_A, `update inbox_thread set status = 'AGUARDANDO_CONTATO' where id = $1`, [t4.thread_id]); // responsavel: pode
+    ok('O', /permission denied/i.test(o1 ?? '') && /permission denied/i.test(o2 ?? '') && /permission denied|policy/i.test(o3 ?? '') && /sem autoridade/i.test(o4 ?? '') && /participante/i.test(o5 ?? '') && o6 === null && o7 === null,
+      `assignee: ${o1 ? 'negado' : 'ACEITO'} · setor: ${o2 ? 'negado' : 'ACEITO'} · assignment: ${o3 ? 'negado' : 'ACEITO'} · status por não responsável: ${o4 ? 'negado' : 'ACEITO'} · participante alheio: ${o5 ? 'negado' : 'ACEITO'} · participante próprio: ${o6 ? 'NEGADO' : 'ok'} · status pelo responsável: ${o7 ? 'NEGADO' : 'ok'}`);
+
+    // P) decisao de acao: papel decisor da matriz; quem propos nao decide; Administrador e a excecao. Todos os usuarios abaixo
+    //    ENXERGAM t4 (OBRAS): ENG/OUTRO_ENG membros, DIR transversal — assim o UPDATE alcanca a linha e e o TRIGGER que decide.
+    const act = (await db.query(`insert into inbox_action (organization_id, thread_id, action_kind, title, state, approval_required, approver_role, proposed_by_kind, proposed_by_id, proposed_by_name) values ($1, $2, 'criar_tarefa', 'Reservar guindaste', 'aguardando_aprovacao', true, 'Diretoria', 'usuario', $3, 'Engenheiro') returning id`, [ORG_A, t4.thread_id, ENG_A])).rows[0].id;
+    const actEng = (await db.query(`insert into inbox_action (organization_id, thread_id, action_kind, title, state, approval_required, approver_role, proposed_by_kind, proposed_by_id, proposed_by_name) values ($1, $2, 'criar_tarefa', 'Outra', 'aguardando_aprovacao', true, 'Engenharia', 'usuario', $3, 'Engenheiro') returning id`, [ORG_A, t4.thread_id, ENG_A])).rows[0].id;
+    const p1 = await comoUsuarioFalha(OUTRO_ENG, `update inbox_action set decision = 'aprovada', decided_by = $2, decided_at = now(), state = 'aprovada' where id = $1`, [act, OUTRO_ENG]); // papel Engenharia != Diretoria
+    const p2 = await comoUsuarioFalha(ENG_A, `update inbox_action set decision = 'aprovada', decided_by = $2, decided_at = now(), state = 'aprovada' where id = $1`, [actEng, ENG_A]); // proponente com o papel certo
+    const p3 = await comoUsuarioFalha(DIR_A, `update inbox_action set decision = 'aprovada', decided_by = $2, decided_at = now(), state = 'aprovada' where id = $1`, [act, FIN_A]); // decided_by de outro
+    const p4 = await comoUsuarioFalha(DIR_A, `update inbox_action set decision = 'aprovada', decided_by = $2, decided_at = now(), state = 'aprovada' where id = $1`, [act, DIR_A]);
+    const p5 = await comoUsuarioFalha(OUTRO_ENG, `update inbox_action set decision = 'aprovada', decided_by = $2, decided_at = now(), state = 'aprovada' where id = $1`, [actEng, OUTRO_ENG]); // papel certo, nao proponente
+    ok('P', /decidida por/i.test(p1 ?? '') && /quem propôs/i.test(p2 ?? '') && /decided_by/i.test(p3 ?? '') && p4 === null && p5 === null, `papel errado: ${p1 ? 'negado' : 'ACEITO'} · proponente: ${p2 ? 'negado' : 'ACEITO'} · decided_by alheio: ${p3 ? 'negado' : 'ACEITO'} · Diretoria: ${p4 ? 'NEGADO' : 'ok'} · papel certo não proponente: ${p5 ? 'NEGADO' : 'ok'}`);
+
+    // Q) participante ve a thread fora do setor (escreveu nela); evento com telefone inteiro e recusado
+    await db.query(`update inbox_thread set participant_ids = participant_ids || $2::uuid where id = $1`, [t4.thread_id, FIN_A]);
+    const qFin = (await vistos(FIN_A)).includes(t4.thread_id);
+    const qEv = await deveFalhar(`insert into inbox_thread_event (organization_id, thread_id, event_type, actor_kind, actor_name, detail) values ($1, $2, 'NOTE_ADDED', 'usuario', 'x', 'ligar para ${TEL}')`, [ORG_A, t4.thread_id]);
+    ok('Q', qFin && /check/i.test(qEv ?? ''), `Financeiro vê a thread de OBRAS em que escreveu: ${qFin}; detalhe com telefone inteiro: ${qEv ? 'recusado' : 'ACEITO'}`);
+
+    // R) reaplicacao: a migration e idempotente
     await db.exec('savepoint reaplica');
     let reaplica = 'ok';
     try { await db.exec(SQL_0056); } catch (e) { reaplica = String(e.message); }
     await db.exec('rollback to savepoint reaplica');
-    ok('L', reaplica === 'ok', reaplica === 'ok' ? '0056 reaplicada sem erro' : reaplica.split('\n')[0]);
+    ok('R', reaplica === 'ok', reaplica === 'ok' ? '0056 reaplicada sem erro' : reaplica.split('\n')[0]);
 
     await db.exec('rollback');
     const sobrou = (await db.query('select count(*)::int n from inbox_thread')).rows[0].n;

@@ -8,7 +8,11 @@
 //   e um `select` na volta seria recusado pelo RLS (o autor continua participante, entao na pratica segue vendo);
 // - ids de app que nao sao uuid (modo local: THR-00001) so existem antes do primeiro insert; depois o mapa `refs`
 //   traduz app id -> uuid, como no Radar;
-// - o corpo da mensagem vai para inbox_message.body e para lugar nenhum mais (audit_log recebe ids e estados).
+// - o corpo da mensagem vai para inbox_message.body e para lugar nenhum mais (audit_log recebe ids e estados);
+// - ATRIBUICAO E OPERACAO GOVERNADA: setor/equipe/responsavel nunca vao por UPDATE (as colunas nem sao atualizaveis por
+//   `authenticated`). Cada atribuicao nova do store vira uma chamada a RPC inbox_assign_thread, que valida acesso,
+//   autoridade e destino no banco e grava atribuicao + thread + eventos numa transacao. Os eventos que o store gerou para
+//   essa mesma atribuicao (mesmo instante, mesma thread) sao pulados: o banco ja os registrou. A tela nao e autoridade.
 import { CONFIGURACAO_PADRAO, inboxVazio, type Atribuicao, type Classificacao, type ConfiguracaoInbox, type ContatoInbox, type Equipe, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type Setor, type ThreadEvent } from '../core/inbox';
 
 type Row = Record<string, any>;
@@ -19,6 +23,8 @@ export interface HelpersInbox {
   atualizar: (tabela: string, id: string, row: Row) => Promise<void>;
   gravarComposta: (tabela: string, chave: Record<string, string>, row: Row) => Promise<void>;
   apagar: (tabela: string, id: string) => Promise<void>;
+  /** RPC com o JWT do usuario (a autoridade e conferida no banco). */
+  rpc: (nome: string, args: Row) => Promise<Row>;
   orgId: string;
   atorId: string;
   uuid: (v?: string) => string | null;
@@ -38,6 +44,8 @@ let configExiste = false;
 const s = (v: unknown) => (v === null || v === undefined ? undefined : String(v));
 const nn = (v: unknown) => (v === undefined || v === null || v === '' ? null : v);
 const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** Eventos que a RPC inbox_assign_thread registra por conta propria (o store tambem os gera, no mesmo instante da atribuicao). */
+const TIPOS_EVENTO_ATRIBUICAO = new Set<string>(['ROUTED', 'REASSIGNED', 'ASSIGNED', 'RELEASED', 'STATUS_CHANGED']);
 
 /** Registra um id ja gravado no banco (ex.: thread criada pela RPC inbox_ingest) para a persistencia nao reinserir. */
 export function registrarRefInbox(colecao: Colecao, id: string): void { refs?.get(colecao)?.set(id, id); }
@@ -150,21 +158,30 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
   }
   // 5) threads (update sem select)
   const th = mudados<InboxThread>('threads');
-  const threadRow = (t: InboxThread): Row => ({
+  // colunas de ATRIBUICAO so no INSERT (thread nova); no UPDATE elas pertencem a RPC governada
+  const threadRow = (t: InboxThread, comAtribuicao = true): Row => ({
     channel: t.canal, provider: t.provider, context: t.contexto, contact_id: ref('contatos', t.contatoId), central_conversation_id: h.uuid(t.conversaCentralId), external_conversation_id: nn(t.externalConversationId), subject: t.assunto.slice(0, 200),
-    status: t.status, priority: t.prioridade, service_level: t.nivel, sector_id: setorId(t.setorCodigo), team_id: ref('equipes', t.equipeId), assignee_id: h.perfil(t.responsavelId),
+    status: t.status, priority: t.prioridade, service_level: t.nivel, ...(comAtribuicao ? { sector_id: setorId(t.setorCodigo), team_id: ref('equipes', t.equipeId), assignee_id: h.perfil(t.responsavelId) } : {}),
     participant_ids: t.participantes.map((p) => h.perfil(p)).filter((p): p is string => !!p), project_id: h.obra(t.codigoObra), labels: t.labels, classification: t.classificacao ?? null, summary: nn(t.resumo?.slice(0, 600)),
     sla_first_response_due: nn(t.sla?.primeiraRespostaAte), sla_first_response_at: nn(t.sla?.primeiraRespostaEm), sla_resolution_due: nn(t.sla?.resolucaoAte),
     opened_at: t.abertaEm, last_message_at: t.ultimaMensagemEm, last_inbound_at: nn(t.ultimaInboundEm), resolved_at: nn(t.resolvidaEm), closed_at: nn(t.fechadaEm), resolved_by: nn(t.resolvidaPor), origin: t.origem,
   });
-  await inserirNovos('threads', th.novos, threadRow);
-  // 5b) atribuicoes ANTES da atualizacao das threads: a atribuicao vigente feita por quem encaminha e o que faz a linha nova
-  //     passar pela politica de SELECT do RLS (inbox_encaminhei). Nova = insert; a que fechou = update de released_at.
+  await inserirNovos('threads', th.novos, (t) => threadRow(t, true));
+  // 5b) ATRIBUICOES pela operacao governada, ANTES da atualizacao das threads: a RPC valida acesso/autoridade/destino,
+  //     encerra a vigente, cria a nova, atualiza setor/equipe/responsavel/status da thread e registra os eventos. A que
+  //     fechou (liberadaEm) nao e gravada daqui: a RPC ja a encerrou. Eventos gerados pelo store para a mesma atribuicao
+  //     (mesma thread, mesmo instante, tipos de atribuicao) sao marcados como ja persistidos.
   const at = mudados<Atribuicao>('atribuicoes');
-  const atrRow = (x: Atribuicao): Row => ({ thread_id: ref('threads', x.threadId), sector_id: setorId(x.setorCodigo), team_id: ref('equipes', x.equipeId), assignee_id: h.perfil(x.usuarioId), assigned_at: x.atribuidaEm, released_at: nn(x.liberadaEm), reason: nn(x.motivo), origin: x.origem, actor_id: h.perfil(x.atorId) });
-  await inserirNovos('atribuicoes', at.novos, atrRow);
-  await atualizarAlterados('threads', th.alterados, threadRow);
-  await atualizarAlterados('atribuicoes', at.alterados, atrRow);
+  const eventosDaAtribuicao = new Set<string>();
+  for (const x of at.novos) {
+    const tid = ref('threads', x.threadId); if (!tid) continue;
+    const r = await h.rpc('inbox_assign_thread', { p_thread_id: tid, p_sector_code: x.setorCodigo ?? null, p_team_id: ref('equipes', x.equipeId), p_assignee_id: h.perfil(x.usuarioId), p_reason: x.motivo ?? null, p_origin: x.origem });
+    if (r.ok !== true) throw new Error(`atribuição recusada pelo banco: ${String(r.erro ?? 'recusada')}`);
+    refs.get('atribuicoes')!.set(x.id, typeof r.assignment_id === 'string' ? r.assignment_id : x.id);
+    for (const e of depois.eventos) if (e.threadId === x.threadId && e.em === x.atribuidaEm && TIPOS_EVENTO_ATRIBUICAO.has(e.tipo)) { eventosDaAtribuicao.add(e.id); refs.get('eventos')!.set(e.id, e.id); }
+  }
+  for (const x of at.alterados) if (!refs.get('atribuicoes')!.has(x.id)) continue; // liberadaEm: encerrada pela RPC
+  await atualizarAlterados('threads', th.alterados, (t) => threadRow(t, false));
   // 6) acoes (passo 1: job_id so quando o job ja existe)
   const ac = mudados<InboxAction>('acoes');
   const acaoRow = (x: InboxAction): Row => ({
@@ -187,7 +204,7 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
   // 9) (atribuicoes gravadas no passo 5b)
   // 10) eventos (append-only)
   const ev = mudados<ThreadEvent>('eventos');
-  await inserirNovos('eventos', ev.novos, (e) => ({ thread_id: ref('threads', e.threadId), message_id: ref('mensagens', e.mensagemId), event_type: e.tipo, occurred_at: e.em, actor_kind: e.ator.tipo, actor_id: nn(e.ator.tipo === 'usuario' ? h.perfil(e.ator.id) ?? e.ator.id : e.ator.id), actor_name: e.ator.nome, detail: e.detalhe.slice(0, 500), before_value: nn(e.antes?.slice(0, 200)), after_value: nn(e.depois?.slice(0, 200)) }));
+  await inserirNovos('eventos', ev.novos.filter((e) => !eventosDaAtribuicao.has(e.id)), (e) => ({ thread_id: ref('threads', e.threadId), message_id: ref('mensagens', e.mensagemId), event_type: e.tipo, occurred_at: e.em, actor_kind: e.ator.tipo, actor_id: nn(e.ator.tipo === 'usuario' ? h.perfil(e.ator.id) ?? e.ator.id : e.ator.id), actor_name: e.ator.nome, detail: e.detalhe.slice(0, 500), before_value: nn(e.antes?.slice(0, 200)), after_value: nn(e.depois?.slice(0, 200)) }));
   // 11) configuracao (uma linha por organizacao)
   if (!configExiste || !igual(a.configuracao, depois.configuracao)) {
     const c = depois.configuracao;

@@ -935,6 +935,8 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
       falha(`inserir ${tabela}`, e2);
     },
     apagar: async (tabela, id) => { const { error } = await sb.from(tabela).delete().eq('id', id); falha(`apagar ${tabela}`, error); },
+    // operacao governada (inbox_assign_thread): com o JWT do usuario; a autoridade e conferida no banco
+    rpc: async (nome, args) => { const { data, error } = await sb.rpc(nome, args); falha(`rpc ${nome}`, error); return (data ?? {}) as Row; },
   }, antes.inbox, depois.inbox);
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)

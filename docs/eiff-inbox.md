@@ -262,7 +262,7 @@ resolução de thread, fallback sem IA, seed/higiene), `src/core/inbox/ingestaoS
 duplicidade, falha da porta, fallback), `src/data/inbox.store.test.ts` (permissão, atribuição com histórico, status,
 rascunho/nota persistidos, triagem, ações/jobs, autoridade, configuração), `src/data/inbox.supabase.test.ts` (adapter:
 ordem, insert-only, update sem select, texto só em `inbox_message`, leitura). **RLS** provado em PostgreSQL de verdade por
-`scripts/pg-smoke-inbox.mjs` (PGlite, 12 provas A–L, rollback ao final; step "PostgreSQL Smoke (EIFF Inbox)" no CI) e
+`scripts/pg-smoke-inbox.mjs` (PGlite, 18 provas A–R, rollback ao final; step "PostgreSQL Smoke (EIFF Inbox)" no CI) e
 o preflight da fila inteira aplica 0001..0056. Limitação: a suíte vitest não sobe Postgres; o RLS é provado pelo smoke.
 
 ### 11.9 Pendências reais
@@ -297,7 +297,7 @@ regiões distintas). Nenhum trabalho do Inbox foi descartado; nenhuma alteraçã
 
 ### 12.3 RLS e a decisão sobre participante
 
-Revalidado no PostgreSQL descartável (`scripts/pg-smoke-inbox.mjs`, 12 provas): Diretoria/Administrador transversal (G);
+Revalidado no PostgreSQL descartável (`scripts/pg-smoke-inbox.mjs`, provas G–H, K, Q): Diretoria/Administrador transversal (G);
 gestor/atendente só o próprio setor mais o que lhes foi atribuído, de que participam ou sem setor (G/H/K); Auditoria (sem
 `inbox`) e outra organização não veem nada (H); `inbox_config` só Administrador/Diretoria (J); filhos herdam (H).
 
@@ -312,9 +312,7 @@ política de SELECT — isto era "mantém acesso indefinidamente". Corrigido ant
 - Adapter: grava a atribuição **antes** de atualizar a thread e atualiza sem RETURNING (smoke I prova as três situações:
   sem atribuição recusa; com atribuição vigente aceita e o autor ainda vê; liberada, deixa de ver).
 
-Limite conhecido: o RLS delimita **visibilidade**; a autoridade fina (só responsável/gestor transfere) vive no store
-(`podeAtribuir`/`podeMudarStatus`). Um membro do setor com sessão válida poderia, fora da tela, atualizar campos de uma thread
-do seu setor. Aceito neste checkpoint; endurecer por RPC de transferência é candidato para a fase 3.
+Limite que existia neste checkpoint (autoridade fina só no store) foi fechado no gate final do PR: ver §12.8.
 
 ### 12.4 Migration 0056 — revisão para produção
 
@@ -345,8 +343,44 @@ formato Graph API nem import de `src/core/central/`; não existe segunda funçã
 
 ### 12.7 Gates do checkpoint
 
-typecheck, lint, vitest (113 arquivos), build, `smoke:inbox` (12 provas) e preflight (0001..0056) — todos verdes; validação
+typecheck, lint, vitest (113 arquivos), build, `smoke:inbox` (18 provas) e preflight (0001..0056) — todos verdes; validação
 visual de `#/atendimento` e `#/atendimento/configuracao` em modo local sem erro de console do app.
+
+
+### 12.8 Gate final do PR #13 — autoridade de transferência no banco
+
+O risco restante da §12.3 foi fechado antes do merge: a autoridade deixa de viver só no store. Migration 0056, seção 8.
+
+| Operação | Antes | Agora | Natureza |
+| --- | --- | --- | --- |
+| atribuir, reatribuir, assumir, liberar, trocar setor, trocar equipe, trocar responsável | `UPDATE inbox_thread` + `INSERT inbox_assignment` pelo adapter | **só pela RPC `inbox_assign_thread`** (as colunas `sector_id`, `team_id`, `assignee_id` não são atualizáveis por `authenticated`; `inbox_assignment` sem INSERT/UPDATE para `authenticated`) | decisão de autoridade |
+| status (fechar, reabrir, espera, resolver), prioridade, nível | `UPDATE` comum | `UPDATE` comum, conferido pelo trigger `inbox_thread_autoridade`: transversal, responsável atual, gestor do setor atual ou, sem responsável e no meu recorte, assumir/triar/fechar | decisão de autoridade (trigger) |
+| participantes | `UPDATE` comum | `UPDATE` comum; só cresce com o próprio `auth.uid()` (quem escreve/decide), salvo transversal | proteção do modelo |
+| aprovar/rejeitar ação | `UPDATE inbox_action` | `UPDATE` comum, conferido pelo trigger `inbox_action_autoridade`: `decided_by` = `auth.uid()`, papel decisor da matriz (Administrador é a exceção), proponente não decide | decisão de autoridade (trigger) |
+| assunto, labels, obra, classificação, resumo, SLA, marcas de tempo, referências à Central, nota/rascunho (insert de mensagem), propor ação, job, resultado | `UPDATE`/`INSERT` comum | inalterado (RLS de visibilidade) | edição de dado |
+
+`inbox_assign_thread(p_thread_id, p_sector_code, p_team_id, p_assignee_id, p_reason, p_origin)` é `SECURITY DEFINER` com
+`search_path` fixo, EXECUTE só para `authenticated`/`service_role`, ator **sempre `auth.uid()`** (nenhum parâmetro de ator),
+thread só da organização do ator (cross-org devolve `thread_nao_encontrada`), e valida em ordem: acesso (a mesma regra da
+política de SELECT) → destino da mesma organização (setor ativo, equipe do setor, perfil ativo) → autoridade (espelho de
+`podeAtribuir`: transversal; assumir conversa sem responsável no meu recorte; responsável atual; gestor do setor atual;
+triagem de conversa sem setor) → mudança real → encerra a atribuição vigente, cria a nova (`actor_id = auth.uid()`),
+atualiza a thread (status derivado como `statusAposAtribuicao`, SLA se faltava) e registra os eventos — numa transação:
+qualquer falha desfaz tudo (prova N). Os parâmetros são o estado alvo completo; sem mudança nada é gravado.
+
+Adapter: cada atribuição nova do store vira uma chamada à RPC (com o JWT do usuário); o `UPDATE` da thread nunca leva
+as colunas governadas; os eventos que o store gerou para essa atribuição são marcados como já persistidos (o banco os
+registrou). O store continua com as mesmas regras como validação de UX — elas não contam como proteção.
+
+Provas novas no smoke (I–P): atendente assume conversa do seu setor; atendente sem autoridade não transfere nem alcança
+thread de outro setor; gestor transfere (anterior encerrada, nova criada, thread atualizada, eventos) e segue vendo enquanto
+a atribuição vigente for dele; outra organização e usuário sem `inbox` não operam; Diretoria opera transversalmente;
+destino inválido recusado antes de escrever; falha intermediária faz rollback integral; `UPDATE` direto de responsável,
+setor e `INSERT` de atribuição recebem `permission denied`; status por quem não tem autoridade e participante alheio são
+recusados pelo trigger; decisão de ação com papel errado, pelo proponente ou com `decided_by` alheio é recusada.
+
+Participantes: decisão da §12.3 preservada — participante é quem contribuiu; encaminhamento dá acesso só enquanto a
+atribuição vigente for de quem encaminhou; histórico em `inbox_assignment` e eventos.
 
 ## 13. Próxima fase — Octopus Router (contrato arquitetural, não implementado)
 

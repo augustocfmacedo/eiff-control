@@ -7,7 +7,7 @@ import { carregarInbox, persistirInbox, type HelpersInbox } from './inbox.supaba
 
 const ORG = '11111111-1111-1111-1111-111111111111';
 const AGORA = '2026-09-23T12:00:00.000Z';
-type Chamada = { op: 'inserir' | 'atualizar' | 'composta' | 'apagar'; tabela: string; rows: Record<string, unknown>[] };
+type Chamada = { op: 'inserir' | 'atualizar' | 'composta' | 'apagar' | 'rpc'; tabela: string; rows: Record<string, unknown>[] };
 
 function helpersFalsos(tabelas: Record<string, Record<string, unknown>[]> = {}) {
   const chamadas: Chamada[] = [];
@@ -18,6 +18,7 @@ function helpersFalsos(tabelas: Record<string, Record<string, unknown>[]> = {}) 
     atualizar: async (tabela, id, row) => { chamadas.push({ op: 'atualizar', tabela, rows: [{ id, ...row }] }); },
     gravarComposta: async (tabela, chave, row) => { chamadas.push({ op: 'composta', tabela, rows: [{ ...chave, ...row }] }); },
     apagar: async (tabela, id) => { chamadas.push({ op: 'apagar', tabela, rows: [{ id }] }); },
+    rpc: async (nome, args) => { chamadas.push({ op: 'rpc', tabela: nome, rows: [args] }); return { ok: true, assignment_id: `uuid-assign-${++seq}`, status: 'ATRIBUIDA', event_ids: [] }; },
     orgId: ORG, atorId: 'perfil-ator', uuid: (v) => (v && /^[0-9a-f-]{36}$/i.test(v) ? v : null), perfil: (id) => (id ? `perfil-${id}` : null),
     obra: (c) => (c ? `proj-${c}` : null), obraCodigo: (id) => (id ? String(id).replace('proj-', '') : undefined),
   };
@@ -36,8 +37,16 @@ describe('escrita', () => {
     expect(idx('inbox_team')).toBeLessThan(idx('inbox_member'));
     expect(idx('inbox_contact')).toBeLessThan(idx('inbox_thread'));
     expect(idx('inbox_thread')).toBeLessThan(idx('inbox_action'));
-    // atribuicao entra entre o insert e o update da thread (inbox_encaminhei no RLS)
-    expect(idx('inbox_assignment')).toBeLessThan(idx('inbox_action'));
+    // atribuicao NUNCA por insert: uma chamada a RPC governada por atribuicao nova, entre o insert e o update da thread
+    expect(chamadas.some((c) => c.tabela === 'inbox_assignment')).toBe(false);
+    const rpcs = chamadas.filter((c) => c.op === 'rpc' && c.tabela === 'inbox_assign_thread');
+    expect(rpcs).toHaveLength(seed.atribuicoes.length);
+    expect(rpcs[0].rows[0]).toMatchObject({ p_sector_code: 'FINANCEIRO', p_assignee_id: 'perfil-u-fin', p_origin: 'roteamento' }); expect(String(rpcs[0].rows[0].p_thread_id)).toMatch(/^uuid-inbox_thread-/);
+    expect(idx('inbox_assign_thread')).toBeLessThan(idx('inbox_action'));
+    // os eventos que a RPC registra (ASSIGNED/ROUTED/... no instante da atribuicao) nao sao inseridos de novo
+    const eventosInseridos = chamadas.filter((c) => c.tabela === 'inbox_thread_event').flatMap((c) => c.rows);
+    const t1Ev = eventosInseridos.filter((e) => String(e.thread_id) === String(rpcs[0].rows[0].p_thread_id));
+    expect(t1Ev.map((e) => e.event_type)).toEqual(['THREAD_CREATED', 'AI_ANALYZED']);
     expect(idx('inbox_action')).toBeLessThan(idx('inbox_message'));
     expect(idx('inbox_message')).toBeLessThan(idx('inbox_thread_event'));
     expect(chamadas.filter((c) => c.tabela === 'inbox_message').every((c) => c.op === 'inserir')).toBe(true);
@@ -68,6 +77,8 @@ describe('escrita', () => {
     expect(chamadas).toHaveLength(1);
     expect(chamadas[0]).toMatchObject({ op: 'atualizar', tabela: 'inbox_thread' });
     expect(chamadas[0].rows[0]).toMatchObject({ status: 'EM_ATENDIMENTO' }); expect(String(chamadas[0].rows[0].id)).toMatch(/^uuid-inbox_thread-/);
+    // o UPDATE da thread nunca leva as colunas governadas
+    expect(Object.keys(chamadas[0].rows[0])).not.toEqual(expect.arrayContaining(['sector_id', 'assignee_id', 'team_id']));
   });
   it('remover membro apaga a linha; setor novo é inserido e existente alterado', async () => {
     const { h, chamadas } = helpersFalsos();

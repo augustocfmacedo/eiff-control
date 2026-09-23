@@ -25,6 +25,9 @@
 --      (setor, equipe, membro, regras) so Administrador/Diretoria escrevem — a mesma matriz de src/core/permissoes.ts
 --      (`inbox` e `inbox_config`), nunca uma segunda ACL;
 --   7) auditoria: audit_log continua recebendo so ids/estados pela aplicacao; nenhum trigger copia corpo de mensagem.
+--   8) OPERACOES GOVERNADAS (secao 8): atribuir/transferir/assumir/liberar so pela RPC inbox_assign_thread (colunas
+--      sector_id/team_id/assignee_id sem UPDATE para authenticated; inbox_assignment sem INSERT/UPDATE); status, prioridade,
+--      nivel, participantes e decisao de acao conferidos por trigger contra auth.uid() — a tela nao e autoridade.
 -- Migration idempotente: pode ser aplicada mais de uma vez.
 
 -- ---------------------------------------------------------------------------------------------------------------
@@ -597,3 +600,180 @@ do $g$ declare tb text; begin
   end loop;
   execute 'grant delete on inbox_member to authenticated';
 end $g$;
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- 8) OPERACOES GOVERNADAS: a autoridade mora no banco, nao na tela (docs/eiff-inbox.md § gate final)
+-- ---------------------------------------------------------------------------------------------------------------
+-- O que e EDICAO DE DADO e continua por UPDATE comum (RLS de visibilidade): assunto, labels, obra, classificacao, resumo,
+-- SLA, marcas de tempo, referencias a Central. O que e DECISAO DE AUTORIDADE:
+--   * atribuir / reatribuir / trocar setor / equipe / responsavel / assumir / liberar -> SO pela RPC inbox_assign_thread.
+--     As colunas sector_id, team_id e assignee_id NAO sao atualizaveis por `authenticated` (privilegio de coluna) e
+--     inbox_assignment nao recebe INSERT/UPDATE de `authenticated`: fora da RPC nao existe caminho;
+--   * status (fechar, reabrir, espera, resolver), prioridade e nivel -> UPDATE comum, mas o trigger inbox_thread_autoridade
+--     exige transversal, responsavel atual, gestor do setor atual ou (sem responsavel, no meu recorte) assumir/triar;
+--   * participant_ids -> so cresce com o proprio usuario (quem escreve/decide), salvo transversal;
+--   * aprovar/rejeitar acao -> UPDATE comum, mas o trigger inbox_action_autoridade exige o papel decisor (Administrador e a
+--     excecao) e recusa que quem propos decida.
+-- O ator e SEMPRE auth.uid(): nenhum parametro de ator e aceito. Sem auth.uid() (service_role) os triggers nao se aplicam —
+-- e o caminho de inbox_ingest, que nao muda atribuicao nem decisao.
+
+-- membro GESTOR de um setor
+create or replace function inbox_gestor_de(p_sector uuid) returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select p_sector is not null and exists (select 1 from inbox_member m where m.profile_id = auth.uid() and m.sector_id = p_sector and m.member_role = 'gestor')
+$$;
+
+-- transferencia/atribuicao ATOMICA. Parametros sao o ESTADO ALVO completo (null = sem setor / sem equipe / sem responsavel).
+create or replace function inbox_assign_thread(
+  p_thread_id uuid, p_sector_code text default null, p_team_id uuid default null, p_assignee_id uuid default null,
+  p_reason text default null, p_origin text default 'manual'
+) returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_uid uuid := auth.uid();
+  v_org uuid; v_trans boolean; v_ator_nome text;
+  t inbox_thread; v_sector uuid; v_team uuid; v_novo_status text; v_sla timestamptz;
+  v_visivel boolean; v_assumir boolean; v_autorizado boolean; v_now timestamptz := now();
+  v_assign uuid; v_eventos uuid[] := '{}'; v_ev uuid; v_nome_de text; v_nome_para text; v_cod_de text; v_cod_para text;
+  v_horas numeric;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'erro', 'nao_autenticado'); end if;
+  select organization_id, name into v_org, v_ator_nome from profile where id = v_uid and active;
+  if v_org is null then return jsonb_build_object('ok', false, 'erro', 'sem_perfil'); end if;
+  if not inbox_role() then return jsonb_build_object('ok', false, 'erro', 'sem_permissao_inbox'); end if;
+  if p_origin not in ('roteamento', 'triagem', 'manual', 'escalacao', 'sistema') then return jsonb_build_object('ok', false, 'erro', 'origem_invalida'); end if;
+
+  -- thread da MINHA organizacao (cross-org e "nao encontrada", nunca "sem acesso": nao vaza existencia)
+  select * into t from inbox_thread where id = p_thread_id and organization_id = v_org for update;
+  if t.id is null then return jsonb_build_object('ok', false, 'erro', 'thread_nao_encontrada'); end if;
+
+  -- 1) tem acesso? (a mesma regra da politica de SELECT)
+  v_trans := inbox_config_role();
+  v_visivel := v_trans or t.assignee_id = v_uid or v_uid = any (t.participant_ids) or t.sector_id is null
+    or t.sector_id in (select inbox_user_sectors()) or inbox_encaminhei(t.id);
+  if not v_visivel then return jsonb_build_object('ok', false, 'erro', 'sem_acesso'); end if;
+
+  -- 2) destino valido e da MESMA organizacao
+  if p_sector_code is not null then
+    select id into v_sector from inbox_sector where organization_id = v_org and code = p_sector_code and active;
+    if v_sector is null then return jsonb_build_object('ok', false, 'erro', 'setor_invalido'); end if;
+  end if;
+  if p_team_id is not null then
+    select id into v_team from inbox_team where id = p_team_id and organization_id = v_org and active and sector_id = v_sector;
+    if v_team is null then return jsonb_build_object('ok', false, 'erro', 'equipe_invalida'); end if;
+  end if;
+  if p_assignee_id is not null and not exists (select 1 from profile p where p.id = p_assignee_id and p.organization_id = v_org and p.active) then
+    return jsonb_build_object('ok', false, 'erro', 'responsavel_invalido');
+  end if;
+
+  -- 3) tem autoridade? (espelha podeAtribuir do core)
+  v_assumir := p_assignee_id = v_uid and v_sector is not distinct from t.sector_id;
+  v_autorizado := v_trans
+    or (v_assumir and t.assignee_id is null and (t.sector_id is null or t.sector_id in (select inbox_user_sectors())))
+    or t.assignee_id = v_uid
+    or inbox_gestor_de(t.sector_id)
+    or (t.assignee_id is null and t.sector_id is null);
+  if not v_autorizado then return jsonb_build_object('ok', false, 'erro', 'sem_autoridade'); end if;
+
+  -- 4) mudanca e permitida? (sem mudanca = nada gravado)
+  if v_sector is not distinct from t.sector_id and v_team is not distinct from t.team_id and p_assignee_id is not distinct from t.assignee_id then
+    return jsonb_build_object('ok', true, 'sem_mudanca', true, 'thread_id', t.id, 'status', t.status);
+  end if;
+
+  -- status derivado (statusAposAtribuicao do core)
+  v_novo_status := t.status;
+  if t.status in ('NOVA', 'TRIADA', 'ATRIBUIDA') then
+    v_novo_status := case when p_assignee_id is not null then 'ATRIBUIDA' when v_sector is not null then 'TRIADA' when t.status = 'ATRIBUIDA' then 'TRIADA' else t.status end;
+  elsif p_assignee_id is null and t.status in ('AGUARDANDO_CONTATO', 'AGUARDANDO_INTERNO', 'AGUARDANDO_APROVACAO') then
+    v_novo_status := 'TRIADA';
+  end if;
+  v_sla := t.sla_first_response_due;
+  if v_sla is null then
+    select coalesce((c.sla_hours ->> t.priority)::numeric, 24) into v_horas from inbox_config c where c.organization_id = v_org;
+    v_sla := t.opened_at + (coalesce(v_horas, 24) * interval '1 hour');
+  end if;
+
+  -- 5) encerrar a atribuicao vigente, criar a nova, atualizar a thread, registrar os eventos — tudo nesta transacao
+  update inbox_assignment set released_at = v_now where thread_id = t.id and released_at is null;
+  insert into inbox_assignment (organization_id, thread_id, sector_id, team_id, assignee_id, assigned_at, reason, origin, actor_id)
+    values (v_org, t.id, v_sector, v_team, p_assignee_id, v_now, left(p_reason, 500), p_origin, v_uid) returning id into v_assign;
+  perform set_config('inbox.governada', 'on', true);
+  update inbox_thread set sector_id = v_sector, team_id = v_team, assignee_id = p_assignee_id, status = v_novo_status, sla_first_response_due = v_sla where id = t.id;
+  perform set_config('inbox.governada', '', true);
+
+  select code into v_cod_de from inbox_sector where id = t.sector_id;
+  select code into v_cod_para from inbox_sector where id = v_sector;
+  if v_sector is distinct from t.sector_id or v_team is distinct from t.team_id then
+    insert into inbox_thread_event (organization_id, thread_id, event_type, occurred_at, actor_kind, actor_id, actor_name, detail, before_value, after_value)
+      values (v_org, t.id, case when t.sector_id is null then 'ROUTED' else 'REASSIGNED' end, v_now, 'usuario', v_uid::text, v_ator_nome,
+        left('setor ' || coalesce(v_cod_de, '—') || ' → ' || coalesce(v_cod_para, '—') || coalesce(': ' || nullif(left(p_reason, 200), ''), ''), 500), v_cod_de, v_cod_para)
+      returning id into v_ev;
+    v_eventos := v_eventos || v_ev;
+  end if;
+  if p_assignee_id is distinct from t.assignee_id then
+    select name into v_nome_de from profile where id = t.assignee_id;
+    select name into v_nome_para from profile where id = p_assignee_id;
+    insert into inbox_thread_event (organization_id, thread_id, event_type, occurred_at, actor_kind, actor_id, actor_name, detail, before_value, after_value)
+      values (v_org, t.id, case when p_assignee_id is null then 'RELEASED' when t.assignee_id is null then 'ASSIGNED' else 'REASSIGNED' end, v_now, 'usuario', v_uid::text, v_ator_nome,
+        left('responsável ' || coalesce(v_nome_de, '—') || ' → ' || coalesce(v_nome_para, '—') || coalesce(': ' || nullif(left(p_reason, 200), ''), ''), 500), t.assignee_id::text, p_assignee_id::text)
+      returning id into v_ev;
+    v_eventos := v_eventos || v_ev;
+  end if;
+  if v_novo_status <> t.status then
+    insert into inbox_thread_event (organization_id, thread_id, event_type, occurred_at, actor_kind, actor_id, actor_name, detail, before_value, after_value)
+      values (v_org, t.id, 'STATUS_CHANGED', v_now, 'usuario', v_uid::text, v_ator_nome, 'status derivado da atribuição', t.status, v_novo_status)
+      returning id into v_ev;
+    v_eventos := v_eventos || v_ev;
+  end if;
+  return jsonb_build_object('ok', true, 'sem_mudanca', false, 'thread_id', t.id, 'assignment_id', v_assign, 'status', v_novo_status, 'event_ids', to_jsonb(v_eventos));
+end $$;
+revoke execute on function inbox_assign_thread(uuid, text, uuid, uuid, text, text) from public, anon;
+grant execute on function inbox_assign_thread(uuid, text, uuid, uuid, text, text) to authenticated, service_role;
+
+-- autoridade sobre status/prioridade/nivel e sobre participant_ids (UPDATE comum, decisao conferida no banco)
+create or replace function inbox_thread_autoridade() returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_uid uuid := auth.uid(); v_trans boolean; v_ok boolean; v_novos uuid[];
+begin
+  if v_uid is null then return new; end if;                                   -- service_role (ingestao) nao passa por aqui
+  if coalesce(current_setting('inbox.governada', true), '') = 'on' then return new; end if;  -- dentro da RPC ja autorizada
+  v_trans := inbox_config_role();
+  -- setor/equipe/responsavel nunca por UPDATE comum (o privilegio de coluna ja impede; aqui e a segunda camada)
+  if new.sector_id is distinct from old.sector_id or new.team_id is distinct from old.team_id or new.assignee_id is distinct from old.assignee_id then
+    raise exception 'atribuição só pela operação governada inbox_assign_thread';
+  end if;
+  if new.status is distinct from old.status or new.priority is distinct from old.priority or new.service_level is distinct from old.service_level then
+    v_ok := v_trans or old.assignee_id = v_uid or inbox_gestor_de(old.sector_id)
+      or (old.assignee_id is null and (old.sector_id is null or old.sector_id in (select inbox_user_sectors())) and new.status in ('TRIADA', 'ATRIBUIDA', 'EM_ATENDIMENTO', 'FECHADA'));
+    if not v_ok then raise exception 'sem autoridade para mudar status, prioridade ou nível desta conversa'; end if;
+  end if;
+  if new.participant_ids is distinct from old.participant_ids and not v_trans then
+    select coalesce(array_agg(p), '{}') into v_novos from unnest(new.participant_ids) p where not (p = any (old.participant_ids)) and p <> v_uid;
+    if array_length(v_novos, 1) > 0 then raise exception 'participante só entra por conta própria (quem escreve ou decide)'; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists inbox_thread_autoridade on inbox_thread;
+create trigger inbox_thread_autoridade before update on inbox_thread for each row execute function inbox_thread_autoridade();
+
+-- decisao de acao: papel decisor da matriz (Administrador e a excecao); quem propos nao decide
+create or replace function inbox_action_autoridade() returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_uid uuid := auth.uid(); v_papel text;
+begin
+  if v_uid is null then return new; end if;
+  if new.decision is distinct from old.decision or new.decided_by is distinct from old.decided_by then
+    select role::text into v_papel from profile where id = v_uid;
+    if new.decided_by is distinct from v_uid then raise exception 'decided_by tem de ser quem decide (auth.uid())'; end if;
+    if v_papel <> 'Administrador' then
+      if old.approver_role is not null and old.approver_role <> v_papel then raise exception 'esta ação é decidida por %', old.approver_role; end if;
+      if old.proposed_by_kind = 'usuario' and old.proposed_by_id = v_uid::text then raise exception 'quem propôs a ação não a aprova'; end if;
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists inbox_action_autoridade on inbox_action;
+create trigger inbox_action_autoridade before update on inbox_action for each row execute function inbox_action_autoridade();
+
+-- privilegios de coluna: setor/equipe/responsavel so pela RPC; atribuicao so pela RPC
+revoke update on inbox_thread from authenticated;
+grant update (subject, status, priority, service_level, participant_ids, project_id, labels, classification, summary,
+  sla_first_response_due, sla_first_response_at, sla_resolution_due, last_message_at, last_inbound_at, resolved_at, closed_at, resolved_by,
+  central_conversation_id, external_conversation_id) on inbox_thread to authenticated;
+revoke insert, update on inbox_assignment from authenticated;
