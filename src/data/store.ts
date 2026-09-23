@@ -61,7 +61,7 @@ import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRe
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
-import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal } from '../core/radar';
+import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
@@ -87,6 +87,32 @@ export class RegraCadenciaCommitError extends RegraDeNegocioError {
     public readonly tarefaId?: string,
     public readonly pendencias?: readonly CodigoPendenciaTarefaCM[],
     public readonly detalhe?: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * LE-2C — o comando da UNICA porta do Lead Engine no store. Uniao discriminada em vez de duas actions: existe
+ * um entrypoint so, e o `tipo` diz qual funcao do core decide. A UI nunca manda dataset, analise, usuario,
+ * relogio nem gerador de id — só o que ela de fato sabe.
+ */
+export type ComandoLeadEngine =
+  | { tipo: 'DECISAO'; pedido: PedidoDecisao }
+  | { tipo: 'TERMINALIZAR_SUPRIMIDO'; registroFonteId: string };
+
+/**
+ * LE-2C — recusa da porta governada do Lead Engine, com os motivos do CORE preservados.
+ * Continua sendo uma RegraDeNegocioError (quem so mostra a mensagem nao muda), mas quem precisa decidir le
+ * `motivos`, `registroFonteId` e `operacao` sem nenhum parsing de texto. A lista de motivos e a do
+ * `leadEngineReview.ts`: o store nao inventa codigo nem reinterpreta recusa.
+ */
+export class RegraLeadEngineError extends RegraDeNegocioError {
+  constructor(
+    message: string,
+    public readonly motivos: readonly MotivoRecusa[],
+    public readonly registroFonteId: string,
+    public readonly operacao: ComandoLeadEngine['tipo'],
   ) {
     super(message);
   }
@@ -1788,6 +1814,63 @@ export const actions = {
     exigir('radar');
     const radar = { ...state.ds.radar, duplicatas: state.ds.radar.duplicatas.map((x) => (x.id === id ? { ...x, status: 'descartada' as const, resolvidoEm: agora(), resolvidoPor: state.usuario.id } : x)) };
     commit(registrar({ ...state.ds, radar }, 'radar_descartar_duplicata', 'radar_empresa', d.empresaId, d, { status: 'descartada' }));
+  },
+
+  /**
+   * LE-2C — UNICA porta do Lead Engine no store. O store e FRONTEIRA, nao autoridade:
+   *
+   *   permissao -> le o estado ATUAL -> o CORE revalida e decide -> auditoria -> um commit
+   *
+   * Nenhuma regra do Lead Engine vive aqui. Identidade forte, supressao, match, fingerprint, observacao
+   * desatualizada, transicoes e as regras de CREATE/ASSOCIATE continuam em `leadEngineReview.ts`, e sao
+   * reavaliadas contra `state.ds.radar` no momento da chamada — nunca contra o que a tela viu.
+   *
+   * Falha fechada: recusa do core nao registra, nao commita e nao aplica nada pela metade.
+   */
+  processarCandidatoLeadEngine(cmd: ComandoLeadEngine): ResultadoDecisao {
+    exigir('radar');
+    const r = state.ds.radar;
+    // contexto canonico: ids, data-base, relogio e usuario sao do STORE. A UI nao fornece nenhum deles.
+    const ctx: ContextoDecisao = idsRadar(r);
+    const registroFonteId = cmd.tipo === 'DECISAO' ? cmd.pedido.registroFonteId : cmd.registroFonteId;
+    const antes = r.registrosFonte.find((x) => x.id === registroFonteId);
+
+    const saida = cmd.tipo === 'DECISAO'
+      ? aplicarDecisao(r, cmd.pedido, ctx)
+      : terminalizarSuprimido(r, registroFonteId, ctx);
+
+    if (!saida.ok) {
+      throw new RegraLeadEngineError(
+        `O Lead Engine recusou esta operação: ${saida.motivos.join(', ')}.`,
+        saida.motivos, registroFonteId, cmd.tipo,
+      );
+    }
+
+    const { resultado } = saida;
+    // idempotencia do KEEP_REVIEW: o core devolve o MESMO dataset quando nada mudou. Commit vazio seria
+    // ruido de auditoria e uma versao nova sem fato novo.
+    if (resultado.radar === r) return resultado;
+
+    const depois = resultado.radar.registrosFonte.find((x) => x.id === registroFonteId);
+    const acao = cmd.tipo === 'DECISAO' ? `lead_engine_decisao_${cmd.pedido.decisao.toLowerCase()}` : 'lead_engine_terminalizar_suprimido';
+    // a evidencia bruta ja esta em RegistroFonte: a auditoria guarda a DECISAO, nao o payload de novo
+    const ds = registrar(
+      { ...state.ds, radar: resultado.radar },
+      acao, 'radar_source_record', registroFonteId,
+      antes && { statusIntake: antes.statusIntake, entidadeId: antes.entidadeId },
+      {
+        statusIntake: resultado.status,
+        entidadeId: resultado.entidadeId,
+        empresaId: resultado.empresaId,
+        projetoId: resultado.projetoId,
+        sinalIds: resultado.sinalIds,
+        empresaCriada: resultado.empresaCriada,
+        ...(cmd.tipo === 'DECISAO' ? { decisao: cmd.pedido.decisao, empresaEscolhida: cmd.pedido.empresaId } : {}),
+      },
+      depois?.motivoDecisao,
+    );
+    commit(ds);
+    return resultado;
   },
 
   novoContatoRadar(empresaId: string): Contato {

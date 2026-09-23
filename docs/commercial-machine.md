@@ -1,7 +1,8 @@
 # EIFF Commercial Machine — arquitetura (CM1 + CM2)
 
 Estado: **CM1 fechado** (CM1-A, CM1-B, CM1-C, CM1-D1, CM1-D2, CM1-E) e **CM2 fechado** (Cadence Engine v1: CM2-A a
-CM2-F). CM3 a CM5 não iniciados; a próxima grande frente é o **Lead Engine 1.0**.
+CM2-F). CM3 a CM5 não iniciados; a próxima grande frente é o **Lead Engine 1.0** — documento canônico:
+`docs/lead-engine-1.0.md`.
 Branches: `feature/commercial-machine-v1` (CM1, congelada em `a9ef237`) e `feature/commercial-machine-cm2` (CM2) ·
 baseline original: `main @ ab642be` · plano e histórico: `COMMERCIAL_MACHINE_V1_PLAN.md` · documento canônico do CM2:
 `docs/commercial-machine-cm2.md`.

@@ -373,15 +373,30 @@ export interface Supressao {
   criadoEm: string;
 }
 
+/** Tipo de registro bruto: o que a fonte entregou. */
+export type TipoRegistroFonte = 'empresa' | 'contato' | 'projeto' | 'sinal';
+
+/**
+ * Estado do staging do Lead Engine (LE-1). Ausente = registro FORA do Lead Engine: linhagem legada,
+ * importacao CSV, Vibe e tudo que ja existia antes. Ausente NUNCA e pendencia.
+ */
+export type StatusIntake = 'PENDING' | 'REVIEW' | 'RESOLVED' | 'REJECTED';
+
 /** Registro bruto recebido de uma fonte externa (linhagem e reprocessamento). */
 export interface RegistroFonte {
   id: string;
   fonteId: string;
-  tipo: 'empresa' | 'contato' | 'projeto' | 'sinal';
+  tipo: TipoRegistroFonte;
   externoId?: string;
   payload: unknown;
   entidadeId?: string;
   recebidoEm: string;
+  // Lead Engine LE-1 (todos opcionais: registro sem eles e registro nao gerenciado pelo Lead Engine)
+  payloadFingerprint?: string; // impressao canonica da OBSERVACAO, nao do objeto externo
+  statusIntake?: StatusIntake;
+  decididoEm?: string;
+  decididoPor?: string;
+  motivoDecisao?: string;
 }
 
 /** Linha do ledger radar_vibe_operation (somente leitura no app; escrita so pela funcao Netlify). */

@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { economiaInteligencia } from '../../core/radar/economia';
-import { DIMENSOES, FAIXAS_FUNCIONARIOS, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, PERSONAS, TIPOS_SINAL, calcularDecisionFit, configDe, filaHoje, oportunidadesSemProximaAcao, resumoRadar, type CondicaoRegra, type Dimensao, type Estrategia, type ImportacaoLinha, type Persona, type RegraPersona, type RegraScore } from '../../core/radar';
+import { DIMENSOES, FAIXAS_FUNCIONARIOS, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, PERSONAS, TIPOS_SINAL, calcularDecisionFit, configDe, filaHoje, descobertasSuprimidas, filaDeRevisao, oportunidadesSemProximaAcao, resumoRadar, type CondicaoRegra, type Dimensao, type Estrategia, type ImportacaoLinha, type Persona, type RegraPersona, type RegraScore } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast } from '../../ui/components';
 import { ImportarForm, ScorePill, d, dh, nomeUsuario } from './comum';
 import { VibePainel } from './Vibe';
 import { CoberturaDecisores } from './Cobertura';
+import LeadEngineCandidatos from './LeadEngineCandidatos';
 import { SignalPilot } from './SignalPilot';
 
-type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe' | 'signal';
+type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'candidatos' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe' | 'signal';
 
 export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const { ds, usuario } = useStore();
@@ -26,6 +27,11 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const semAcao = oportunidadesSemProximaAcao(r);
   const vencidas = r.tarefas.filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) < hoje).sort((a, b) => (a.venceEm < b.venceEm ? -1 : 1));
   const cfg = configDe(r.configScore);
+  // LE-2E: projecoes do Lead Engine. A fila de revisao da importacao CSV (res.revisoesPendentes) e OUTRA coisa.
+  const candidatosLE = filaDeRevisao(r);
+  // LE-2E: a escolha de empresa por candidato vive AQUI para LeadEngineCandidatos/LinhaCandidato ficarem puros
+  const [selecaoLE, setSelecaoLE] = useState<Record<string, string>>({});
+  const suprimidosLE = descobertasSuprimidas(r);
   const empresaNome = (id: string) => { const e = r.empresas.find((x) => x.id === id); return e ? e.nomeFantasia ?? e.razaoSocial : id; };
   const salvarRegra = (g: RegraScore) => tentar(() => actions.salvarRegraScoreRadar(g), toast);
   const descreveCondicao = (c: CondicaoRegra) => c.tipo === 'sinal' ? `sinal ${NOME_SINAL[c.tipoSinal]}` : c.tipo === 'fitCalibrado' ? `FIT calibrado · ${c.componente}` : c.tipo === 'campo' ? `${String(c.campo)} ${c.op} ${Array.isArray(c.valor) ? c.valor.slice(0, 4).join(', ') + (c.valor.length > 4 ? '…' : '') : String(c.valor ?? '')}` : c.tipo === 'contato' ? `contato${c.decisor ? ' decisor' : ''}${c.comEmail ? ' com e-mail' : ''}${c.comTelefone ? ' e telefone' : ''}${c.verificado ? ' verificado' : ''}` : c.tipo === 'resposta' ? `resposta ${c.codigos.join('/')}` : c.tipo === 'atividade' ? `atividade ${c.tipos.join('/')}` : c.tipo === 'projeto' ? `projeto${c.inicioEmMeses ? ` em ${c.inicioEmMeses} meses` : ''}` : c.tipo === 'sinalQualquer' ? `qualquer sinal${c.diasMax ? ` em ${c.diasMax} dias` : ''}` : `completude de ${c.campos.length} campos`;
@@ -79,7 +85,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         ]} />
       </div>
       <div style={{ height: 16 }} />
-      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }, { id: 'signal' as const, label: 'Signal Pilot' }] : [])]} />
+      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'candidatos', label: `Candidatos (${candidatosLE.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }, { id: 'signal' as const, label: 'Signal Pilot' }] : [])]} />
 
       {aba === 'visao' && (
         <div className="grid cols-2">
@@ -169,6 +175,8 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
       {aba === 'decisores' && <><CoberturaDecisores /><ConfigDecisores podeConfig={podeConfig} onErro={toast} onOk={toast} /></>}
       {aba === 'vibe' && podeConfig && <VibePainel onErro={toast} onOk={toast} />}
       {aba === 'signal' && <SignalPilot />}
+
+      {aba === 'candidatos' && <LeadEngineCandidatos candidatos={candidatosLE} suprimidos={suprimidosLE} empresas={r.empresas} podeAgir={podeAgir} selecao={selecaoLE} onSelecionar={(id, empresaId) => setSelecaoLE((s) => ({ ...s, [id]: empresaId }))} onErro={toast} onOk={toast} />}
 
       {aba === 'revisao' && (
         <div className="card table-wrap">
