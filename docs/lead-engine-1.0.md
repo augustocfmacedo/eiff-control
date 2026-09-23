@@ -1,9 +1,9 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE2-F fechado** (rebaseline sobre `main @ 5e7b3be` e certificação da linha, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
-Branch ATUAL da linha: `feature/lead-engine-2`, baseada em `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
+Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
 por cherry-pick (a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree; o módulo órfão está
 preservado em `rescue/lead-engine-2-orphan`). Baseline histórico do LE-0: `main @ 88c9ccc`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
@@ -1025,3 +1025,63 @@ local: depois do commit, o `useStore` rerenderiza com o novo estado.
 
 Core (`leadEngineReview.ts`), store (`store.ts`), persistência (`radar.supabase.ts`) e a migration 0055 ficaram
 **intocados** neste gate. A migration 0055 continua **não aplicada remotamente**.
+
+---
+
+## 32. LE2-F — rebaseline sobre a `main` e certificação da linha LE-2
+
+Gate de 23/09/2026. Dois blocos: incorporar a `main` vigente sem reescrever história e certificar a linha inteira
+sobre o HEAD integrado. **Nada foi liberado**: sem release, sem PR, sem merge em `main`, sem migration remota, sem LE-3.
+
+### 32.1 Rebaseline
+
+`git merge --no-ff origin/main` em `feature/lead-engine-2`, a partir de `main @ 5e7b3be` e HEAD `5211239`
+(merge-base `14d2ff7`). **Zero conflitos.** Os três commits da `main` tocam apenas Mission Control
+(`quadroOperacional.ts`/`.test.ts`, `MissionControlQuadro.tsx`) e a guarda da UX-6 (`comercialUX6.test.ts`) —
+nenhum arquivo de implementação do Lead Engine dos dois lados. LE-0 (`616bac3`), LE-1 (`6ec33d4`),
+LE2-A (`c14b7bd`), LE2-B (`059429a`), LE2-C (`31b46cc`), LE2-E (`5211239`) e `5e7b3be` seguem todos ancestrais do HEAD.
+
+### 32.2 Fecho de imports do núcleo
+
+O fecho transitivo a partir de `leadEngineReview.ts` e `leadEngineIntake.ts` alcança **11 módulos**, todos em
+`src/core/radar/` (`adapters`, `contatos`, `fitCalibracao`, `hash`, `ingestao`, `normalizar`, `padroes`, `score`,
+`types` + os dois). **Zero pacote externo**, zero React, zero store, zero Supabase, zero `fetch`. A tela chama uma
+única action (`processarCandidatoLeadEngine`) e nenhuma função mutacional do core.
+
+### 32.3 Estado real do banco de produção — `PROD_0055_STATE = NOT_APPLIED`
+
+Verificado por consulta **somente leitura** ao projeto `dduobppgomqyagjviwpx` em 23/09/2026.
+
+Achado colateral: **este projeto não tem ledger de migrations** — `supabase_migrations.schema_migrations` não
+existe, porque as migrations sempre foram aplicadas por `supabase db query -f`. A conferência do que está no ar
+tem de ser feita pelo **schema real**, nunca por um ledger.
+
+`radar_source_record` em produção tem só as 8 colunas da 0031 (`id`, `organization_id`, `source_id`,
+`record_type`, `external_id`, `payload`, `entity_id`, `received_at`). **Nenhuma** coluna da 0055
+(`payload_fingerprint`, `intake_status`, `decided_at`, `decided_by`, `decision_reason`), **nenhum** dos três CHECKs,
+**nenhum** dos dois índices novos e **nenhum** trigger (`pg_trigger` não-interno devolve vazio). Não é estado
+parcial: é a tabela pré-Lead-Engine intacta, com 108 linhas legadas, todas com `external_id` e `entity_id`.
+Depois da 0055 essas 108 ficam com `intake_status` NULL — "fora do Lead Engine", sem backfill e sem virar
+pendência, exatamente como o smoke PGlite prova.
+
+### 32.4 Ordem de release — `MIGRATION_BEFORE_APP_DEPLOY = YES`
+
+A ordem não é preferência, é consequência do adapter. O `db()` da spec `registrosFonte` em `radar.supabase.ts`
+(LE2-A) **envia** `payload_fingerprint`, `intake_status`, `decided_at`, `decided_by` e `decision_reason` em toda
+gravação. Com o app no ar antes da 0055, qualquer escrita em `radar_source_record` — a importação CSV do Radar,
+que é funcionalidade viva em produção — falharia com coluna inexistente. A leitura toleraria (o `select *` não
+traria as colunas), a escrita não. Logo:
+
+1. aplicar a 0055;
+2. provar o schema (colunas, 3 CHECKs, 2 índices, trigger `radar_source_record_evidencia`);
+3. só então merge e deploy do app;
+4. smoke de produção.
+
+### 32.5 Certificação
+
+Sobre o HEAD integrado, não sobre resultados anteriores: LE-1 46/46, LE2-A 23/23, LE2-B 55/55, LE2-C 29/29,
+LE2-E 29/29, PGlite 0055 17/17, Mission Control e Commercial UX 94/94, suíte completa 101 arquivos e 1787 testes,
+`tsc`, `eslint`, `build` e `git diff --check` verdes. Smoke funcional da jornada (29 asserções): PENDING → Candidatos →
+CREATE/ASSOCIATE → RESOLVED → sai da fila, com empresa/projeto/sinal criados, uma auditoria e **zero** oportunidade,
+tarefa, atividade e comunicação; suprimido → seção auditável → REJECTED/`SUPRIMIDO`; impressão velha → recusa
+`CONTEXTO_MUDOU` com zero commit e zero auditoria.
