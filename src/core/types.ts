@@ -679,6 +679,7 @@ export interface Romaneio {
 }
 
 import type { RadarDataset } from './radar/types';
+import type { InboxDataset } from './inbox/tipos';
 
 // ---------------------------------------------------------------------------
 // Estoque de aco com rastreabilidade de corrida (kg)
@@ -804,4 +805,6 @@ export interface Dataset {
   funcoes: FuncaoColaborador[]; // catalogo de funcoes (job_function)
   alocacoes: Alocacao[]; // alocacoes por periodo (worker_allocation)
   radar: RadarDataset; // EIFF Radar (src/core/radar)
+  /** EIFF Inbox (src/core/inbox). Opcional: datasets antigos e o remoto sem persistencia nao trazem o slice; o store normaliza. */
+  inbox?: InboxDataset;
 }

@@ -3,6 +3,7 @@ import React from 'react';
 // Icones em linha (24x24, traco 1.7) para menu, botoes e estados. Monocromaticos: herdam currentColor.
 const PATHS: Record<string, React.ReactNode> = {
   painel: <><rect x="3" y="3" width="8" height="10" rx="1.5" /><rect x="13" y="3" width="8" height="5" rx="1.5" /><rect x="13" y="11" width="8" height="10" rx="1.5" /><rect x="3" y="16" width="8" height="5" rx="1.5" /></>,
+  atendimento: <><path d="M4 13v-2a8 8 0 0 1 16 0v2" /><rect x="3" y="12" width="4" height="6" rx="1.5" /><rect x="17" y="12" width="4" height="6" rx="1.5" /><path d="M19 18v1a2 2 0 0 1-2 2h-4" /></>,
   inbox: <><path d="M3 13h5l2 3h4l2-3h5" /><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" /></>,
   central: <><path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M9 21v-5h6v5" /><path d="M9 10h.01M15 10h.01M9 14h.01M15 14h.01" /></>,
   obras: <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" /></>,
