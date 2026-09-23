@@ -1,6 +1,7 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-0 fechado** (contrato, §1 a §26) e **LE-1 fechado** (intake canônico, §27). **LE-2 não iniciado.**
+Estado: **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+(fundação de persistência, §28). **LE2-B não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch: `feature/lead-engine-1` · baseline do LE-0: `main @ 88c9ccc` · baseline do LE-1: `98636bd`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
@@ -753,3 +754,78 @@ banco já no lugar para impedir que a mutabilidade toque o bruto.
 `supabase/migrations/0055_lead_engine_intake.sql` está no repositório e **não foi aplicada em produção**. Nenhum
 comando foi rodado contra o banco remoto. A aplicação pertence a um release futuro do Lead Engine. O número 0055 foi
 escolhido porque 0052 está reservada pela EIFF Central (existe só em código) e 0053/0054 já foram aplicadas.
+
+---
+
+## 28. LE2-A — fundação de persistência do staging
+
+Primeiro gate do LE-2. Trata **só** de fazer a decisão chegar ao banco: não traz o módulo de revisão, não liga
+store, não mexe no Command Center. A linha nasceu de `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados por
+cherry-pick, na branch `feature/lead-engine-2`.
+
+### 28.1 `registrosFonte` deixou de ser insert-only
+
+A spec de `radar_source_record` em `radar.supabase.ts` perdeu `imutavel: true`. Motivo: no ramo imutável de
+`persistirRadar` só existem `inserir` e `apagar` — **não há caminho de update**, então `PENDING → REVIEW →
+RESOLVED/REJECTED` era descartado em silêncio.
+
+A troca tem um segundo efeito, tão importante quanto o primeiro: o ramo imutável **apagava** a linha que sumisse
+do dataset (`h.apagar`), e o ramo mutável não apaga nada. Evidência bruta é trilha de auditoria, não cache:
+
+```text
+SOURCE RECORD DELETE BY ORDINARY DATASET DIFF = FORBIDDEN
+```
+
+Isso está preso por teste (`radar.persistencia.test.ts`).
+
+### 28.2 A evidência continua imutável — e quem garante é o banco
+
+Tornar a spec mutável **não** afrouxa a evidência. O trigger `radar_source_record_evidencia` (migration 0055)
+recusa alteração de `organization_id`, `source_id`, `record_type`, `external_id`, `payload`,
+`payload_fingerprint` e `received_at`. Só `intake_status`, `decided_at`, `decided_by`, `decision_reason` e
+`entity_id` evoluem.
+
+**Divisão de prova, declarada de propósito:**
+
+| Camada | O que prova | Onde |
+| --- | --- | --- |
+| TypeScript | o que o adapter **manda**: colunas, valores, e por qual caminho (`gravar` × `inserir` × `apagar`) | `src/data/radar.persistencia.test.ts` (23 testes) |
+| PostgreSQL | o que o banco **recusa**: o trigger, os CHECKs e o índice de idempotência | `scripts/pg-smoke-lead-engine.mjs` (PGlite, 17 asserções) |
+
+Teste de TypeScript não substitui trigger de PostgreSQL. O adapter pode mandar um payload adulterado; quem diz
+não é o banco — e isso agora está provado contra um Postgres de verdade, em memória, dentro de
+`BEGIN … ROLLBACK`.
+
+### 28.3 `entity_id` é polimórfico pelo `record_type`
+
+`RegistroFonte.entidadeId` aponta para quatro tabelas. A resolução antiga (`empresas ?? contatos`) cobria duas e
+gravava `null` para projeto e sinal — e o CHECK `RESOLVED ⇒ entity_id is not null` **recusaria a linha**.
+
+```text
+empresa → empresas     contato → contatos
+projeto → projetos     sinal   → sinais
+```
+
+`COLECAO_DO_REGISTRO` é a tabela única dessa correspondência. Sem entidade ligada, `entity_id` vai nulo — o que
+é válido em PENDING, REVIEW e REJECTED.
+
+### 28.4 Política de supressão (congelada)
+
+```text
+SUPPRESSION_POLICY = SUPPRESSION_WINS_REDISCOVERY
+```
+
+D-12 é a autoridade. Conta suprimida que reaparece numa fonte externa:
+
+- o **bruto é preservado** (a descoberta aconteceu e fica auditável);
+- **não promove** — nada vira Empresa, Projeto ou Sinal por esse caminho;
+- **não volta para a fila acionável** do comercial;
+- fica **visível para auditoria** como descoberta suprimida.
+
+Não existe reativação automática. E `KEEP_REVIEW` **não** pode ser usado para manter uma redescoberta suprimida
+eternamente na fila operacional: a transição exata é assunto do LE2-B, mas a semântica está congelada aqui.
+
+### 28.5 Migration nova: **NÃO**
+
+A 0055 já tem tudo — as cinco colunas, os três CHECKs, o índice único parcial e o trigger. O LE2-A é mudança de
+**adapter**, não de schema. Nada foi aplicado em banco remoto.

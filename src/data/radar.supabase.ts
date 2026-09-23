@@ -29,6 +29,13 @@ interface Spec<T extends { id: string }> {
   db: (o: T, ref: (chave: Chave, id?: string) => string | null, h: HelpersRadar) => Row;
 }
 
+/**
+ * LE-2A — RegistroFonte.entidadeId e POLIMORFICO: aponta para quatro tabelas diferentes, e quem diz qual e o
+ * proprio record_type. Procurar a entidade chutando colecao por colecao acertaria por acidente e erraria em
+ * silencio quando dois namespaces tivessem o mesmo id de app.
+ */
+export const COLECAO_DO_REGISTRO = { empresa: 'empresas', contato: 'contatos', projeto: 'projetos', sinal: 'sinais' } as const;
+
 const n = (v: unknown) => (v === null || v === undefined ? undefined : Number(v));
 const s = (v: unknown) => (v === null || v === undefined ? undefined : String(v));
 const nn = (v: unknown) => (v === undefined || v === null || v === '' ? null : v);
@@ -60,7 +67,12 @@ const SPECS: Spec<{ id: string }>[] = [
   // registrosFonte segue insert-only (imutavel): a evidencia bruta nunca e reescrita, e a migration 0055 poe a mesma
   // regra no banco (trigger radar_source_record_evidencia). Os campos de decisao do Lead Engine sao gravados no
   // INSERT; transicionar um candidato (PENDING -> RESOLVED/REJECTED) e do LE-2 e exige tornar esta spec mutavel.
-  { chave: 'registrosFonte', tabela: 'radar_source_record', ordem: 'received_at', imutavel: true, app: (x) => ({ id: x.id, fonteId: x.source_id, tipo: x.record_type, externoId: s(x.external_id), payload: x.payload, entidadeId: s(x.entity_id), recebidoEm: x.received_at, payloadFingerprint: s(x.payload_fingerprint), statusIntake: s(x.intake_status), decididoEm: s(x.decided_at), decididoPor: s(x.decided_by), motivoDecisao: s(x.decision_reason) }), db: (o: Row, ref, h) => ({ source_id: ref('fontes', o.fonteId), record_type: o.tipo, external_id: nn(o.externoId), payload: o.payload ?? {}, entity_id: ref('empresas', o.entidadeId) ?? ref('contatos', o.entidadeId), received_at: o.recebidoEm, payload_fingerprint: nn(o.payloadFingerprint), intake_status: nn(o.statusIntake), decided_at: nn(o.decididoEm), decided_by: o.decididoPor ? h.perfil(o.decididoPor) ?? h.atorId : null, decision_reason: nn(o.motivoDecisao) }) },
+  // LE-2A: MUTAVEL de proposito. A decisao do Lead Engine (PENDING -> REVIEW -> RESOLVED/REJECTED) precisa virar
+  // UPDATE, e o ramo mutavel do persistidor NAO apaga linha que some do dataset — evidencia bruta e trilha de
+  // auditoria, nao cache. A evidencia continua imutavel onde importa: o trigger radar_source_record_evidencia
+  // (migration 0055) recusa mudanca em organization_id, source_id, record_type, external_id, payload,
+  // payload_fingerprint e received_at. So os campos de decisao e a ligacao com a entidade evoluem.
+  { chave: 'registrosFonte', tabela: 'radar_source_record', ordem: 'received_at', app: (x) => ({ id: x.id, fonteId: x.source_id, tipo: x.record_type, externoId: s(x.external_id), payload: x.payload, entidadeId: s(x.entity_id), recebidoEm: x.received_at, payloadFingerprint: s(x.payload_fingerprint), statusIntake: s(x.intake_status), decididoEm: s(x.decided_at), decididoPor: s(x.decided_by), motivoDecisao: s(x.decision_reason) }), db: (o: Row, ref, h) => ({ source_id: ref('fontes', o.fonteId), record_type: o.tipo, external_id: nn(o.externoId), payload: o.payload ?? {}, entity_id: ref(COLECAO_DO_REGISTRO[o.tipo as keyof typeof COLECAO_DO_REGISTRO] ?? 'empresas', o.entidadeId), received_at: o.recebidoEm, payload_fingerprint: nn(o.payloadFingerprint), intake_status: nn(o.statusIntake), decided_at: nn(o.decididoEm), decided_by: o.decididoPor ? h.perfil(o.decididoPor) ?? h.atorId : null, decision_reason: nn(o.motivoDecisao) }) },
 ];
 
 // mapa app id -> uuid por entidade (identidade apos a carga; ids locais novos entram apos o insert)

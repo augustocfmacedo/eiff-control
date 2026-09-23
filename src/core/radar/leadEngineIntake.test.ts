@@ -403,10 +403,17 @@ describe('LE-1 · nao-regressao', () => {
     expect(imports.sort()).toEqual(['./hash', './types']);
   });
 
-  it('46 · a evidencia bruta continua insert-only no mapeamento e no banco', () => {
+  it('46 · a evidencia bruta continua protegida — agora pelo banco, nao pelo insert-only', () => {
     const mapa = readFileSync('src/data/radar.supabase.ts', 'utf8');
     const linha = mapa.split('\n').find((l) => l.includes("tabela: 'radar_source_record'"))!;
-    expect(linha).toContain('imutavel: true'); // LE-2 tera de mudar isto conscientemente para transicionar candidato
+    // MUDANCA CONSCIENTE DO LE2-A: a spec deixou de ser insert-only porque a decisao humana
+    // (PENDING -> REVIEW -> RESOLVED/REJECTED) precisa virar UPDATE — no ramo imutavel nao existe caminho de
+    // update e a transicao era descartada em silencio. A garantia nao se perdeu, mudou de lugar:
+    //   * a evidencia e protegida pelo TRIGGER do Postgres (abaixo, e exercitado em pg-smoke-lead-engine.mjs);
+    //   * o ramo mutavel NAO apaga linha que some do dataset, o que o ramo imutavel fazia.
+    // O contrato completo esta em docs/lead-engine-1.0.md §28; os testes, em src/data/radar.persistencia.test.ts.
+    expect(linha).not.toContain('imutavel: true');
+    expect(linha).toContain('COLECAO_DO_REGISTRO'); // entity_id polimorfico pelo record_type
     const sql = readFileSync('supabase/migrations/0055_lead_engine_intake.sql', 'utf8');
     expect(sql).toContain('radar_source_record_evidencia_imutavel');
     expect(sql).toContain('new.payload is distinct from old.payload');
