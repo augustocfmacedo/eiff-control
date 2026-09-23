@@ -1,11 +1,14 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34), **LE3-B fechado** (perfil do universo, §35) , **LE3-C fechado** (política piloto V1 e lote de 50, §36) , **LE3-D fechado** (fronteira de intake, §37) e **ingestão piloto executada em produção em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, promoção humana pendente. **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
-(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
-LE-3 a LE-8 não iniciados.
-Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
-por cherry-pick (a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree; o módulo órfão está
-preservado em `rescue/lead-engine-2-orphan`). Baseline histórico do LE-0: `main @ 88c9ccc`.
+Estado em 23/09/2026:
+
+- **LE-0 fechado** (contrato, §1 a §26) · **LE-1 fechado** (intake canônico, §27) · **LE2-A/B/C/E fechados** (persistência §28, núcleo de revisão §29, fronteira do store §30, UI no Command Center §31) · **LE2-F fechado** (rebaseline e certificação, §32).
+- **LE-2 RELEASED**: migration `0055` aplicada em produção e PR #9 mesclado em `main` (`0273da87`, §33).
+- **LE-3 EM ANDAMENTO — piloto em produção.** LE3-A/A1 fechados (contrato e evidência do CNO, §34) · LE3-B fechado (perfil do universo, §35) · LE3-C fechado (política piloto V1 e lote de 50, §36) · LE3-D fechado (fronteira de intake e rehearsal, §37) · **ingestão piloto executada em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, aguardando decisão humana. **LE3-E não iniciado.** LE-3 não está concluído enquanto o LE3-E continuar pendente.
+- **LE-4 a LE-8 não iniciados.**
+
+Branch ATUAL da linha: `feature/lead-engine-3`, criada de `origin/main @ 0273da8`; `origin/main @ d063194` foi incorporada formalmente pelo merge `aaadac4`. HEAD da linha antes desta correção documental: `52f7604`.
+Histórico (não é a branch atual): `feature/lead-engine-2` levou LE-0 a LE2-F até o PR #9, com base em `origin/main @ 14d2ff7` e LE-0/LE-1 recuperados por cherry-pick; a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree e o módulo órfão está preservado em `rescue/lead-engine-2-orphan`. Baseline histórico do LE-0: `main @ 88c9ccc`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
 `docs/commercial-machine-cm2.md`; o Radar, em `docs/radar.md`.
 
