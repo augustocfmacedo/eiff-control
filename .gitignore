@@ -16,3 +16,14 @@ dados/vibe/
 
 # worktrees de agentes (locais)
 .claude/worktrees/
+
+# Snapshot do CNO (Dados Abertos da Receita): ~315 MiB comprimidos, ~1,4 GiB de CSV. Nunca versionar.
+# As fixtures do LE-3A sao sinteticas e vivem dentro do proprio teste.
+cno.zip
+cno.zip.parcial
+cno*.csv
+cno-metadados.pdf
+dados/cno/
+
+# SQL de rehearsal/carga gerado pelos runners de producao (contem payloads reais). Nunca versionar.
+scratch/

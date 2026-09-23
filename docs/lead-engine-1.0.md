@@ -1,11 +1,14 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE2-G parcial** — migration `0055` **aplicada em produção** em 23/09/2026 (§33); código **ainda não liberado**. **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
-(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
-LE-3 a LE-8 não iniciados.
-Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
-por cherry-pick (a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree; o módulo órfão está
-preservado em `rescue/lead-engine-2-orphan`). Baseline histórico do LE-0: `main @ 88c9ccc`.
+Estado em 23/09/2026:
+
+- **LE-0 fechado** (contrato, §1 a §26) · **LE-1 fechado** (intake canônico, §27) · **LE2-A/B/C/E fechados** (persistência §28, núcleo de revisão §29, fronteira do store §30, UI no Command Center §31) · **LE2-F fechado** (rebaseline e certificação, §32).
+- **LE-2 RELEASED**: migration `0055` aplicada em produção e PR #9 mesclado em `main` (`0273da87`, §33).
+- **LE-3 EM ANDAMENTO — piloto em produção.** LE3-A/A1 fechados (contrato e evidência do CNO, §34) · LE3-B fechado (perfil do universo, §35) · LE3-C fechado (política piloto V1 e lote de 50, §36) · LE3-D fechado (fronteira de intake e rehearsal, §37) · **ingestão piloto executada em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, aguardando decisão humana. **LE3-E não iniciado.** LE-3 não está concluído enquanto o LE3-E continuar pendente.
+- **LE-4 a LE-8 não iniciados.**
+
+Branch ATUAL da linha: `feature/lead-engine-3`, criada de `origin/main @ 0273da8`; `origin/main @ d063194` foi incorporada formalmente pelo merge `aaadac4`. HEAD da linha antes desta correção documental: `52f7604`.
+Histórico (não é a branch atual): `feature/lead-engine-2` levou LE-0 a LE2-F até o PR #9, com base em `origin/main @ 14d2ff7` e LE-0/LE-1 recuperados por cherry-pick; a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree e o módulo órfão está preservado em `rescue/lead-engine-2-orphan`. Baseline histórico do LE-0: `main @ 88c9ccc`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
 `docs/commercial-machine-cm2.md`; o Radar, em `docs/radar.md`.
 
@@ -1129,18 +1132,614 @@ omitem as cinco colunas novas, o que deixa `intake_status` NULL e satisfaz os tr
 (todos são `intake_status is null or …`). O índice único é parcial em `payload_fingerprint is not null`, fora do
 alcance do app antigo. É a mesma linha legada que o smoke PGlite já cobria.
 
-### 33.5 O que este gate NÃO fez
+### 33.5 O release do código
 
-O PR `feature/lead-engine-2` → `main` **não foi aberto**: esta sessão não tem credencial do GitHub
-(`gh` não autenticado, sem `GH_TOKEN`; o push funciona pelo Credential Manager do Windows, que não é fonte de
-token para a API). Sem PR não houve CI, merge, deploy nem smoke de produção. Merge em `main` e publicação em
-Production continuam dependendo das duas frases-senha separadas do projeto.
+O PR desta sessão não pôde ser aberto por falta de credencial do GitHub (`gh` não autenticado, sem `GH_TOKEN`;
+o push funciona pelo Credential Manager do Windows, que não é fonte de token para a API). O **PR #9** foi aberto
+fora desta sessão e mesclado em `main` com `EIFF Quality Gate` e o Deploy Preview do Netlify verdes, sob a
+frase-senha `MERGE AUTORIZADO`.
 
 ```
-MIGRATION_0055  = PASS       PR_RELEASE = BLOCKED (credencial)
-PROD_0055_STATE = APPLIED    LE2_STATUS = NOT_RELEASED
-LE2_DB_READY    = YES
+MIGRATION_0055  = PASS       PR #9      = merged
+PROD_0055_STATE = APPLIED    main       = 0273da87…
+LE2_DB_READY    = YES        LE2_STATUS = RELEASED
 ```
 
-O banco está pronto para o app antigo e para o novo. A descoberta automática segue desligada: sem CNO, PNCP,
-Vibe, notícias ou scheduler. LE-3 não iniciado.
+A ordem projetada em §32.4 foi cumprida: migration antes do deploy do app. A descoberta automática **continua
+desligada** — sem CNO, PNCP, Vibe, notícias ou scheduler. O Lead Engine está pronto para receber candidatos,
+mas ainda não varre fonte nenhuma; isso é o LE-3, que começa no §34.
+
+---
+
+## 34. LE3-A — contrato da fonte oficial do CNO e leitor de snapshot
+
+Gate de 23/09/2026, na branch `feature/lead-engine-3` (worktree próprio, a partir de `main @ 0273da8`).
+Entrega o **contrato** da primeira fonte real do Lead Engine e um leitor de snapshot. **Nada é ingerido**:
+zero candidato criado, zero escrita no Radar, zero Supabase, zero migration.
+
+### 34.1 A fonte, auditada e não presumida
+
+```
+landing      https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-de-obras-cno
+dados        https://arquivos.receitafederal.gov.br/index.php/s/PC6732BXG9B98W3  -> cno.zip
+dicionario   https://arquivos.receitafederal.gov.br/index.php/s/XEa8aE7wJdMGzkE  -> cno-metadados.pdf
+modo         SNAPSHOT completo (nao ha API de consulta nem endpoint incremental)
+licenca      Creative Commons Attribution
+```
+
+Origem **exclusivamente** Dados Abertos. `CNO_DISCOVERY_SOURCE = RECEITA_OPEN_DATA`,
+`CNO_ECAC_SCRAPING = FORBIDDEN`, `CNO_GOVBR_CREDENTIALS = NONE` — o e-CAC mostra as obras *do usuário*, não a
+base pública de descoberta, e nada aqui usa sessão, certificado ou credencial.
+
+`cno.zip` em 23/09/2026: `application/zip`, **330.628.581 bytes**, `Last-Modified: Sat, 12 Sep 2026 04:59:45 GMT`,
+`ETag "76bb7f934f457be4234c5733ee92b40b"`. O servidor honra `Range`, então o índice do ZIP é lido sem baixar o
+arquivo. Cinco membros, **1,41 GB de CSV cru**:
+
+| arquivo | bruto | comprimido |
+|---|---|---|
+| `cno.csv` | 842,6 MiB | 260,2 MiB |
+| `cno_areas.csv` | 360,0 MiB | 34,8 MiB |
+| `cno_cnaes.csv` | 120,3 MiB | 15,7 MiB |
+| `cno_vinculos.csv` | 22,0 MiB | 4,6 MiB |
+| `cno_totais.csv` | 127 B | 82 B |
+
+Totais declarados pela própria fonte: **3.604.156 obras**, 3.942.713 CNAEs, 4.553.076 áreas, 431.211 vínculos.
+
+**Periodicidade: declarada ≠ observada.** O catálogo diz `DIARIA` e registra
+`ultimaAtualizacaoDados = 2024-11-04`, e a página marca o conjunto como "Desatualizado" — mas o artefato real
+tem `Last-Modified` de **12/09/2026**. As duas informações do portal estão erradas: ele não consegue ler o
+header através do redirect 303 do Nextcloud. Uma sondagem única não prova cadência; o que se pode afirmar é que
+o snapshot vivo não é diário (11 dias no momento da auditoria) e que **`ETag` + `Last-Modified` são a única
+base confiável** para detectar snapshot novo. A cadência real só sai de observação repetida — trabalho do LE3-B.
+
+### 34.2 Onde o artefato vence a documentação
+
+Quatro divergências reais entre o dicionário oficial e o arquivo publicado. Em todas vale o arquivo:
+
+1. os membros são **minúsculos** (`cno.csv`), não `CNO.CSV`;
+2. o separador é **vírgula**, não ponto-e-vírgula;
+3. o encoding é **ISO-8859-1**, sem BOM, terminador LF — não UTF-8;
+4. Categoria, Destinação, Tipo de obra e Tipo de Área vêm como **texto** ("Obra Nova"), embora o dicionário os
+   descreva como códigos ("0 - Obra Nova").
+
+E o cabeçalho oficial tem acentuação **inconsistente** — `Código do Pais`, `Nome do pais`,
+`Data de inicio da responsabilidade`, `Qualificação do responsavel`, `Código do municipio` × `Nome do município`.
+As constantes copiam isso literalmente; "corrigir" quebraria a leitura. O `cno.csv` real tem ainda duas colunas
+que a documentação não lista na mesma forma: `Caixa Postal` e `Código de localização` (esta é um **plus code**).
+
+### 34.3 O tipo canônico
+
+`CnoObservacaoCanonica` em `src/core/radar/cnoDadosAbertos.ts` é a projeção normalizada da linha oficial.
+A ponte completa é `CSV oficial -> evidência + canônica -> envelope -> adapterCNO -> PedidoIntake` (§34.12). Núcleo **puro**: sem rede, sem `fs`, sem React,
+sem store, sem Supabase, sem variável de ambiente; importa só `./leadEngineIntake` (tipo) e `./normalizar`.
+
+**`Nome` é o nome DA OBRA; `Nome empresarial` é a razão social da PJ.** Nunca se confundem, e isso está preso
+por teste em três camadas (parser, payload, adapter). O campo `Nome` traz a string **literal `null`** em 3.653
+de 44.254 linhas amostradas (8,3%) — `textoCno` trata como ausência, senão "null" viraria nome de obra no Radar.
+
+### 34.4 Identidade e pessoa física
+
+O dicionário garante que `NI do responsável` fica em branco quando o responsável é CPF, e a amostra real
+confirma com correlação perfeita: **9.178 linhas com NI — todas com 14 dígitos e DV válido — e 35.076 sem NI,
+todas também sem nome empresarial**. Zero casos mistos.
+
+Logo: CNPJ válido → identidade forte possível; CPF/NI ausente → **nunca** se inventa CNPJ, nunca se inventa
+empresa, e `razaoSocial` jamais é preenchida com o nome da obra. A obra sem PJ continua sendo descoberta bruta
+legítima — o LE3-A não promove nada de qualquer forma. A validação reusa `normalizarCnpj`, o validador único do
+Radar: não existe segundo validador no sistema.
+
+`externoId = número do CNO` (12 dígitos, string, zero à esquerda significativo). Nunca CNPJ, nome da obra, hash
+da linha ou posição no arquivo. O fingerprint continua sendo o do LE-1 sobre o payload canônico, então
+**mesmo CNO + payload igual → `IDEMPOTENT_NOOP`; mesmo CNO + payload diferente → `NOVA_OBSERVACAO`**, sem jamais
+sobrescrever a observação anterior.
+
+### 34.5 Códigos congelados
+
+`Situação` (do dicionário): `01` NULA · `02` ATIVA · `03` SUSPENSA · `14` PARALISADA · `15` ENCERRADA.
+Na amostra real: 15 domina com 83,6%, 02 com 12,9%.
+
+`Qualificação do responsável`: `0053` Pessoa Jurídica Construtora · `0057` Dono da Obra ·
+`0064` Incorporador de Construção Civil · `0070` Proprietário do Imóvel · `0109` Consórcio ·
+`0110` Construção em nome coletivo · `0111` Sociedade Líder de Consórcio. São **atributos de fonte**, não filtro
+comercial: qualquer política de seleção por qualificação vem depois e explícita.
+
+Áreas: 5 categorias, 7 destinações, 3 tipos construtivos (Alvenaria/Madeira/Mista), 2 tipos de área.
+Atenção ao nome: **"Tipo de obra" do CNO_AREAS é o método construtivo**, não a natureza da obra — confundir os
+dois inverte a leitura inteira.
+
+### 34.6 Política de sinal — estrutural, não textual
+
+```
+Obra Nova              -> CNO_NEW
+Acrescimo · Reforma    -> CNO_EXPANSION
+Demolicao · Existente  -> nenhum sinal
+sem area / categoria desconhecida -> nenhum sinal
+```
+
+Um CNO costuma ter várias áreas (36.852 de ~90 mil na amostra). Precedência declarada: qualquer `Obra Nova`
+vence; senão Acréscimo/Reforma viram expansão; senão não há sinal. Ausência de evidência não vira evidência —
+preferimos nenhum sinal a um sinal errado, e o bruto fica preservado de qualquer modo.
+
+### 34.7 Data do evento
+
+Precedência explícita: `dataInicio` → `dataRegistro` → `dataSituacao` → `SEM_EVENTO_DATADO`.
+Sem data oficial **não se produz sinal**. O adapter antigo caía em `new Date()`, o que dataria de hoje uma obra
+de 1992 — para dado histórico do CNO isso é fabricação de evento.
+
+### 34.8 O que mudou no `adapterCNO`
+
+Três ajustes mínimos, todos ao contrato real:
+
+1. `nome` saiu da cadeia da razão social (era o quarto fallback, e transformava nome de obra — ou "null" — em conta);
+2. `tipoSinal` explícito vence a heurística de regex; a regex sobrevive só para payload genérico sem o campo;
+3. sem data oficial não há sinal, no lugar do fallback para hoje.
+
+### 34.9 O leitor de snapshot
+
+`scripts/cno.mts` (fora do core, com `vite-node` como os demais scripts do repositório):
+`probe`, `validar`, `amostra --limite N`, `baixar --destino`. Host **único** permitido, fail closed; sem
+credencial e sem cookie; timeout de 120 s, no máximo 5 redirects, User-Agent identificável, arquivo temporário
+com limpeza em falha. Tudo em streaming — o índice do ZIP vem por `Range` e cada membro é inflado só até a
+janela pedida, então a amostra nunca toca os 315 MiB. `.gitignore` recusa `cno.zip`, `cno*.csv`,
+`cno-metadados.pdf` e `dados/cno/`: **o dataset público não entra no repositório**.
+
+Privacidade: CNPJ sai mascarado, CPF nunca é reconstruído e, quando não há PJ identificada, o relatório **omite
+o campo `Nome`** — ali ele costuma trazer o nome da pessoa física. As fixtures dos testes são sintéticas.
+
+### 34.10 Prova contra a fonte real
+
+`validar` contra o snapshot vivo: os cinco cabeçalhos batem exatamente com as constantes
+(`CNO_SNAPSHOT_VALIDACAO = PASS`). `amostra --limite 5` produziu 5 observações canônicas e 5 `PedidoIntake`,
+sem persistir nada, e exercitou os casos que importam: `Existente + Reforma -> CNO_EXPANSION`,
+`Demolição + Existente + Obra Nova -> CNO_NEW` (a demolição não derruba a precedência) e uma obra de pessoa
+física corretamente sem PJ.
+
+Suíte `cnoDadosAbertos.test.ts`: 56 testes. Fronteiras verificadas por varredura do próprio arquivo — sem rede,
+sem `fs`, sem ambiente, sem store, sem React, sem Supabase, sem score, sem Commercial Queue, sem cadência e sem
+oportunidade, tarefa, atividade ou comunicação.
+
+### 34.11 O que este gate deliberadamente não fez
+
+Sem descoberta real ligada, sem scheduler, sem ingestão, sem política comercial de seleção (nada de filtro por
+UF, município, área mínima, destinação ou porte — isso é gate próprio). PNCP, RFB, Vibe e notícias não foram
+tocados. `LE3_B` ainda não começou.
+
+### 34.12 LE3-A1 — evidência da fonte separada da projeção canônica
+
+Correção de um defeito real da primeira versão do LE3-A: `RegistroFonte.payload` levava **só**
+`payloadCno(obs)`, a projeção normalizada. Normalização é uma **leitura** do dado, não o dado — e ali a origem
+se perdia. Três perdas concretas, todas medidas no snapshot real:
+
+| o que a fonte entregou | o que sobrava |
+|---|---|
+| `Nome = "null"` (literal, 8% das linhas) | nada — `textoCno` descarta |
+| `NI = "11.222.333/0001-81"` | só `11222333000181` |
+| coluna que a EIFF ainda não projeta | nada |
+
+Agora `RegistroFonte.payload` é um **envelope** com versão declarada:
+
+```
+{ schema: 'CNO_OPEN_DATA_V1', evidence: { obra, areas, cnaes, vinculos }, canonical: {...} }
+```
+
+`evidence` é a linha como a fonte entregou — nome real da coluna, valor textual, string vazia, `"null"`
+literal, código original, data como texto, NI original e qualquer coluna ainda não usada (`linhaComoObjeto`;
+célula além do cabeçalho vira `#<índice>`, porque sobra de parsing também é evidência). O único tratamento é a
+decodificação determinística ISO-8859-1 → string: o valor depois de decodificar é igual ao da célula antes de
+normalizar. A ordenação determinística vale para os dois lados, e a linha bruta `i` continua sendo a origem da
+canônica `i`.
+
+**Proveniência de snapshot fica de fora, de propósito.** `ETag`, `Last-Modified`, quando baixamos, caminho
+temporário e posição no ZIP não entram no envelope: qualquer um deles faria o mesmo CNO, com os mesmos dados,
+gerar impressão nova a cada leitura e destruiria a idempotência que o LE-1 existe para garantir. Isso é
+verificado por teste, junto com o fato de que dois `recebidoEm` diferentes dão o mesmo fingerprint — reler o
+mesmo snapshot amanhã é `IDEMPOTENT_NOOP`, não observação nova. O algoritmo global `payloadFingerprint` não foi
+tocado; mudou só o objeto que o CNO entrega a ele. Mudança real em qualquer célula — inclusive numa que o
+canônico descarta — muda a impressão, porque a evidência mudou de verdade.
+
+O `adapterCNO` normaliza a partir de `canonical` sob **guarda de versão** (`schema` não reconhecido não é lido
+como payload plano; o formato antigo continua funcionando sem ambiguidade), e a **linhagem continua recebendo o
+envelope inteiro** — `adapterCNO` devolve `payload: bruto` e o LE2-B repassa `bruto.payload` ao sinal, então a
+evidência chega lá. A assinatura de `pedidoIntakeCno` passou a exigir a observação completa, então entregar só
+o canônico ao intake virou **erro de tipo**, não convenção.
+
+`scripts/cno.mts` continua com zero persistência e **não imprime a evidência** — preservar não é logar. Só a
+contagem: `evidencia: obra=1 areas=N cnaes=N vinculos=N`.
+
+Suíte: 73 testes (56 do LE3-A + 17 desta correção).
+
+---
+
+## 35. LE3-B — perfil do universo CNO e simulador de política
+
+Gate de 23/09/2026, `feature/lead-engine-3`. O snapshot inteiro (3.604.156 obras) foi lido e medido em
+modo somente leitura para que a política de descoberta da EIFF seja escolhida **com números**, não no escuro.
+**Nenhuma política foi adotada. Zero candidato, zero `RegistroFonte`, zero Supabase, zero migration.**
+
+### 35.1 Descritor do snapshot e regra skip/novo
+
+`cnoSnapshot.ts`: `CnoSnapshotDescriptor { etag, lastModified, contentLength }` e `compararSnapshot` →
+`MESMO_SNAPSHOT | SNAPSHOT_NOVO | INDETERMINADO`. ETag manda; sem ETag, `Last-Modified` + tamanho; metadata
+insuficiente é `INDETERMINADO` e **processa** — só `MESMO_SNAPSHOT` autoriza pular. Este descritor pertence ao
+controle da fonte e **não entra em `RegistroFonte.payload`** (§34.12). A Receita não publica delta: snapshot
+novo → reler a base inteira e deixar o fingerprint do LE-1 dizer, CNO a CNO, o que é repetição, alteração ou
+novidade (§35.9). Snapshot igual → não baixar, não processar.
+
+### 35.2 Ordenação provada sobre os arquivos completos
+
+`ordenacao --arquivo`: monotonicidade da chave CNO do primeiro ao último registro, em 9,9 s.
+
+| arquivo | SORTED_ASC | linhas | = `cno_totais.csv` |
+|---|---|---|---|
+| `cno.csv` | YES | 3.604.156 | ✔ |
+| `cno_areas.csv` | YES | 4.553.076 | ✔ |
+| `cno_cnaes.csv` | YES | 3.942.713 | ✔ |
+| `cno_vinculos.csv` | YES | 431.211 | ✔ |
+
+`STREAMING_MERGE_JOIN = VIÁVEL`. As contagens batem exatamente com os totais declarados pela própria fonte.
+
+### 35.3 Merge join em streaming
+
+`cnoStreamJoin.ts` (`juntarOrdenadoCno`): quatro iteradores com *espiar*, alinhados por CNO — uma obra, seus
+filhos, uma `CnoObservacao`, descarta, próxima. Memória proporcional ao maior CNO, nunca aos 3,6 milhões;
+não existe `Map` de obras. Ordenação é guardada em cada fluxo e o join **falha fechado** (`ErroOrdenacaoCno`)
+na primeira quebra. Órfãos (filho sem pai) e `CNO_DUPLICADO` viram diagnóstico, nunca descarte silencioso.
+
+No snapshot real: **diagnósticos = `{}`** — zero área/CNAE/vínculo órfão, zero CNO duplicado. A integridade
+referencial da fonte é perfeita.
+
+### 35.4 Desempenho
+
+```
+tempo         181,4 s      (1,41 GB de CSV + join + estatística + serialização de 1,2 mi de envelopes)
+throughput    19.871 CNOs/s
+RSS máximo    282 MiB      (limitado: mapa de 259.771 CNPJs distintos + histogramas; não cresce com os CNOs)
+```
+
+### 35.5 O universo (referência = data do snapshot, 12/09/2026)
+
+```
+TOTAL_CNO             3.604.156
+com PJ                1.211.314   (33,6%)     sem PJ   2.392.842
+com CNPJ válido       1.211.314   ← IGUAL a "com PJ": a bicondicional da amostra vale nos 3,6 mi inteiros
+```
+
+Situação: ENCERRADA 2.444.140 (67,8%) · ATIVA 1.030.361 (28,6%) · PARALISADA 62.057 · NULA 57.776 ·
+SUSPENSA 9.822. Sinal estrutural: CNO_NEW 2.740.318 (76,0%) · CNO_EXPANSION 532.884 (14,8%) · nenhum
+330.954 (9,2%). Idade do evento: **85,2% têm mais de 730 dias**; ≤ 365 dias são 241.921 (6,7%); nenhuma sem
+data, nenhuma futura. Área: 68,7% < 250 m²; ≥ 1.000 m² são 245.372 (6,8%); 199.504 (5,5%) sem área em m²
+(unidade Outra/km/m³/kW/kVA — contadas como "sem área", nunca convertidas). Destinação Galpão industrial:
+183.494 obras (5,1%). Qualificação: Proprietário do Imóvel 55,9%, Dono da Obra 30,0%, PJ Construtora 10,8%.
+Top UFs: SP 1.083.586 · MG 465.717 · RS 405.185 · PR 364.031 · SC 239.014 · **GO 189.779** · MT 100.370.
+
+Um outlier de fonte: uma obra declara `Área total = 555.555.555.555,55 m²`. Os percentis por histograma
+ignoram o efeito (p50 225 m², p90 3.200 m²), mas qualquer média de área fica inútil — registrado, não corrigido.
+
+### 35.6 Interseções (Brasil / GO)
+
+| interseção | Brasil | GO |
+|---|---|---|
+| PJ + CNPJ válido | 1.211.314 | 58.585 |
+| PJ + sinal | 969.180 | 54.477 |
+| PJ + sinal + ATIVA | 355.747 | 15.117 |
+| PJ + sinal + evento ≤ 365 d | 82.511 | 3.883 |
+| PJ + sinal + área ≥ 500 | 319.290 | 12.911 |
+| PJ + sinal + área ≥ 1.000 | 212.787 | 7.803 |
+| PJ + sinal + área ≥ 2.000 | 137.597 | 4.863 |
+| PJ + Galpão industrial | 124.612 | 3.872 |
+| PJ + Galpão + evento ≤ 365 d | 10.419 | 308 |
+| PJ + Galpão + área ≥ 1.000 | 52.208 | 1.619 |
+
+Goiás é **relatório, não regra**: 189.779 obras, 58.585 com PJ, 54.477 PJ+sinal, 3.883 PJ+sinal recente.
+Top municípios GO: Goiânia 25.868 · Anápolis 14.895 · Aparecida de Goiânia 11.031 · Caldas Novas 9.685 ·
+Rio Verde 8.399 · Catalão 8.149 · Trindade 7.377 · Senador Canedo 6.423.
+
+### 35.7 Cenários simulados — hipóteses, nenhum "correto"
+
+Todos partem de PJ + CNPJ válido + sinal (`cnoDiscoveryPolicy.ts`, `cenariosLe3b`).
+
+| cenário | Brasil | GO | CNO_NEW | CNO_EXP | área p50 | área p90 |
+|---|---|---|---|---|---|---|
+| A · evento ≤ 365 d | 82.511 | 3.883 | 65.657 | 16.854 | 225 | 3.600 |
+| B · A + área ≥ 500 | 27.721 | 1.164 | 19.480 | 8.241 | 1.600 | 14.000 |
+| C · A + área ≥ 1.000 | 19.007 | 703 | 13.622 | 5.385 | 2.950 | 19.825 |
+| D · A + área ≥ 2.000 | 12.191 | 426 | 9.197 | 2.994 | 5.450 | 27.925 |
+| E · Galpão + evento ≤ 365 d | 10.226 | 307 | 6.926 | 3.300 | 700 | 5.975 |
+| F · E + área ≥ 1.000 | 4.051 | 107 | 2.749 | 1.302 | 2.700 | 17.850 |
+| G · A + ATIVA | 62.294 | 2.149 | 47.714 | 14.580 | 350 | 5.025 |
+| H · Galpão + ≤ 730 d + área ≥ 1.000 | 8.644 | 261 | 5.922 | 2.722 | 2.800 | 18.500 |
+
+### 35.8 Matriz de sensibilidade — PJ + CNPJ válido + sinal
+
+Linhas = janela (dias até o evento), colunas = área mínima (m²).
+
+```
+Brasil          0       500      1000      2000      5000
+   30 d     2.935     1.173       821       546       314
+   90 d    15.046     5.885     4.012     2.597     1.364
+  180 d    36.623    13.255     9.155     5.883     3.134
+  365 d    82.511    27.721    19.007    12.191     6.532
+  730 d   182.676    57.584    39.121    25.740    14.041
+
+GO              0       500      1000      2000      5000
+   30 d       138        27        24        18        13
+   90 d       578       207       140        93        47
+  180 d     1.474       511       317       194       101
+  365 d     3.883     1.164       703       426       197
+  730 d     9.042     2.579     1.557       948       478
+```
+
+### 35.9 Tamanho do envelope e duplicidade por responsável
+
+Envelope `{ schema, evidence, canonical }` serializado, medido nas 1.211.314 obras com PJ (o universo de todos
+os cenários): **p50 2.176 B · p90 2.752 · p95 2.880 · p99 3.584 · máx 32.869 B**. Zero acima de 100 KB.
+Os cinco maiores ficam entre 22 e 33 KB (CNOs com muitas áreas). Persistir candidatos não é problema de volume.
+
+Responsáveis: **259.771 CNPJs distintos** para 1.211.314 obras — média 4,66, mediana 1, p90 9, p99 53,
+máximo 4.193 obras num único CNPJ. Distribuição: 1 obra 138.604 · 2–5 80.409 · 6–20 30.643 · 21–100 9.261 ·
+100+ 854. Quinhentas obras não são quinhentas empresas — e o Lead Engine já lida com isso por `ASSOCIATE_EXISTING`.
+
+### 35.10 Recorrência provada com o fingerprint do LE-1 (fixture, sem persistir)
+
+snapshot igual → skip na fonte · snapshot novo + CNO igual + dado igual → `IDEMPOTENT_NOOP` ·
+snapshot novo + CNO igual + dado alterado (mesmo só na evidência) → `NOVA_OBSERVACAO` · CNO novo → `NOVO_REGISTRO`.
+
+### 35.11 Ferramentas e testes
+
+`scripts/cno.mts`: `ordenacao`, `perfil --arquivo --saida`, `simular --perfil` (relê o JSON sem reprocessar).
+`dados/cno/perfil.json` (48 KB, gitignored) tem só agregados: sem payload, sem nome, sem endereço, sem CNPJ.
+Suítes: `cnoSnapshot` 5 · `cnoDiscoveryPolicy` 14 · `cnoStreamJoin` 12 · `cnoPerfil` 22 = **53 testes**.
+
+### 35.12 O que este gate não fez
+
+Não escolheu política. Não ingeriu. Não criou scheduler. Não tocou PNCP, RFB, Vibe ou notícias. A próxima
+decisão é de negócio: "obras novas/expansões dos últimos X dias, acima de Y m², nestas regiões e destinos" —
+e a matriz do §35.8 diz quantas obras cada escolha traz.
+
+---
+
+## 36. LE3-C — política piloto congelada e lote determinístico de dry-run
+
+Gate de 23/09/2026, `feature/lead-engine-3`. Congela a **primeira política piloto** do CNO, roda o dry-run
+sobre o snapshot inteiro e produz o manifest dos 50 primeiros candidatos — provando **exatamente** o que seria
+ingerido. **Zero persistência, zero `RegistroFonte`, zero Supabase.** A ingestão real é gate próprio.
+
+### 36.1 `CNO_PILOT_POLICY_V1` — piloto, não regra definitiva
+
+```
+ufs                    ['GO']
+situacoes              ['02']  (ATIVA)
+exigirPessoaJuridica   true
+exigirCnpjValido       true
+exigirSinal            true    (CNO_NEW ou CNO_EXPANSION; NENHUM não passa; sem peso entre os dois)
+areaMinimaM2           1000
+janelaDias             90      → eventoDepoisDe derivado da data de referência informada pela execução
+categorias             ['Obra Nova', 'Acréscimo', 'Reforma']
+destinacoes            (nenhum filtro — deliberado)
+```
+
+A destinação **não filtra** e acompanha cada candidato: o objetivo é medir quais destinações convertem antes
+de transformá-las em regra. A data de referência é explícita (`--data`), nunca o relógio; `cnoPilot.ts` não
+contém `new Date()` e um teste prende isso. Para 23/09/2026, `eventoDepoisDe = 2026-06-25`, inclusivo
+(exatamente 90 dias aceita, 91 rejeita).
+
+### 36.2 Dry-run sobre o snapshot real
+
+```
+TOTAL_ANALISADO   3.604.156
+TOTAL_ELEGIVEL          115
+TOTAL_RECUSADO    3.604.041
+```
+
+Coerência com a matriz do LE3-B: a célula GO × 90 dias × ≥ 1.000 m² valia **140** com referência 12/09 e sem
+filtro de situação/categoria. Com referência 23/09 (janela deslocada 11 dias, nada novo depois de 12/09),
+ATIVA e categorias explícitas, o resultado é **115 ≤ 140** — como esperado, sem ajuste.
+
+Elegíveis por sinal: CNO_NEW 82 · CNO_EXPANSION 33. Por destinação: Comercial salas e lojas 42 · Residencial
+multifamiliar 28 · Conjunto habitacional popular 24 · **Galpão industrial 16** · Residencial unifamiliar 5.
+Por município: Goiânia 16 · Anápolis 12 · Águas Lindas 9 · Aparecida, Jataí, Rio Verde, Senador Canedo 5 cada.
+Por área: 1.000–1.999 37 · 2.000–4.999 34 · 10.000–19.999 22 · 5.000–9.999 12 · 20.000+ 10. Por
+qualificação: PJ Construtora 46 · Dono da Obra 29 · Proprietário 21 · Incorporador 19. Por idade: 31–90 dias
+96 · 0–30 dias 19.
+
+Motivos de recusa (uma obra pode ter vários): EVENTO_ANTIGO 3.566.701 · UF_FORA 3.414.377 · AREA_ABAIXO
+3.159.280 · SITUACAO_FORA 2.573.795 · SEM_PJ / SEM_CNPJ_VALIDO 2.392.842 · CATEGORIA_FORA / SEM_SINAL 330.954 ·
+SEM_AREA 199.504.
+
+### 36.3 O lote de 50
+
+Ordem de **controle** — `eventoEm` DESC, `CNO` ASC — não prioridade. Sem score, classe, FIT ou Commercial Queue.
+
+```
+CNO_NEW 36 · CNO_EXPANSION 14
+área p50 4.316 m² · p90 17.142 m²
+CNPJs únicos 45 · maior ocupação 4 vagas · CNPJs com > 1 vaga: 3
+eventos de 31/07/2026 a 11/09/2026
+municípios: Anápolis 8 · Goiânia 6 · Senador Canedo 5 · Rio Verde 4 · (+23 municípios com 1–2)
+destinações: Comercial 18 · Conj. habitacional popular 11 · Resid. multifamiliar 11 · Galpão industrial 6 · Resid. unifamiliar 4
+```
+
+### 36.4 Cap por empresa — medido, não aplicado
+
+| cap | lote | empresas únicas | CNOs fora pelo cap | maior ocupação |
+|---|---|---|---|---|
+| nenhum | 50 | 45 | 0 | 4 |
+| 5 | 50 | 45 | 0 | 4 |
+| 3 | 50 | 46 | 1 | 3 |
+| 1 | 50 | 50 | 20 | 1 |
+
+Neste recorte a concentração é baixa: um cap de 5 não muda nada e cap 3 exclui um único CNO. Só cap 1 altera o
+lote de fato (20 obras cedem lugar a outras empresas). Nenhum cap foi adotado.
+
+### 36.5 Manifest e determinismo
+
+`dados/cno/pilot-manifest-v1.json` (52 KB, gitignored): política, versão, data de referência, descritor do
+snapshot (ETag `"76bb7f93…"`, `Last-Modified` 12/09/2026, 330.628.581 bytes — **fora do envelope e fora do
+fingerprint**, provado por teste), totais, `batchSize`, os 50 fingerprints, distribuições, métricas, simulação
+de cap e o lote. Cada entrada: CNO, evento e origem, tipo de sinal, município/UF, área, categorias,
+destinações, situação, CNPJ e razão social da PJ, qualificação, `payloadFingerprint`. **Sem evidence, sem
+endereço, sem dado de PF** (a política exige PJ). O envelope completo é reconstruído só na ingestão.
+
+O `payloadFingerprint` de cada entrada é o **mesmo** que `validarIntake(pedidoIntakeCno(obs))` calcula — o
+manifest é a promessa exata do que o intake verá.
+
+Duas execuções sobre o mesmo snapshot: mesmo total (115), mesmos 50 CNOs, mesma ordem, mesmos fingerprints.
+`PILOT_MANIFEST_DETERMINISTIC = YES`. Tempo por execução: 136–167 s.
+
+### 36.6 Código e testes
+
+`cnoPilot.ts` (puro: política V1, `avaliarPiloto`, `projetarEntrada`, `ordenarLote`, `montarLote`,
+`simularCap`, `metricasLote`, `montarManifest`, `manifestosIguais`) e `scripts/cno.mts -- piloto --arquivo
+--data --limite` (I/O; sem `--executar`, sem opção de persistir). Suíte `cnoPilot.test.ts`: 31 testes.
+
+### 36.7 O que este gate não fez
+
+Não ingeriu. Não criou candidato, empresa, projeto, sinal, oportunidade, tarefa, atividade ou comunicação.
+Não adotou cap. Não tornou a política definitiva. Termina com um arquivo local e números.
+
+---
+
+## 37. LE3-D — fronteira governada de intake e rehearsal contra a produção
+
+Gate de 23/09/2026, `feature/lead-engine-3`, sobre a `main` rebaselineada (`aaadac4`, merge limpo de
+`d063194`; os três commits vindos da `main` são do MC-LIVE e não tocam o Lead Engine). Constrói a porta que
+transforma uma observação CNO válida em `RegistroFonte` **PENDING** e ensaia os 50 do manifest contra o estado
+**real** de produção, somente leitura. **Nenhuma escrita em produção foi realizada.**
+
+### 37.1 O fluxo, e onde esta fronteira termina
+
+```
+CNO → PedidoIntake → validarIntake → classificarIntake → registroDeIntake → RegistroFonte PENDING
+    → filaDeRevisao → revisão humana → processarCandidatoLeadEngine → ASSOCIATE / CREATE / KEEP / REJECT
+```
+
+A fronteira do LE3-D termina em **`RegistroFonte PENDING`, `entidadeId` ausente**. Ela não promove.
+Confirmado no código e preso por teste: `processarCandidatoLeadEngine` é porta de **decisão** de candidato já
+existente (chama `aplicarDecisao` sobre `cmd.pedido`); `ingerirRegistrosRadar` normaliza pelo adapter e cria
+Empresa/Projeto/Sinal **diretamente**, pulando a revisão — e por isso é **proibida** neste fluxo. O CNO
+operacional cria candidato, nunca conta. O store não participa da descoberta.
+
+### 37.2 Core: `leadEngineBatchIntake.ts`
+
+Puro. `planejarBatchIntake(pedidos, existentes, novoId)` reutiliza `validarIntake`, `discoveryRecords`,
+`classificarIntake` e `registroDeIntake` do LE-1 — sem segundo fingerprint, sem segunda idempotência — e
+devolve `PlanoBatchIntake { entradas, novos, novasObservacoes, noops, invalidos, registros }`:
+
+- `NOVO_REGISTRO` → `RegistroFonte` novo, `PENDING`, sem entidade;
+- `NOVA_OBSERVACAO` → registro novo **ao lado** da anterior (que fica intacta), com `observacaoAnteriorId`;
+- `IDEMPOTENT_NOOP` → nada;
+- `INVALIDO` → diagnóstico com os motivos do LE-1, nada inventado.
+
+O lote também se vê a si mesmo: dois pedidos idênticos no mesmo lote dão um registro e um NOOP. `novoId` é
+injetado e o ID nunca deriva do CNO; `recebidoEm` não integra a identidade nem o fingerprint.
+`aplicarPlanoEmMemoria` anexa os registros a um `RadarDataset` sem tocar em nada anterior. `resolverFonteCno`
+exige **exatamente uma** fonte `CNO` **ativa** vinda do banco — nunca ID hardcoded. `conferirManifest` compara
+CNOs, fingerprints recalculados e política reavaliada; qualquer divergência bloqueia o lote inteiro.
+`modoExecucao` é o hard gate: sem `--executar` → SIMULACAO; `--executar` sem `--confirmar CNO_PILOT_V1` →
+RECUSADO (não cai em simulação silenciosa); `--confirmar` sozinho → SIMULACAO; só as duas juntas → ESCRITA.
+
+### 37.3 Runner: `scripts/cno-intake-producao.mts`
+
+Segue `radar-importar-producao.mts`: `--perfil <uuid>` → `profile` (ativo) → `organization_id` → papel em
+`PAPEIS_RADAR`; fonte CNO resolvida em `radar_source` da organização. **O manifest não é payload**: o runner
+reabre `dados/cno/cno.zip`, refaz o streaming join, reconstrói as 50 `CnoObservacao` completas, gera
+`pedidoIntakeCno` com o `fonteId` real, recalcula o fingerprint e reavalia `CNO_PILOT_POLICY_V1`. Lê
+`radar_source_record` da organização/fonte para os 50 `external_id`, planeja com o core, roda a segunda
+simulação e a simulação com uma observação alterada, conta `filaDeRevisao` e grava o SQL em
+`scratch/cno-pilot-intake.sql` (gitignored). O SQL é `begin; set_config(sub); 50 × insert into
+radar_source_record; commit;` — o próprio runner varre o script e bloqueia se qualquer outra tabela ou verbo
+aparecer, ou se houver `ON CONFLICT`. A escrita só é alcançável no modo ESCRITA e **não foi usada**.
+
+Os helpers de ZIP/streaming saíram de `cno.mts` para `scripts/lib/cnoZip.mts`, compartilhados pelos dois
+scripts — nada foi reimplementado.
+
+### 37.4 Rehearsal contra a produção (READ-ONLY, 23/09/2026)
+
+Perfil resolvido por consulta somente-leitura pelo e-mail: uma correspondência, `Administrador`, ativo,
+organização EIFF. Fonte CNO da organização: exatamente uma, ativa (`7c2665b5-…`). Zero registros CNO
+pré-existentes.
+
+```
+MANIFEST_ENTRIES    50
+SNAPSHOT_MATCH      50/50      (50 observações reconstruídas em 135 s, 3.604.156 obras lidas)
+FINGERPRINT_MATCH   50/50
+POLICY_MATCH        50/50
+
+NOVO_REGISTRO       50        NOVA_OBSERVACAO 0        IDEMPOTENT_NOOP 0        INVALIDO 0
+WOULD_INSERT        50
+
+segunda simulação (plano aplicado em memória)      NOVO 0 · NOVA_OBS 0 · NOOP 50
+uma observação alterada (Situação da 1ª)           NOVO 0 · NOVA_OBS 1 · NOOP 49
+filaDeRevisao com o plano aplicado                 50 candidatos PENDING
+
+WOULD_CREATE_EMPRESA / PROJETO / SINAL / OPORTUNIDADE / TAREFA / ATIVIDADE / COMUNICACAO = 0
+```
+
+SQL gerado: 52 linhas, 50 `insert into radar_source_record`, nenhuma outra tabela, nenhum `ON CONFLICT`,
+`intake_status = 'PENDING'` e `entity_id = NULL` nos 50. **Não executado.**
+
+### 37.5 Testes
+
+`leadEngineBatchIntake.test.ts`: 29 testes — NOVO/NOVA_OBSERVACAO/NOOP/INVALIDO, PENDING sem entidade,
+envelope completo com evidence e canonical, fingerprint do LE-1, fonte e `record_type = projeto`, 50 → 50
+novos → 50 NOOP → 1 alteração = 1 nova observação com a anterior intacta, manifest (ausente, fingerprint
+divergente, política divergente), fonte (ausente, duplicada, inativa), zero entidade comercial, `filaDeRevisao`,
+hard gate nos quatro estados, e guardas estruturais: `ingerirRegistrosRadar` e `processarCandidatoLeadEngine`
+nunca aparecem no core nem no runner, e o runner só emite INSERT em `radar_source_record`.
+
+### 37.6 O que este gate não fez
+
+Não gravou os 50. Não criou empresa, projeto, sinal, oportunidade, tarefa, atividade ou comunicação. Não
+alterou o store. Não abriu PR, não mesclou, não deployou. Não iniciou LE3-E, PNCP, scheduler ou outra fonte.
+A ingestão real dos 50 — `--executar --confirmar CNO_PILOT_V1` — é decisão sua, em gate próprio.
+
+---
+
+## 38. Ingestão piloto do CNO — executada em produção
+
+23/09/2026, 21:31 UTC. Autorização explícita ("INGESTÃO CNO PILOTO AUTORIZADA") depois do rehearsal do
+§37. Comando: `scripts/cno-intake-producao.mts -- … --executar --confirmar CNO_PILOT_V1`. O runner refez, no
+modo ESCRITA, todas as conferências do rehearsal antes de tocar o banco e só então aplicou o SQL numa única
+transação.
+
+### 38.1 Pré-voo (imediatamente antes)
+
+Git: `d9538fd` = remoto, árvore limpa, behind main 0. Produção (read-only): 0 registros CNO, 108
+`radar_source_record` no total, fonte `7c2665b5-…` ativa, perfil ativo, trigger `radar_source_record_evidencia`
+presente. Estado idêntico ao do rehearsal.
+
+### 38.2 Execução
+
+```
+SNAPSHOT_MATCH 50/50 · FINGERPRINT_MATCH 50/50 · POLICY_MATCH 50/50
+produção antes: 0 existentes → plano NOVO_REGISTRO 50 · WOULD_INSERT 50
+efeitos colaterais planejados: todos 0
+SQL: 50 × insert into radar_source_record, uma transação
+registros CNO após a carga: 50
+```
+
+### 38.3 O que ficou no banco (verificado read-only)
+
+```
+total 50 · PENDING 50 · entity_id NULL 50 · record_type projeto 50 · CNOs distintos 50
+payload.schema = CNO_OPEN_DATA_V1: 50 · com evidence + canonical: 50 · sem decisão: 50
+received_at único para o lote: 2026-09-23 21:31:57.062+00
+CNO + payload_fingerprint iguais ao manifest: 50/50
+radar_source_record total: 108 → 158 (+50 exatos)
+radar_company 91 · radar_project 0 · radar_opportunity 0  (inalterados)
+```
+
+Sinal 2, atividade 2, tarefa 1 e comunicação 3 são registros pré-existentes do Signal Pilot; o SQL aplicado
+não continha nenhuma outra tabela (auditado antes da execução, §37.4).
+
+### 38.4 Idempotência real
+
+Nova simulação contra a produção, com os 50 já gravados: **50 `IDEMPOTENT_NOOP`, 0 inserts**. Reler o mesmo
+snapshot não cria nada. A observação alterada continua produzindo exatamente 1 `NOVA_OBSERVACAO`.
+
+### 38.5 O que acontece agora
+
+Os 50 são candidatos **PENDING** na aba **Candidatos** do Command Center (LE2-E), na produção que já roda o
+LE-2. Nenhuma Empresa, Projeto ou Sinal nasceu. A promoção é humana — `ASSOCIATE_EXISTING`, `CREATE_COMPANY`,
+`KEEP_REVIEW` ou `REJECT` — pela porta governada `processarCandidatoLeadEngine`. Este documento não faz mais
+nenhuma promessa sobre eles: o que converte, e quais destinações convertem, é o que o piloto vai medir.
