@@ -18,14 +18,28 @@ import { ESPELHO_JOB_STATES, type EstadoJobFactory } from './workItem';
 
 // ------------------------------------------------------------------------------------- allowlist
 
-/** Papel do repositorio para o Mission Control. `fabrica` e o unico com issues de job. */
+/**
+ * Papel do repositorio para o Mission Control. `papel` diz o que o repositorio E (o produto, ou a fabrica
+ * que o constroi) — NAO diz onde os jobs moram. Ver `observarIssues`.
+ */
 export type PapelRepositorio = 'produto' | 'fabrica';
 
 export interface RepositorioObservavel {
   repository: string;
   papel: PapelRepositorio;
   ramoPrincipal: string;
-  /** so a fabrica publica jobs como issue com label `factory:state:*` */
+  /**
+   * Ler as issues `factory:task` deste repositorio.
+   *
+   * O contrato canonico da fabrica (`JOB_CONTRACT.md`, primeira linha) diz: "Um job e uma issue no
+   * repositorio-ALVO (nao no repositorio da fabrica)" — e o proprio YAML do job carrega
+   * `repository: augustocfmacedo/eiff-control`. Logo um job real do produto nasce como issue AQUI, no
+   * eiff-control, e nao no eiff-dev-factory. Enquanto isto era `false` para o produto, um job com
+   * `factory:task` + `factory:state:CODING` no eiff-control ficava INVISIVEL ao painel.
+   *
+   * Por isso todo repositorio-alvo da allowlist e observado. Isto NAO amplia a allowlist nem aceita
+   * repositorio do cliente: continua sendo esta lista fixa, server-side.
+   */
   observarIssues: boolean;
 }
 
@@ -34,7 +48,7 @@ export interface RepositorioObservavel {
  * aceita `?repo=` e nao ha como transformar a funcao num proxy do GitHub.
  */
 export const REPOSITORIOS_OBSERVADOS: readonly RepositorioObservavel[] = [
-  { repository: 'augustocfmacedo/eiff-control', papel: 'produto', ramoPrincipal: 'main', observarIssues: false },
+  { repository: 'augustocfmacedo/eiff-control', papel: 'produto', ramoPrincipal: 'main', observarIssues: true },
   { repository: 'augustocfmacedo/eiff-dev-factory', papel: 'fabrica', ramoPrincipal: 'main', observarIssues: true },
 ];
 
@@ -125,6 +139,11 @@ export interface IssueObservada {
   titulo: string;
   /** estado do job lido da label `factory:state:*`; null quando a issue nao declara nenhum */
   estadoFactory: EstadoJobFactory | null;
+  /**
+   * Identidade canonica: o `taskId` do bloco `factory-task:v1` no corpo (`lerIdentidadeCanonica`). null quando
+   * nao ha bloco valido — e ai a issue segue referenciada por `repositorio#numero`, sem correlacao inventada.
+   * O corpo em si nunca esta aqui.
+   */
   taskId: string | null;
   /** so labels `factory:*` — nenhuma label livre de terceiro entra */
   labelsFactory: string[];
@@ -174,14 +193,114 @@ export interface LeituraGitHub {
 
 // ------------------------------------------------------------------------------------- utilitarios
 
-/** Mesmo formato canonico do contrato da fabrica (`packages/contracts/src/texto.ts`: TASK_ID). */
+/** Mesmo formato canonico do contrato da fabrica (`packages/contracts/src/texto.ts`: TASK_ID), SOLTO num texto. */
 export const TASK_ID_FACTORY = /\b([A-Z]{2,4}-\d{4})\b/;
 
-/** taskId a partir de titulo de issue (`[EC-0142] …`) ou branch (`factory/EC-0142-a1`). Sem palpite. */
+/** ESPELHO de `TASK_ID` (`packages/contracts/src/texto.ts`), ANCORADO: valida um valor inteiro, nao procura num texto. */
+export const TASK_ID_CANONICO = /^[A-Z]{2,4}-\d{4}$/;
+
+/**
+ * taskId a partir de texto livre (titulo de PR feito por humano, por exemplo). E busca solta: serve de
+ * ULTIMO recurso onde nao existe identidade canonica — nunca para issue de job, cuja identidade e o bloco.
+ */
 export function extrairTaskId(texto: string | null | undefined): string | null {
   if (!texto) return null;
   const m = TASK_ID_FACTORY.exec(texto);
   return m ? m[1] : null;
+}
+
+/** ESPELHO de `lerBranchDoJob` (`packages/github/src/refs.ts`): `factory/<taskId>-a<attempt>`, attempt ≥ 1. */
+const BRANCH_DO_JOB = /^factory\/([A-Z]{2,4}-\d{4})-a(\d{1,4})$/;
+
+/** Identidade canonica de um PR da fabrica: a branch e GERADA do taskId (`branchDoJob`), entao e a autoridade. */
+export function taskIdDaBranchDoJob(branch: string | null | undefined): string | null {
+  if (!branch) return null;
+  const m = BRANCH_DO_JOB.exec(branch);
+  return m && Number(m[2]) >= 1 ? m[1] : null;
+}
+
+// ------------------------------------------------------- identidade canonica da issue (JOB_CONTRACT.md)
+
+/**
+ * Marcadores do bloco canonico do job no corpo da issue. Formato suportado, exatamente o do JOB_CONTRACT.md:
+ *
+ *   <!-- factory-task:v1 -->
+ *   ```yaml
+ *   taskId: EC-0142                # comentario inline permitido
+ *   repository: augustocfmacedo/eiff-control
+ *   ...
+ *   ```
+ *   <!-- /factory-task -->
+ *
+ * A cerca ```yaml e o marcador de fim sao opcionais na leitura (o de inicio nao). Nao existe leitor executavel
+ * deste bloco na fabrica (`parseJobContract` valida um OBJETO ja extraido; `lerRelatorioDoPr` le o bloco do
+ * PR, que e JSON). Por isso a extracao vive aqui, minima e explicita: so `taskId` e `repository`, ambos
+ * escalares de nivel superior — sem parser YAML e sem dependencia nova.
+ */
+export const MARCADOR_TASK_INICIO = '<!-- factory-task:v1 -->';
+export const MARCADOR_TASK_FIM = '<!-- /factory-task -->';
+/** GitHub limita o corpo a 65 536 caracteres; nada acima disso e lido. */
+const CORPO_ISSUE_MAXIMO = 65_536;
+
+/** Catalogo FECHADO de por que uma issue nao tem identidade canonica. Nunca vira palpite. */
+export const RECUSAS_IDENTIDADE = [
+  'SEM_BLOCO',            // corpo sem `<!-- factory-task:v1 -->`
+  'BLOCOS_AMBIGUOS',      // mais de um bloco: nenhum e escolhido
+  'CHAVE_DUPLICADA',      // `taskId:` ou `repository:` repetidos dentro do bloco
+  'SEM_TASK_ID',          // bloco sem `taskId:`
+  'TASK_ID_INVALIDO',     // `taskId:` fora de `^[A-Z]{2,4}-\d{4}$`
+  'SEM_REPOSITORIO',      // bloco sem `repository:`
+  'REPOSITORIO_DIVERGENTE', // `repository:` diferente do repositorio onde a issue esta
+] as const;
+export type RecusaIdentidade = (typeof RECUSAS_IDENTIDADE)[number];
+
+export type IdentidadeCanonica =
+  | { taskId: string; recusa?: undefined }
+  | { taskId: null; recusa: RecusaIdentidade };
+
+/** Valor escalar YAML: tira o comentario (`#` no inicio ou apos espaco) e aspas simples/duplas envolventes. */
+function valorEscalarYaml(bruto: string): string {
+  const semComentario = bruto.replace(/(^|\s)#.*$/, '').trim();
+  const aspas = /^(["'])(.*)\1$/.exec(semComentario);
+  return (aspas ? aspas[2] : semComentario).trim();
+}
+
+/**
+ * Identidade canonica da issue de job: o campo `taskId` DENTRO do bloco delimitado, e so ele.
+ *
+ * Regras (todas testadas): exatamente um bloco; `taskId` e `repository` uma vez cada; `taskId` no formato
+ * canonico; `repository` igual ao repositorio onde a issue esta. Qualquer desvio devolve `taskId: null` com a
+ * recusa nomeada — e o chamador preserva a referencia `repositorio#numero`, sem inventar correlacao.
+ * Um identificador solto no titulo ou na prosa NUNCA e consultado aqui.
+ *
+ * Roda SO no servidor: o corpo e lido em transito e nao entra em `IssueObservada` nem na resposta.
+ */
+export function lerIdentidadeCanonica(corpo: string | null | undefined, repositorioDaIssue: string): IdentidadeCanonica {
+  if (!corpo) return { taskId: null, recusa: 'SEM_BLOCO' };
+  const texto = corpo.length > CORPO_ISSUE_MAXIMO ? corpo.slice(0, CORPO_ISSUE_MAXIMO) : corpo;
+  const inicio = texto.indexOf(MARCADOR_TASK_INICIO);
+  if (inicio < 0) return { taskId: null, recusa: 'SEM_BLOCO' };
+  if (texto.indexOf(MARCADOR_TASK_INICIO, inicio + MARCADOR_TASK_INICIO.length) >= 0) return { taskId: null, recusa: 'BLOCOS_AMBIGUOS' };
+
+  const depois = texto.slice(inicio + MARCADOR_TASK_INICIO.length);
+  const fim = depois.indexOf(MARCADOR_TASK_FIM);
+  let segmento = fim >= 0 ? depois.slice(0, fim) : depois;
+  const cerca = /```(?:yaml|yml)?[ \t]*\r?\n([\s\S]*?)```/.exec(segmento);
+  if (cerca) segmento = cerca[1];
+
+  const valores: Partial<Record<'taskId' | 'repository', string>> = {};
+  for (const linha of segmento.split(/\r?\n/)) {
+    const m = /^(taskId|repository):[ \t]*(.*)$/.exec(linha); // nivel superior: linha sem indentacao
+    if (!m) continue;
+    const chave = m[1] as 'taskId' | 'repository';
+    if (chave in valores) return { taskId: null, recusa: 'CHAVE_DUPLICADA' };
+    valores[chave] = valorEscalarYaml(m[2]);
+  }
+  if (valores.taskId === undefined || valores.taskId === '') return { taskId: null, recusa: 'SEM_TASK_ID' };
+  if (!TASK_ID_CANONICO.test(valores.taskId)) return { taskId: null, recusa: 'TASK_ID_INVALIDO' };
+  if (!valores.repository) return { taskId: null, recusa: 'SEM_REPOSITORIO' };
+  if (valores.repository !== repositorioDaIssue) return { taskId: null, recusa: 'REPOSITORIO_DIVERGENTE' };
+  return { taskId: valores.taskId };
 }
 
 const PREFIXO_ESTADO = 'factory:state:';
@@ -330,13 +449,19 @@ function lerPulls(corpo: unknown): PullRequestObservado[] {
       branch, headSha,
       rascunho: p.draft === true,
       criadoEm, atualizadoEm, url,
-      taskId: extrairTaskId(txt(p.title)) ?? extrairTaskId(branch),
+      // a branch e GERADA do taskId pela fabrica: e a identidade canonica do PR. Titulo so como ultimo
+      // recurso (PR humano fora do padrao); um id diferente no titulo nunca vence a branch canonica.
+      taskId: taskIdDaBranchDoJob(branch) ?? extrairTaskId(txt(p.title)),
     });
   }
   return saida;
 }
 
-function lerIssues(corpo: unknown): IssueObservada[] {
+/**
+ * `repositorio` e o repositorio de onde a lista veio: a identidade canonica exige que o `repository:` do bloco
+ * seja este. O corpo (`i.body`) e lido AQUI, em transito, e descartado — nunca entra em `IssueObservada`.
+ */
+function lerIssues(corpo: unknown, repositorio: string): IssueObservada[] {
   const lista = arr(corpo) ?? [];
   const saida: IssueObservada[] = [];
   for (const i of lista.slice(0, LIMITE_ISSUES)) {
@@ -352,7 +477,8 @@ function lerIssues(corpo: unknown): IssueObservada[] {
     saida.push({
       numero, titulo,
       estadoFactory: estadoDaLabel(labelsFactory),
-      taskId: extrairTaskId(titulo),
+      // identidade canonica: o `taskId` do bloco no corpo. O titulo (`[factory] …`) nao a carrega por contrato.
+      taskId: lerIdentidadeCanonica(txt(i.body), repositorio).taskId,
       labelsFactory,
       estadoGitHub: txt(i.state) === 'closed' ? 'closed' : 'open',
       criadoEm, atualizadoEm,
@@ -424,7 +550,7 @@ export async function lerRepositorio(r: RepositorioObservavel, d: DepsGitHub): P
     try {
       const lidas = await obter<unknown>(`/repos/${r.repository}/issues?state=open&labels=factory:task&per_page=${LIMITE_ISSUES}&sort=updated&direction=desc`, d, contador);
       limite = lidas.limite ?? limite;
-      issues = lerIssues(lidas.dados);
+      issues = lerIssues(lidas.dados, r.repository);
     } catch (e) {
       erroIssues = codigoDe(e);
     }
@@ -449,5 +575,15 @@ export async function lerGitHub(d: DepsGitHub, repos: readonly RepositorioObserv
   };
 }
 
-/** Teto de chamadas por ciclo, para o orcamento de rate limit ser um numero e nao uma esperanca. */
+/**
+ * Teto de chamadas por ciclo, para o orcamento de rate limit ser um numero e nao uma esperanca.
+ *
+ * Por repositorio: `commits/{ramo}` + `check-runs` do sha + `pulls` = 3, mais `issues?labels=factory:task`
+ * quando `observarIssues` = 4. Com os dois repositorios observando issues: 4 + 4 = **8 por ciclo**.
+ * Era 7 enquanto o produto nao lia issues (3 + 4).
+ *
+ * O numero e DERIVADO da allowlist — nunca uma constante digitada — entao acrescentar repositorio ou
+ * ligar issues recalcula sozinho, e o teste que compara o teto com as chamadas reais acompanha.
+ * O custo por ciclo nao depende da quantidade de cartoes: nao existe chamada por item.
+ */
 export const MAX_CHAMADAS_POR_CICLO = REPOSITORIOS_OBSERVADOS.reduce((n, r) => n + (r.observarIssues ? 4 : 3), 0);
