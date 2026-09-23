@@ -1,4 +1,4 @@
-// UX-P01 — Financeiro compacto: provas do piloto (rodada 2).
+// UX-P01/UX-P02 — Financeiro compacto: provas do piloto (rodada 2 + integracao).
 //
 // O vitest roda em `environment: 'node'`, sem testing-library, e so inclui `src/**/*.test.ts`: o componente React nao e
 // renderizado aqui. O que o piloto DECIDE mora em `financeiroCompactoModel.ts` (puro) e e provado caso a caso contra a
@@ -11,7 +11,7 @@ import { calcLancamentos, dashboard, posicaoBancaria, reservaVinculadaTotal, sla
 import { pode } from '../../core/permissoes';
 import type { Dataset } from '../../core/types';
 import { DATA_BASE_TESTE, EXTRATO_ATE_PADRAO, FIXTURE_GERADA_EM, PREFIXO_TESTE, ROTULO_TESTE, USUARIO_FINANCEIRO, USUARIO_OBRA, VARIANTES, datasetTeste, usuarioDaVariante, type VarianteFixture } from './financeiroCompacto.fixtures';
-import { ROTULO_SEVERIDADE, SEVERIDADE_POR_TOM, TETO_ATENCAO, TETO_SITUACAO, TEXTO_RESTRITO, TEXTO_SEM_EXTRATO, VISOES, agruparPorSeveridade, montarPiloto, tempoRelativo, type EntradaPiloto, type ModeloPiloto, type Visao } from './financeiroCompactoModel';
+import { ROTULO_SEVERIDADE, ROTULO_SINCRONIZACAO, SEVERIDADE_POR_TOM, TETO_ATENCAO, TETO_SITUACAO, TEXTO_RESTRITO, TEXTO_SEM_EXTRATO, VISOES, agruparPorSeveridade, entradaDoApp, montarPiloto, tempoRelativo, type EntradaPiloto, type EstadoDoApp, type ModeloPiloto, type Visao } from './financeiroCompactoModel';
 
 const AGORA = '2026-09-23T15:00:00.000Z';
 const FONTE = { rotulo: ROTULO_TESTE, modo: 'teste' as const, atualizadoEm: FIXTURE_GERADA_EM, id: 'fixture' };
@@ -417,8 +417,83 @@ describe('guardas estaticas: somente leitura, sem store, sem rede, sem gravacao'
     const seletores = css.split('}').map((b) => b.split('{')[0].trim()).filter(Boolean).filter((s) => !s.startsWith('@'));
     for (const sel of seletores) for (const parte of sel.split(',')) expect(parte.trim(), `seletor fora do prefixo: ${parte}`).toMatch(/^(\.piloto-fin|\[data-theme="light"\] \.piloto-fin|@media)/);
   });
-  it('o rotulo PILOTO · DADOS DE TESTE aparece na tela e na entrada', () => {
-    for (const f of ['FinanceiroCompacto.tsx', 'main.tsx']) expect(fonte(f)).toMatch(/ROTULO_TESTE|PILOTO · DADOS DE TESTE/);
+  it('UX-P02: a marca de dados de teste saiu do runtime — tela e modelo nao importam a fixture nem citam o rotulo', () => {
+    for (const f of ['FinanceiroCompacto.tsx', 'financeiroCompactoModel.ts', 'piloto.css']) {
+      expect(fonte(f)).not.toMatch(/financeiroCompacto\.fixtures/);
+      expect(fonte(f)).not.toMatch(/DADOS DE TESTE|ROTULO_TESTE|datasetTeste/);
+    }
+    // a fixture continua existindo, so para os testes
+    expect(arquivos).toContain('financeiroCompacto.fixtures.ts');
+    expect(fs.readFileSync(path.join(pasta, 'financeiroCompacto.fixtures.ts'), 'utf8')).toMatch(/PILOTO · DADOS DE TESTE/);
+  });
+  it('UX-P02: os arquivos de isolamento foram removidos e o App liga o piloto so por lazy + case, sem sidebar, paleta ou tour', () => {
+    expect(arquivos).not.toContain('main.tsx');
+    expect(fs.existsSync(path.resolve('piloto-financeiro.html'))).toBe(false);
+    const app = fs.readFileSync(path.resolve('src/App.tsx'), 'utf8');
+    const linhas = app.split('\n').filter((l) => /piloto/i.test(l) && !/^\s*\/\//.test(l));
+    expect(linhas).toHaveLength(3); // lazy import, import do adaptador e o case da rota
+    expect(app).toMatch(/const FinanceiroCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/FinanceiroCompacto'\)\);/);
+    expect(app).toMatch(/import \{ entradaDoApp \} from '\.\/screens\/piloto\/financeiroCompactoModel';/);
+    const caso = app.slice(app.indexOf("case 'piloto':"), app.indexOf('break;', app.indexOf("case 'piloto':")));
+    expect(caso).toMatch(/p1 === 'financeiro'/);
+    expect(caso).toMatch(/entradaDoApp\(\{ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)/);
+    expect(caso).toMatch(/Página não encontrada/);
+    for (const f of ['src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/core/permissoes.ts', 'src/data/store.ts', 'src/core/engine.ts']) expect(fs.readFileSync(path.resolve(f), 'utf8'), `${f} referencia o piloto`).not.toMatch(/piloto\/financeiro|FinanceiroCompacto|financeiroCompacto/);
+  });
+});
+
+describe('UX-P02: adaptador entradaDoApp (leitura do que o App ja carregou; sync e frescor separados)', () => {
+  const base = (extra: Partial<EstadoDoApp> = {}): EstadoDoApp => ({ ds: datasetTeste('padrao'), usuario: USUARIO_FINANCEIRO, modo: 'remoto', carregando: false, erroInicial: undefined, sync: { status: 'ok', em: '2026-09-23T14:00:00.000Z' }, agora: AGORA, ...extra });
+  it('carregando e erroInicial viram os estados correspondentes; pronto carrega ds, usuario, agora e visao sem copiar nem alterar', () => {
+    expect(entradaDoApp(base({ carregando: true }))).toMatchObject({ estado: 'carregando', fonte: { modo: 'remoto', rotulo: 'Supabase' } });
+    expect(entradaDoApp(base({ erroInicial: 'sem rede' }))).toMatchObject({ estado: 'erro', mensagem: 'sem rede' });
+    const e = base({ visao: 'operacional' });
+    const r = entradaDoApp(e);
+    expect(r.estado).toBe('pronto');
+    if (r.estado === 'pronto') { expect(r.ds).toBe(e.ds); expect(r.usuario).toBe(e.usuario); expect(r.agora).toBe(AGORA); expect(r.visao).toBe('operacional'); }
+  });
+  it('remoto: fonte Supabase com atualizadoEm = sync.em; sincronizacao espelha o status 1:1 (ok, enviando, pendente, erro)', () => {
+    for (const [status, estado] of [['ok', 'sincronizado'], ['enviando', 'enviando'], ['pendente', 'pendente'], ['erro', 'erro']] as const) {
+      const r = entradaDoApp(base({ sync: { status, em: '2026-09-23T14:00:00.000Z', desde: '2026-09-23T13:00:00.000Z', msg: 'x' } }));
+      expect(r.fonte).toMatchObject({ rotulo: 'Supabase', modo: 'remoto', atualizadoEm: '2026-09-23T14:00:00.000Z', sincronizacao: { estado, em: '2026-09-23T14:00:00.000Z', desde: '2026-09-23T13:00:00.000Z', msg: 'x' } });
+      expect(ROTULO_SINCRONIZACAO[estado]).toBeTruthy();
+    }
+  });
+  it('sync pendente/erro NAO vira "dados desatualizados": o frescor e identico ao do sync ok', () => {
+    const ds = datasetTeste('atualizado');
+    const ok = pronto(montarPiloto(entradaDoApp(base({ ds, sync: { status: 'ok', em: '2026-09-23T14:00:00.000Z' } }))));
+    const pend = pronto(montarPiloto(entradaDoApp(base({ ds, sync: { status: 'pendente', em: '2026-09-23T14:00:00.000Z', desde: '2026-09-23T13:00:00.000Z' } }))));
+    const erro = pronto(montarPiloto(entradaDoApp(base({ ds, sync: { status: 'erro', em: '2026-09-23T14:00:00.000Z', msg: 'falhou' } }))));
+    expect(JSON.stringify(pend.frescor)).toBe(JSON.stringify(ok.frescor));
+    expect(JSON.stringify(erro.frescor)).toBe(JSON.stringify(ok.frescor));
+    expect(ok.frescor.desatualizado).toBe(false);
+    expect(pend.fonte.sincronizacao?.estado).toBe('pendente');
+    expect(erro.fonte.sincronizacao?.estado).toBe('erro');
+    expect(ok.frescor.chips.map((c) => c.id)).toEqual(['base', 'extrato', 'atualizado']);
+    expect(ok.frescor.chips.find((c) => c.id === 'atualizado')?.texto).toBe('Atualizado há 1 h');
+  });
+  it('modo local: fonte "Modo local · seed", sincronizacao local, sem chip de aviso de atualizacao e sem marca de teste', () => {
+    const r = entradaDoApp(base({ modo: 'local', sync: { status: 'local' } }));
+    expect(r.fonte).toEqual({ rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } });
+    const m = pronto(montarPiloto(r));
+    expect(m.fonte.modo).toBe('local');
+    expect(m.frescor.chips.find((c) => c.id === 'atualizado')).toMatchObject({ texto: 'Seed local' });
+    expect(m.frescor.chips.find((c) => c.id === 'atualizado')?.tom).toBeUndefined();
+    expect(m.frescor.motivos.some((x) => /desconhecido/.test(x))).toBe(false);
+    expect(JSON.stringify(m)).not.toMatch(/DADOS DE TESTE/);
+  });
+  it('paridade e permissao continuam as mesmas pelo adaptador: o modelo e identico ao montado pela entrada direta', () => {
+    for (const variante of ['padrao', 'restrito'] as const) {
+      const ds = datasetTeste(variante);
+      const viaApp = montarPiloto(entradaDoApp({ ds, usuario: usuarioDaVariante(variante), modo: 'remoto', carregando: false, sync: { status: 'ok', em: FIXTURE_GERADA_EM }, agora: AGORA }));
+      const direta = montarPiloto({ estado: 'pronto', fonte: { rotulo: 'Supabase', modo: 'remoto', atualizadoEm: FIXTURE_GERADA_EM, sincronizacao: { estado: 'sincronizado', em: FIXTURE_GERADA_EM } }, ds, usuario: usuarioDaVariante(variante), agora: AGORA });
+      expect(JSON.stringify(viaApp)).toBe(JSON.stringify(direta));
+      if (viaApp.estado === 'pronto') expect(viaApp.usuario.veBancos).toBe(pode(usuarioDaVariante(variante), 'ver_bancos'));
+    }
+  });
+  it('o adaptador nao muta o estado recebido', () => {
+    const e = congelar(base());
+    expect(() => entradaDoApp(e)).not.toThrow();
   });
 });
 

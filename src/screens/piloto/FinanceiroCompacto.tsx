@@ -1,7 +1,7 @@
-// UX-P01 — Financeiro compacto: tela do piloto (somente leitura, sem store). Rodada 2.
+// UX-P01/UX-P02 — Financeiro compacto: tela do piloto (somente leitura, sem store), integrada em #/piloto/financeiro.
 //
-// Recebe uma `EntradaPiloto` ja resolvida (fixture nesta fase; dataset do store na integracao) e mostra o modelo puro de
-// `montarPiloto`. A tela nao decide nada financeiro: so apresenta. Blocos: cabecalho com microfrescor → SITUACAO
+// Recebe uma `EntradaPiloto` ja resolvida pelo App (`entradaDoApp` sobre o Dataset/usuario/sync ja carregados; a fixture
+// existe so nos testes) e mostra o modelo puro de `montarPiloto`. A tela nao decide nada financeiro: so apresenta. Blocos: cabecalho com microfrescor → SITUACAO
 // (3 ou 4 tiles conforme a visao) → ATENCAO (nucleo: o que aconteceu · impacto · proximo passo, agrupada pela severidade
 // canonica do alerta, sem horizonte temporal) → COMPOSICAO em gaveta lateral, so quando pedida. Acoes: apenas "Ver composicao", "Ver pendencias",
 // "Ver origem" e "Ver projecao" para telas ja existentes do EIFF Control.
@@ -11,22 +11,32 @@ import { Sparkline } from '../../ui/charts';
 import { Icon } from '../../ui/icons';
 import { Valor } from '../../ui/motion';
 import { fmtBr } from '../../core/engine';
-import { ROTULO_TESTE } from './financeiroCompacto.fixtures';
-import { VERSAO_PILOTO, VISOES, montarPiloto, type Composicao, type EntradaPiloto, type GrupoAtencao, type ItemAtencao, type ItemSituacao, type ModeloPiloto, type Tom, type Visao } from './financeiroCompactoModel';
+import { ROTULO_SINCRONIZACAO, VERSAO_PILOTO, VISOES, montarPiloto, type Composicao, type EntradaPiloto, type GrupoAtencao, type ItemAtencao, type ItemSituacao, type ModeloPiloto, type Tom, type Visao } from './financeiroCompactoModel';
 import './piloto.css';
 
 const badgeTom = (t?: Tom): 'ok' | 'warn' | 'bad' | 'info' | 'muted' => (t === 'bad' ? 'bad' : t === 'warn' ? 'warn' : t === 'ok' ? 'ok' : t === 'info' ? 'info' : 'muted');
 
-/** Faixa permanente e curta: nada aqui e situacao real. */
-function FaixaTeste({ fonte }: { fonte: ModeloPiloto['fonte'] }) {
-  if (fonte.modo !== 'teste') return null;
-  return <div className="piloto-fin-faixa" role="note" title="Nenhum número desta tela representa a situação real da empresa."><Icon name="aviso" size={13} /><b>{ROTULO_TESTE}</b><span>dados fictícios{fonte.id ? ` · ${fonte.id}` : ''}</span></div>;
+/** Modo local: o seed nao e a operacao real, e a tela diz isso; em modo remoto nao renderiza nada. */
+function FaixaLocal({ fonte }: { fonte: ModeloPiloto['fonte'] }) {
+  if (fonte.modo !== 'local') return null;
+  return <div className="piloto-fin-faixa" role="note"><Icon name="aviso" size={13} /><b>Modo local</b><span>dados do seed · não são a operação real</span></div>;
+}
+
+const dataHoraCurta = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+/** Sincronizacao e frescor sao conceitos distintos: chips separados, sem um virar o outro. */
+function ChipSync({ fonte }: { fonte: ModeloPiloto['fonte'] }) {
+  const s = fonte.sincronizacao;
+  if (!s) return null;
+  const tom = s.estado === 'erro' ? 'bad' : s.estado === 'pendente' ? 'warn' : '';
+  const sufixo = s.estado === 'sincronizado' ? dataHoraCurta(s.em) : s.estado === 'pendente' && s.desde ? `desde ${dataHoraCurta(s.desde)}` : '';
+  return <span className={`piloto-fin-chip ${tom}`} title={s.msg ?? 'Estado de sincronização do aplicativo (o mesmo da barra superior)'} aria-label="Sincronização">{ROTULO_SINCRONIZACAO[s.estado]}{sufixo ? ` ${sufixo}` : ''}</span>;
 }
 
 function Chips({ m }: { m: Extract<ModeloPiloto, { estado: 'pronto' | 'vazio' }> }) {
   return (
-    <div className="piloto-fin-chips" aria-label="Frescor dos dados">
+    <div className="piloto-fin-chips" aria-label="Frescor e sincronização dos dados">
       {m.frescor.chips.map((c) => <span key={c.id} className={`piloto-fin-chip ${c.tom ?? ''}`} title={c.titulo}>{c.texto}</span>)}
+      <ChipSync fonte={m.fonte} />
     </div>
   );
 }
@@ -132,7 +142,7 @@ function Rodape({ m }: { m: Extract<ModeloPiloto, { estado: 'pronto' | 'vazio' }
   const f = m.frescor;
   return (
     <footer className="piloto-fin-rodape small muted" aria-label="Origem e período">
-      Fonte {m.fonte.rotulo}{f.fonteAtualizadaEm ? ` · ${new Date(f.fonteAtualizadaEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : ' · atualização desconhecida'} · período {f.periodo.rotulo} · cenário {f.cenario} · piloto {VERSAO_PILOTO}
+      Fonte {m.fonte.rotulo}{f.fonteAtualizadaEm ? ` · ${new Date(f.fonteAtualizadaEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : m.fonte.modo === 'local' ? '' : ' · atualização desconhecida'} · período {f.periodo.rotulo} · cenário {f.cenario} · piloto {VERSAO_PILOTO}
     </footer>
   );
 }
@@ -149,7 +159,7 @@ export default function FinanceiroCompacto({ entrada, composicaoInicial = null, 
   if (m.estado === 'carregando') {
     return (
       <div className="piloto-fin" aria-busy="true" aria-label="Carregando">
-        <FaixaTeste fonte={m.fonte} />
+        <FaixaLocal fonte={m.fonte} />
         <div className="piloto-fin-head"><h1>Financeiro compacto</h1><div className="piloto-fin-chips"><Skeleton w={70} h={18} r={9} /><Skeleton w={110} h={18} r={9} /><Skeleton w={90} h={18} r={9} /></div></div>
         <div className="piloto-fin-situacao cols-3">{[0, 1, 2].map((i) => <div key={i} className="piloto-fin-tile"><Skeleton w={100} h={9} /><Skeleton w="65%" h={24} style={{ marginTop: 8 }} /><Skeleton w="80%" h={9} style={{ marginTop: 10 }} /></div>)}</div>
         <div className="card piloto-fin-atencao"><Skeleton w={60} h={9} />{[0, 1, 2, 3].map((i) => <Skeleton key={i} w="100%" h={13} style={{ marginTop: 10 }} />)}</div>
@@ -159,7 +169,7 @@ export default function FinanceiroCompacto({ entrada, composicaoInicial = null, 
   if (m.estado === 'erro') {
     return (
       <div className="piloto-fin">
-        <FaixaTeste fonte={m.fonte} />
+        <FaixaLocal fonte={m.fonte} />
         <div className="piloto-fin-head"><h1>Financeiro compacto</h1></div>
         <EstadoErro titulo="Dados financeiros indisponíveis" causa={<>{m.mensagem}{m.causa && <> · <code>{m.causa}</code></>}</>}>Nada foi alterado; nenhum número é mostrado para não confundir ausência com zero.</EstadoErro>
       </div>
@@ -168,7 +178,7 @@ export default function FinanceiroCompacto({ entrada, composicaoInicial = null, 
   if (m.estado === 'vazio') {
     return (
       <div className="piloto-fin">
-        <FaixaTeste fonte={m.fonte} />
+        <FaixaLocal fonte={m.fonte} />
         <div className="piloto-fin-head"><h1>Financeiro compacto</h1><Chips m={m} /></div>
         <Empty icone="banco" titulo="Sem dados financeiros">{m.motivo}</Empty>
         <Rodape m={m} />
@@ -180,7 +190,7 @@ export default function FinanceiroCompacto({ entrada, composicaoInicial = null, 
   const comp = composicao ? m.composicoes[composicao] : undefined;
   return (
     <div className="piloto-fin">
-      <FaixaTeste fonte={m.fonte} />
+      <FaixaLocal fonte={m.fonte} />
       <div className="piloto-fin-head">
         <div className="piloto-fin-titulo">
           <h1>Financeiro compacto</h1>

@@ -1,4 +1,4 @@
-// UX-P01 — Financeiro compacto: view-model puro do piloto (somente leitura). Rodada 2.
+// UX-P01/UX-P02 — Financeiro compacto: view-model puro do piloto (somente leitura). Integrado ao App pela UX-P02.
 //
 // Filosofia: SITUACAO (como estamos) → ATENCAO (o que exige olhar: o que aconteceu, impacto, severidade, proximo passo)
 // → COMPOSICAO (detalhe apenas quando pedido) → FRESCOR (microinformacao: base, extrato ate, atualizado ha).
@@ -21,7 +21,7 @@ import { pode } from '../../core/permissoes';
 import { sugestoesPara } from '../../core/sugestoes';
 import type { Aprovacao, Dataset, Usuario } from '../../core/types';
 
-export const VERSAO_PILOTO = 'UX-P01.3';
+export const VERSAO_PILOTO = 'UX-P02.1';
 /** Teto do bloco SITUACAO por visao: o menor conjunto que ajuda a decidir. */
 export const TETO_SITUACAO: Record<Visao, number> = { executivo: 3, operacional: 4 };
 /** Teto da lista compacta de ATENCAO; o restante fica acessivel por "Ver todas". */
@@ -46,12 +46,48 @@ const ORDEM_SEVERIDADE: Severidade[] = ['acao', 'atencao', 'acompanhar'];
 /** Sugestoes do painel (core) que este bloco ja apresenta pelo proprio campo do dashboard: nao repetir a mesma pendencia. */
 const SUGESTOES_COBERTAS: Record<string, string> = { 'sla-aprovacoes': 'aprovacoes', 'sem-conciliacao': 'sem-conciliacao' };
 
+/**
+ * Estado de SINCRONIZACAO, espelhado 1:1 do store (`sync.status`), sem interpretacao gerencial: e um conceito distinto de
+ * FRESCOR (base, extrato, idade do dado) e a tela mostra os dois separados. Pendente/erro NAO viram "dados desatualizados".
+ */
+export interface Sincronizacao { estado: 'sincronizado' | 'enviando' | 'pendente' | 'erro' | 'local'; em?: string; desde?: string; msg?: string }
+export const ROTULO_SINCRONIZACAO: Record<Sincronizacao['estado'], string> = { sincronizado: 'Supabase · sincronizado', enviando: 'Supabase · sincronizando…', pendente: 'offline · alterações guardadas neste aparelho', erro: 'não sincronizado', local: 'modo local · seed' };
+
 export interface FonteDados {
   rotulo: string;
   modo: 'teste' | 'local' | 'remoto';
   /** Quando a fonte foi sincronizada/gerada (ISO). Ausente = desconhecido, e isso e dito na tela. */
   atualizadoEm?: string;
   id?: string;
+  sincronizacao?: Sincronizacao;
+}
+
+/** O que o App ja tem em maos depois de `useStore()`; o piloto nunca importa o store. */
+export interface EstadoDoApp {
+  ds: Dataset;
+  usuario: Usuario;
+  modo: 'local' | 'remoto';
+  carregando: boolean;
+  erroInicial?: string;
+  sync: { status: 'ok' | 'enviando' | 'erro' | 'local' | 'pendente'; em?: string; desde?: string; msg?: string };
+  agora: string;
+  visao?: Visao;
+}
+
+const ESTADO_SYNC: Record<EstadoDoApp['sync']['status'], Sincronizacao['estado']> = { ok: 'sincronizado', enviando: 'enviando', pendente: 'pendente', erro: 'erro', local: 'local' };
+
+/**
+ * UX-P02 — adaptador puro e somente leitura: Dataset, usuario e sync que o App ja carregou viram a EntradaPiloto.
+ * Sem fetch, sem store, sem regra: so mapeamento. Em modo local a fonte e o seed e e dita como tal (nunca "operacao real").
+ */
+export function entradaDoApp(e: EstadoDoApp): EntradaPiloto {
+  const fonte: FonteDados =
+    e.modo === 'remoto'
+      ? { rotulo: 'Supabase', modo: 'remoto', atualizadoEm: e.sync.em, sincronizacao: { estado: ESTADO_SYNC[e.sync.status], em: e.sync.em, desde: e.sync.desde, msg: e.sync.msg } }
+      : { rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } };
+  if (e.carregando) return { estado: 'carregando', fonte };
+  if (e.erroInicial) return { estado: 'erro', fonte, mensagem: e.erroInicial };
+  return { estado: 'pronto', fonte, ds: e.ds, usuario: e.usuario, agora: e.agora, visao: e.visao };
 }
 
 export type EntradaPiloto =
@@ -165,7 +201,7 @@ function frescorDe(ds: Dataset, d: Dashboard | undefined, fonte: FonteDados, ago
   const ate = periodos[periodos.length - 1]?.fim ?? ds.params.dataBase;
   const motivos: string[] = [];
   if (def.alerta) motivos.push(def.alerta);
-  if (!fonte.atualizadoEm) motivos.push('Momento da última atualização da fonte desconhecido.');
+  if (!fonte.atualizadoEm && fonte.modo !== 'local') motivos.push('Momento da última atualização da fonte desconhecido.');
   const diasExtrato = Number.isFinite(def.dias) ? def.dias : undefined;
   const chips: ChipFrescor[] = [
     { id: 'base', texto: `Base ${diaMes(ds.params.dataBase)}`, titulo: `Data-base ${fmtBr(ds.params.dataBase)} · cenário ${ds.params.cenario}` },
@@ -174,7 +210,9 @@ function frescorDe(ds: Dataset, d: Dashboard | undefined, fonte: FonteDados, ago
       : { id: 'extrato', texto: 'Sem extrato', tom: 'warn', titulo: def.alerta },
     fonte.atualizadoEm
       ? { id: 'atualizado', texto: `Atualizado ${tempoRelativo(fonte.atualizadoEm, agora)}`, titulo: `Fonte ${fonte.rotulo} · ${new Date(fonte.atualizadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` }
-      : { id: 'atualizado', texto: 'Atualização desconhecida', tom: 'warn', titulo: 'A fonte não informou quando foi sincronizada.' },
+      : fonte.modo === 'local'
+        ? { id: 'atualizado', texto: 'Seed local', titulo: 'Dados do seed em modo local: não são a operação real.' }
+        : { id: 'atualizado', texto: 'Atualização desconhecida', tom: 'warn', titulo: 'A fonte não informou quando foi sincronizada.' },
   ];
   return {
     dataBase: ds.params.dataBase,
