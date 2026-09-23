@@ -168,13 +168,17 @@ async function main() {
     // I) atribuicao fora do recorte e recusada por RLS (UPDATE nao enxerga a linha); dentro do recorte passa e a linha some quando sai do recorte
     const iFora = await comoUsuario(FIN_A, `update inbox_thread set assignee_id = $2 where id = $1 returning id`, [dInt.thread_id, FIN_A]);
     const iDentro = await comoUsuario(FIN_A, `update inbox_thread set assignee_id = $2, status = 'ATRIBUIDA' where id = $1 returning id`, [c2.thread_id, FIN_A]);
-    // transferir para FORA do proprio recorte: a linha NOVA tambem passa pela politica de SELECT (regra do Postgres), entao
-    // quem transfere precisa continuar participante — e exatamente o que o store faz (entrar(novo, ator)). Sem isso, recusa.
+    // transferir para FORA do proprio recorte: a linha NOVA tambem passa pela politica de SELECT (regra do Postgres). Sem nada
+    // que ligue o autor a linha nova, o banco recusa. O caminho do adapter: primeiro a ATRIBUICAO vigente feita por mim
+    // (inbox_encaminhei), depois o UPDATE — sem tornar o autor participante. Quando a atribuicao e liberada, o acesso acaba.
     const iEngSem = await comoUsuarioFalha(ENG_A, `update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', assignee_id = null, status = 'TRIADA' where id = $1`, [t4.thread_id]);
-    const iEng = await comoUsuario(ENG_A, `update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', assignee_id = null, status = 'TRIADA', participant_ids = array[$2::uuid] where id = $1`, [t4.thread_id, ENG_A]);
+    const atrId = (await comoUsuario(ENG_A, `insert into inbox_assignment (organization_id, thread_id, sector_id, origin, actor_id) values ($1, $2, 'cccccccc-0000-0000-0000-000000000001', 'manual', $3) returning id`, [ORG_A, t4.thread_id, ENG_A])).rows[0].id;
+    const iEng = await comoUsuario(ENG_A, `update inbox_thread set sector_id = 'cccccccc-0000-0000-0000-000000000001', assignee_id = null, status = 'TRIADA' where id = $1`, [t4.thread_id]);
+    const engAinda = await contar(ENG_A); // 3: ainda ve a que encaminhou (atribuicao vigente)
+    await db.query(`update inbox_assignment set released_at = now() where id = $1`, [atrId]); // alguem reatribuiu
     const iEngRet = null;
     const engDepois = await contar(ENG_A);
-    ok('I', iFora.rows.length === 0 && iDentro.rows.length === 1 && /row-level security/i.test(iEngSem ?? '') && iEng.affectedRows === 1 && engDepois === 3 && iEngRet === null, `fora do recorte: ${iFora.rows.length} linha; dentro: ${iDentro.rows.length}; transferir sem ficar participante: ${iEngSem ? 'recusado pelo RLS' : 'ACEITO'}; como participante: ${iEng.affectedRows}; Engenharia segue vendo ${engDepois}`);
+    ok('I', iFora.rows.length === 0 && iDentro.rows.length === 1 && /row-level security/i.test(iEngSem ?? '') && iEng.affectedRows === 1 && engAinda === 3 && engDepois === 2 && iEngRet === null, `fora do recorte: ${iFora.rows.length} linha; dentro: ${iDentro.rows.length}; transferir sem atribuição: ${iEngSem ? 'recusado pelo RLS' : 'ACEITO'}; com atribuição vigente: ${iEng.affectedRows} (Engenharia ainda vê ${engAinda}); após liberar a atribuição vê ${engDepois}`);
 
     // J) configuracao: Financeiro (sem inbox_config) nao cria setor nem membro; Diretoria cria; identidade duplicada e recusada
     const jFin = await comoUsuarioFalha(FIN_A, `insert into inbox_sector (organization_id, code, name) values ($1, 'JURIDICO', 'Jurídico')`, [ORG_A]);
@@ -188,7 +192,7 @@ async function main() {
     await db.query(`update inbox_thread set participant_ids = participant_ids || $2::uuid where id = $1`, [dInt.thread_id, FIN_A]);
     const kFin = await contar(FIN_A);
     const kEv = await deveFalhar(`insert into inbox_thread_event (organization_id, thread_id, event_type, actor_kind, actor_name, detail) values ($1, $2, 'NOTE_ADDED', 'usuario', 'x', 'ligar para ${TEL}')`, [ORG_A, dInt.thread_id]);
-    ok('K', kFin === 4 && /check/i.test(kEv ?? ''), `Financeiro passa a ver ${kFin} (as 3 de antes + a de OBRAS em que virou participante); detalhe com telefone inteiro: ${kEv ? 'recusado' : 'ACEITO'}`);
+    ok('K', kFin === 4 && /check/i.test(kEv ?? ''), `Financeiro passa a ver ${kFin} (as 3 de antes + a de OBRAS em que escreveu, como participante); detalhe com telefone inteiro: ${kEv ? 'recusado' : 'ACEITO'}`);
 
     // L) reaplicacao: a migration e idempotente
     await db.exec('savepoint reaplica');

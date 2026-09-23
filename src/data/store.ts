@@ -2881,9 +2881,10 @@ export const actions = {
     const ids = idsInbox(i);
     const status = statusAposAtribuicao(t, setorCodigo, responsavelId);
     const sla = t.sla ?? { primeiraRespostaAte: slaDe(i.configuracao, t.prioridade, t.abertaEm) };
-    // quem transfere continua participante: mantem a visibilidade da conversa (e o RLS exige isso para a linha nova)
-    let novo: InboxThread = entrar({ ...t, setorCodigo, equipeId, responsavelId, status, sla }, state.usuario.id);
-    if (responsavelId) novo = entrar(novo, responsavelId);
+    // participante e quem ESCREVE ou DECIDE na conversa (responder, anotar, propor, aprovar) — nao quem a encaminha nem quem
+    // a recebe. Quem encaminhou continua enxergando pela atribuicao vigente que fez (inbox_encaminhei no RLS); quem recebeu
+    // enxerga como responsavel. "Participou" fica no historico (inbox_assignment.actor_id + eventos), nao em acesso.
+    const novo: InboxThread = { ...t, setorCodigo, equipeId, responsavelId, status, sla };
     const eventos: ThreadEvent[] = [];
     const motivo = dados.motivo?.trim() ? `: ${dados.motivo.trim()}` : '';
     if (setorCodigo !== t.setorCodigo || equipeId !== t.equipeId) eventos.push(eventoInbox(ids, t.id, t.setorCodigo ? 'REASSIGNED' : 'ROUTED', `setor ${t.setorCodigo ?? '—'} → ${setorCodigo ?? '—'}${equipeId ? ` · equipe ${i.equipes.find((e) => e.id === equipeId)?.nome ?? equipeId}` : ''}${motivo}`, t.setorCodigo, setorCodigo));
@@ -2901,7 +2902,7 @@ export const actions = {
     const aut = podeMudarStatus(recorteAtual(i), t, para);
     if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
     const ids = idsInbox(i);
-    const novo = entrar(aplicarStatus(t, para, ids.agora, 'humano'), state.usuario.id);
+    const novo = aplicarStatus(t, para, ids.agora, 'humano');
     const ev = eventoInbox(ids, t.id, eventoDaTransicao(t.status, para), motivo?.trim() || `${NOME_STATUS[t.status]} → ${NOME_STATUS[para]}`, t.status, para);
     commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ev] }), 'inbox_mudar_status', 'inbox_thread', t.id, { status: t.status }, { status: para }, motivo));
   },
@@ -2913,7 +2914,7 @@ export const actions = {
     const aut = podeMudarStatus(recorteAtual(i), t, t.status === 'NOVA' ? 'TRIADA' : t.status);
     if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
     const ids = idsInbox(i);
-    const novo = entrar({ ...t, prioridade, sla: t.sla?.primeiraRespostaEm ? t.sla : { ...t.sla, primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } }, state.usuario.id);
+    const novo: InboxThread = { ...t, prioridade, sla: t.sla?.primeiraRespostaEm ? t.sla : { ...t.sla, primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } };
     commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, eventoInbox(ids, t.id, 'PRIORITY_CHANGED', motivo?.trim() || `prioridade ${t.prioridade} → ${prioridade}`, t.prioridade, prioridade)] }), 'inbox_mudar_prioridade', 'inbox_thread', t.id, { prioridade: t.prioridade }, { prioridade }, motivo));
   },
 
@@ -2989,8 +2990,7 @@ export const actions = {
     const nivel = nivelMaisRestritivo(dados.nivel, decisao.nivel);
     const prioridade = maiorPrioridade(dados.prioridade, t.prioridade === 'Normal' ? dados.prioridade : t.prioridade);
     const status = statusAposAtribuicao(t, setorCodigo, responsavelId);
-    let novo: InboxThread = entrar({ ...t, classificacao, setorCodigo, equipeId, responsavelId, nivel, prioridade, status, assunto: dados.assunto.trim() || t.assunto, sla: t.sla ?? { primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } }, state.usuario.id);
-    if (responsavelId) novo = entrar(novo, responsavelId);
+    const novo: InboxThread = { ...t, classificacao, setorCodigo, equipeId, responsavelId, nivel, prioridade, status, assunto: dados.assunto.trim() || t.assunto, sla: t.sla ?? { primeiraRespostaAte: slaDe(i.configuracao, prioridade, t.abertaEm) } };
     const eventos = [
       eventoInbox(ids, t.id, 'TRIAGED', `triagem humana: intenção ${classificacao.intencao} · prioridade ${prioridade} · nível ${nivel}`),
       eventoInbox(ids, t.id, 'ROUTED', `${dados.setorCodigo ? `setor escolhido na triagem: ${setorCodigo}` : decisao.motivos.join(' · ')}`, t.setorCodigo, setorCodigo),

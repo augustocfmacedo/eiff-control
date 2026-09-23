@@ -19,7 +19,8 @@
 --   5) classificacao persistida como jsonb operacional (intencao, entidades, recomendacoes, confianca, sinais e
 --      trechos de evidencia) — sem raciocinio encadeado; chaves sensiveis proibidas por CHECK;
 --   6) RLS por organizacao E por recorte de setor: Administrador/Diretoria veem tudo; os demais veem as threads dos
---      setores em que sao membros, as que lhes foram atribuidas ou de que participam e as ainda sem setor (triagem).
+--      setores em que sao membros, as que lhes foram atribuidas, de que participam (escreveram/decidiram), as ainda sem
+--      setor (triagem) e as que ENCAMINHARAM enquanto a atribuicao que fizeram estiver vigente (inbox_encaminhei).
 --      Filhos (mensagem, evento, atribuicao, acao, job) HERDAM a visibilidade da thread por EXISTS. Configuracao
 --      (setor, equipe, membro, regras) so Administrador/Diretoria escrevem — a mesma matriz de src/core/permissoes.ts
 --      (`inbox` e `inbox_config`), nunca uma segunda ACL;
@@ -179,6 +180,8 @@ create index if not exists inbox_thread_org_status_idx on inbox_thread (organiza
 create index if not exists inbox_thread_contato_idx on inbox_thread (organization_id, contact_id, channel, context, last_message_at desc);
 create index if not exists inbox_thread_setor_idx on inbox_thread (organization_id, sector_id, status);
 create index if not exists inbox_thread_responsavel_idx on inbox_thread (organization_id, assignee_id, status);
+-- a politica testa `auth.uid() = any (participant_ids)`: GIN no array
+create index if not exists inbox_thread_participantes_idx on inbox_thread using gin (participant_ids);
 
 create table if not exists inbox_message (
   id uuid primary key default gen_random_uuid(),
@@ -228,6 +231,8 @@ create table if not exists inbox_assignment (
   created_at timestamptz not null default now()
 );
 create index if not exists inbox_assignment_thread_idx on inbox_assignment (thread_id, assigned_at desc);
+-- inbox_encaminhei(): atribuicao vigente feita por mim
+create index if not exists inbox_assignment_ator_idx on inbox_assignment (actor_id, thread_id) where released_at is null;
 
 -- eventos da thread: append-only, curtos, sem corpo de mensagem
 create table if not exists inbox_thread_event (
@@ -504,6 +509,14 @@ grant execute on function inbox_ingest(uuid, text, text, text, text, text, text,
 create or replace function inbox_user_sectors() returns setof uuid language sql stable security definer set search_path = public, pg_temp as $$
   select sector_id from inbox_member where profile_id = auth.uid()
 $$;
+-- quem ENCAMINHOU a conversa enxerga-a enquanto a atribuicao que fez estiver vigente (released_at nulo). Isto e o que
+-- faz o UPDATE de transferencia passar pela politica de SELECT da linha nova sem transformar o autor em participante
+-- permanente: "participou" fica em inbox_assignment (historico); o ACESSO acaba na proxima reatribuicao.
+-- Definer e le SO inbox_assignment: a politica de inbox_assignment olha inbox_thread por EXISTS, e sem o definer a
+-- politica da thread voltaria a consultar a atribuicao como o usuario — recursao.
+create or replace function inbox_encaminhei(p_thread uuid) returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from inbox_assignment a where a.thread_id = p_thread and a.released_at is null and a.actor_id = auth.uid())
+$$;
 
 alter table inbox_sector enable row level security;
 alter table inbox_team enable row level security;
@@ -546,7 +559,7 @@ drop policy if exists inbox_thread_select on inbox_thread;
 create policy inbox_thread_select on inbox_thread for select using (
   organization_id = current_org() and inbox_role() and (
     inbox_config_role() or assignee_id = auth.uid() or auth.uid() = any (participant_ids)
-    or sector_id is null or sector_id in (select inbox_user_sectors())
+    or sector_id is null or sector_id in (select inbox_user_sectors()) or inbox_encaminhei(id)
   )
 );
 drop policy if exists inbox_thread_insert on inbox_thread;
@@ -555,7 +568,7 @@ drop policy if exists inbox_thread_update on inbox_thread;
 create policy inbox_thread_update on inbox_thread for update using (
   organization_id = current_org() and inbox_role() and (
     inbox_config_role() or assignee_id = auth.uid() or auth.uid() = any (participant_ids)
-    or sector_id is null or sector_id in (select inbox_user_sectors())
+    or sector_id is null or sector_id in (select inbox_user_sectors()) or inbox_encaminhei(id)
   )
 ) with check (organization_id = current_org() and inbox_role());
 

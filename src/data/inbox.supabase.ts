@@ -157,7 +157,14 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
     sla_first_response_due: nn(t.sla?.primeiraRespostaAte), sla_first_response_at: nn(t.sla?.primeiraRespostaEm), sla_resolution_due: nn(t.sla?.resolucaoAte),
     opened_at: t.abertaEm, last_message_at: t.ultimaMensagemEm, last_inbound_at: nn(t.ultimaInboundEm), resolved_at: nn(t.resolvidaEm), closed_at: nn(t.fechadaEm), resolved_by: nn(t.resolvidaPor), origin: t.origem,
   });
-  await inserirNovos('threads', th.novos, threadRow); await atualizarAlterados('threads', th.alterados, threadRow);
+  await inserirNovos('threads', th.novos, threadRow);
+  // 5b) atribuicoes ANTES da atualizacao das threads: a atribuicao vigente feita por quem encaminha e o que faz a linha nova
+  //     passar pela politica de SELECT do RLS (inbox_encaminhei). Nova = insert; a que fechou = update de released_at.
+  const at = mudados<Atribuicao>('atribuicoes');
+  const atrRow = (x: Atribuicao): Row => ({ thread_id: ref('threads', x.threadId), sector_id: setorId(x.setorCodigo), team_id: ref('equipes', x.equipeId), assignee_id: h.perfil(x.usuarioId), assigned_at: x.atribuidaEm, released_at: nn(x.liberadaEm), reason: nn(x.motivo), origin: x.origem, actor_id: h.perfil(x.atorId) });
+  await inserirNovos('atribuicoes', at.novos, atrRow);
+  await atualizarAlterados('threads', th.alterados, threadRow);
+  await atualizarAlterados('atribuicoes', at.alterados, atrRow);
   // 6) acoes (passo 1: job_id so quando o job ja existe)
   const ac = mudados<InboxAction>('acoes');
   const acaoRow = (x: InboxAction): Row => ({
@@ -177,10 +184,7 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
   const jobRow = (j: InboxJob): Row => ({ thread_id: ref('threads', j.threadId), action_id: ref('acoes', j.acaoId), title: j.titulo.slice(0, 200), objective: j.objetivo, context: j.contexto, acceptance_criteria: j.criteriosAceite, provider: j.provider, state: j.estado, external_ref: nn(j.referenciaExterna), result: j.resultado ?? null, created_by: h.perfil(j.criadoPor) ?? h.atorId });
   await inserirNovos('jobs', jb.novos, jobRow); await atualizarAlterados('jobs', jb.alterados, jobRow);
   for (const j of jb.novos) { const acao = depois.acoes.find((x) => x.jobId === j.id); const aid = acao ? refs.get('acoes')!.get(acao.id) : undefined; if (aid) await h.atualizar('inbox_action', aid, { job_id: ref('jobs', j.id) }); }
-  // 9) atribuicoes (historico: nova = insert; a vigente que fechou = update de released_at)
-  const at = mudados<Atribuicao>('atribuicoes');
-  const atrRow = (x: Atribuicao): Row => ({ thread_id: ref('threads', x.threadId), sector_id: setorId(x.setorCodigo), team_id: ref('equipes', x.equipeId), assignee_id: h.perfil(x.usuarioId), assigned_at: x.atribuidaEm, released_at: nn(x.liberadaEm), reason: nn(x.motivo), origin: x.origem, actor_id: h.perfil(x.atorId) });
-  await inserirNovos('atribuicoes', at.novos, atrRow); await atualizarAlterados('atribuicoes', at.alterados, atrRow);
+  // 9) (atribuicoes gravadas no passo 5b)
   // 10) eventos (append-only)
   const ev = mudados<ThreadEvent>('eventos');
   await inserirNovos('eventos', ev.novos, (e) => ({ thread_id: ref('threads', e.threadId), message_id: ref('mensagens', e.mensagemId), event_type: e.tipo, occurred_at: e.em, actor_kind: e.ator.tipo, actor_id: nn(e.ator.tipo === 'usuario' ? h.perfil(e.ator.id) ?? e.ator.id : e.ator.id), actor_name: e.ator.nome, detail: e.detalhe.slice(0, 500), before_value: nn(e.antes?.slice(0, 200)), after_value: nn(e.depois?.slice(0, 200)) }));

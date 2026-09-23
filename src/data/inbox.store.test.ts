@@ -31,7 +31,7 @@ describe('atribuição e status', () => {
     const antes = thread('THR-00007'); expect(antes.status).toBe('NOVA');
     actions.inboxAtribuir('THR-00007', { setorCodigo: 'COMERCIAL', responsavelId: 'u-augusto', motivo: 'lead' });
     const t = thread('THR-00007');
-    expect(t.status).toBe('ATRIBUIDA'); expect(t.setorCodigo).toBe('COMERCIAL'); expect(t.responsavelId).toBe('u-augusto'); expect(t.participantes).toContain('u-augusto');
+    expect(t.status).toBe('ATRIBUIDA'); expect(t.setorCodigo).toBe('COMERCIAL'); expect(t.responsavelId).toBe('u-augusto'); expect(t.participantes).toEqual([]);
     const ev = inbox().eventos.filter((e) => e.threadId === 'THR-00007').map((e) => e.tipo);
     expect(ev).toContain('ROUTED'); expect(ev).toContain('ASSIGNED'); expect(ev).toContain('STATUS_CHANGED');
     const atr = inbox().atribuicoes.filter((a) => a.threadId === 'THR-00007');
@@ -41,11 +41,11 @@ describe('atribuição e status', () => {
   it('transferir mantém o histórico e marca TRANSFERIDA; sem mudança nada é gravado', () => {
     actions.inboxAtribuir('THR-00001', { setorCodigo: 'COMPRAS', responsavelId: 'u-compras' });
     const t = thread('THR-00001');
-    expect(t.participantes).toEqual(['u-fin', 'u-admin', 'u-compras']);
+    expect(t.participantes).toEqual(['u-fin']); // encaminhar e receber nao tornam ninguem participante: historico fica na atribuicao
     expect(inbox().eventos.filter((e) => e.threadId === 'THR-00001' && e.tipo === 'REASSIGNED')).toHaveLength(2);
     // historico: a atribuicao anterior fechou (liberadaEm) e a nova esta vigente; quem transferiu virou participante
     const hist = inbox().atribuicoes.filter((a) => a.threadId === 'THR-00001');
-    expect(hist).toHaveLength(2); expect(hist[0].liberadaEm).toBeTruthy(); expect(hist[1]).toMatchObject({ setorCodigo: 'COMPRAS', usuarioId: 'u-compras' }); expect(t.participantes).toContain('u-admin');
+    expect(hist).toHaveLength(2); expect(hist[0].liberadaEm).toBeTruthy(); expect(hist[1]).toMatchObject({ setorCodigo: 'COMPRAS', usuarioId: 'u-compras', atorId: 'u-admin' });
     const n = audits().length;
     actions.inboxAtribuir('THR-00001', { setorCodigo: 'COMPRAS', responsavelId: 'u-compras' });
     expect(audits()).toHaveLength(n);

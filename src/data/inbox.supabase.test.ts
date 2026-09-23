@@ -36,6 +36,8 @@ describe('escrita', () => {
     expect(idx('inbox_team')).toBeLessThan(idx('inbox_member'));
     expect(idx('inbox_contact')).toBeLessThan(idx('inbox_thread'));
     expect(idx('inbox_thread')).toBeLessThan(idx('inbox_action'));
+    // atribuicao entra entre o insert e o update da thread (inbox_encaminhei no RLS)
+    expect(idx('inbox_assignment')).toBeLessThan(idx('inbox_action'));
     expect(idx('inbox_action')).toBeLessThan(idx('inbox_message'));
     expect(idx('inbox_message')).toBeLessThan(idx('inbox_thread_event'));
     expect(chamadas.filter((c) => c.tabela === 'inbox_message').every((c) => c.op === 'inserir')).toBe(true);

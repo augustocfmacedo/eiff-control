@@ -1,4 +1,4 @@
-# EIFF Inbox — fundação (bootstrap 01)
+# EIFF Inbox — fundação, persistência e checkpoint de integração
 
 Frente aberta em 23/09/2026 na branch `feature/eiff-inbox-bootstrap` (worktree própria, isolada das branches da
 EIFF Dev Factory e das waves da EIFF Central). **Nesta fase nada é enviado, nenhuma IA é chamada e nenhum job vai
@@ -205,9 +205,9 @@ webhooks: `unique_violation` é capturada e devolve a mensagem vencedora como du
 `inbox_config_role()` = Administrador/Diretoria. Configuração: `inbox` lê, `inbox_config` escreve. Contato/identidade: `inbox`
 lê e cadastra. Thread: visível se transversal, ou `assignee_id = auth.uid()`, ou participante, ou sem setor (triagem), ou
 setor em `inbox_user_sectors()` (lê só `inbox_member`). Filhos herdam por `EXISTS` na thread. Regra descoberta e provada:
-no Postgres a linha ATUALIZADA também precisa passar pela política de SELECT, então quem transfere uma conversa para fora
-do próprio recorte precisa continuar participante — o store faz exatamente isso (`entrar(novo, ator)`) e o adapter atualiza
-thread **sem RETURNING**. `authenticated` não tem DELETE (exceto `inbox_member`).
+no Postgres a linha ATUALIZADA também precisa passar pela política de SELECT. A solução do checkpoint (§12.3): quem
+encaminha enxerga a conversa **enquanto a atribuição que fez estiver vigente** (`inbox_encaminhei`, lê `inbox_assignment`),
+sem virar participante; o adapter grava a atribuição antes de atualizar a thread e atualiza **sem RETURNING**. `authenticated` não tem DELETE (exceto `inbox_member`).
 
 ### 11.3 Fluxo de ingestão
 
@@ -273,3 +273,102 @@ o preflight da fila inteira aplica 0001..0056. Limitação: a suíte vitest não
 4. Escalação por SLA como execução automática (hoje só decisão `escalacoesPendentes`).
 5. `IntelligenceProvider` real por função Netlify; `FactoryProvider` quando a fábrica expuser API.
 6. Vínculo automático contato ↔ Radar/obra e uso de `body_search` na busca da tela.
+
+## 12. Checkpoint de integração (23/09/2026)
+
+### 12.1 Baseline
+
+`origin/main` avançou de d063194 para **7ac9bde** (PR #11 UX-P02 Financeiro compacto; PR #12 Lead Engine 3). Incorporado por
+merge (convenção do repositório) em `c8a9e6a`. Único conflito: `CLAUDE.md` (estado das migrations) — mantidas as linhas
+atualizadas da main e a nota do 0056. `src/App.tsx` mesclou sozinho (rota `/piloto` da main e `/atendimento` do Inbox em
+regiões distintas). Nenhum trabalho do Inbox foi descartado; nenhuma alteração da main exigiu adaptação do Inbox
+(`store.ts`, `types.ts`, `permissoes.ts` e `styles.css` só mudaram do lado do Inbox).
+
+### 12.2 Revisão de segurança
+
+| Ponto | Verificação | Resultado |
+| --- | --- | --- |
+| `SUPABASE_SERVICE_ROLE_KEY` no browser | grep em `src/` fora de testes: só `src/core/inbox/ingestaoPorta.ts` (server-side) e `src/core/radar/vibeServidor.ts` (já existente); teste varre `store.ts`, `supabase.ts`, telas e o `dist/` quando existe | nunca chega ao bundle |
+| Ingestão chamada pelo frontend | `inbox_ingest` tem `revoke execute … from public, anon, authenticated` e `grant … to service_role`; a função ainda recusa `request.jwt.claims.role ≠ service_role`; smoke F prova `permission denied` para usuário autenticado | não pode |
+| Organização escolhida pelo payload | a organização vem de `EIFF_INBOX_ORGANIZATION_ID` (ambiente do Netlify), validada por `configPortaIngest`; a RPC confere `exists organization`; nada do payload da Meta decide organização | server-side |
+| RPC `inbox_ingest` | `SECURITY DEFINER`, `set search_path = public, pg_temp`, parâmetros tipados, idempotente pela unique + `unique_violation` capturada (o bloco inteiro é desfeito, nada parcial), isolamento por `organization_id` em todas as consultas | ok |
+| Spoofing de identity/provider | a RPC confia no chamador (service role). Provider e identificador vêm do payload **assinado** pela Meta e normalizado pela Central; a única porta é o webhook com HMAC. Um payload forjado sem assinatura válida nunca chega à RPC | mitigado pela Central |
+| Corrida | dois webhooks com a mesma mensagem: um insere, o outro cai na unique e recebe `duplicada: true` com os ids do vencedor (smoke B/L) | ok |
+
+### 12.3 RLS e a decisão sobre participante
+
+Revalidado no PostgreSQL descartável (`scripts/pg-smoke-inbox.mjs`, 12 provas): Diretoria/Administrador transversal (G);
+gestor/atendente só o próprio setor mais o que lhes foi atribuído, de que participam ou sem setor (G/H/K); Auditoria (sem
+`inbox`) e outra organização não veem nada (H); `inbox_config` só Administrador/Diretoria (J); filhos herdam (H).
+
+**Participante ≠ acesso indefinido.** No fim da fase 2, quem transferia virava participante para a escrita passar pela
+política de SELECT — isto era "mantém acesso indefinidamente". Corrigido antes do PR:
+
+- `participant_ids` = quem **escreveu ou decidiu** na conversa (resposta, nota, proposta, aprovação). Encaminhar e receber
+  não tornam ninguém participante. Quem escreveu continua lendo a conversa (revogável no futuro por gestor).
+- Quem **encaminhou** enxerga a conversa só enquanto a atribuição que fez estiver vigente: `inbox_encaminhei(thread)`
+  (SECURITY DEFINER, lê apenas `inbox_assignment.actor_id` com `released_at is null`; sem recursão com a política dos
+  filhos). Na próxima reatribuição o acesso acaba; o "participou historicamente" fica em `inbox_assignment` e nos eventos.
+- Adapter: grava a atribuição **antes** de atualizar a thread e atualiza sem RETURNING (smoke I prova as três situações:
+  sem atribuição recusa; com atribuição vigente aceita e o autor ainda vê; liberada, deixa de ver).
+
+Limite conhecido: o RLS delimita **visibilidade**; a autoridade fina (só responsável/gestor transfere) vive no store
+(`podeAtribuir`/`podeMudarStatus`). Um membro do setor com sessão válida poderia, fora da tela, atualizar campos de uma thread
+do seu setor. Aceito neste checkpoint; endurecer por RPC de transferência é candidato para a fase 3.
+
+### 12.4 Migration 0056 — revisão para produção
+
+Conferido: tipos e CHECKs de todos os enums; FKs para `organization`, `profile`, `project`, `worker`, `radar_contact`,
+`radar_company`; referências lógicas (sem FK) só para a Central; uniques de setor, equipe, membro (com `coalesce` da equipe),
+identidade e mensagem externa; índices para as consultas das políticas (`sector_id`, `assignee_id`, GIN em
+`participant_ids`, parcial em `inbox_assignment(actor_id, thread_id) where released_at is null`) e para a resolução de
+thread em `inbox_ingest` (`(org, contact, channel, context, last_message_at desc)`); timestamps e defaults; triggers touch,
+append-only do evento, imutabilidade e não-deleção da mensagem, coerência de organização; `authenticated` sem DELETE (exceto
+membros). Ajustes deste checkpoint: os dois índices novos e `inbox_encaminhei`. Preflight 0001..0056 verde; reaplicação
+idempotente provada (L).
+
+### 12.5 `body_search`
+
+Coluna gerada `to_tsvector('portuguese', body)` armazenada, com índice GIN. Contém os lexemas do corpo inteiro (não o texto
+literal), na **mesma linha** de `inbox_message`: quem pode ler a linha pode ler o corpo, quem não pode não lê nenhum dos dois
+— o RLS é por linha, então não há exposição extra. Permite busca futura (`@@ plainto_tsquery('portuguese', …)`) sem duplicar
+conteúdo. Custo hoje: o adapter lê `select *`, então a coluna desce ao navegador; quando a busca for implementada, a leitura
+passa a listar colunas.
+
+### 12.6 Fronteiras reconfirmadas
+
+`provider externo → EIFF Central (assinatura, teto, normalização) → ChannelInboundEvent + conteúdo → Inbox`. Teste de
+regressão em `inbox.test.ts` ("fronteiras arquiteturais"): o Inbox não contém `META_WHATSAPP`, verificação de assinatura,
+formato Graph API nem import de `src/core/central/`; não existe segunda função de webhook; o webhook chama
+`tratarWebhookMeta` antes de `ingerirEventosCentral`; nenhum módulo do Inbox importa `eiff-dev-factory`, `githubAdapter`,
+`workItem` ou `missionControl`; `FACTORY` recusa; chave de serviço e RPC nunca no código do navegador nem no `dist/`.
+
+### 12.7 Gates do checkpoint
+
+typecheck, lint, vitest (113 arquivos), build, `smoke:inbox` (12 provas) e preflight (0001..0056) — todos verdes; validação
+visual de `#/atendimento` e `#/atendimento/configuracao` em modo local sem erro de console do app.
+
+## 13. Próxima fase — Octopus Router (contrato arquitetural, não implementado)
+
+```
+Inbound Message            ChannelInboundEvent + conteúdo, já persistido por inbox_ingest (nunca se perde)
+      ↓
+Identity Resolution        IdentidadeCanal → ContatoInbox (+ whatsapp_identity da Central para ação sensível;
+                           vínculo Radar/obra/perfil)
+      ↓
+Thread Resolution          mesma identidade + canal + contexto + não fechada → reutiliza; fechada → reabre; senão cria
+      ↓
+Intelligence Analysis      IntelligenceProvider.analisar(InboxAnalysisInput) → InboxAnalysisResult
+                           (só sinais, evidências e motivo operacional; classificarSeguro nunca lança)
+      ↓
+Routing Decision           rotear(): regras em dados → setor/equipe/responsável/prioridade, com motivos auditáveis
+      ↓
+Automation Policy          nivelPara(): A (IA responde) · B (IA prepara, humano aprova) · C (humano); nunca afrouxa
+      ↓
+AI / Human / Approval      ação `responder` proposta → aprovação por papel → rascunho registrado → (fase de envio)
+      ↓
+SLA / Escalation           slaDe()/estadoSla()/escalacoesPendentes() → SLA_ESCALATED como execução, não só decisão
+```
+
+Regras que a fase 3 herda sem renegociar: IA interpreta, motor decide, permissão autoriza, servidor executa, auditoria
+registra; texto que chega é dado, nunca instrução; nada é enviado sem rito de canário; Factory só por `ExecutionProvider`.

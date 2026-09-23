@@ -300,3 +300,43 @@ describe('seed e higiene', () => {
     for (const proibido of ['fetch(', '/api/', 'anthropic', 'META_WHATSAPP', 'OCTADESK']) expect(tela).not.toContain(proibido);
   });
 });
+
+describe('fronteiras arquiteturais (regressão): Central → Inbox, Factory e segredo', () => {
+  const ler = (f: string) => fs.readFileSync(path.join(process.cwd(), f), 'utf8');
+  const arquivosInbox = () => fs.readdirSync(path.join(process.cwd(), 'src/core/inbox')).filter((x) => x.endsWith('.ts') && !x.endsWith('.test.ts')).map((x) => `src/core/inbox/${x}`);
+  it('o Inbox não valida webhook da Meta, não recebe credencial Meta e não conhece a Graph API: só o contrato normalizado da Central', () => {
+    for (const f of [...arquivosInbox(), 'src/data/inbox.supabase.ts', 'src/screens/Inbox.tsx', 'src/screens/InboxConfig.tsx']) {
+      const t = ler(f);
+      for (const proibido of ['META_WHATSAPP', 'x-hub-signature', 'hub.challenge', 'verificarAssinaturaMeta', 'whatsapp_business_account', 'graph.facebook.com', 'App Secret']) expect(t, `${f} contém ${proibido}`).not.toMatch(new RegExp(proibido, 'i'));
+      expect(t, `${f} importa a Central`).not.toMatch(/from\s+['"]\.\.\/central\//);
+    }
+  });
+  it('não existe webhook concorrente: só a função da Central verifica assinatura e desafio', () => {
+    const funcoes = fs.readdirSync(path.join(process.cwd(), 'netlify/functions')).filter((x) => x.endsWith('.ts'));
+    const comWebhook = funcoes.filter((x) => /hub\.challenge|x-hub-signature/i.test(ler(`netlify/functions/${x}`)));
+    expect(comWebhook).toEqual(['channel-meta-webhook.ts']); // a unica porta; a verificacao mora em src/core/central/metaServidor.ts
+    expect(funcoes.filter((x) => /inbox/i.test(x))).toEqual([]);
+    expect(ler('netlify/functions/channel-meta-webhook.ts')).toMatch(/tratarWebhookMeta[\s\S]*ingerirEventosCentral/);
+  });
+  it('o Inbox não importa implementação da Factory nem do Mission Control; FACTORY continua recusando', async () => {
+    for (const f of [...arquivosInbox(), 'src/data/inbox.supabase.ts', 'src/screens/Inbox.tsx']) {
+      const t = ler(f);
+      for (const proibido of ['eiff-dev-factory', 'githubAdapter', 'workItem', 'missionControl', 'statusServidor']) expect(t, `${f} contém ${proibido}`).not.toContain(proibido);
+    }
+    const r = await provedorExecucao('FACTORY').execute({ id: 'J', threadId: 'T', acaoId: 'A', titulo: 't', objetivo: 'o', contexto: [], criteriosAceite: [], provider: 'FACTORY', estado: 'RASCUNHO', criadoEm: AGORA, criadoPor: 'u' });
+    expect(r.estado).toBe('RASCUNHO'); expect(r.referenciaExterna).toBeUndefined();
+  });
+  it('a chave de serviço e a RPC de ingestão nunca chegam ao navegador (código do app e, quando existe, o bundle)', () => {
+    for (const f of ['src/data/store.ts', 'src/data/inbox.supabase.ts', 'src/data/supabase.ts', 'src/screens/Inbox.tsx', 'src/screens/InboxConfig.tsx', 'src/App.tsx']) {
+      expect(ler(f), f).not.toMatch(/SERVICE_ROLE|EIFF_INBOX_ORGANIZATION_ID/);
+      expect(ler(f), f).not.toMatch(/rpc\(['"]inbox_ingest/);
+    }
+    const dist = path.join(process.cwd(), 'dist/assets');
+    if (fs.existsSync(dist)) {
+      for (const a of fs.readdirSync(dist).filter((x) => x.endsWith('.js'))) {
+        const t = fs.readFileSync(path.join(dist, a), 'utf8');
+        expect(t, a).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|EIFF_INBOX_ORGANIZATION_ID|rpc\/inbox_ingest/);
+      }
+    }
+  });
+});
