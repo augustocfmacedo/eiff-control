@@ -1,6 +1,6 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE2-G parcial** — migration `0055` **aplicada em produção** em 23/09/2026 (§33); código **ainda não liberado**. **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A em andamento** (contrato da fonte oficial do CNO, §34). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
@@ -1129,18 +1129,174 @@ omitem as cinco colunas novas, o que deixa `intake_status` NULL e satisfaz os tr
 (todos são `intake_status is null or …`). O índice único é parcial em `payload_fingerprint is not null`, fora do
 alcance do app antigo. É a mesma linha legada que o smoke PGlite já cobria.
 
-### 33.5 O que este gate NÃO fez
+### 33.5 O release do código
 
-O PR `feature/lead-engine-2` → `main` **não foi aberto**: esta sessão não tem credencial do GitHub
-(`gh` não autenticado, sem `GH_TOKEN`; o push funciona pelo Credential Manager do Windows, que não é fonte de
-token para a API). Sem PR não houve CI, merge, deploy nem smoke de produção. Merge em `main` e publicação em
-Production continuam dependendo das duas frases-senha separadas do projeto.
+O PR desta sessão não pôde ser aberto por falta de credencial do GitHub (`gh` não autenticado, sem `GH_TOKEN`;
+o push funciona pelo Credential Manager do Windows, que não é fonte de token para a API). O **PR #9** foi aberto
+fora desta sessão e mesclado em `main` com `EIFF Quality Gate` e o Deploy Preview do Netlify verdes, sob a
+frase-senha `MERGE AUTORIZADO`.
 
 ```
-MIGRATION_0055  = PASS       PR_RELEASE = BLOCKED (credencial)
-PROD_0055_STATE = APPLIED    LE2_STATUS = NOT_RELEASED
-LE2_DB_READY    = YES
+MIGRATION_0055  = PASS       PR #9      = merged
+PROD_0055_STATE = APPLIED    main       = 0273da87…
+LE2_DB_READY    = YES        LE2_STATUS = RELEASED
 ```
 
-O banco está pronto para o app antigo e para o novo. A descoberta automática segue desligada: sem CNO, PNCP,
-Vibe, notícias ou scheduler. LE-3 não iniciado.
+A ordem projetada em §32.4 foi cumprida: migration antes do deploy do app. A descoberta automática **continua
+desligada** — sem CNO, PNCP, Vibe, notícias ou scheduler. O Lead Engine está pronto para receber candidatos,
+mas ainda não varre fonte nenhuma; isso é o LE-3, que começa no §34.
+
+---
+
+## 34. LE3-A — contrato da fonte oficial do CNO e leitor de snapshot
+
+Gate de 23/09/2026, na branch `feature/lead-engine-3` (worktree próprio, a partir de `main @ 0273da8`).
+Entrega o **contrato** da primeira fonte real do Lead Engine e um leitor de snapshot. **Nada é ingerido**:
+zero candidato criado, zero escrita no Radar, zero Supabase, zero migration.
+
+### 34.1 A fonte, auditada e não presumida
+
+```
+landing      https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-de-obras-cno
+dados        https://arquivos.receitafederal.gov.br/index.php/s/PC6732BXG9B98W3  -> cno.zip
+dicionario   https://arquivos.receitafederal.gov.br/index.php/s/XEa8aE7wJdMGzkE  -> cno-metadados.pdf
+modo         SNAPSHOT completo (nao ha API de consulta nem endpoint incremental)
+licenca      Creative Commons Attribution
+```
+
+Origem **exclusivamente** Dados Abertos. `CNO_DISCOVERY_SOURCE = RECEITA_OPEN_DATA`,
+`CNO_ECAC_SCRAPING = FORBIDDEN`, `CNO_GOVBR_CREDENTIALS = NONE` — o e-CAC mostra as obras *do usuário*, não a
+base pública de descoberta, e nada aqui usa sessão, certificado ou credencial.
+
+`cno.zip` em 23/09/2026: `application/zip`, **330.628.581 bytes**, `Last-Modified: Sat, 12 Sep 2026 04:59:45 GMT`,
+`ETag "76bb7f934f457be4234c5733ee92b40b"`. O servidor honra `Range`, então o índice do ZIP é lido sem baixar o
+arquivo. Cinco membros, **1,41 GB de CSV cru**:
+
+| arquivo | bruto | comprimido |
+|---|---|---|
+| `cno.csv` | 842,6 MiB | 260,2 MiB |
+| `cno_areas.csv` | 360,0 MiB | 34,8 MiB |
+| `cno_cnaes.csv` | 120,3 MiB | 15,7 MiB |
+| `cno_vinculos.csv` | 22,0 MiB | 4,6 MiB |
+| `cno_totais.csv` | 127 B | 82 B |
+
+Totais declarados pela própria fonte: **3.604.156 obras**, 3.942.713 CNAEs, 4.553.076 áreas, 431.211 vínculos.
+
+**Periodicidade: declarada ≠ observada.** O catálogo diz `DIARIA` e registra
+`ultimaAtualizacaoDados = 2024-11-04`, e a página marca o conjunto como "Desatualizado" — mas o artefato real
+tem `Last-Modified` de **12/09/2026**. As duas informações do portal estão erradas: ele não consegue ler o
+header através do redirect 303 do Nextcloud. Uma sondagem única não prova cadência; o que se pode afirmar é que
+o snapshot vivo não é diário (11 dias no momento da auditoria) e que **`ETag` + `Last-Modified` são a única
+base confiável** para detectar snapshot novo. A cadência real só sai de observação repetida — trabalho do LE3-B.
+
+### 34.2 Onde o artefato vence a documentação
+
+Quatro divergências reais entre o dicionário oficial e o arquivo publicado. Em todas vale o arquivo:
+
+1. os membros são **minúsculos** (`cno.csv`), não `CNO.CSV`;
+2. o separador é **vírgula**, não ponto-e-vírgula;
+3. o encoding é **ISO-8859-1**, sem BOM, terminador LF — não UTF-8;
+4. Categoria, Destinação, Tipo de obra e Tipo de Área vêm como **texto** ("Obra Nova"), embora o dicionário os
+   descreva como códigos ("0 - Obra Nova").
+
+E o cabeçalho oficial tem acentuação **inconsistente** — `Código do Pais`, `Nome do pais`,
+`Data de inicio da responsabilidade`, `Qualificação do responsavel`, `Código do municipio` × `Nome do município`.
+As constantes copiam isso literalmente; "corrigir" quebraria a leitura. O `cno.csv` real tem ainda duas colunas
+que a documentação não lista na mesma forma: `Caixa Postal` e `Código de localização` (esta é um **plus code**).
+
+### 34.3 O tipo canônico
+
+`CnoObservacaoCanonica` em `src/core/radar/cnoDadosAbertos.ts` é a ponte
+`CSV oficial -> observação canônica -> adapterCNO -> PedidoIntake`. Núcleo **puro**: sem rede, sem `fs`, sem React,
+sem store, sem Supabase, sem variável de ambiente; importa só `./leadEngineIntake` (tipo) e `./normalizar`.
+
+**`Nome` é o nome DA OBRA; `Nome empresarial` é a razão social da PJ.** Nunca se confundem, e isso está preso
+por teste em três camadas (parser, payload, adapter). O campo `Nome` traz a string **literal `null`** em 3.653
+de 44.254 linhas amostradas (8,3%) — `textoCno` trata como ausência, senão "null" viraria nome de obra no Radar.
+
+### 34.4 Identidade e pessoa física
+
+O dicionário garante que `NI do responsável` fica em branco quando o responsável é CPF, e a amostra real
+confirma com correlação perfeita: **9.178 linhas com NI — todas com 14 dígitos e DV válido — e 35.076 sem NI,
+todas também sem nome empresarial**. Zero casos mistos.
+
+Logo: CNPJ válido → identidade forte possível; CPF/NI ausente → **nunca** se inventa CNPJ, nunca se inventa
+empresa, e `razaoSocial` jamais é preenchida com o nome da obra. A obra sem PJ continua sendo descoberta bruta
+legítima — o LE3-A não promove nada de qualquer forma. A validação reusa `normalizarCnpj`, o validador único do
+Radar: não existe segundo validador no sistema.
+
+`externoId = número do CNO` (12 dígitos, string, zero à esquerda significativo). Nunca CNPJ, nome da obra, hash
+da linha ou posição no arquivo. O fingerprint continua sendo o do LE-1 sobre o payload canônico, então
+**mesmo CNO + payload igual → `IDEMPOTENT_NOOP`; mesmo CNO + payload diferente → `NOVA_OBSERVACAO`**, sem jamais
+sobrescrever a observação anterior.
+
+### 34.5 Códigos congelados
+
+`Situação` (do dicionário): `01` NULA · `02` ATIVA · `03` SUSPENSA · `14` PARALISADA · `15` ENCERRADA.
+Na amostra real: 15 domina com 83,6%, 02 com 12,9%.
+
+`Qualificação do responsável`: `0053` Pessoa Jurídica Construtora · `0057` Dono da Obra ·
+`0064` Incorporador de Construção Civil · `0070` Proprietário do Imóvel · `0109` Consórcio ·
+`0110` Construção em nome coletivo · `0111` Sociedade Líder de Consórcio. São **atributos de fonte**, não filtro
+comercial: qualquer política de seleção por qualificação vem depois e explícita.
+
+Áreas: 5 categorias, 7 destinações, 3 tipos construtivos (Alvenaria/Madeira/Mista), 2 tipos de área.
+Atenção ao nome: **"Tipo de obra" do CNO_AREAS é o método construtivo**, não a natureza da obra — confundir os
+dois inverte a leitura inteira.
+
+### 34.6 Política de sinal — estrutural, não textual
+
+```
+Obra Nova              -> CNO_NEW
+Acrescimo · Reforma    -> CNO_EXPANSION
+Demolicao · Existente  -> nenhum sinal
+sem area / categoria desconhecida -> nenhum sinal
+```
+
+Um CNO costuma ter várias áreas (36.852 de ~90 mil na amostra). Precedência declarada: qualquer `Obra Nova`
+vence; senão Acréscimo/Reforma viram expansão; senão não há sinal. Ausência de evidência não vira evidência —
+preferimos nenhum sinal a um sinal errado, e o bruto fica preservado de qualquer modo.
+
+### 34.7 Data do evento
+
+Precedência explícita: `dataInicio` → `dataRegistro` → `dataSituacao` → `SEM_EVENTO_DATADO`.
+Sem data oficial **não se produz sinal**. O adapter antigo caía em `new Date()`, o que dataria de hoje uma obra
+de 1992 — para dado histórico do CNO isso é fabricação de evento.
+
+### 34.8 O que mudou no `adapterCNO`
+
+Três ajustes mínimos, todos ao contrato real:
+
+1. `nome` saiu da cadeia da razão social (era o quarto fallback, e transformava nome de obra — ou "null" — em conta);
+2. `tipoSinal` explícito vence a heurística de regex; a regex sobrevive só para payload genérico sem o campo;
+3. sem data oficial não há sinal, no lugar do fallback para hoje.
+
+### 34.9 O leitor de snapshot
+
+`scripts/cno.mts` (fora do core, com `vite-node` como os demais scripts do repositório):
+`probe`, `validar`, `amostra --limite N`, `baixar --destino`. Host **único** permitido, fail closed; sem
+credencial e sem cookie; timeout de 120 s, no máximo 5 redirects, User-Agent identificável, arquivo temporário
+com limpeza em falha. Tudo em streaming — o índice do ZIP vem por `Range` e cada membro é inflado só até a
+janela pedida, então a amostra nunca toca os 315 MiB. `.gitignore` recusa `cno.zip`, `cno*.csv`,
+`cno-metadados.pdf` e `dados/cno/`: **o dataset público não entra no repositório**.
+
+Privacidade: CNPJ sai mascarado, CPF nunca é reconstruído e, quando não há PJ identificada, o relatório **omite
+o campo `Nome`** — ali ele costuma trazer o nome da pessoa física. As fixtures dos testes são sintéticas.
+
+### 34.10 Prova contra a fonte real
+
+`validar` contra o snapshot vivo: os cinco cabeçalhos batem exatamente com as constantes
+(`CNO_SNAPSHOT_VALIDACAO = PASS`). `amostra --limite 5` produziu 5 observações canônicas e 5 `PedidoIntake`,
+sem persistir nada, e exercitou os casos que importam: `Existente + Reforma -> CNO_EXPANSION`,
+`Demolição + Existente + Obra Nova -> CNO_NEW` (a demolição não derruba a precedência) e uma obra de pessoa
+física corretamente sem PJ.
+
+Suíte `cnoDadosAbertos.test.ts`: 56 testes. Fronteiras verificadas por varredura do próprio arquivo — sem rede,
+sem `fs`, sem ambiente, sem store, sem React, sem Supabase, sem score, sem Commercial Queue, sem cadência e sem
+oportunidade, tarefa, atividade ou comunicação.
+
+### 34.11 O que este gate deliberadamente não fez
+
+Sem descoberta real ligada, sem scheduler, sem ingestão, sem política comercial de seleção (nada de filtro por
+UF, município, área mínima, destinação ou porte — isso é gate próprio). PNCP, RFB, Vibe e notícias não foram
+tocados. `LE3_B` ainda não começou.
