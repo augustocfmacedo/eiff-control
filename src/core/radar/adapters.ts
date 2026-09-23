@@ -45,11 +45,18 @@ const obj = (b: unknown): Record<string, unknown> | undefined => (b && typeof b 
  *    Acrescimo / Reforma / Demolicao / Existente); adivinhar por regex quando existe dado estruturado
  *    transformava demolicao em obra nova. A regex continua valendo so para payload generico sem `tipoSinal`.
  * 3. sem data oficial nao ha sinal. O fallback anterior era `new Date()`, que dataria de hoje uma obra de 1992.
+ *
+ * LE-3A1: o payload do CNO virou um ENVELOPE `{ schema, evidence, canonical }` — a evidencia como a fonte
+ * entregou ao lado da projecao normalizada. A normalizacao le `canonical`; a LINHAGEM continua recebendo o
+ * envelope inteiro (`payload: bruto`), porque quem preserva a origem e o registro, nao o adapter. A escolha e
+ * por VERSAO declarada, nunca por heuristica: sem `schema` reconhecido, vale o formato antigo, plano.
  */
 export const adapterCNO: AdapterFonte = {
   fonte: 'CNO', nome: 'Cadastro Nacional de Obras',
   normalizar(bruto) {
-    const o = obj(bruto); if (!o) return undefined;
+    const envelope = obj(bruto);
+    const o = envelope?.schema === 'CNO_OPEN_DATA_V1' ? obj(envelope.canonical) : envelope;
+    if (!o) return undefined;
     const razao = texto(o, 'nomeResponsavel', 'responsavel', 'razaoSocial'); if (!razao) return undefined;
     const inicio = texto(o, 'dataEvento', 'dataInicio', 'inicio', 'dataRegistro');
     const declarado = texto(o, 'tipoSinal');

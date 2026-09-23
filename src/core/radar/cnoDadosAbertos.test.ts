@@ -10,10 +10,12 @@ import {
   CABECALHO_CNO_TOTAIS, CABECALHO_CNO_VINCULOS, CATEGORIAS_AREA, DESTINACOES_AREA, ENCODING_CNO,
   HOST_OFICIAL_CNO, MODO_FONTE_CNO, ORIGENS_DATA_EVENTO_CNO, QUALIFICACAO_CNO, SEM_EVENTO_DATADO,
   SINAL_POR_CATEGORIA, SITUACAO_CNO, TIPOS_AREA, TIPOS_CONSTRUTIVOS,
+  SCHEMA_CNO,
   areaDeLinha, cabecalhoCsvCno, camposCsvCno, cnaeDeLinha, cnoNormalizado, cnpjDoResponsavel,
-  conferirCabecalho, dataCno, dataEventoCno, externoIdCno, indicesDe, juntarCno, numeroCno, obraDeLinha,
-  payloadCno, pedidoIntakeCno, sinalCno, textoCno, totaisDeLinha, vinculoDeLinha,
-  type CnoObservacaoCanonica,
+  conferirCabecalho, dataCno, dataEventoCno, envelopeCno, externoIdCno, indicesDe, juntarCno,
+  juntarObservacoesCno, lerAreaCno, lerCnaeCno, lerObraCno, lerVinculoCno, linhaComoObjeto, numeroCno,
+  obraDeLinha, payloadCno, pedidoIntakeCno, sinalCno, textoCno, totaisDeLinha, vinculoDeLinha,
+  type CnoObservacao, type CnoObservacaoCanonica, type EnvelopeCno,
 } from './cnoDadosAbertos';
 import { adapterCNO } from './adapters';
 import { classificarIntake, discoveryRecordDe, payloadFingerprint, registroDeIntake, validarIntake } from './leadEngineIntake';
@@ -59,8 +61,16 @@ const linhaArea = (cno: string, categoria: string, destinacao = 'Galpão industr
 
 const area = (cno: string, categoria: string, ...resto: string[]) => areaDeLinha(camposCsvCno(linhaArea(cno, categoria, ...resto)), ixAreas)!;
 
+/** Observacao COMPLETA (evidencia + canonica), que e o que o intake consome desde o LE3-A1. */
+const obsCom = (categorias: string[], base: Partial<Record<string, string>> = {}, cabObra = CAB_OBRA): CnoObservacao =>
+  juntarObservacoesCno({
+    obras: [lerObraCno(cabecalhoCsvCno(cabObra), indicesDe(cabecalhoCsvCno(cabObra)), camposCsvCno(linhaObra(base)))!],
+    areas: categorias.map((c) => lerAreaCno(cabecalhoCsvCno(CAB_AREAS), ixAreas, camposCsvCno(linhaArea(CNO_A, c)))!),
+  }).observacoes[0];
+
+/** Só a projeção canônica, para os testes que falam de normalização. */
 const comAreas = (categorias: string[], base: Partial<Record<string, string>> = {}): CnoObservacaoCanonica =>
-  juntarCno({ obras: [obra(base)], areas: categorias.map((c) => area(CNO_A, c)) }).observacoes[0];
+  obsCom(categorias, base).canonical;
 
 // ---------------------------------------------------------------------------------------------------------
 describe('LE-3A · schema e leitura do CSV', () => {
@@ -249,7 +259,7 @@ describe('LE-3A · identidade', () => {
     expect(externoIdCno(o)).toBe(CNO_A);
     expect(externoIdCno(o)).not.toBe(o.cnpjResponsavel);
     expect(externoIdCno(o)).not.toBe(o.nomeObra);
-    expect(pedidoIntakeCno(o, 'FONTE-CNO', '2026-09-23T10:00:00.000Z').externoId).toBe(CNO_A);
+    expect(pedidoIntakeCno(obsCom(['Obra Nova']), 'FONTE-CNO', '2026-09-23T10:00:00.000Z').externoId).toBe(CNO_A);
   });
 });
 
@@ -355,7 +365,7 @@ describe('LE-3A · joins por CNO', () => {
 // ---------------------------------------------------------------------------------------------------------
 describe('LE-3A · adapter', () => {
   const reg = (categorias: string[], base: Partial<Record<string, string>> = {}) =>
-    adapterCNO.normalizar(payloadCno(comAreas(categorias, base)));
+    adapterCNO.normalizar(envelopeCno(obsCom(categorias, base)));
 
   it('36 · a PJ responsável vira a empresa, com CNPJ e local da obra', () => {
     const r = reg(['Obra Nova'])!;
@@ -407,18 +417,19 @@ describe('LE-3A · adapter', () => {
   });
 
   it('42 · o payload bruto/canônico é preservado inteiro no registro normalizado', () => {
-    const p = payloadCno(comAreas(['Obra Nova']));
+    const p = envelopeCno(obsCom(['Obra Nova']));
     const r = adapterCNO.normalizar(p)!;
-    expect(r.payload).toBe(p);
-    expect((r.payload as Record<string, unknown>).areas).toHaveLength(1);
-    expect((r.payload as Record<string, unknown>).cno).toBe(CNO_A);
+    expect(r.payload).toBe(p); // a LINHAGEM recebe o envelope, nao so o canonico
+    expect((r.payload as EnvelopeCno).evidence.obra['CNO']).toBe(CNO_A);
+    expect((r.payload as EnvelopeCno).evidence.areas).toHaveLength(1);
+    expect(((r.payload as EnvelopeCno).canonical as Record<string, unknown>).cno).toBe(CNO_A);
   });
 
   it('43 · sem data oficial o adapter NÃO inventa hoje: não produz sinal', () => {
     const semData = comAreas(['Obra Nova'], { inicio: '', registro: '', dataSituacao: '' });
     expect(dataEventoCno(semData)).toBeUndefined();
     expect(payloadCno(semData).origemDataEvento).toBe(SEM_EVENTO_DATADO);
-    const r = adapterCNO.normalizar(payloadCno(semData))!;
+    const r = adapterCNO.normalizar(envelopeCno(obsCom(['Obra Nova'], { inicio: '', registro: '', dataSituacao: '' })))!;
     expect(r.sinais).toEqual([]);
     const hoje = new Date().toISOString().slice(0, 10);
     expect(JSON.stringify(r.sinais)).not.toContain(hoje);
@@ -427,7 +438,7 @@ describe('LE-3A · adapter', () => {
     expect(dataEventoCno(comAreas(['Obra Nova'])!)!.origem).toBe('dataInicio');
     expect(dataEventoCno(comAreas(['Obra Nova'], { inicio: '' }))!.origem).toBe('dataRegistro');
     expect(dataEventoCno(comAreas(['Obra Nova'], { inicio: '', registro: '' }))!.origem).toBe('dataSituacao');
-    expect(adapterCNO.normalizar(payloadCno(comAreas(['Obra Nova'])))!.sinais?.[0].eventoEm).toBe('1992-02-20');
+    expect(adapterCNO.normalizar(envelopeCno(obsCom(['Obra Nova'])))!.sinais?.[0].eventoEm).toBe('1992-02-20');
   });
 });
 
@@ -435,34 +446,35 @@ describe('LE-3A · adapter', () => {
 describe('LE-3A · intake do LE-1', () => {
   const FONTE = 'FONTE-CNO';
   const EM = '2026-09-23T10:00:00.000Z';
-  const pedido = (o: CnoObservacaoCanonica) => pedidoIntakeCno(o, FONTE, EM);
+  const pedido = (o: CnoObservacao) => pedidoIntakeCno(o, FONTE, EM);
 
   it('44 · o pedido usa a fonte informada e a evidência canônica', () => {
-    const p = pedido(comAreas(['Obra Nova']));
+    const p = pedido(obsCom(['Obra Nova']));
     expect(p.fonteId).toBe(FONTE);
     expect(p.recebidoEm).toBe(EM);
-    expect((p.payload as Record<string, unknown>).fonte).toBe('CNO');
+    expect((p.payload as EnvelopeCno).schema).toBe(SCHEMA_CNO);
+    expect(((p.payload as EnvelopeCno).canonical as Record<string, unknown>).fonte).toBe('CNO');
   });
 
   it('45 · o tipo do registro é `projeto`: uma obra é um projeto, não uma empresa', () => {
-    expect(pedido(comAreas(['Obra Nova'])).tipo).toBe('projeto');
+    expect(pedido(obsCom(['Obra Nova'])).tipo).toBe('projeto');
   });
 
   it('46 · externoId do pedido é o CNO', () => {
-    expect(pedido(comAreas(['Obra Nova'])).externoId).toBe(CNO_A);
+    expect(pedido(obsCom(['Obra Nova'])).externoId).toBe(CNO_A);
   });
 
   it('47 · o fingerprint é determinístico para a mesma observação', () => {
-    const a = payloadCno(comAreas(['Obra Nova']));
-    const b = payloadCno(comAreas(['Obra Nova']));
+    const a = envelopeCno(obsCom(['Obra Nova']));
+    const b = envelopeCno(obsCom(['Obra Nova']));
     expect(payloadFingerprint(a)).toBe(payloadFingerprint(b));
-    const v1 = validarIntake(pedido(comAreas(['Obra Nova'])));
+    const v1 = validarIntake(pedido(obsCom(['Obra Nova'])));
     expect(v1.ok).toBe(true);
     if (v1.ok) expect(v1.payloadFingerprint).toBe(payloadFingerprint(a));
   });
 
   it('48 · repetição exata do mesmo CNO com o mesmo payload é IDEMPOTENT_NOOP', () => {
-    const p = pedido(comAreas(['Obra Nova']));
+    const p = pedido(obsCom(['Obra Nova']));
     const v = validarIntake(p);
     if (!v.ok) throw new Error('intake inválido');
     expect(classificarIntake(v, []).resultado).toBe('NOVO_REGISTRO');
@@ -471,12 +483,12 @@ describe('LE-3A · intake do LE-1', () => {
   });
 
   it('49 · mesmo CNO com payload diferente é NOVA_OBSERVACAO — nunca sobrescreve a anterior', () => {
-    const p1 = pedido(comAreas(['Obra Nova']));
+    const p1 = pedido(obsCom(['Obra Nova']));
     const v1 = validarIntake(p1);
     if (!v1.ok) throw new Error('intake inválido');
     const existente = discoveryRecordDe(registroDeIntake(v1, p1, 'SR-1'))!;
 
-    const p2 = pedido(comAreas(['Obra Nova'], { situacao: '15', dataSituacao: '2026-09-01' }));
+    const p2 = pedido(obsCom(['Obra Nova'], { situacao: '15', dataSituacao: '2026-09-01' }));
     const v2 = validarIntake(p2);
     if (!v2.ok) throw new Error('intake inválido');
     expect(v2.identidade.externoId).toBe(v1.identidade.externoId); // mesmo objeto externo
@@ -548,5 +560,184 @@ describe('LE-3A · fronteiras', () => {
     expect(HOST_OFICIAL_CNO).toBe('arquivos.receitafederal.gov.br');
     expect(semComentario).not.toContain('e-cac');
     expect(semComentario).not.toContain('gov.br/login');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// LE-3A1 — a evidência da fonte vive ao lado da projeção canônica, nunca no lugar dela.
+//
+// A primeira versão do LE-3A mandava só `payloadCno(obs)` para o intake. Isso perdia a origem: o "null"
+// literal sumia, o NI com pontuação sumia, e coluna que a EIFF ainda não usa sumia. Normalização é uma
+// LEITURA do dado, não o dado.
+describe('LE-3A1 · evidência bruta separada da canônica', () => {
+  const evid = (o: CnoObservacao) => o.evidence.obra;
+
+  it('1 · o valor bruto de cada célula é preservado com o nome real da coluna', () => {
+    const o = obsCom(['Obra Nova']);
+    expect(evid(o)['CNO']).toBe(CNO_A);
+    expect(evid(o)['Nome']).toBe('Galpão Alfa');
+    expect(evid(o)['Nome empresarial']).toBe('Construtora Fictícia Alfa Ltda');
+    expect(evid(o)['Situação']).toBe('02');                 // código original, não "ATIVA"
+    expect(evid(o)['Data de início']).toBe('1992-02-20');    // data como texto
+    expect(evid(o)['Área total']).toBe('412.00');            // texto, não número 412
+    expect(evid(o)['Caixa Postal']).toBe('');                // string vazia preservada como tal
+    expect(evid(o)['Qualificação do responsavel']).toBe('0053');
+  });
+
+  it('2 · o literal "null" continua na evidência', () => {
+    const o = obsCom(['Obra Nova'], { nome: 'null' });
+    expect(evid(o)['Nome']).toBe('null');
+  });
+
+  it('3 · e o canônico não o propaga', () => {
+    const o = obsCom(['Obra Nova'], { nome: 'null' });
+    expect(o.canonical.nomeObra).toBeUndefined();
+    // a separação perfeita: os dois coexistem sem se contaminar
+    expect(evid(o)['Nome']).toBe('null');
+  });
+
+  it('4 · o NI é preservado exatamente como veio, com pontuação e tudo', () => {
+    const o = obsCom(['Obra Nova'], { ni: '"11.222.333/0001-81"' });
+    expect(evid(o)['NI do responsável']).toBe('11.222.333/0001-81');
+  });
+
+  it('5 · e o canônico guarda o CNPJ normalizado — ambos coexistem', () => {
+    const o = obsCom(['Obra Nova'], { ni: '"11.222.333/0001-81"' });
+    expect(o.canonical.cnpjResponsavel).toBe(CNPJ);
+    expect(evid(o)['NI do responsável']).not.toBe(o.canonical.cnpjResponsavel);
+  });
+
+  it('6 · coluna que a EIFF ainda não projeta é preservada, e o canônico não muda', () => {
+    const cabFuturo = CAB_OBRA + ',"Campo futuro"';
+    const o = obsCom(['Obra Nova'], {}, cabFuturo);
+    // a linha da fixture nao tem a celula extra: a coluna existe e vem vazia, sem quebrar nada
+    expect(Object.keys(evid(o))).toContain('Campo futuro');
+    expect(o.canonical).toEqual(obsCom(['Obra Nova']).canonical);
+    // e com valor de verdade, o valor chega intacto
+    const comValor = linhaComoObjeto(cabecalhoCsvCno(cabFuturo), camposCsvCno(linhaObra() + ',"ABC"'));
+    expect(comValor['Campo futuro']).toBe('ABC');
+    // célula além do cabeçalho também é evidência, não lixo descartado
+    expect(linhaComoObjeto(['a', 'b'], ['1', '2', '3'])).toEqual({ a: '1', b: '2', '#2': '3' });
+  });
+
+  it('7 · a linha bruta da área é preservada ao lado da canônica', () => {
+    const o = obsCom(['Demolição']);
+    expect(o.evidence.areas).toHaveLength(1);
+    expect(o.evidence.areas[0]['Categoria']).toBe('Demolição');
+    expect(o.evidence.areas[0]['Tipo de obra']).toBe('Alvenaria');
+    expect(o.evidence.areas[0]['Metragem']).toBe('412.00');
+    expect(o.evidence.areas[0]['Tipo de Área Complementar']).toBe('');
+    expect(o.canonical.areas[0].metragem).toBe(412);
+  });
+
+  it('8 · a linha bruta do CNAE é preservada', () => {
+    const cab = cabecalhoCsvCno(CAB_CNAES);
+    const o = juntarObservacoesCno({
+      obras: [lerObraCno(cabecalhoCsvCno(CAB_OBRA), ixObra, camposCsvCno(linhaObra()))!],
+      cnaes: [lerCnaeCno(cab, ixCnaes, camposCsvCno(`${CNO_A},4120400,2022-05-17`))!],
+    }).observacoes[0];
+    expect(o.evidence.cnaes[0]).toEqual({ CNO: CNO_A, CNAE: '4120400', 'Data de registro': '2022-05-17' });
+    expect(o.canonical.cnaes[0].cnae).toBe('4120400');
+  });
+
+  it('9 · a linha bruta do vínculo é preservada, inclusive o NI vazio', () => {
+    const cab = cabecalhoCsvCno(CAB_VINCULOS);
+    const o = juntarObservacoesCno({
+      obras: [lerObraCno(cabecalhoCsvCno(CAB_OBRA), ixObra, camposCsvCno(linhaObra()))!],
+      vinculos: [lerVinculoCno(cab, ixVinculos, camposCsvCno(`${CNO_A},1988-08-01,,2022-05-26,0053,`))!],
+    }).observacoes[0];
+    expect(o.evidence.vinculos[0]['Data de fim']).toBe('');
+    expect(o.evidence.vinculos[0]['NI do responsável']).toBe('');
+    expect(o.evidence.vinculos[0]['Qualificação do contribuinte']).toBe('0053');
+    expect(o.canonical.vinculos[0].fim).toBeUndefined();
+    expect(o.canonical.vinculos[0].cnpjResponsavel).toBeUndefined();
+  });
+
+  it('10 · a ordem é determinística nos DOIS lados, e a linha bruta i continua sendo a origem da canônica i', () => {
+    const cats = ['Reforma', 'Obra Nova', 'Acréscimo'];
+    const direta = obsCom(cats);
+    const invertida = obsCom([...cats].reverse());
+    expect(invertida.evidence.areas).toEqual(direta.evidence.areas);
+    expect(invertida.canonical.areas).toEqual(direta.canonical.areas);
+    // o pareamento nao se perde na ordenacao
+    direta.evidence.areas.forEach((bruta, i) => expect(bruta['Categoria']).toBe(direta.canonical.areas[i].categoria));
+  });
+
+  it('11 · o fingerprint é estável para a mesma observação, inclusive com ordem de propriedades diferente', () => {
+    const a = envelopeCno(obsCom(['Obra Nova']));
+    const b = envelopeCno(obsCom(['Obra Nova']));
+    expect(payloadFingerprint(a)).toBe(payloadFingerprint(b));
+    // `jsonCanonico` ordena as chaves: montar o mesmo objeto ao contrario dá a mesma impressão
+    const espelho = { canonical: a.canonical, evidence: a.evidence, schema: a.schema };
+    expect(payloadFingerprint(espelho)).toBe(payloadFingerprint(a));
+  });
+
+  it('12 · mudar uma célula da fonte muda o fingerprint', () => {
+    const base = payloadFingerprint(envelopeCno(obsCom(['Obra Nova'])));
+    expect(payloadFingerprint(envelopeCno(obsCom(['Obra Nova'], { situacao: '15' })))).not.toBe(base);
+    // e mesmo uma mudanca que o canonico DESCARTA muda a impressao, porque a evidencia mudou de verdade
+    expect(payloadFingerprint(envelopeCno(obsCom(['Obra Nova'], { nome: 'null' })))).not.toBe(base);
+  });
+
+  it('13-14 · ETag e Last-Modified do snapshot não entram no envelope e não podem mover o fingerprint', () => {
+    const e = envelopeCno(obsCom(['Obra Nova']));
+    const texto = JSON.stringify(e);
+    for (const proibido of ['etag', 'ETag', 'lastModified', 'Last-Modified', 'last_modified', 'baixadoEm', 'downloadedAt', 'snapshot', 'offLocal', 'zip']) {
+      expect(texto).not.toContain(proibido);
+    }
+    expect(Object.keys(e).sort()).toEqual(['canonical', 'evidence', 'schema']);
+  });
+
+  it('15 · o instante em que recebemos NÃO integra o payload: dois recebimentos dão a mesma impressão', () => {
+    const o = obsCom(['Obra Nova']);
+    const p1 = pedidoIntakeCno(o, 'FONTE-CNO', '2026-09-23T10:00:00.000Z');
+    const p2 = pedidoIntakeCno(o, 'FONTE-CNO', '2026-11-30T23:59:59.999Z');
+    expect(p1.recebidoEm).not.toBe(p2.recebidoEm);
+    expect(payloadFingerprint(p1.payload)).toBe(payloadFingerprint(p2.payload));
+    const v1 = validarIntake(p1);
+    const v2 = validarIntake(p2);
+    if (!v1.ok || !v2.ok) throw new Error('intake inválido');
+    expect(v2.payloadFingerprint).toBe(v1.payloadFingerprint);
+    // logo, reler o mesmo snapshot amanhã é IDEMPOTENT_NOOP, não observação nova
+    expect(classificarIntake(v2, [discoveryRecordDe(registroDeIntake(v1, p1, 'SR-1'))!]).resultado).toBe('IDEMPOTENT_NOOP');
+  });
+
+  it('16 · o adapter normaliza a partir de `canonical`, sob guarda de versão', () => {
+    const e = envelopeCno(obsCom(['Obra Nova']));
+    expect(e.schema).toBe(SCHEMA_CNO);
+    const r = adapterCNO.normalizar(e)!;
+    expect(r.empresa?.razaoSocial).toBe('Construtora Fictícia Alfa Ltda');
+    expect(r.projeto?.nome).toBe('Galpão Alfa');
+    // sem schema reconhecido nao ha heuristica: o envelope nao e lido como payload plano
+    expect(adapterCNO.normalizar({ ...e, schema: 'OUTRO' })).toBeUndefined();
+    // e o formato plano antigo continua funcionando
+    expect(adapterCNO.normalizar(payloadCno(obsCom(['Obra Nova']).canonical))?.empresa?.razaoSocial)
+      .toBe('Construtora Fictícia Alfa Ltda');
+  });
+
+  it('17 · a linhagem recebe o ENVELOPE completo, não só o canônico', () => {
+    const e = envelopeCno(obsCom(['Obra Nova']));
+    const r = adapterCNO.normalizar(e)!;
+    expect(r.payload).toBe(e);
+    // é este objeto que o LE2-B repassa ao sinal (`payload: bruto.payload`), então a evidência chega lá
+    expect((r.payload as EnvelopeCno).evidence.obra['Nome']).toBe('Galpão Alfa');
+    expect((r.payload as EnvelopeCno).evidence.obra['NI do responsável']).toBe(CNPJ);
+  });
+
+  it('18 · nenhum caminho entrega `payloadCno(obs)` sozinho ao intake', () => {
+    const o = obsCom(['Obra Nova']);
+    const p = pedidoIntakeCno(o, 'FONTE-CNO', '2026-09-23T10:00:00.000Z');
+    const envelope = p.payload as EnvelopeCno;
+    expect(envelope.schema).toBe(SCHEMA_CNO);
+    expect(envelope.evidence).toBeDefined();
+    expect(envelope.canonical).toBeDefined();
+    expect(payloadFingerprint(p.payload)).not.toBe(payloadFingerprint(payloadCno(o.canonical)));
+
+    // guarda estrutural: a assinatura exige a observacao COMPLETA, e o envelope e montado em um lugar so
+    const fonte = readFileSync('src/core/radar/cnoDadosAbertos.ts', 'utf8');
+    const semComentario = fonte.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(semComentario).toContain('payload: envelopeCno(o)');
+    expect(semComentario).not.toContain('payload: payloadCno(');
+    expect(semComentario).toMatch(/pedidoIntakeCno\(o: CnoObservacao,/);
   });
 });

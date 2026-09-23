@@ -127,6 +127,21 @@ export function indicesDe(cabecalho: string[]): Record<string, number> {
   return ix;
 }
 
+/** A celula como a fonte entregou: texto, sem tipo e sem juizo. Chave = nome REAL da coluna. */
+export type LinhaBruta = Record<string, string>;
+
+/**
+ * A linha inteira como objeto, ANTES de qualquer normalizacao. Preserva nome real da coluna, valor textual,
+ * string vazia, o literal "null", codigo original, data como texto e coluna que a EIFF ainda nao usa.
+ * Celula alem do cabecalho e preservada sob `#<indice>`: sobra de parsing tambem e evidencia.
+ */
+export function linhaComoObjeto(cabecalho: string[], campos: string[]): LinhaBruta {
+  const bruta: LinhaBruta = {};
+  cabecalho.forEach((nome, i) => { if (bruta[nome] === undefined) bruta[nome] = campos[i] ?? ''; });
+  for (let i = cabecalho.length; i < campos.length; i++) bruta[`#${i}`] = campos[i];
+  return bruta;
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // 5. Normalizacao de valor
 //
@@ -444,7 +459,7 @@ export function dataEventoCno(obs: CnoObservacaoCanonica): { data: string; orige
 // 11. Projecao para o intake do LE-1
 
 /** Identidade externa do objeto no CNO: o numero do CNO. Nunca CNPJ, nome da obra, hash ou posicao no arquivo. */
-export const externoIdCno = (obs: CnoObservacaoCanonica): string => obs.cno;
+export const externoIdCno = (obs: { cno: string }): string => obs.cno;
 
 /**
  * Payload canonico gravado como evidencia bruta em `RegistroFonte.payload` e consumido por `adapterCNO`.
@@ -487,7 +502,116 @@ export function payloadCno(obs: CnoObservacaoCanonica): Record<string, unknown> 
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// 12. Evidencia bruta ao lado da projecao canonica
+//
+// LE3-A1. A versao anterior mandava SO `payloadCno(obs)` para o intake, e isso perdia a origem: o "null"
+// literal sumia, o NI com pontuacao sumia, e coluna que a EIFF ainda nao usa sumia. Normalizacao e uma LEITURA
+// do dado, nao o dado. `RegistroFonte.payload` passa a carregar as duas coisas, e a evidencia e a que o trigger
+// `radar_source_record_evidencia` torna imutavel no banco.
+
+export interface CnoSourceEvidence {
+  obra: LinhaBruta;
+  areas: LinhaBruta[];
+  cnaes: LinhaBruta[];
+  vinculos: LinhaBruta[];
+}
+
+/** Uma observacao completa: a evidencia como veio e a projecao canonica, ligadas pelo mesmo CNO. */
+export interface CnoObservacao {
+  cno: string;
+  evidence: CnoSourceEvidence;
+  canonical: CnoObservacaoCanonica;
+}
+
+export interface LinhaLida<T> { cno: string; bruta: LinhaBruta; canonica: T }
+
+const lerPar = <T extends object>(
+  cabecalho: string[], campos: string[],
+  parse: () => { cno: string; canonica: T } | undefined,
+): LinhaLida<T> | undefined => {
+  const p = parse();
+  return p && { cno: p.cno, bruta: linhaComoObjeto(cabecalho, campos), canonica: p.canonica };
+};
+
+export const lerObraCno = (cabecalho: string[], ix: Record<string, number>, campos: string[]): LinhaLida<CnoObservacaoCanonica> | undefined =>
+  lerPar(cabecalho, campos, () => { const c = obraDeLinha(campos, ix); return c && { cno: c.cno, canonica: c }; });
+
+export const lerAreaCno = (cabecalho: string[], ix: Record<string, number>, campos: string[]): LinhaLida<CnoAreaCanonica> | undefined =>
+  lerPar(cabecalho, campos, () => { const a = areaDeLinha(campos, ix); return a && { cno: a.cno, canonica: a.area }; });
+
+export const lerCnaeCno = (cabecalho: string[], ix: Record<string, number>, campos: string[]): LinhaLida<CnoCnaeCanonico> | undefined =>
+  lerPar(cabecalho, campos, () => { const c = cnaeDeLinha(campos, ix); return c && { cno: c.cno, canonica: c.cnae }; });
+
+export const lerVinculoCno = (cabecalho: string[], ix: Record<string, number>, campos: string[]): LinhaLida<CnoVinculoCanonico> | undefined =>
+  lerPar(cabecalho, campos, () => { const v = vinculoDeLinha(campos, ix); return v && { cno: v.cno, canonica: v.vinculo }; });
+
+/**
+ * Junta os quatro arquivos preservando os DOIS lados. A ordenacao e feita sobre os pares, entao a linha bruta
+ * de indice `i` continua sendo a origem da linha canonica de indice `i` — a ordem deterministica vale para a
+ * evidencia tambem, e e por isso que o fingerprint nao depende da ordem de leitura do arquivo.
+ */
+export function juntarObservacoesCno(entrada: {
+  obras: LinhaLida<CnoObservacaoCanonica>[];
+  areas?: LinhaLida<CnoAreaCanonica>[];
+  cnaes?: LinhaLida<CnoCnaeCanonico>[];
+  vinculos?: LinhaLida<CnoVinculoCanonico>[];
+}): { observacoes: CnoObservacao[]; diagnosticos: DiagnosticoCno[] } {
+  const porCno = new Map<string, { obra: LinhaLida<CnoObservacaoCanonica>; areas: LinhaLida<CnoAreaCanonica>[]; cnaes: LinhaLida<CnoCnaeCanonico>[]; vinculos: LinhaLida<CnoVinculoCanonico>[] }>();
+  for (const o of entrada.obras) porCno.set(o.cno, { obra: o, areas: [], cnaes: [], vinculos: [] });
+  const diagnosticos: DiagnosticoCno[] = [];
+
+  const anexar = <T>(linhas: LinhaLida<T>[] | undefined, campo: 'areas' | 'cnaes' | 'vinculos', orfao: TipoDiagnosticoCno) => {
+    for (const l of linhas ?? []) {
+      const alvo = porCno.get(l.cno);
+      if (!alvo) { diagnosticos.push({ tipo: orfao, cno: l.cno }); continue; }
+      (alvo[campo] as LinhaLida<T>[]).push(l);
+    }
+  };
+  anexar(entrada.areas, 'areas', 'AREA_ORFA');
+  anexar(entrada.cnaes, 'cnaes', 'CNAE_ORFAO');
+  anexar(entrada.vinculos, 'vinculos', 'VINCULO_ORFAO');
+
+  const observacoes = [...porCno.values()]
+    .sort((a, b) => cmp(a.obra.cno, b.obra.cno))
+    .map(({ obra, areas, cnaes, vinculos }) => {
+      areas.sort((a, b) => ordenarAreas(a.canonica, b.canonica));
+      cnaes.sort((a, b) => cmp(a.canonica.cnae, b.canonica.cnae) || cmp(a.canonica.dataRegistro, b.canonica.dataRegistro));
+      vinculos.sort((a, b) => cmp(a.canonica.inicio, b.canonica.inicio) || cmp(a.canonica.qualificacao, b.canonica.qualificacao) || cmp(a.canonica.cnpjResponsavel, b.canonica.cnpjResponsavel));
+      return {
+        cno: obra.cno,
+        evidence: { obra: obra.bruta, areas: areas.map((a) => a.bruta), cnaes: cnaes.map((c) => c.bruta), vinculos: vinculos.map((v) => v.bruta) },
+        canonical: { ...obra.canonica, areas: areas.map((a) => a.canonica), cnaes: cnaes.map((c) => c.canonica), vinculos: vinculos.map((v) => v.canonica) },
+      };
+    });
+  return { observacoes, diagnosticos };
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// 13. Envelope do intake
+
+/** Versao do envelope. O adapter so aceita `canonical` aninhado sob este schema — sem heuristica ambigua. */
+export const SCHEMA_CNO = 'CNO_OPEN_DATA_V1' as const;
+
+export interface EnvelopeCno {
+  schema: typeof SCHEMA_CNO;
+  evidence: CnoSourceEvidence;
+  canonical: Record<string, unknown>;
+}
+
+/**
+ * O que vai em `RegistroFonte.payload`, e portanto o que o fingerprint do LE-1 mede.
+ *
+ * Deliberadamente NAO entra aqui nada de proveniencia do snapshot — `ETag`, `Last-Modified`, quando baixamos,
+ * caminho temporario, posicao no ZIP. Qualquer um desses faria o MESMO CNO, com os MESMOS dados, gerar
+ * impressao nova a cada leitura, destruindo a idempotencia que o LE-1 existe para garantir. Proveniencia de
+ * snapshot pertence ao log do leitor, nao a observacao.
+ */
+export function envelopeCno(o: CnoObservacao): EnvelopeCno {
+  return { schema: SCHEMA_CNO, evidence: o.evidence, canonical: payloadCno(o.canonical) };
+}
+
 /** A observacao vira pedido de intake. `tipo` e `projeto`: uma obra e um projeto, nunca uma empresa por si so. */
-export function pedidoIntakeCno(obs: CnoObservacaoCanonica, fonteId: string, recebidoEm: string): PedidoIntake {
-  return { fonteId, tipo: 'projeto', externoId: externoIdCno(obs), payload: payloadCno(obs), recebidoEm };
+export function pedidoIntakeCno(o: CnoObservacao, fonteId: string, recebidoEm: string): PedidoIntake {
+  return { fonteId, tipo: 'projeto', externoId: externoIdCno(o), payload: envelopeCno(o), recebidoEm };
 }

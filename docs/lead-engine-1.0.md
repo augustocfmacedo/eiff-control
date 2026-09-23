@@ -1206,8 +1206,8 @@ que a documentação não lista na mesma forma: `Caixa Postal` e `Código de loc
 
 ### 34.3 O tipo canônico
 
-`CnoObservacaoCanonica` em `src/core/radar/cnoDadosAbertos.ts` é a ponte
-`CSV oficial -> observação canônica -> adapterCNO -> PedidoIntake`. Núcleo **puro**: sem rede, sem `fs`, sem React,
+`CnoObservacaoCanonica` em `src/core/radar/cnoDadosAbertos.ts` é a projeção normalizada da linha oficial.
+A ponte completa é `CSV oficial -> evidência + canônica -> envelope -> adapterCNO -> PedidoIntake` (§34.12). Núcleo **puro**: sem rede, sem `fs`, sem React,
 sem store, sem Supabase, sem variável de ambiente; importa só `./leadEngineIntake` (tipo) e `./normalizar`.
 
 **`Nome` é o nome DA OBRA; `Nome empresarial` é a razão social da PJ.** Nunca se confundem, e isso está preso
@@ -1300,3 +1300,47 @@ oportunidade, tarefa, atividade ou comunicação.
 Sem descoberta real ligada, sem scheduler, sem ingestão, sem política comercial de seleção (nada de filtro por
 UF, município, área mínima, destinação ou porte — isso é gate próprio). PNCP, RFB, Vibe e notícias não foram
 tocados. `LE3_B` ainda não começou.
+
+### 34.12 LE3-A1 — evidência da fonte separada da projeção canônica
+
+Correção de um defeito real da primeira versão do LE3-A: `RegistroFonte.payload` levava **só**
+`payloadCno(obs)`, a projeção normalizada. Normalização é uma **leitura** do dado, não o dado — e ali a origem
+se perdia. Três perdas concretas, todas medidas no snapshot real:
+
+| o que a fonte entregou | o que sobrava |
+|---|---|
+| `Nome = "null"` (literal, 8% das linhas) | nada — `textoCno` descarta |
+| `NI = "11.222.333/0001-81"` | só `11222333000181` |
+| coluna que a EIFF ainda não projeta | nada |
+
+Agora `RegistroFonte.payload` é um **envelope** com versão declarada:
+
+```
+{ schema: 'CNO_OPEN_DATA_V1', evidence: { obra, areas, cnaes, vinculos }, canonical: {...} }
+```
+
+`evidence` é a linha como a fonte entregou — nome real da coluna, valor textual, string vazia, `"null"`
+literal, código original, data como texto, NI original e qualquer coluna ainda não usada (`linhaComoObjeto`;
+célula além do cabeçalho vira `#<índice>`, porque sobra de parsing também é evidência). O único tratamento é a
+decodificação determinística ISO-8859-1 → string: o valor depois de decodificar é igual ao da célula antes de
+normalizar. A ordenação determinística vale para os dois lados, e a linha bruta `i` continua sendo a origem da
+canônica `i`.
+
+**Proveniência de snapshot fica de fora, de propósito.** `ETag`, `Last-Modified`, quando baixamos, caminho
+temporário e posição no ZIP não entram no envelope: qualquer um deles faria o mesmo CNO, com os mesmos dados,
+gerar impressão nova a cada leitura e destruiria a idempotência que o LE-1 existe para garantir. Isso é
+verificado por teste, junto com o fato de que dois `recebidoEm` diferentes dão o mesmo fingerprint — reler o
+mesmo snapshot amanhã é `IDEMPOTENT_NOOP`, não observação nova. O algoritmo global `payloadFingerprint` não foi
+tocado; mudou só o objeto que o CNO entrega a ele. Mudança real em qualquer célula — inclusive numa que o
+canônico descarta — muda a impressão, porque a evidência mudou de verdade.
+
+O `adapterCNO` normaliza a partir de `canonical` sob **guarda de versão** (`schema` não reconhecido não é lido
+como payload plano; o formato antigo continua funcionando sem ambiguidade), e a **linhagem continua recebendo o
+envelope inteiro** — `adapterCNO` devolve `payload: bruto` e o LE2-B repassa `bruto.payload` ao sinal, então a
+evidência chega lá. A assinatura de `pedidoIntakeCno` passou a exigir a observação completa, então entregar só
+o canônico ao intake virou **erro de tipo**, não convenção.
+
+`scripts/cno.mts` continua com zero persistência e **não imprime a evidência** — preservar não é logar. Só a
+contagem: `evidencia: obra=1 areas=N cnaes=N vinculos=N`.
+
+Suíte: 73 testes (56 do LE3-A + 17 desta correção).

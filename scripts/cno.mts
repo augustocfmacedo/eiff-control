@@ -21,9 +21,9 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import {
   ARQUIVOS_CNO, CABECALHOS_CNO, ENCODING_CNO, HOST_OFICIAL_CNO, MODO_FONTE_CNO,
-  areaDeLinha, cabecalhoCsvCno, camposCsvCno, cnaeDeLinha, conferirCabecalho, dataEventoCno, indicesDe,
-  juntarCno, obraDeLinha, payloadCno, pedidoIntakeCno, sinalCno, totaisDeLinha, vinculoDeLinha,
-  type ArquivoCno, type CnoObservacaoCanonica,
+  cabecalhoCsvCno, camposCsvCno, conferirCabecalho, dataEventoCno, indicesDe, juntarObservacoesCno,
+  lerAreaCno, lerCnaeCno, lerObraCno, lerVinculoCno, pedidoIntakeCno, sinalCno, totaisDeLinha,
+  type ArquivoCno, type CnoObservacao,
 } from '../src/core/radar/cnoDadosAbertos';
 
 // --------------------------------------------------------------------------------------------------- fonte
@@ -266,38 +266,40 @@ async function amostra(limite: number, arquivo?: string): Promise<void> {
     : await membrosRemotos(URL_DADOS, Number((await buscar(URL_DADOS, {}, 'HEAD')).headers.get('content-length')));
   const membro = (n: string) => membros.find((m) => m.nome === n)!;
 
-  const ler = async <T>(nome: string, n: number, fn: (campos: string[], ix: Record<string, number>) => T | undefined): Promise<T[]> => {
+  const ler = async <T>(nome: string, n: number, fn: (cab: string[], ix: Record<string, number>, campos: string[]) => T | undefined): Promise<T[]> => {
+    let cab: string[] | undefined;
     let ix: Record<string, number> | undefined;
     const out: T[] = [];
     for await (const l of linhasDoMembro(origem, membro(nome), n + 1)) {
-      if (!ix) { ix = indicesDe(cabecalhoCsvCno(l)); continue; }
-      const v = fn(camposCsvCno(l), ix);
+      if (!cab || !ix) { cab = cabecalhoCsvCno(l); ix = indicesDe(cab); continue; }
+      const v = fn(cab, ix, camposCsvCno(l));
       if (v !== undefined) out.push(v);
     }
     return out;
   };
 
   // as areas/cnaes/vinculos vem do inicio do arquivo, que e ordenado por CNO como o cno.csv: a amostra casa
-  const obras = await ler('cno.csv', limite, obraDeLinha);
-  const areas = await ler('cno_areas.csv', limite * 4, areaDeLinha);
-  const cnaes = await ler('cno_cnaes.csv', limite * 4, cnaeDeLinha);
-  const vinculos = await ler('cno_vinculos.csv', limite * 4, vinculoDeLinha);
+  const obras = await ler('cno.csv', limite, lerObraCno);
+  const areas = await ler('cno_areas.csv', limite * 4, lerAreaCno);
+  const cnaes = await ler('cno_cnaes.csv', limite * 4, lerCnaeCno);
+  const vinculos = await ler('cno_vinculos.csv', limite * 4, lerVinculoCno);
 
-  const { observacoes, diagnosticos } = juntarCno({ obras, areas, cnaes, vinculos });
+  const { observacoes, diagnosticos } = juntarObservacoesCno({ obras, areas, cnaes, vinculos });
   // Os orfaos aqui sao artefato da AMOSTRA, nao defeito da fonte: lemos mais linhas de areas/cnaes/vinculos do
   // que de obras, entao sobram filhos cujo pai ficou fora da janela. Num snapshot inteiro isso seria defeito.
-  console.log(`amostra: ${observacoes.length} observacoes canonicas`);
+  console.log(`amostra: ${observacoes.length} observacoes (evidencia + canonica)`);
   console.log(`orfaos fora da janela da amostra: ${diagnosticos.length} (esperado: a janela de filhos e maior que a de obras)\n`);
 
   for (const o of observacoes.slice(0, limite)) mostrar(o);
 
-  const comSinal = observacoes.filter((o) => sinalCno(o) !== 'NENHUM').length;
-  const comPj = observacoes.filter((o) => o.cnpjResponsavel).length;
+  const comSinal = observacoes.filter((o) => sinalCno(o.canonical) !== 'NENHUM').length;
+  const comPj = observacoes.filter((o) => o.canonical.cnpjResponsavel).length;
   console.log(`\nresumo da amostra: ${comSinal}/${observacoes.length} com sinal, ${comPj}/${observacoes.length} com PJ identificavel`);
   console.log('PERSISTENCIA = NENHUMA (nada foi gravado no Radar nem no Supabase)');
 }
 
-function mostrar(o: CnoObservacaoCanonica): void {
+function mostrar(obs: CnoObservacao): void {
+  const o = obs.canonical;
   const ev = dataEventoCno(o);
   // Privacidade: sem PJ identificada o responsavel e pessoa fisica, e o campo "Nome" costuma trazer o nome
   // dela. O dado e publico, mas este relatorio nao precisa reproduzi-lo — o CNO ja identifica a obra.
@@ -309,8 +311,11 @@ function mostrar(o: CnoObservacaoCanonica): void {
   console.log(`   categorias : ${[...new Set(o.areas.map((a) => a.categoria).filter(Boolean))].join(', ') || '—'}`);
   console.log(`   destinacoes: ${[...new Set(o.areas.map((a) => a.destinacao).filter(Boolean))].join(', ') || '—'}`);
   console.log(`   sinal      : ${sinalCno(o)}   evento: ${ev ? `${ev.data} (${ev.origem})` : 'SEM_EVENTO_DATADO'}`);
-  const p = pedidoIntakeCno(o, 'FONTE-CNO', new Date().toISOString());
-  console.log(`   intake     : tipo=${p.tipo} externoId=${p.externoId}`);
+  // A evidencia bruta NAO e impressa: preservar nao e logar. So a contagem de linhas preservadas.
+  const e = obs.evidence;
+  console.log(`   evidencia  : obra=1 areas=${e.areas.length} cnaes=${e.cnaes.length} vinculos=${e.vinculos.length} (conteudo nao impresso)`);
+  const p = pedidoIntakeCno(obs, 'FONTE-CNO', new Date().toISOString());
+  console.log(`   intake     : tipo=${p.tipo} externoId=${p.externoId} schema=${(p.payload as { schema: string }).schema}`);
   console.log('');
 }
 
