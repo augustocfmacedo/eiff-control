@@ -1,7 +1,7 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
 Estado: **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
-(fundação de persistência, §28). **LE2-B não iniciado.**
+(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch: `feature/lead-engine-1` · baseline do LE-0: `main @ 88c9ccc` · baseline do LE-1: `98636bd`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
@@ -829,3 +829,75 @@ eternamente na fila operacional: a transição exata é assunto do LE2-B, mas a 
 
 A 0055 já tem tudo — as cinco colunas, os três CHECKs, o índice único parcial e o trigger. O LE2-A é mudança de
 **adapter**, não de schema. Nada foi aplicado em banco remoto.
+
+---
+
+## 29. LE2-B — núcleo de revisão, decisão e promoção
+
+`src/core/radar/leadEngineReview.ts`. Núcleo **puro** sobre o `RadarDataset`: projeta candidatos, analisa
+identidade, aplica guardas, valida a decisão de uma pessoa, promove quando permitido e transiciona o
+`RegistroFonte`. Adaptado do módulo preservado em `rescue/lead-engine-2-orphan` (blob `8abe00da…`), com três
+correções obrigatórias.
+
+### 29.1 Human-in-the-loop preservado
+
+Nenhum candidato não suprimido se autopromove. As quatro decisões — `ASSOCIATE_EXISTING`, `CREATE_COMPANY`,
+`KEEP_REVIEW`, `REJECT` — vêm de fora e são revalidadas contra o estado **atual** do dataset, nunca contra o que
+a tela viu. `payloadFingerprintEsperado` divergente é `CONTEXTO_MUDOU`; observação mais nova aberta é
+`OBSERVACAO_DESATUALIZADA`, e a mais nova não é tocada.
+
+`CREATE_COMPANY` só com empresa normalizada + identidade forte (CNPJ válido ou `businessId` de 32 hex) e sem
+match `certo`/`provavel` (`JA_EXISTE_EMPRESA`). Match `possivel` preserva o comportamento canônico do Radar:
+empresa nova + `PossivelDuplicata` pendente — sem exceção inventada no Lead Engine.
+
+### 29.2 Transições canônicas — autoridade de verdade
+
+```text
+PENDING → REVIEW | RESOLVED | REJECTED
+REVIEW  → RESOLVED | REJECTED
+RESOLVED → (nada)        REJECTED → (nada)        REVIEW → PENDING proibido
+```
+
+No módulo órfão a tabela existia mas `transicionar()` **não a consultava**. Agora `transicionar` é a única porta
+de mudança de `statusIntake`, chama `transicaoPermitida` antes de escrever e falha fechada com
+`TRANSICAO_INVALIDA`. Um teste varre o módulo: fora dessa função, ninguém escreve o campo.
+
+`BLOQUEIO_DURO` — constante declarada e nunca usada no órfão — **não foi trazida**.
+
+### 29.3 Supressão terminal (D-12)
+
+```text
+SUPPRESSION_POLICY = SUPPRESSION_WINS_REDISCOVERY
+```
+
+Candidato que resolve para conta com `do_not_contact` ou `opt_out`:
+
+- sai da **fila acionável** (`filaDeRevisao`) e aparece em `descobertasSuprimidas`, projeção somente leitura —
+  supressão não vira desaparecimento;
+- **não promove** por nenhuma decisão (`ASSOCIATE_EXISTING`, `CREATE_COMPANY` e `KEEP_REVIEW` recusam com
+  `SUPRIMIDO`), o que impede usar `KEEP_REVIEW` para eternizá-lo na fila;
+- encerra por `terminalizarSuprimido`: `PENDING|REVIEW → REJECTED`, `motivoDecisao = SUPRIMIDO`, com ator e data.
+  Não cria Empresa, Projeto nem Sinal; não reativa a conta; não remove a supressão.
+
+O wiring automático é do LE2-C — aqui o comportamento está definido e provado.
+
+### 29.4 Linhagem da promoção
+
+O sinal promovido recebe como evidência o **payload bruto do próprio `RegistroFonte`**, não o eco do adapter. Os
+adapters de hoje devolvem `payload: bruto`, então uma asserção de valor não distingue as duas origens; a garantia
+é estrutural e está presa por teste e por mutação (`payload: bruto.payload`, nunca `normalizado.payload`).
+
+Promoção usa os primitivos existentes — `upsertEmpresa`, `upsertProjeto`, `registrarSinalNormalizado` — e
+**nunca** `ingerirRegistro`, que criaria um segundo `RegistroFonte` e duplicaria a evidência.
+
+### 29.5 O que o LE2-B não faz
+
+Nenhuma Oportunidade, Tarefa, Atividade ou Comunicação automática. Zero efeito externo: sem rede, sem Supabase,
+sem Vibe, sem CNO/PNCP/RFB. Não toca score, `priorityScore`, `priorityClass`, Commercial Queue nem cadência.
+
+- **Store ainda não ligado** — `src/data/store.ts` intocado; a porta governada é o LE2-C.
+- **UI ainda não ligada** — Command Center, Hoje, Panorama, Modo Foco, Pipeline e Entrada intocados; é o LE2-E.
+- **Migration 0055 ainda não aplicada remotamente.**
+
+O barril `src/core/radar/index.ts` passou a exportar `leadEngineIntake` e `leadEngineReview` (sem ciclo; `tsc`
+limpo), com guarda de export no teste.
