@@ -58,13 +58,42 @@ export const PULLS_CONTROL = [
 ];
 
 /**
+ * Corpo de issue no formato CANONICO da fabrica (JOB_CONTRACT.md, secao "Um job e uma issue"): texto livre
+ * para humanos + o bloco delimitado `<!-- factory-task:v1 -->` com YAML, que e a unica parte que a fabrica le.
+ * Reproduz o exemplo oficial, inclusive os comentarios inline apos `#`, para o leitor ser testado contra o
+ * formato real e nao contra uma versao higienizada.
+ */
+export function blocoFactoryTask(o: { taskId: string; repository: string; titulo?: string; prosa?: string; fechar?: boolean }): string {
+  const yaml = [
+    `taskId: ${o.taskId}                # <prefixo do repo>-<seq>; único; vira o nome da branch`,
+    `title: ${o.titulo ?? 'Rateio de faturamento por etapa'}`,
+    `repository: ${o.repository}`,
+    'baseSha: 0273da8c5bb1ad6d2a2e0e6d6b4dbb8f3f9d0a11           # commit exato de partida',
+    'risk: GREEN                    # declarado; a política calcula e o maior vence',
+    'workerRole: worker',
+    'complexity: STANDARD',
+    'objective: >',
+    '  Ler o rateio por etapa da NF e mostrar na aba Faturamento.',
+    'allowedPaths:',
+    '  - src/core/faturamento.ts',
+    'maxTurns: 40',
+    'priority: 50                    # 0-100, maior primeiro',
+  ].join('\n');
+  return `${o.prosa ?? 'Descrição livre para humanos: o rateio por etapa precisa aparecer na aba Faturamento.'}\n\n<!-- factory-task:v1 -->\n\`\`\`yaml\n${yaml}\n\`\`\`\n${o.fechar === false ? '' : '<!-- /factory-task -->\n'}`;
+}
+
+/**
  * Issues de job no repositorio-ALVO. E onde o job canonico vive (JOB_CONTRACT.md): um job do produto
  * nasce aqui, no eiff-control, e NAO no repositorio da fabrica.
+ *
+ * O titulo segue o contrato — `[factory] <titulo curto>` — e por isso NAO carrega o taskId: a identidade
+ * canonica esta no bloco do corpo. E exatamente o caso que a extracao por titulo nao cobria.
  */
 export const ISSUES_CONTROL = [
   {
     number: 7,
-    title: '[EC-0042] Rateio de faturamento por etapa',
+    title: '[factory] Rateio de faturamento por etapa',
+    body: blocoFactoryTask({ taskId: 'EC-0042', repository: 'augustocfmacedo/eiff-control' }),
     state: 'open',
     created_at: '2026-09-22T05:00:00Z',
     updated_at: '2026-09-22T08:44:00Z',
@@ -77,7 +106,8 @@ export const ISSUES_CONTROL = [
 export const ISSUES_FACTORY = [
   {
     number: 41,
-    title: '[EC-0142] Exportar CSV da tabela de alocações',
+    title: '[factory] Exportar CSV da tabela de alocações',
+    body: blocoFactoryTask({ taskId: 'EC-0142', repository: 'augustocfmacedo/eiff-dev-factory', titulo: 'Exportar CSV da tabela de alocações' }),
     state: 'open',
     created_at: '2026-09-20T12:00:00Z',
     updated_at: '2026-09-22T08:31:00Z',
@@ -87,7 +117,8 @@ export const ISSUES_FACTORY = [
   },
   {
     number: 42,
-    title: '[DF-0418] Endurecer a política de Bash do worker',
+    title: '[factory] Endurecer a política de Bash do worker',
+    body: blocoFactoryTask({ taskId: 'DF-0418', repository: 'augustocfmacedo/eiff-dev-factory', titulo: 'Endurecer a política de Bash do worker' }),
     state: 'open',
     created_at: '2026-09-21T09:00:00Z',
     updated_at: '2026-09-22T08:00:00Z',
@@ -97,7 +128,8 @@ export const ISSUES_FACTORY = [
   },
   {
     number: 43,
-    title: '[DF-0419] Revisar perímetro do broker',
+    title: '[factory] Revisar perímetro do broker',
+    body: blocoFactoryTask({ taskId: 'DF-0419', repository: 'augustocfmacedo/eiff-dev-factory', titulo: 'Revisar perímetro do broker' }),
     state: 'open',
     created_at: '2026-09-21T11:00:00Z',
     updated_at: '2026-09-22T08:20:00Z',

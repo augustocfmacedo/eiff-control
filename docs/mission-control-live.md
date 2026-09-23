@@ -317,9 +317,42 @@ Duas correções, nenhuma delas nova fonte de verdade:
    são procuradas; `factory.contagens` diz o que a fábrica produziu, em qualquer repositório.
 
 A projeção segue idêntica — `issue → factory:task → factory:state:* → normalização →
-MissionControlWorkItem` — e continua sem escrita. Um job e o PR dele com o mesmo `taskId` (título
-`[EC-0042] …`, branch `factory/EC-0042-a1`) viram **um cartão só**: a fábrica tem precedência sobre o
-GitHub, então o PR enriquece os links sem nunca sobrescrever o estado operacional do job.
+MissionControlWorkItem` — e continua sem escrita.
+
+### Identidade canônica da tarefa (bloco `factory-task:v1`)
+
+Pelo `JOB_CONTRACT.md`, o título da issue é `[factory] <título curto>` e a identidade do job é o campo
+`taskId` **dentro do bloco delimitado** no corpo:
+
+```
+<!-- factory-task:v1 -->
+```yaml
+taskId: EC-0042                # comentário inline permitido
+repository: augustocfmacedo/eiff-control
+…
+```
+<!-- /factory-task -->
+```
+
+Extrair o `taskId` do título, como a primeira versão da ponte fazia, só funcionava para issues fora do
+contrato — uma issue canônica e o PR dela viravam **dois cartões**. Agora `lerIdentidadeCanonica`
+(`githubAdapter.ts`) lê o bloco no servidor, em trânsito, e o corpo **nunca** entra em `IssueObservada` nem
+na resposta. Não existe leitor executável desse bloco na fábrica (`parseJobContract` valida um objeto já
+extraído; `lerRelatorioDoPr` lê o bloco JSON do PR), então a extração aqui é mínima e explícita: só `taskId`
+e `repository`, escalares de nível superior, sem parser YAML e sem dependência nova.
+
+Regras, todas com teste: exatamente um bloco; `taskId` e `repository` uma vez cada; `taskId` no formato
+canônico ancorado (espelho de `TASK_ID` em `texto.ts`); `repository` igual ao repositório onde a issue está.
+Qualquer desvio devolve `taskId: null` com uma recusa do catálogo fechado (`SEM_BLOCO`, `BLOCOS_AMBIGUOS`,
+`CHAVE_DUPLICADA`, `SEM_TASK_ID`, `TASK_ID_INVALIDO`, `SEM_REPOSITORIO`, `REPOSITORIO_DIVERGENTE`) — e a
+issue fica referenciada por `repositório#número`, sem correlação inventada. Um identificador solto no título
+ou na prosa nunca é consultado; um `[EC-0099]` no título não vence um `EC-0042` no bloco.
+
+Para o PR, a identidade é a **branch** `factory/<taskId>-a<n>` (espelho de `lerBranchDoJob` em `refs.ts`),
+porque a fábrica a gera a partir do `taskId`; o título é último recurso para PR humano fora do padrão e nunca
+vence a branch. Com issue canônica e PR na branch canônica, o resultado é **um cartão só**: a fábrica tem
+precedência sobre o GitHub, então o PR enriquece os links sem nunca sobrescrever o estado operacional do job.
+O corpo já vem na listagem `GET /issues`: nenhuma chamada por issue, teto inalterado em 8.
 
 **Nunca há chamada por cartão**: PRs e issues vêm em lista, e o CI lido é o do `main` de cada repositório — o CI
 por PR exigiria uma chamada por PR e por isso não é lido nesta fase. Só o servidor fala com o GitHub; o navegador

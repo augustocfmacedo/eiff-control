@@ -13,15 +13,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_CHAMADAS_POR_CICLO, REPOSITORIOS_OBSERVADOS, classificarRespostaGitHub, ehRepositorioObservado,
-  estadoDaLabel, extrairTaskId, lerGitHub, semCache, situacaoDoCi, type CacheCondicional, type EntradaCache,
+  MAX_CHAMADAS_POR_CICLO, RECUSAS_IDENTIDADE, REPOSITORIOS_OBSERVADOS, classificarRespostaGitHub, ehRepositorioObservado,
+  estadoDaLabel, extrairTaskId, lerGitHub, lerIdentidadeCanonica, semCache, situacaoDoCi, taskIdDaBranchDoJob,
+  type CacheCondicional, type EntradaCache,
 } from './githubAdapter';
 import { avaliarStatusVivo, compararBuild, humanizarIdade, LIMITE_STALE_GITHUB_S, ORIGEM_SHA_BUILD } from './statusVivo';
 import { autenticarStatus, laneDasLabels, projetarWorkItems, tratarDevelopmentStatus, type DepsStatus, type DevelopmentStatusResposta } from './statusServidor';
 import { lerStatusRemoto, proximoIntervalo, INTERVALO_STATUS_MS, INTERVALO_MAXIMO_MS } from '../../data/statusRemoto';
 import { ESPELHO_JOB_STATES, STATUS_POR_ESTADO_FACTORY } from './workItem';
 import {
-  CAMINHOS, CHECKS_VERMELHO, ISSUES_FACTORY, ROTAS_SAUDAVEIS, SHA_MAIN_CONTROL, criarFetchGitHub, type Rotas,
+  CAMINHOS, CHECKS_VERMELHO, ISSUES_CONTROL, ISSUES_FACTORY, PULLS_CONTROL, ROTAS_SAUDAVEIS, SHA_MAIN_CONTROL,
+  blocoFactoryTask, criarFetchGitHub, type Rotas,
 } from './__fixtures__/github';
 
 const AGORA = '2026-09-22T09:10:00.000Z';
@@ -746,7 +748,8 @@ describe('SHA do artefato publicado', () => {
 describe('ponte de visibilidade da fábrica', () => {
   const so = (caminho: string, corpoIssues: unknown): Rotas => ({ ...ROTAS_SAUDAVEIS, [caminho]: { status: 200, corpo: corpoIssues } });
   const issue = (over: Record<string, unknown> = {}) => ({
-    number: 90, title: '[EC-0099] Job de exemplo', state: 'open',
+    number: 90, title: '[factory] Job de exemplo', state: 'open',
+    body: blocoFactoryTask({ taskId: 'EC-0099', repository: 'augustocfmacedo/eiff-control', titulo: 'Job de exemplo' }),
     created_at: '2026-09-22T05:00:00Z', updated_at: '2026-09-22T08:00:00Z', closed_at: null,
     html_url: 'https://github.com/augustocfmacedo/eiff-control/issues/90',
     labels: [{ name: 'factory:task' }, { name: 'factory:state:READY' }],
@@ -821,5 +824,131 @@ describe('ponte de visibilidade da fábrica', () => {
     expect(it0.source).toBe('ARCHITECTURE');          // estado fora do catálogo = nenhum estado
     expect(it0.statusOrigem).not.toContain('TELEPORTANDO');
     expect(Object.keys(STATUS_POR_ESTADO_FACTORY)).toHaveLength(15); // catálogo fechado, sem status novo
+  });
+});
+
+// ------------------------------------------- 8. identidade canônica da tarefa (bloco factory-task:v1)
+
+// JOB_CONTRACT.md: o título da issue é `[factory] <título curto>` e a identidade do job é o campo `taskId`
+// DENTRO do bloco delimitado `<!-- factory-task:v1 -->` no corpo. Extrair o taskId do título, portanto, só
+// funcionava para issues fora do contrato. Estes testes prendem a leitura canônica — e as recusas.
+describe('identidade canônica da tarefa (bloco factory-task:v1)', () => {
+  it('título [factory] sem taskId + bloco canônico + PR na branch factory/EC-0042-a1 → UM cartão', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps()));
+    const cartoes = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(cartoes).toHaveLength(1);
+    const [c] = cartoes;
+    expect(c.source).toBe('FACTORY');
+    expect(c.status).toBe('EXECUTANDO');
+    expect(c.statusOrigem).toBe('CODING');
+    expect(c.links?.issue).toBe('https://github.com/augustocfmacedo/eiff-control/issues/7');
+    expect(c.links?.pullRequest).toBe('https://github.com/augustocfmacedo/eiff-control/pull/24');
+    // e o corpo da issue NUNCA sai no contrato de resposta
+    expect(JSON.stringify(r)).not.toContain('factory-task:v1');
+    expect(JSON.stringify(r)).not.toContain('baseSha');
+  });
+});
+
+// As recusas: nenhuma delas pode virar taskId por palpite. Cada caso abaixo é um jeito de a identidade estar
+// ausente, ambígua ou contraditória — e em todos a issue fica referenciada por `repositório#número`.
+describe('identidade canônica — recusas (nunca palpite)', () => {
+  const REPO = 'augustocfmacedo/eiff-control';
+  const OUTRO = 'augustocfmacedo/eiff-dev-factory';
+  const ISSUE_URL = 'https://github.com/augustocfmacedo/eiff-control/issues/7';
+  const bloco = (o: Partial<Parameters<typeof blocoFactoryTask>[0]> = {}) => blocoFactoryTask({ taskId: 'EC-0042', repository: REPO, ...o });
+  const rotas = (issue: Record<string, unknown>): Rotas => ({
+    ...ROTAS_SAUDAVEIS, [`${CAMINHOS.CONTROL}/issues`]: { status: 200, corpo: [{ ...ISSUES_CONTROL[0], ...issue }] },
+  });
+
+  it('o leitor aceita o bloco canônico completo: comentários inline, cerca yaml, fim opcional, aspas', () => {
+    expect(lerIdentidadeCanonica(bloco(), REPO)).toEqual({ taskId: 'EC-0042' });
+    expect(lerIdentidadeCanonica(bloco({ fechar: false }), REPO)).toEqual({ taskId: 'EC-0042' });
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: "EC-0042"\nrepository: '${REPO}'\n<!-- /factory-task -->`, REPO))
+      .toEqual({ taskId: 'EC-0042' });
+    expect(RECUSAS_IDENTIDADE).toHaveLength(7); // catálogo fechado
+  });
+
+  it('corpo sem marcador, vazio ou nulo → SEM_BLOCO (mesmo com taskId em texto solto)', () => {
+    expect(lerIdentidadeCanonica(`taskId: EC-0042\nrepository: ${REPO}`, REPO)).toEqual({ taskId: null, recusa: 'SEM_BLOCO' });
+    expect(lerIdentidadeCanonica('Referente ao EC-0042.', REPO).recusa).toBe('SEM_BLOCO');
+    expect(lerIdentidadeCanonica('', REPO).recusa).toBe('SEM_BLOCO');
+    expect(lerIdentidadeCanonica(null, REPO).recusa).toBe('SEM_BLOCO');
+  });
+
+  it('taskId fora do formato canônico → TASK_ID_INVALIDO; ausente → SEM_TASK_ID', () => {
+    for (const ruim of ['ec-0042', 'EC-42', 'EC-00420', 'E-0042', 'EC_0042', 'EC-0042 EXTRA', 'factory/EC-0042-a1']) {
+      expect(lerIdentidadeCanonica(bloco({ taskId: ruim }), REPO), ruim).toEqual({ taskId: null, recusa: 'TASK_ID_INVALIDO' });
+    }
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\nrepository: ${REPO}\n`, REPO).recusa).toBe('SEM_TASK_ID');
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId:   # vazio\nrepository: ${REPO}\n`, REPO).recusa).toBe('SEM_TASK_ID');
+  });
+
+  it('repository do bloco diferente do repositório da issue → REPOSITORIO_DIVERGENTE; ausente → SEM_REPOSITORIO', () => {
+    expect(lerIdentidadeCanonica(bloco({ repository: OUTRO }), REPO)).toEqual({ taskId: null, recusa: 'REPOSITORIO_DIVERGENTE' });
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\n`, REPO).recusa).toBe('SEM_REPOSITORIO');
+  });
+
+  it('dois blocos → BLOCOS_AMBIGUOS; chave repetida → CHAVE_DUPLICADA', () => {
+    expect(lerIdentidadeCanonica(bloco() + bloco({ taskId: 'EC-0043' }), REPO).recusa).toBe('BLOCOS_AMBIGUOS');
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\ntaskId: EC-0043\nrepository: ${REPO}\n`, REPO).recusa).toBe('CHAVE_DUPLICADA');
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\nrepository: ${REPO}\nrepository: ${OUTRO}\n`, REPO).recusa).toBe('CHAVE_DUPLICADA');
+    // chave INDENTADA não é nível superior: não conta como duplicata nem como valor
+    expect(lerIdentidadeCanonica(`<!-- factory-task:v1 -->\ntaskId: EC-0042\nrepository: ${REPO}\ndeps:\n  taskId: EC-0043\n`, REPO)).toEqual({ taskId: 'EC-0042' });
+  });
+
+  it('identificador só em texto livre (título e prosa) NÃO vira identidade: a issue fica em repositório#número', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: rotas({
+      title: '[EC-0042] Rateio de faturamento por etapa', body: 'Referente ao job EC-0042; contrato em outro lugar.',
+    }) })));
+    const daIssue = r.workItems.find((i) => i.links?.issue === ISSUE_URL)!;
+    expect(daIssue.correlationId).toBe('augustocfmacedo/eiff-control#7'); // referência preservada, sem palpite
+    expect(daIssue.source).toBe('FACTORY');                                // a label de estado continua valendo
+    expect(daIssue.links?.pullRequest).toBeUndefined();                    // e NÃO se fundiu com o PR
+    const doPr = r.workItems.find((i) => i.correlationId === 'EC-0042')!;
+    expect(doPr.source).toBe('GITHUB');                                    // o EC-0042 que sobra é só o do PR
+  });
+
+  it('título divergente não vence o bloco: [EC-0099] no título + EC-0042 no bloco → EC-0042, um cartão', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: rotas({ title: '[EC-0099] Rateio de faturamento por etapa' }) })));
+    expect(r.workItems.some((i) => i.correlationId === 'EC-0099')).toBe(false);
+    const c = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(c).toHaveLength(1);
+    expect(c[0].source).toBe('FACTORY');
+    expect(c[0].links?.issue).toBe(ISSUE_URL);
+    expect(c[0].links?.pullRequest).toBe('https://github.com/augustocfmacedo/eiff-control/pull/24');
+  });
+
+  it('repositório divergente no bloco → sem identidade mesmo com taskId perfeito; PR segue sozinho', async () => {
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: rotas({ body: bloco({ repository: OUTRO }) }) })));
+    expect(r.workItems.find((i) => i.links?.issue === ISSUE_URL)!.correlationId).toBe('augustocfmacedo/eiff-control#7');
+    const c = r.workItems.filter((i) => i.correlationId === 'EC-0042');
+    expect(c).toHaveLength(1);
+    expect(c[0].source).toBe('GITHUB');
+  });
+
+  it('PR: a branch canônica é a identidade; título é último recurso e nunca vence a branch', async () => {
+    expect(taskIdDaBranchDoJob('factory/EC-0042-a1')).toBe('EC-0042');
+    expect(taskIdDaBranchDoJob('factory/EC-0042-a0')).toBeNull();   // attempt ≥ 1 (lerBranchDoJob)
+    expect(taskIdDaBranchDoJob('factory/EC-0042')).toBeNull();
+    expect(taskIdDaBranchDoJob('feature/EC-0042-a1')).toBeNull();
+    expect(taskIdDaBranchDoJob(null)).toBeNull();
+
+    const pulls = PULLS_CONTROL.map((p) => (p.number === 24 ? { ...p, title: '[EC-0099] Rateio' } : p));
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: { ...ROTAS_SAUDAVEIS, [`${CAMINHOS.CONTROL}/pulls`]: { status: 200, corpo: pulls } } })));
+    const pr = r.repositorios.find((x) => x.papel === 'produto')!.pullRequests.find((p) => p.numero === 24)!;
+    expect(pr.taskId).toBe('EC-0042');
+    expect(r.workItems.filter((i) => i.correlationId === 'EC-0042')).toHaveLength(1);
+  });
+
+  it('o corpo é lido em trânsito: nenhuma chamada por issue, teto segue 8, corpo nunca sai na resposta', async () => {
+    const d = deps();
+    const r = corpo(await tratarDevelopmentStatus(req(), d));
+    expect(d.chamadasGitHub()).toBe(8);
+    expect(r.fontes.github.chamadas).toBe(8);
+    const json = JSON.stringify(r);
+    expect(json).not.toContain('factory-task:v1');
+    expect(json).not.toContain('Descrição livre para humanos');
+    expect(Object.keys(r.repositorios[0].issues[0])).not.toContain('body');
+    expect(Object.keys(r.repositorios[0].issues[0])).not.toContain('corpo');
   });
 });
