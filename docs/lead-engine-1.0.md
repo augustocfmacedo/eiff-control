@@ -1,6 +1,6 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A em andamento** (contrato da fonte oficial do CNO, §34). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34) e **LE3-B fechado** (perfil do universo e simulador de política, §35; nenhuma política adotada, zero ingestão). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
@@ -1344,3 +1344,151 @@ o canônico ao intake virou **erro de tipo**, não convenção.
 contagem: `evidencia: obra=1 areas=N cnaes=N vinculos=N`.
 
 Suíte: 73 testes (56 do LE3-A + 17 desta correção).
+
+---
+
+## 35. LE3-B — perfil do universo CNO e simulador de política
+
+Gate de 23/09/2026, `feature/lead-engine-3`. O snapshot inteiro (3.604.156 obras) foi lido e medido em
+modo somente leitura para que a política de descoberta da EIFF seja escolhida **com números**, não no escuro.
+**Nenhuma política foi adotada. Zero candidato, zero `RegistroFonte`, zero Supabase, zero migration.**
+
+### 35.1 Descritor do snapshot e regra skip/novo
+
+`cnoSnapshot.ts`: `CnoSnapshotDescriptor { etag, lastModified, contentLength }` e `compararSnapshot` →
+`MESMO_SNAPSHOT | SNAPSHOT_NOVO | INDETERMINADO`. ETag manda; sem ETag, `Last-Modified` + tamanho; metadata
+insuficiente é `INDETERMINADO` e **processa** — só `MESMO_SNAPSHOT` autoriza pular. Este descritor pertence ao
+controle da fonte e **não entra em `RegistroFonte.payload`** (§34.12). A Receita não publica delta: snapshot
+novo → reler a base inteira e deixar o fingerprint do LE-1 dizer, CNO a CNO, o que é repetição, alteração ou
+novidade (§35.9). Snapshot igual → não baixar, não processar.
+
+### 35.2 Ordenação provada sobre os arquivos completos
+
+`ordenacao --arquivo`: monotonicidade da chave CNO do primeiro ao último registro, em 9,9 s.
+
+| arquivo | SORTED_ASC | linhas | = `cno_totais.csv` |
+|---|---|---|---|
+| `cno.csv` | YES | 3.604.156 | ✔ |
+| `cno_areas.csv` | YES | 4.553.076 | ✔ |
+| `cno_cnaes.csv` | YES | 3.942.713 | ✔ |
+| `cno_vinculos.csv` | YES | 431.211 | ✔ |
+
+`STREAMING_MERGE_JOIN = VIÁVEL`. As contagens batem exatamente com os totais declarados pela própria fonte.
+
+### 35.3 Merge join em streaming
+
+`cnoStreamJoin.ts` (`juntarOrdenadoCno`): quatro iteradores com *espiar*, alinhados por CNO — uma obra, seus
+filhos, uma `CnoObservacao`, descarta, próxima. Memória proporcional ao maior CNO, nunca aos 3,6 milhões;
+não existe `Map` de obras. Ordenação é guardada em cada fluxo e o join **falha fechado** (`ErroOrdenacaoCno`)
+na primeira quebra. Órfãos (filho sem pai) e `CNO_DUPLICADO` viram diagnóstico, nunca descarte silencioso.
+
+No snapshot real: **diagnósticos = `{}`** — zero área/CNAE/vínculo órfão, zero CNO duplicado. A integridade
+referencial da fonte é perfeita.
+
+### 35.4 Desempenho
+
+```
+tempo         181,4 s      (1,41 GB de CSV + join + estatística + serialização de 1,2 mi de envelopes)
+throughput    19.871 CNOs/s
+RSS máximo    282 MiB      (limitado: mapa de 259.771 CNPJs distintos + histogramas; não cresce com os CNOs)
+```
+
+### 35.5 O universo (referência = data do snapshot, 12/09/2026)
+
+```
+TOTAL_CNO             3.604.156
+com PJ                1.211.314   (33,6%)     sem PJ   2.392.842
+com CNPJ válido       1.211.314   ← IGUAL a "com PJ": a bicondicional da amostra vale nos 3,6 mi inteiros
+```
+
+Situação: ENCERRADA 2.444.140 (67,8%) · ATIVA 1.030.361 (28,6%) · PARALISADA 62.057 · NULA 57.776 ·
+SUSPENSA 9.822. Sinal estrutural: CNO_NEW 2.740.318 (76,0%) · CNO_EXPANSION 532.884 (14,8%) · nenhum
+330.954 (9,2%). Idade do evento: **85,2% têm mais de 730 dias**; ≤ 365 dias são 241.921 (6,7%); nenhuma sem
+data, nenhuma futura. Área: 68,7% < 250 m²; ≥ 1.000 m² são 245.372 (6,8%); 199.504 (5,5%) sem área em m²
+(unidade Outra/km/m³/kW/kVA — contadas como "sem área", nunca convertidas). Destinação Galpão industrial:
+183.494 obras (5,1%). Qualificação: Proprietário do Imóvel 55,9%, Dono da Obra 30,0%, PJ Construtora 10,8%.
+Top UFs: SP 1.083.586 · MG 465.717 · RS 405.185 · PR 364.031 · SC 239.014 · **GO 189.779** · MT 100.370.
+
+Um outlier de fonte: uma obra declara `Área total = 555.555.555.555,55 m²`. Os percentis por histograma
+ignoram o efeito (p50 225 m², p90 3.200 m²), mas qualquer média de área fica inútil — registrado, não corrigido.
+
+### 35.6 Interseções (Brasil / GO)
+
+| interseção | Brasil | GO |
+|---|---|---|
+| PJ + CNPJ válido | 1.211.314 | 58.585 |
+| PJ + sinal | 969.180 | 54.477 |
+| PJ + sinal + ATIVA | 355.747 | 15.117 |
+| PJ + sinal + evento ≤ 365 d | 82.511 | 3.883 |
+| PJ + sinal + área ≥ 500 | 319.290 | 12.911 |
+| PJ + sinal + área ≥ 1.000 | 212.787 | 7.803 |
+| PJ + sinal + área ≥ 2.000 | 137.597 | 4.863 |
+| PJ + Galpão industrial | 124.612 | 3.872 |
+| PJ + Galpão + evento ≤ 365 d | 10.419 | 308 |
+| PJ + Galpão + área ≥ 1.000 | 52.208 | 1.619 |
+
+Goiás é **relatório, não regra**: 189.779 obras, 58.585 com PJ, 54.477 PJ+sinal, 3.883 PJ+sinal recente.
+Top municípios GO: Goiânia 25.868 · Anápolis 14.895 · Aparecida de Goiânia 11.031 · Caldas Novas 9.685 ·
+Rio Verde 8.399 · Catalão 8.149 · Trindade 7.377 · Senador Canedo 6.423.
+
+### 35.7 Cenários simulados — hipóteses, nenhum "correto"
+
+Todos partem de PJ + CNPJ válido + sinal (`cnoDiscoveryPolicy.ts`, `cenariosLe3b`).
+
+| cenário | Brasil | GO | CNO_NEW | CNO_EXP | área p50 | área p90 |
+|---|---|---|---|---|---|---|
+| A · evento ≤ 365 d | 82.511 | 3.883 | 65.657 | 16.854 | 225 | 3.600 |
+| B · A + área ≥ 500 | 27.721 | 1.164 | 19.480 | 8.241 | 1.600 | 14.000 |
+| C · A + área ≥ 1.000 | 19.007 | 703 | 13.622 | 5.385 | 2.950 | 19.825 |
+| D · A + área ≥ 2.000 | 12.191 | 426 | 9.197 | 2.994 | 5.450 | 27.925 |
+| E · Galpão + evento ≤ 365 d | 10.226 | 307 | 6.926 | 3.300 | 700 | 5.975 |
+| F · E + área ≥ 1.000 | 4.051 | 107 | 2.749 | 1.302 | 2.700 | 17.850 |
+| G · A + ATIVA | 62.294 | 2.149 | 47.714 | 14.580 | 350 | 5.025 |
+| H · Galpão + ≤ 730 d + área ≥ 1.000 | 8.644 | 261 | 5.922 | 2.722 | 2.800 | 18.500 |
+
+### 35.8 Matriz de sensibilidade — PJ + CNPJ válido + sinal
+
+Linhas = janela (dias até o evento), colunas = área mínima (m²).
+
+```
+Brasil          0       500      1000      2000      5000
+   30 d     2.935     1.173       821       546       314
+   90 d    15.046     5.885     4.012     2.597     1.364
+  180 d    36.623    13.255     9.155     5.883     3.134
+  365 d    82.511    27.721    19.007    12.191     6.532
+  730 d   182.676    57.584    39.121    25.740    14.041
+
+GO              0       500      1000      2000      5000
+   30 d       138        27        24        18        13
+   90 d       578       207       140        93        47
+  180 d     1.474       511       317       194       101
+  365 d     3.883     1.164       703       426       197
+  730 d     9.042     2.579     1.557       948       478
+```
+
+### 35.9 Tamanho do envelope e duplicidade por responsável
+
+Envelope `{ schema, evidence, canonical }` serializado, medido nas 1.211.314 obras com PJ (o universo de todos
+os cenários): **p50 2.176 B · p90 2.752 · p95 2.880 · p99 3.584 · máx 32.869 B**. Zero acima de 100 KB.
+Os cinco maiores ficam entre 22 e 33 KB (CNOs com muitas áreas). Persistir candidatos não é problema de volume.
+
+Responsáveis: **259.771 CNPJs distintos** para 1.211.314 obras — média 4,66, mediana 1, p90 9, p99 53,
+máximo 4.193 obras num único CNPJ. Distribuição: 1 obra 138.604 · 2–5 80.409 · 6–20 30.643 · 21–100 9.261 ·
+100+ 854. Quinhentas obras não são quinhentas empresas — e o Lead Engine já lida com isso por `ASSOCIATE_EXISTING`.
+
+### 35.10 Recorrência provada com o fingerprint do LE-1 (fixture, sem persistir)
+
+snapshot igual → skip na fonte · snapshot novo + CNO igual + dado igual → `IDEMPOTENT_NOOP` ·
+snapshot novo + CNO igual + dado alterado (mesmo só na evidência) → `NOVA_OBSERVACAO` · CNO novo → `NOVO_REGISTRO`.
+
+### 35.11 Ferramentas e testes
+
+`scripts/cno.mts`: `ordenacao`, `perfil --arquivo --saida`, `simular --perfil` (relê o JSON sem reprocessar).
+`dados/cno/perfil.json` (48 KB, gitignored) tem só agregados: sem payload, sem nome, sem endereço, sem CNPJ.
+Suítes: `cnoSnapshot` 5 · `cnoDiscoveryPolicy` 14 · `cnoStreamJoin` 12 · `cnoPerfil` 22 = **53 testes**.
+
+### 35.12 O que este gate não fez
+
+Não escolheu política. Não ingeriu. Não criou scheduler. Não tocou PNCP, RFB, Vibe ou notícias. A próxima
+decisão é de negócio: "obras novas/expansões dos últimos X dias, acima de Y m², nestas regiões e destinos" —
+e a matriz do §35.8 diz quantas obras cada escolha traz.

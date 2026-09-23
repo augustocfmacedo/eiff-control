@@ -6,7 +6,10 @@
  *   npx vite-node scripts/cno.mts -- amostra --limite 20
  *   npx vite-node scripts/cno.mts -- amostra --arquivo D:/tmp/cno.zip --limite 20
  *   npx vite-node scripts/cno.mts -- validar --arquivo D:/tmp/cno.zip
- *   npx vite-node scripts/cno.mts -- baixar --destino D:/tmp
+ *   npx vite-node scripts/cno.mts -- baixar --destino dados/cno
+ *   npx vite-node scripts/cno.mts -- ordenacao --arquivo dados/cno/cno.zip
+ *   npx vite-node scripts/cno.mts -- perfil --arquivo dados/cno/cno.zip --saida dados/cno/perfil.json
+ *   npx vite-node scripts/cno.mts -- simular --perfil dados/cno/perfil.json
  *
  * Regras deste leitor:
  *  - host unico permitido (fail closed): nenhuma URL de terceiro, nenhum host vindo por argumento;
@@ -15,7 +18,8 @@
  *  - NAO persiste nada no Radar nem no Supabase. O maximo que produz e observacao canonica na tela;
  *  - CPF nunca e reconstruido e CNPJ sai mascarado.
  */
-import { createWriteStream, createReadStream, statSync, unlinkSync } from 'node:fs';
+import { createWriteStream, createReadStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { createInflateRaw } from 'node:zlib';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -23,8 +27,10 @@ import {
   ARQUIVOS_CNO, CABECALHOS_CNO, ENCODING_CNO, HOST_OFICIAL_CNO, MODO_FONTE_CNO,
   cabecalhoCsvCno, camposCsvCno, conferirCabecalho, dataEventoCno, indicesDe, juntarObservacoesCno,
   lerAreaCno, lerCnaeCno, lerObraCno, lerVinculoCno, pedidoIntakeCno, sinalCno, totaisDeLinha,
-  type ArquivoCno, type CnoObservacao,
+  type ArquivoCno, type CnoObservacao, type LinhaLida,
 } from '../src/core/radar/cnoDadosAbertos';
+import { juntarOrdenadoCno, verificarOrdenacao } from '../src/core/radar/cnoStreamJoin';
+import { PerfilCno, type ResumoPerfil } from '../src/core/radar/cnoPerfil';
 
 // --------------------------------------------------------------------------------------------------- fonte
 /** Links oficiais do conjunto "Cadastro Nacional de Obras - CNO" no dados.gov.br (auditados em 23/09/2026). */
@@ -70,7 +76,7 @@ const faixa = async (url: string, inicio: number, fim: number): Promise<Buffer> 
 };
 
 // ------------------------------------------------------------------------------------------------ zip
-interface MembroZip { nome: string; bruto: number; comprimido: number; offLocal: number; metodo: number }
+interface MembroZip { nome: string; bruto: number; comprimido: number; offLocal: number; metodo: number; modificadoEm?: string }
 
 /** Le so o diretorio central (fim do arquivo). Evita baixar 315 MiB para saber o que ha dentro. */
 async function membrosRemotos(url: string, total: number): Promise<MembroZip[]> {
@@ -102,6 +108,9 @@ function lerDiretorioCentral(cd: Buffer): MembroZip[] {
   let p = 0;
   while (p < cd.length && cd.readUInt32LE(p) === 0x02014b50) {
     const metodo = cd.readUInt16LE(p + 10);
+    const modTime = cd.readUInt16LE(p + 12), modDate = cd.readUInt16LE(p + 14);
+    const modificadoEm = `${((modDate >> 9) & 0x7f) + 1980}-${String((modDate >> 5) & 0x0f).padStart(2, '0')}-${String(modDate & 0x1f).padStart(2, '0')}`;
+    void modTime;
     let comprimido = cd.readUInt32LE(p + 20);
     let bruto = cd.readUInt32LE(p + 24);
     const nLen = cd.readUInt16LE(p + 28), eLen = cd.readUInt16LE(p + 30), cLen = cd.readUInt16LE(p + 32);
@@ -119,7 +128,7 @@ function lerDiretorioCentral(cd: Buffer): MembroZip[] {
       }
       e += 4 + sz;
     }
-    membros.push({ nome, metodo, bruto, comprimido, offLocal });
+    membros.push({ nome, metodo, bruto, comprimido, offLocal, modificadoEm });
     p += 46 + nLen + eLen + cLen;
   }
   return membros;
@@ -336,6 +345,207 @@ async function baixar(destino: string): Promise<void> {
   }
 }
 
+
+// ------------------------------------------------------------------------------------------ LE-3B: snapshot local completo
+/**
+ * Todas as linhas de um membro do ZIP LOCAL, em streaming: stream de disco com start/end -> inflateRaw -> split
+ * por '\n' em latin1 (1 byte = 1 char, entao cortar por byte e seguro). Memoria = um pedaco de cada vez.
+ */
+async function* linhasCompletas(arquivo: string, m: MembroZip): AsyncGenerator<string> {
+  const cab = await lerPedaco(arquivo, m.offLocal, m.offLocal + 29);
+  const ini = inicioDosDados(cab, m.offLocal);
+  const entrada = createReadStream(arquivo, { start: ini, end: ini + m.comprimido - 1, highWaterMark: 1 << 20 });
+  const inflate = createInflateRaw({ chunkSize: 1 << 20 });
+  entrada.pipe(inflate);
+  let resto = '';
+  for await (const pedaco of inflate) {
+    resto += (pedaco as Buffer).toString(ENCODING_CNO);
+    let i = 0;
+    let q: number;
+    while ((q = resto.indexOf('\n', i)) >= 0) {
+      const l = resto.slice(i, q);
+      i = q + 1;
+      if (l.length) yield l.endsWith('\r') ? l.slice(0, -1) : l;
+    }
+    resto = resto.slice(i);
+  }
+  if (resto.trim()) yield resto.endsWith('\r') ? resto.slice(0, -1) : resto;
+}
+
+/** Linhas lidas (bruta + canonica) de um membro; a primeira linha e o cabecalho e e conferida contra o contrato. */
+async function* fluxoLido<T>(arquivo: string, m: MembroZip, ler: (cab: string[], ix: Record<string, number>, campos: string[]) => LinhaLida<T> | undefined, contagem: { linhas: number }): AsyncGenerator<LinhaLida<T>> {
+  let cab: string[] | undefined;
+  let ix: Record<string, number> | undefined;
+  for await (const l of linhasCompletas(arquivo, m)) {
+    if (!cab || !ix) {
+      cab = cabecalhoCsvCno(l);
+      const c = conferirCabecalho(cab, CABECALHOS_CNO[m.nome as ArquivoCno]);
+      if (!c.ok) throw new Error(`${m.nome}: cabecalho divergente do contrato (faltando: ${c.faltando.join(', ') || '—'}; inesperados: ${c.inesperados.join(', ') || '—'})`);
+      ix = indicesDe(cab);
+      continue;
+    }
+    contagem.linhas++;
+    const v = ler(cab, ix, camposCsvCno(l));
+    if (v) yield v;
+  }
+}
+
+const membroDe = (membros: MembroZip[], nome: ArquivoCno): MembroZip => {
+  const m = membros.find((x) => x.nome === nome);
+  if (!m) throw new Error(`membro ausente no ZIP: ${nome}`);
+  return m;
+};
+
+const exigirArquivo = (arquivo?: string): string => {
+  if (!arquivo) throw new Error('informe --arquivo <cno.zip> (baixe uma vez com `baixar --destino <dir>`; nao baixe 315 MiB a cada analise)');
+  if (!existsSync(arquivo)) throw new Error(`arquivo nao encontrado: ${arquivo}`);
+  return arquivo;
+};
+
+async function ordenacao(arquivoOpt?: string): Promise<void> {
+  const arquivo = exigirArquivo(arquivoOpt);
+  const membros = await membrosLocais(arquivo);
+  console.log('arquivo:', arquivo, '\n');
+  let todos = true;
+  const t0 = Date.now();
+  for (const nome of ['cno.csv', 'cno_areas.csv', 'cno_cnaes.csv', 'cno_vinculos.csv'] as const) {
+    const m = membroDe(membros, nome);
+    const contagem = { linhas: 0 };
+    const chaves = (async function* () {
+      for await (const l of linhasCompletas(arquivo, m)) {
+        if (contagem.linhas === 0 && l.startsWith('"CNO"')) { contagem.linhas = 1; continue; }
+        contagem.linhas++;
+        // so a chave: primeira celula, sem aspas (o CNO vem sem aspas no artefato)
+        const fim = l.indexOf(',');
+        yield { cno: fim >= 0 ? l.slice(0, fim) : l };
+      }
+    })();
+    const r = await verificarOrdenacao(chaves, nome);
+    todos &&= r.ordenado;
+    console.log(`  ${nome.padEnd(20)} SORTED_ASC = ${r.ordenado ? 'YES' : 'NO '}   linhas=${(contagem.linhas - 1).toLocaleString('pt-BR')}` + (r.quebra ? `   quebra na linha ${r.quebra.linha}: ${r.quebra.anterior} -> ${r.quebra.atual}` : ''));
+  }
+  console.log(`\nSTREAMING_MERGE_JOIN = ${todos ? 'VIAVEL' : 'BLOCKED'}   (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+  if (!todos) process.exitCode = 1;
+}
+
+async function perfil(arquivoOpt?: string, saida?: string, referenciaOpt?: string): Promise<ResumoPerfil> {
+  const arquivo = exigirArquivo(arquivoOpt);
+  const membros = await membrosLocais(arquivo);
+  const referencia = referenciaOpt ?? membroDe(membros, 'cno.csv').modificadoEm ?? new Date().toISOString().slice(0, 10);
+  console.log('arquivo   :', arquivo);
+  console.log('referencia:', referencia, referenciaOpt ? '(informada)' : '(data do membro cno.csv dentro do ZIP)');
+  console.log('');
+
+  const contagens = { obras: { linhas: 0 }, areas: { linhas: 0 }, cnaes: { linhas: 0 }, vinculos: { linhas: 0 } };
+  const acumulador = new PerfilCno(referencia);
+  const diag: Record<string, number> = {};
+  let observacoes = 0;
+  let rssMax = process.memoryUsage().rss;
+  const t0 = Date.now();
+
+  const eventos = juntarOrdenadoCno({
+    obras: fluxoLido(arquivo, membroDe(membros, 'cno.csv'), lerObraCno, contagens.obras),
+    areas: fluxoLido(arquivo, membroDe(membros, 'cno_areas.csv'), lerAreaCno, contagens.areas),
+    cnaes: fluxoLido(arquivo, membroDe(membros, 'cno_cnaes.csv'), lerCnaeCno, contagens.cnaes),
+    vinculos: fluxoLido(arquivo, membroDe(membros, 'cno_vinculos.csv'), lerVinculoCno, contagens.vinculos),
+  });
+  for await (const ev of eventos) {
+    if (ev.tipo === 'diagnostico') { diag[ev.diagnostico.tipo] = (diag[ev.diagnostico.tipo] ?? 0) + 1; continue; }
+    acumulador.adicionar(ev.observacao);
+    observacoes++;
+    if (observacoes % 100_000 === 0) {
+      const rss = process.memoryUsage().rss;
+      if (rss > rssMax) rssMax = rss;
+      process.stdout.write(`\r  ${observacoes.toLocaleString('pt-BR')} CNOs · ${((Date.now() - t0) / 1000).toFixed(0)} s · RSS ${mib(rss)}      `);
+    }
+  }
+  const segundos = (Date.now() - t0) / 1000;
+  rssMax = Math.max(rssMax, process.memoryUsage().rss);
+  process.stdout.write('\r' + ' '.repeat(80) + '\r');
+
+  const r = acumulador.resumo();
+  const desempenho = {
+    segundos: Math.round(segundos * 10) / 10,
+    cnosPorSegundo: Math.round(observacoes / segundos),
+    rssMaxMiB: Math.round(rssMax / 1024 / 1024),
+    linhas: { obras: contagens.obras.linhas, areas: contagens.areas.linhas, cnaes: contagens.cnaes.linhas, vinculos: contagens.vinculos.linhas },
+    diagnosticos: diag,
+  };
+  imprimirPerfil(r, desempenho);
+
+  if (saida) {
+    mkdirSync(dirname(saida), { recursive: true });
+    writeFileSync(saida, JSON.stringify({ geradoEm: new Date().toISOString(), snapshot: { arquivo, membros: membros.map((m) => ({ nome: m.nome, bruto: m.bruto, modificadoEm: m.modificadoEm })) }, desempenho, perfil: r }, null, 2));
+    console.log('\nresumo agregado salvo em', saida, '(so agregados; sem payload, sem dado pessoal)');
+  }
+  return r;
+}
+
+const n = (v: number) => v.toLocaleString('pt-BR');
+const pctDe = (v: number, total: number) => (total ? `${((100 * v) / total).toFixed(1)}%` : '—');
+const lista = (l: [string, number][], total: number, limite = 12) => l.slice(0, limite).map(([k, v]) => `      ${k.padEnd(34)} ${n(v).padStart(11)}  ${pctDe(v, total).padStart(6)}`).join('\n');
+
+function imprimirPerfil(r: ResumoPerfil, d: { segundos: number; cnosPorSegundo: number; rssMaxMiB: number; linhas: Record<string, number>; diagnosticos: Record<string, number> }): void {
+  console.log('=== UNIVERSO CNO (snapshot completo, somente leitura) ===');
+  console.log(`  total CNOs          ${n(r.total)}`);
+  console.log(`  com PJ              ${n(r.pj)}  (${pctDe(r.pj, r.total)})   sem PJ ${n(r.semPj)}`);
+  console.log(`  com CNPJ valido     ${n(r.cnpjValido)}`);
+  console.log(`  linhas lidas        obras=${n(d.linhas.obras)} areas=${n(d.linhas.areas)} cnaes=${n(d.linhas.cnaes)} vinculos=${n(d.linhas.vinculos)}`);
+  console.log(`  diagnosticos        ${JSON.stringify(d.diagnosticos)}`);
+  console.log(`  desempenho          ${d.segundos} s · ${n(d.cnosPorSegundo)} CNOs/s · RSS max ${d.rssMaxMiB} MiB`);
+  console.log('\n  por situacao\n' + lista(r.porSituacao, r.total));
+  console.log('\n  por UF (top 12)\n' + lista(r.porUf, r.total));
+  console.log('\n  por categoria (obras que tem a categoria)\n' + lista(r.porCategoria, r.total));
+  console.log('\n  por destinacao\n' + lista(r.porDestinacao, r.total));
+  console.log('\n  por tipo construtivo\n' + lista(r.porTipoConstrutivo, r.total));
+  console.log('\n  por qualificacao do responsavel\n' + lista(r.porQualificacao, r.total));
+  console.log('\n  por sinal\n' + lista(r.porSinal, r.total));
+  console.log(`\n  por idade do evento (referencia ${r.referencia})\n` + lista(r.porIdade, r.total));
+  console.log('\n  por area total (m2; outra unidade = sem area)\n' + lista(r.porArea, r.total));
+  console.log('\n  intersecoes (Brasil)\n' + lista(r.intersecoes, r.total, 20));
+  console.log('\n=== GOIAS (relatorio, nao regra) ===');
+  console.log(`  total ${n(r.goias.total)} · PJ ${n(r.goias.pj)} · PJ+sinal ${n(r.goias.sinal)} · PJ+sinal<=365d ${n(r.goias.sinalRecente365)}`);
+  console.log('  por destinacao\n' + lista(r.goias.porDestinacao, r.goias.total));
+  console.log('  por area\n' + lista(r.goias.porArea, r.goias.total));
+  console.log('  top municipios\n' + lista(r.goias.topMunicipios, r.goias.total, 15));
+  imprimirCenarios(r);
+}
+
+function imprimirCenarios(r: ResumoPerfil): void {
+  console.log('\n=== CENARIOS (hipoteses para medir; nenhum e "o correto") ===');
+  for (const c of r.cenarios) {
+    console.log(`  ${c.id} · ${c.nome}`);
+    console.log(`      Brasil ${n(c.total).padStart(9)}   GO ${n(c.go).padStart(7)}   CNO_NEW ${n(c.porSinal.find((x) => x[0] === 'CNO_NEW')?.[1] ?? 0)}   CNO_EXPANSION ${n(c.porSinal.find((x) => x[0] === 'CNO_EXPANSION')?.[1] ?? 0)}   area p50 ${c.area.p50 ?? '—'} m2 · p90 ${c.area.p90 ?? '—'} m2`);
+    console.log(`      top UFs: ${c.porUf.slice(0, 8).map(([u, v]) => `${u} ${n(v)}`).join(' · ')}`);
+  }
+  console.log('\n=== SENSIBILIDADE: PJ + CNPJ valido + sinal · linhas = janela (dias) · colunas = area minima (m2) ===');
+  const cab = '            ' + r.sensibilidade.areas.map((a) => String(a).padStart(9)).join('');
+  for (const [rotulo, matriz] of [['Brasil', r.sensibilidade.brasil], ['GO', r.sensibilidade.go]] as const) {
+    console.log(`  ${rotulo}\n${cab}`);
+    matriz.forEach((linha, i) => console.log(`   ${String(r.sensibilidade.janelas[i]).padStart(5)} d  ` + linha.map((v) => n(v).padStart(9)).join('')));
+  }
+  console.log('\n=== TAMANHO DO ENVELOPE (bytes, so obras com PJ) ===');
+  const p = r.payload;
+  console.log(`  n ${n(p.n)} · p50 ${p.p50} · p90 ${p.p90} · p95 ${p.p95} · p99 ${p.p99} · max ${p.max} · media ${p.media}`);
+  console.log(`  >100 KB: ${p.acima100k} · >500 KB: ${p.acima500k} · >1 MB: ${p.acima1m}`);
+  console.log(`  maiores: ${p.maiores.map((m) => `${m.cno} (${n(m.bytes)} B)`).join(' · ')}`);
+  console.log('\n=== DUPLICIDADE POR CNPJ RESPONSAVEL ===');
+  const q = r.responsaveis;
+  console.log(`  CNPJs unicos ${n(q.cnpjsUnicos)} · obras com CNPJ ${n(q.obrasComCnpj)} · media ${q.mediaObrasPorCnpj} · mediana ${q.medianaObrasPorCnpj} · p90 ${q.p90} · p99 ${q.p99} · max ${q.maximo}`);
+  console.log('  distribuicao: ' + q.distribuicao.map(([k, v]) => `${k} obra(s): ${n(v)}`).join(' · '));
+  console.log('\nPERSISTENCIA = NENHUMA · POLITICA ADOTADA = NENHUMA');
+}
+
+async function simular(perfilJson?: string, arquivoOpt?: string, referenciaOpt?: string): Promise<void> {
+  if (perfilJson) {
+    const salvo = JSON.parse(readFileSync(perfilJson, 'utf8')) as { perfil: ResumoPerfil };
+    console.log('perfil lido de', perfilJson, '(referencia', salvo.perfil.referencia + ')');
+    imprimirCenarios(salvo.perfil);
+    return;
+  }
+  await perfil(arquivoOpt, undefined, referenciaOpt);
+}
+
 // ------------------------------------------------------------------------------------------------ cli
 const argv = process.argv.slice(2).filter((a) => a !== '--');
 const comando = argv[0];
@@ -349,8 +559,11 @@ try {
   else if (comando === 'validar') await validar(opcao('arquivo'));
   else if (comando === 'amostra') await amostra(Number(opcao('limite') ?? 10), opcao('arquivo'));
   else if (comando === 'baixar') await baixar(opcao('destino') ?? '.');
+  else if (comando === 'ordenacao') await ordenacao(opcao('arquivo'));
+  else if (comando === 'perfil') await perfil(opcao('arquivo'), opcao('saida'), opcao('referencia'));
+  else if (comando === 'simular') await simular(opcao('perfil'), opcao('arquivo'), opcao('referencia'));
   else {
-    console.log('uso: npx vite-node scripts/cno.mts -- <probe | validar | amostra | baixar> [--arquivo <cno.zip>] [--limite N] [--destino <dir>]');
+    console.log('uso: npx vite-node scripts/cno.mts -- <probe | validar | amostra | baixar | ordenacao | perfil | simular> [--arquivo <cno.zip>] [--limite N] [--destino <dir>] [--saida <perfil.json>] [--perfil <perfil.json>] [--referencia AAAA-MM-DD]');
     process.exitCode = 1;
   }
 } catch (e) {
