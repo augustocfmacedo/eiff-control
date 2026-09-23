@@ -1,10 +1,13 @@
 // MC-LIVE-2A — a projecao do quadro operacional: agrupar, filtrar, contar e ordenar SEM criar regra de status.
 // Nomes ficticios. Nenhuma rede, nenhum React, nenhuma escrita.
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import QuadroOperacional from '../../screens/MissionControlQuadro';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   COLUNAS_QUADRO, ESCOPOS_QUADRO, FILTRO_VAZIO, ROTULO_FACTORY_VIA_GITHUB, STATUS_DESTAQUE, aplicarFiltroQuadro,
-  ciDoItem, compararItensQuadro, haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, textoBuscavel,
+  SEM_EVIDENCIA_DE_CI, ciDoItem, compararItensQuadro, haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, textoBuscavel,
   workstreamsDisponiveis,
 } from './quadroOperacional';
 import {
@@ -349,5 +352,54 @@ describe('MC-LIVE-2B · CI nao e inferido do estado cru da fonte', () => {
     expect(TELA).toContain('rotulo="PR"');
     expect(TELA).toContain('rotulo="Branch"');
     expect(TELA).toContain('curto(i.links?.pullRequest)'); // PR continua virando #5
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// MC-LIVE-2B (lacuna do smoke): o travessão do CI não pode ser mudo
+// ---------------------------------------------------------------------------------------------
+describe('MC-LIVE-2B · ausência de CI é explicada, não só desenhada', () => {
+  const estadoCom = (i: MissionControlWorkItem) => ({
+    dados: {
+      observadoEm: AGORA,
+      build: { sha: null, origem: null },
+      fontes: { github: { fonte: 'GITHUB' as const, disponivel: true, stale: false, observadoEm: AGORA, chamadas: 7, maxChamadasPorCiclo: 7 } },
+      repositorios: [],
+      workItems: [i],
+      contagens: Object.fromEntries(MC_STATUS.map((s) => [s, 0])) as Record<McStatus, number>,
+      factory: { procedencia: 'GITHUB_PROJECTION' as const, aviso: 'projeção', repositorio: 'x/y', contagens: Object.fromEntries(MC_STATUS.map((s) => [s, 0])) as Record<McStatus, number> },
+      limiteStaleSegundos: 180,
+    },
+    recebidoEm: AGORA, carregando: false, erro: null, falhasSeguidas: 0, recarregar: () => {},
+  });
+
+  const htmlDoCartao = (i: MissionControlWorkItem) =>
+    renderToStaticMarkup(React.createElement(QuadroOperacional, { estado: estadoCom(i) as never }));
+
+  it('a frase da ausência mora no core, não no JSX', () => {
+    expect(SEM_EVIDENCIA_DE_CI).toBe('Sem evidência de CI correlacionada a este item.');
+    expect(TELA).toContain('semValor={SEM_EVIDENCIA_DE_CI}');
+    expect(TELA).not.toContain("'Sem evidência de CI"); // a frase não é escrita inline na tela
+  });
+
+  it('o cartão renderiza CI com travessão E a explicação acessível', () => {
+    const html = htmlDoCartao(item({ source: 'GITHUB', sourceId: '5', status: 'EM_VALIDACAO', statusOrigem: 'pr:draft' }));
+    expect(html).toContain('Sem evidência de CI correlacionada a este item.');
+    // o elo do CI é exatamente: rótulo, travessão com title e aria-label — nunca um valor inventado
+    expect(html).toMatch(/CI<\/span><span class="muted" title="Sem evidência de CI correlacionada a este item\." aria-label="CI: Sem evidência de CI correlacionada a este item\.">—<\/span>/);
+  });
+
+  it('pr:draft continua visível como estado CRU, mas nunca dentro do elo do CI', () => {
+    const html = htmlDoCartao(item({ source: 'GITHUB', sourceId: '5', status: 'EM_VALIDACAO', statusOrigem: 'pr:draft' }));
+    expect(html).toContain('pr:draft');                                   // o fato bruto não some
+    const eloCi = html.slice(html.indexOf('>CI<'));
+    expect(eloCi.slice(0, 220)).not.toContain('pr:draft');                // mas não é CI
+  });
+
+  it('os outros elos não mudaram: ausência sem explicação continua um travessão mudo', () => {
+    const html = htmlDoCartao(item({ source: 'FACTORY', sourceId: 'DF-0900', status: 'EXECUTANDO', statusOrigem: 'CODING' }));
+    // Branch sem valor: travessão simples, sem title — a prop nova é opcional e só o CI a usa
+    expect(html).toContain('Branch</span><span class="muted">—</span>');
+    expect(html).toContain('Sem evidência de CI correlacionada a este item.');
   });
 });

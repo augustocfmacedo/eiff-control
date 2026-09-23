@@ -72,6 +72,20 @@ const htmlPanorama = () => renderToStaticMarkup(React.createElement(ComercialPan
 // ---------------------------------------------------------------------------------------------------------------------
 // A. Responsividade
 // ---------------------------------------------------------------------------------------------------------------------
+// ESCOPO DAS VARREDURAS DE CSS (delimitado na MC-LIVE-2A):
+//
+// Estas asserções liam o styles.css de um marcador ATÉ O FIM DO ARQUIVO. Enquanto o bloco da UX-6 era o
+// último do arquivo isso funcionava por acidente de posição — qualquer bloco novo escrito depois passava a
+// cair dentro da janela varrida e podia reprovar um teste que não fala sobre ele. Foi o que aconteceu quando
+// o quadro operacional acrescentou `.mcq-colunas { … overflow-x: auto; }`: o CSS estava certo, e mesmo assim
+// a guarda da UX-6 acusava carousel no Pipeline.
+//
+// Agora cada varredura termina no marcador `/* fim do bloco UX-6 */` de styles.css. O objetivo é limitar a
+// asserção AO BLOCO DA UX-6, que é o que estes testes prometem proteger.
+//
+// Consequência a ter em mente: CSS escrito depois do marcador NÃO é coberto por estas guardas — nem
+// interfere nelas. Bloco novo que precise de proteção equivalente traz a própria guarda, no próprio teste.
+// A regra da UX-6 não mudou: o que mudou foi onde ela para de olhar.
 describe('UX-6 — responsividade', () => {
   it('o Modo Foco usa classe (que media query alcança), não grid inline de largura fixa', () => {
     expect(CODIGO_FOCO).toContain('className="foco-trabalho"');
