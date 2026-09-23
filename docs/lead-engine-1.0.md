@@ -1,9 +1,11 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
 Estado: **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
-(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E (UI) não iniciado.**
+(fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
-Branch: `feature/lead-engine-1` · baseline do LE-0: `main @ 88c9ccc` · baseline do LE-1: `98636bd`.
+Branch ATUAL da linha: `feature/lead-engine-2`, baseada em `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
+por cherry-pick (a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree; o módulo órfão está
+preservado em `rescue/lead-engine-2-orphan`). Baseline histórico do LE-0: `main @ 88c9ccc`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
 `docs/commercial-machine-cm2.md`; o Radar, em `docs/radar.md`.
 
@@ -971,3 +973,55 @@ há `useEffect`, timer, cron nem hook de startup. A porta existe; quem a chama �
 - **UI ainda não ligada** — Command Center, Hoje, Panorama, Modo Foco, Pipeline e Entrada intocados (LE2-E).
 - **Persistência não tocada neste gate** — `radar.supabase.ts` e a migration 0055 seguem como o LE2-A os deixou.
 - **Migration 0055 ainda não aplicada remotamente.**
+
+---
+
+## 31. LE2-E — a aba Candidatos no Command Center
+
+`src/screens/radar/LeadEngineCandidatos.tsx`, montada no Command Center como aba própria `candidatos`,
+rotulada **Candidatos (N)** com `N = filaDeRevisao(r).length`.
+
+### 31.1 A fila do CSV continua separada
+
+A aba **Fila de revisão** (linhas de importação CSV com empresa ambígua) **não foi tocada**: continua com a
+mesma semântica e com o mesmo contador `res.revisoesPendentes`. São três filas de revisão distintas no Radar —
+importação CSV, duplicatas e candidatos do Lead Engine — e nenhuma foi fundida.
+
+### 31.2 A tela não é autoridade
+
+Ela **projeta** `filaDeRevisao` / `descobertasSuprimidas` e **coleta intenção**, enviando pela porta única
+`actions.processarCandidatoLeadEngine`. Nenhuma regra foi reimplementada: match, identidade forte, supressão,
+fingerprint, observação desatualizada, transições e as regras de CREATE/ASSOCIATE continuam no core e são
+revalidadas a cada clique. A tela **nunca recalcula o fingerprint** — devolve o `payloadFingerprint` que veio no
+próprio item — e nunca manda payload bruto.
+
+Os componentes são **puros** (sem hooks): a escolha de empresa por candidato vive no Command Center. Isso os
+torna testáveis pelo walker de árvore React sem DOM, que é o padrão da Commercial UX.
+
+### 31.3 Quatro decisões, e uma exceção
+
+Associar (com a empresa sugerida pelo match pré-selecionada), Criar empresa, Manter em revisão e Rejeitar
+(motivo obrigatório; motivo vazio não chama a action). Nenhuma decisão é automática a partir do nível do match.
+
+Suprimidos ficam numa **seção separada e auditável** — "Descobertas suprimidas" — com uma única ação,
+**Encerrar descoberta** (`TERMINALIZAR_SUPRIMIDO`). Não há Associar, Criar nem Manter em revisão ali, e a gestão
+das supressões continua sendo da aba **Não contatar**.
+
+### 31.4 Recusa vira frase, não código
+
+`RegraLeadEngineError.motivos` é traduzido por `TEXTO_RECUSA_LEAD_ENGINE` numa frase que diz o que fazer
+("Já existe uma empresa compatível. Associe o candidato à empresa existente."). Código sem tradução cai numa
+mensagem segura com o código em detalhe. A tela **nunca** tenta outra ação a partir do erro.
+
+Nota de implementação: o helper `tentar` do repositório entrega só `e.message` ao `onErro`, o que perderia os
+`motivos` tipados que o LE2-C criou justamente para evitar parsing de texto. Por isso esta tela usa um
+`executar` local com try/catch — o feedback continua indo para o mesmo `toast`.
+
+### 31.5 Fronteiras
+
+Sem score, prioridade, Commercial Queue ou cadência: back-office de entrada, não fila de vendas. Sem descoberta
+real (não existe botão "Buscar CNO" — isso é o LE-3). Sem efeito externo. Sem cópia paralela da fila em estado
+local: depois do commit, o `useStore` rerenderiza com o novo estado.
+
+Core (`leadEngineReview.ts`), store (`store.ts`), persistência (`radar.supabase.ts`) e a migration 0055 ficaram
+**intocados** neste gate. A migration 0055 continua **não aplicada remotamente**.
