@@ -19,7 +19,7 @@
  *  - NAO persiste nada no Radar nem no Supabase. O maximo que produz e observacao canonica na tela;
  *  - CPF nunca e reconstruido e CNPJ sai mascarado.
  */
-import { createWriteStream, createReadStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createWriteStream, createReadStream, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createInflateRaw } from 'node:zlib';
 import { Readable } from 'node:stream';
@@ -28,10 +28,11 @@ import {
   ARQUIVOS_CNO, CABECALHOS_CNO, ENCODING_CNO, HOST_OFICIAL_CNO, MODO_FONTE_CNO,
   cabecalhoCsvCno, camposCsvCno, conferirCabecalho, dataEventoCno, indicesDe, juntarObservacoesCno,
   lerAreaCno, lerCnaeCno, lerObraCno, lerVinculoCno, pedidoIntakeCno, sinalCno, totaisDeLinha,
-  type ArquivoCno, type CnoObservacao, type LinhaLida,
+  type ArquivoCno, type CnoObservacao,
 } from '../src/core/radar/cnoDadosAbertos';
 import { juntarOrdenadoCno, verificarOrdenacao } from '../src/core/radar/cnoStreamJoin';
 import { PerfilCno, faixaArea, faixaIdade, type ResumoPerfil } from '../src/core/radar/cnoPerfil';
+import { exigirArquivo, fluxoLido, inicioDosDados, lerDiretorioCentral, lerPedaco, membroDe, membrosLocais, type MembroZip } from './lib/cnoZip.mts';
 import { diasEntre } from '../src/core/radar/cnoDiscoveryPolicy';
 import { CNO_PILOT_POLICY_V1, CNO_PILOT_POLICY_VERSION, avaliarPiloto, manifestosIguais, metricasLote, montarManifest, politicaPiloto, simularCap, type EntradaManifest, type ManifestPiloto } from '../src/core/radar/cnoPilot';
 
@@ -79,7 +80,6 @@ const faixa = async (url: string, inicio: number, fim: number): Promise<Buffer> 
 };
 
 // ------------------------------------------------------------------------------------------------ zip
-interface MembroZip { nome: string; bruto: number; comprimido: number; offLocal: number; metodo: number; modificadoEm?: string }
 
 /** Le so o diretorio central (fim do arquivo). Evita baixar 315 MiB para saber o que ha dentro. */
 async function membrosRemotos(url: string, total: number): Promise<MembroZip[]> {
@@ -105,62 +105,6 @@ async function membrosRemotos(url: string, total: number): Promise<MembroZip[]> 
   const cd = offsetCd >= base ? cauda.subarray(offsetCd - base, offsetCd - base + tamanhoCd) : await faixa(url, offsetCd, offsetCd + tamanhoCd - 1);
   return lerDiretorioCentral(cd);
 }
-
-function lerDiretorioCentral(cd: Buffer): MembroZip[] {
-  const membros: MembroZip[] = [];
-  let p = 0;
-  while (p < cd.length && cd.readUInt32LE(p) === 0x02014b50) {
-    const metodo = cd.readUInt16LE(p + 10);
-    const modTime = cd.readUInt16LE(p + 12), modDate = cd.readUInt16LE(p + 14);
-    const modificadoEm = `${((modDate >> 9) & 0x7f) + 1980}-${String((modDate >> 5) & 0x0f).padStart(2, '0')}-${String(modDate & 0x1f).padStart(2, '0')}`;
-    void modTime;
-    let comprimido = cd.readUInt32LE(p + 20);
-    let bruto = cd.readUInt32LE(p + 24);
-    const nLen = cd.readUInt16LE(p + 28), eLen = cd.readUInt16LE(p + 30), cLen = cd.readUInt16LE(p + 32);
-    let offLocal = cd.readUInt32LE(p + 42);
-    const nome = cd.toString('utf8', p + 46, p + 46 + nLen);
-    let e = p + 46 + nLen;
-    const fimExtra = e + eLen;
-    while (e + 4 <= fimExtra) {
-      const id = cd.readUInt16LE(e), sz = cd.readUInt16LE(e + 2);
-      let q = e + 4;
-      if (id === 0x0001) {
-        if (bruto === 0xffffffff) { bruto = Number(cd.readBigUInt64LE(q)); q += 8; }
-        if (comprimido === 0xffffffff) { comprimido = Number(cd.readBigUInt64LE(q)); q += 8; }
-        if (offLocal === 0xffffffff) { offLocal = Number(cd.readBigUInt64LE(q)); q += 8; }
-      }
-      e += 4 + sz;
-    }
-    membros.push({ nome, metodo, bruto, comprimido, offLocal, modificadoEm });
-    p += 46 + nLen + eLen + cLen;
-  }
-  return membros;
-}
-
-async function membrosLocais(caminho: string): Promise<MembroZip[]> {
-  const total = statSync(caminho).size;
-  const JANELA = Math.min(96 * 1024, total);
-  const cauda = await lerPedaco(caminho, total - JANELA, total - 1);
-  let eocd = -1;
-  for (let i = cauda.length - 22; i >= 0; i--) if (cauda.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
-  if (eocd < 0) throw new Error('EOCD do ZIP nao encontrado');
-  const tamanhoCd = cauda.readUInt32LE(eocd + 12);
-  const offsetCd = cauda.readUInt32LE(eocd + 16);
-  return lerDiretorioCentral(await lerPedaco(caminho, offsetCd, offsetCd + tamanhoCd - 1));
-}
-
-/** Leitura por faixa no disco: stream com start/end, nunca readFile do arquivo inteiro. */
-function lerPedaco(caminho: string, inicio: number, fim: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const partes: Buffer[] = [];
-    createReadStream(caminho, { start: inicio, end: fim })
-      .on('data', (d) => partes.push(d as Buffer))
-      .on('end', () => resolve(Buffer.concat(partes)))
-      .on('error', reject);
-  });
-}
-
-const inicioDosDados = (cab: Buffer, off: number) => off + 30 + cab.readUInt16LE(26) + cab.readUInt16LE(28);
 
 /**
  * Entrega as linhas de um membro do ZIP, uma a uma, decodificando em latin1. Para com `limite` linhas — e por
@@ -348,62 +292,7 @@ async function baixar(destino: string): Promise<void> {
   }
 }
 
-
 // ------------------------------------------------------------------------------------------ LE-3B: snapshot local completo
-/**
- * Todas as linhas de um membro do ZIP LOCAL, em streaming: stream de disco com start/end -> inflateRaw -> split
- * por '\n' em latin1 (1 byte = 1 char, entao cortar por byte e seguro). Memoria = um pedaco de cada vez.
- */
-async function* linhasCompletas(arquivo: string, m: MembroZip): AsyncGenerator<string> {
-  const cab = await lerPedaco(arquivo, m.offLocal, m.offLocal + 29);
-  const ini = inicioDosDados(cab, m.offLocal);
-  const entrada = createReadStream(arquivo, { start: ini, end: ini + m.comprimido - 1, highWaterMark: 1 << 20 });
-  const inflate = createInflateRaw({ chunkSize: 1 << 20 });
-  entrada.pipe(inflate);
-  let resto = '';
-  for await (const pedaco of inflate) {
-    resto += (pedaco as Buffer).toString(ENCODING_CNO);
-    let i = 0;
-    let q: number;
-    while ((q = resto.indexOf('\n', i)) >= 0) {
-      const l = resto.slice(i, q);
-      i = q + 1;
-      if (l.length) yield l.endsWith('\r') ? l.slice(0, -1) : l;
-    }
-    resto = resto.slice(i);
-  }
-  if (resto.trim()) yield resto.endsWith('\r') ? resto.slice(0, -1) : resto;
-}
-
-/** Linhas lidas (bruta + canonica) de um membro; a primeira linha e o cabecalho e e conferida contra o contrato. */
-async function* fluxoLido<T>(arquivo: string, m: MembroZip, ler: (cab: string[], ix: Record<string, number>, campos: string[]) => LinhaLida<T> | undefined, contagem: { linhas: number }): AsyncGenerator<LinhaLida<T>> {
-  let cab: string[] | undefined;
-  let ix: Record<string, number> | undefined;
-  for await (const l of linhasCompletas(arquivo, m)) {
-    if (!cab || !ix) {
-      cab = cabecalhoCsvCno(l);
-      const c = conferirCabecalho(cab, CABECALHOS_CNO[m.nome as ArquivoCno]);
-      if (!c.ok) throw new Error(`${m.nome}: cabecalho divergente do contrato (faltando: ${c.faltando.join(', ') || '—'}; inesperados: ${c.inesperados.join(', ') || '—'})`);
-      ix = indicesDe(cab);
-      continue;
-    }
-    contagem.linhas++;
-    const v = ler(cab, ix, camposCsvCno(l));
-    if (v) yield v;
-  }
-}
-
-const membroDe = (membros: MembroZip[], nome: ArquivoCno): MembroZip => {
-  const m = membros.find((x) => x.nome === nome);
-  if (!m) throw new Error(`membro ausente no ZIP: ${nome}`);
-  return m;
-};
-
-const exigirArquivo = (arquivo?: string): string => {
-  if (!arquivo) throw new Error('informe --arquivo <cno.zip> (baixe uma vez com `baixar --destino <dir>`; nao baixe 315 MiB a cada analise)');
-  if (!existsSync(arquivo)) throw new Error(`arquivo nao encontrado: ${arquivo}`);
-  return arquivo;
-};
 
 async function ordenacao(arquivoOpt?: string): Promise<void> {
   const arquivo = exigirArquivo(arquivoOpt);
@@ -548,7 +437,6 @@ async function simular(perfilJson?: string, arquivoOpt?: string, referenciaOpt?:
   }
   await perfil(arquivoOpt, undefined, referenciaOpt);
 }
-
 
 // ------------------------------------------------------------------------------------------ LE-3C: dry-run do piloto
 interface DryRun { manifest: ManifestPiloto; recusas: Record<string, number>; elegiveis: EntradaManifest[]; dist: Record<string, [string, number][]>; segundos: number }

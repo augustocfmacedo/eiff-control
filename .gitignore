@@ -24,3 +24,6 @@ cno.zip.parcial
 cno*.csv
 cno-metadados.pdf
 dados/cno/
+
+# SQL de rehearsal/carga gerado pelos runners de producao (contem payloads reais). Nunca versionar.
+scratch/

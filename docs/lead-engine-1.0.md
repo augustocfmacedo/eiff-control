@@ -1,6 +1,6 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34), **LE3-B fechado** (perfil do universo, §35) e **LE3-C fechado** (política piloto V1 congelada e lote de 50 em dry-run, §36; zero ingestão). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34), **LE3-B fechado** (perfil do universo, §35) , **LE3-C fechado** (política piloto V1 e lote de 50, §36) e **LE3-D fechado** (fronteira de intake PENDING e rehearsal read-only dos 50 contra a produção, §37; nenhuma escrita realizada). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
@@ -1593,3 +1593,99 @@ Duas execuções sobre o mesmo snapshot: mesmo total (115), mesmos 50 CNOs, mesm
 
 Não ingeriu. Não criou candidato, empresa, projeto, sinal, oportunidade, tarefa, atividade ou comunicação.
 Não adotou cap. Não tornou a política definitiva. Termina com um arquivo local e números.
+
+---
+
+## 37. LE3-D — fronteira governada de intake e rehearsal contra a produção
+
+Gate de 23/09/2026, `feature/lead-engine-3`, sobre a `main` rebaselineada (`aaadac4`, merge limpo de
+`d063194`; os três commits vindos da `main` são do MC-LIVE e não tocam o Lead Engine). Constrói a porta que
+transforma uma observação CNO válida em `RegistroFonte` **PENDING** e ensaia os 50 do manifest contra o estado
+**real** de produção, somente leitura. **Nenhuma escrita em produção foi realizada.**
+
+### 37.1 O fluxo, e onde esta fronteira termina
+
+```
+CNO → PedidoIntake → validarIntake → classificarIntake → registroDeIntake → RegistroFonte PENDING
+    → filaDeRevisao → revisão humana → processarCandidatoLeadEngine → ASSOCIATE / CREATE / KEEP / REJECT
+```
+
+A fronteira do LE3-D termina em **`RegistroFonte PENDING`, `entidadeId` ausente**. Ela não promove.
+Confirmado no código e preso por teste: `processarCandidatoLeadEngine` é porta de **decisão** de candidato já
+existente (chama `aplicarDecisao` sobre `cmd.pedido`); `ingerirRegistrosRadar` normaliza pelo adapter e cria
+Empresa/Projeto/Sinal **diretamente**, pulando a revisão — e por isso é **proibida** neste fluxo. O CNO
+operacional cria candidato, nunca conta. O store não participa da descoberta.
+
+### 37.2 Core: `leadEngineBatchIntake.ts`
+
+Puro. `planejarBatchIntake(pedidos, existentes, novoId)` reutiliza `validarIntake`, `discoveryRecords`,
+`classificarIntake` e `registroDeIntake` do LE-1 — sem segundo fingerprint, sem segunda idempotência — e
+devolve `PlanoBatchIntake { entradas, novos, novasObservacoes, noops, invalidos, registros }`:
+
+- `NOVO_REGISTRO` → `RegistroFonte` novo, `PENDING`, sem entidade;
+- `NOVA_OBSERVACAO` → registro novo **ao lado** da anterior (que fica intacta), com `observacaoAnteriorId`;
+- `IDEMPOTENT_NOOP` → nada;
+- `INVALIDO` → diagnóstico com os motivos do LE-1, nada inventado.
+
+O lote também se vê a si mesmo: dois pedidos idênticos no mesmo lote dão um registro e um NOOP. `novoId` é
+injetado e o ID nunca deriva do CNO; `recebidoEm` não integra a identidade nem o fingerprint.
+`aplicarPlanoEmMemoria` anexa os registros a um `RadarDataset` sem tocar em nada anterior. `resolverFonteCno`
+exige **exatamente uma** fonte `CNO` **ativa** vinda do banco — nunca ID hardcoded. `conferirManifest` compara
+CNOs, fingerprints recalculados e política reavaliada; qualquer divergência bloqueia o lote inteiro.
+`modoExecucao` é o hard gate: sem `--executar` → SIMULACAO; `--executar` sem `--confirmar CNO_PILOT_V1` →
+RECUSADO (não cai em simulação silenciosa); `--confirmar` sozinho → SIMULACAO; só as duas juntas → ESCRITA.
+
+### 37.3 Runner: `scripts/cno-intake-producao.mts`
+
+Segue `radar-importar-producao.mts`: `--perfil <uuid>` → `profile` (ativo) → `organization_id` → papel em
+`PAPEIS_RADAR`; fonte CNO resolvida em `radar_source` da organização. **O manifest não é payload**: o runner
+reabre `dados/cno/cno.zip`, refaz o streaming join, reconstrói as 50 `CnoObservacao` completas, gera
+`pedidoIntakeCno` com o `fonteId` real, recalcula o fingerprint e reavalia `CNO_PILOT_POLICY_V1`. Lê
+`radar_source_record` da organização/fonte para os 50 `external_id`, planeja com o core, roda a segunda
+simulação e a simulação com uma observação alterada, conta `filaDeRevisao` e grava o SQL em
+`scratch/cno-pilot-intake.sql` (gitignored). O SQL é `begin; set_config(sub); 50 × insert into
+radar_source_record; commit;` — o próprio runner varre o script e bloqueia se qualquer outra tabela ou verbo
+aparecer, ou se houver `ON CONFLICT`. A escrita só é alcançável no modo ESCRITA e **não foi usada**.
+
+Os helpers de ZIP/streaming saíram de `cno.mts` para `scripts/lib/cnoZip.mts`, compartilhados pelos dois
+scripts — nada foi reimplementado.
+
+### 37.4 Rehearsal contra a produção (READ-ONLY, 23/09/2026)
+
+Perfil resolvido por consulta somente-leitura pelo e-mail: uma correspondência, `Administrador`, ativo,
+organização EIFF. Fonte CNO da organização: exatamente uma, ativa (`7c2665b5-…`). Zero registros CNO
+pré-existentes.
+
+```
+MANIFEST_ENTRIES    50
+SNAPSHOT_MATCH      50/50      (50 observações reconstruídas em 135 s, 3.604.156 obras lidas)
+FINGERPRINT_MATCH   50/50
+POLICY_MATCH        50/50
+
+NOVO_REGISTRO       50        NOVA_OBSERVACAO 0        IDEMPOTENT_NOOP 0        INVALIDO 0
+WOULD_INSERT        50
+
+segunda simulação (plano aplicado em memória)      NOVO 0 · NOVA_OBS 0 · NOOP 50
+uma observação alterada (Situação da 1ª)           NOVO 0 · NOVA_OBS 1 · NOOP 49
+filaDeRevisao com o plano aplicado                 50 candidatos PENDING
+
+WOULD_CREATE_EMPRESA / PROJETO / SINAL / OPORTUNIDADE / TAREFA / ATIVIDADE / COMUNICACAO = 0
+```
+
+SQL gerado: 52 linhas, 50 `insert into radar_source_record`, nenhuma outra tabela, nenhum `ON CONFLICT`,
+`intake_status = 'PENDING'` e `entity_id = NULL` nos 50. **Não executado.**
+
+### 37.5 Testes
+
+`leadEngineBatchIntake.test.ts`: 29 testes — NOVO/NOVA_OBSERVACAO/NOOP/INVALIDO, PENDING sem entidade,
+envelope completo com evidence e canonical, fingerprint do LE-1, fonte e `record_type = projeto`, 50 → 50
+novos → 50 NOOP → 1 alteração = 1 nova observação com a anterior intacta, manifest (ausente, fingerprint
+divergente, política divergente), fonte (ausente, duplicada, inativa), zero entidade comercial, `filaDeRevisao`,
+hard gate nos quatro estados, e guardas estruturais: `ingerirRegistrosRadar` e `processarCandidatoLeadEngine`
+nunca aparecem no core nem no runner, e o runner só emite INSERT em `radar_source_record`.
+
+### 37.6 O que este gate não fez
+
+Não gravou os 50. Não criou empresa, projeto, sinal, oportunidade, tarefa, atividade ou comunicação. Não
+alterou o store. Não abriu PR, não mesclou, não deployou. Não iniciou LE3-E, PNCP, scheduler ou outra fonte.
+A ingestão real dos 50 — `--executar --confirmar CNO_PILOT_V1` — é decisão sua, em gate próprio.
