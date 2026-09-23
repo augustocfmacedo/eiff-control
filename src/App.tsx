@@ -14,6 +14,7 @@ import { Tour, tourVisto } from './ui/Tour';
 import { Sugestoes } from './ui/Sugestoes';
 import { registrarAcao, registrarVisita } from './data/telemetria';
 import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
+import { entradaDoApp } from './screens/piloto/financeiroCompactoModel';
 // telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
 const Auditoria = lazy(() => import('./screens/Auditoria'));
@@ -46,6 +47,8 @@ const RadarEmpresa = lazy(() => import('./screens/radar/Empresa'));
 const Fluxo13 = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.Fluxo13 })));
 const Fluxo24 = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.Fluxo24 })));
 const PosicaoDiaria = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.PosicaoDiaria })));
+// UX-P02: piloto experimental somente leitura em #/piloto/financeiro (sem sidebar, paleta, tour ou permissao nova)
+const FinanceiroCompacto = lazy(() => import('./screens/piloto/FinanceiroCompacto'));
 
 export default function App() {
   const rota = useRota();
@@ -165,6 +168,8 @@ export default function App() {
     case 'equipe': tela = <Equipe aba0={p1} key={p1} />; break;
     case 'apontamentos': tela = <ApontamentoTela id={p1 ?? 'novo'} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
     case 'campo': tela = <Campo secao={p1} query={rota.query} key={p1} />; break;
+    // UX-P02: o piloto recebe o Dataset/usuario/sync ja carregados (passagem explicita, somente leitura); nada e buscado por ele
+    case 'piloto': tela = p1 === 'financeiro' ? <FinanceiroCompacto entrada={entradaDoApp({ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacional' ? 'operacional' : 'executivo'} /> : <div className="empty">Página não encontrada.</div>; break;
     default: tela = <div className="empty">Página não encontrada.</div>;
   }
 
