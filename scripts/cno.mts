@@ -10,6 +10,7 @@
  *   npx vite-node scripts/cno.mts -- ordenacao --arquivo dados/cno/cno.zip
  *   npx vite-node scripts/cno.mts -- perfil --arquivo dados/cno/cno.zip --saida dados/cno/perfil.json
  *   npx vite-node scripts/cno.mts -- simular --perfil dados/cno/perfil.json
+ *   npx vite-node scripts/cno.mts -- piloto --arquivo dados/cno/cno.zip --data 2026-09-23 --limite 50
  *
  * Regras deste leitor:
  *  - host unico permitido (fail closed): nenhuma URL de terceiro, nenhum host vindo por argumento;
@@ -30,7 +31,9 @@ import {
   type ArquivoCno, type CnoObservacao, type LinhaLida,
 } from '../src/core/radar/cnoDadosAbertos';
 import { juntarOrdenadoCno, verificarOrdenacao } from '../src/core/radar/cnoStreamJoin';
-import { PerfilCno, type ResumoPerfil } from '../src/core/radar/cnoPerfil';
+import { PerfilCno, faixaArea, faixaIdade, type ResumoPerfil } from '../src/core/radar/cnoPerfil';
+import { diasEntre } from '../src/core/radar/cnoDiscoveryPolicy';
+import { CNO_PILOT_POLICY_V1, CNO_PILOT_POLICY_VERSION, avaliarPiloto, manifestosIguais, metricasLote, montarManifest, politicaPiloto, simularCap, type EntradaManifest, type ManifestPiloto } from '../src/core/radar/cnoPilot';
 
 // --------------------------------------------------------------------------------------------------- fonte
 /** Links oficiais do conjunto "Cadastro Nacional de Obras - CNO" no dados.gov.br (auditados em 23/09/2026). */
@@ -546,6 +549,120 @@ async function simular(perfilJson?: string, arquivoOpt?: string, referenciaOpt?:
   await perfil(arquivoOpt, undefined, referenciaOpt);
 }
 
+
+// ------------------------------------------------------------------------------------------ LE-3C: dry-run do piloto
+interface DryRun { manifest: ManifestPiloto; recusas: Record<string, number>; elegiveis: EntradaManifest[]; dist: Record<string, [string, number][]>; segundos: number }
+
+async function dryRunPiloto(arquivo: string, dataReferencia: string, limite: number, snapshot: ManifestPiloto['snapshot']): Promise<DryRun> {
+  const membros = await membrosLocais(arquivo);
+  const politica = politicaPiloto(dataReferencia);
+  const contagens = { obras: { linhas: 0 }, areas: { linhas: 0 }, cnaes: { linhas: 0 }, vinculos: { linhas: 0 } };
+  const recusas: Record<string, number> = {};
+  const elegiveis: EntradaManifest[] = [];
+  const dist = { sinal: {} as Record<string, number>, destinacao: {} as Record<string, number>, municipio: {} as Record<string, number>, area: {} as Record<string, number>, qualificacao: {} as Record<string, number>, idade: {} as Record<string, number> };
+  const mais = (c: Record<string, number>, k: string) => { c[k] = (c[k] ?? 0) + 1; };
+  let analisado = 0;
+  const t0 = Date.now();
+
+  const eventos = juntarOrdenadoCno({
+    obras: fluxoLido(arquivo, membroDe(membros, 'cno.csv'), lerObraCno, contagens.obras),
+    areas: fluxoLido(arquivo, membroDe(membros, 'cno_areas.csv'), lerAreaCno, contagens.areas),
+    cnaes: fluxoLido(arquivo, membroDe(membros, 'cno_cnaes.csv'), lerCnaeCno, contagens.cnaes),
+    vinculos: fluxoLido(arquivo, membroDe(membros, 'cno_vinculos.csv'), lerVinculoCno, contagens.vinculos),
+  });
+  for await (const ev of eventos) {
+    if (ev.tipo !== 'observacao') continue;
+    analisado++;
+    const { resultado, entrada } = avaliarPiloto(ev.observacao, politica);
+    if (!entrada) { for (const m of resultado.motivosRecusa) mais(recusas, m); continue; }
+    elegiveis.push(entrada);
+    mais(dist.sinal, entrada.tipoSinal);
+    for (const d of entrada.destinacoes.length ? entrada.destinacoes : ['—']) mais(dist.destinacao, d);
+    mais(dist.municipio, entrada.municipio ?? '—');
+    mais(dist.area, faixaArea(entrada.areaTotal));
+    mais(dist.qualificacao, entrada.qualificacaoResponsavelNome ?? entrada.qualificacaoResponsavel ?? '—');
+    mais(dist.idade, faixaIdade(diasEntre(entrada.eventoEm, dataReferencia)));
+  }
+  const ordenar = (c: Record<string, number>): [string, number][] => Object.entries(c).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  const manifest = montarManifest({ dataReferencia, snapshot, totalAnalisado: analisado, elegiveis, limite });
+  return { manifest, recusas, elegiveis, dist: Object.fromEntries(Object.entries(dist).map(([k, v]) => [k, ordenar(v)])), segundos: (Date.now() - t0) / 1000 };
+}
+
+/** Descritor do snapshot para AUDITORIA do lote: tamanho local + (se a rede permitir) ETag/Last-Modified oficiais. */
+async function descritorDoSnapshot(arquivo: string): Promise<ManifestPiloto['snapshot']> {
+  const contentLength = statSync(arquivo).size;
+  try {
+    const r = await buscar(URL_DADOS, {}, 'HEAD');
+    const remoto = Number(r.headers.get('content-length'));
+    return { arquivo, contentLength, etag: r.headers.get('etag') ?? undefined, lastModified: r.headers.get('last-modified') ?? undefined, ...(remoto !== contentLength ? { aviso: `tamanho local difere do remoto (${remoto})` } : {}) } as ManifestPiloto['snapshot'];
+  } catch {
+    return { arquivo, contentLength };
+  }
+}
+
+async function piloto(arquivoOpt?: string, dataReferencia?: string, limiteOpt?: string, saida = 'dados/cno/pilot-manifest-v1.json'): Promise<void> {
+  const arquivo = exigirArquivo(arquivoOpt);
+  if (!dataReferencia) throw new Error('informe --data AAAA-MM-DD: a data de referencia e explicita, nunca o relogio');
+  const limite = Number(limiteOpt ?? 50);
+  const snapshot = await descritorDoSnapshot(arquivo);
+  const politica = politicaPiloto(dataReferencia);
+
+  console.log('=== LE-3C · DRY-RUN DA POLITICA PILOTO (nada e persistido) ===');
+  console.log('politica  :', CNO_PILOT_POLICY_VERSION, JSON.stringify(politica));
+  console.log('referencia:', dataReferencia, '→ eventoDepoisDe', politica.eventoDepoisDe, `(${CNO_PILOT_POLICY_V1.janelaDias} dias)`);
+  console.log('snapshot  :', JSON.stringify(snapshot));
+  console.log('');
+
+  // duas execucoes sobre o mesmo snapshot: o lote tem de ser identico
+  const r1 = await dryRunPiloto(arquivo, dataReferencia, limite, snapshot);
+  process.stdout.write(`  execucao 1: ${r1.segundos.toFixed(0)} s · elegiveis ${r1.manifest.totalElegivel}\n`);
+  const r2 = await dryRunPiloto(arquivo, dataReferencia, limite, snapshot);
+  process.stdout.write(`  execucao 2: ${r2.segundos.toFixed(0)} s · elegiveis ${r2.manifest.totalElegivel}\n`);
+  const deterministico = manifestosIguais(r1.manifest, r2.manifest);
+  console.log(`  PILOT_MANIFEST_DETERMINISTIC = ${deterministico ? 'YES' : 'NO'}\n`);
+
+  const m = r1.manifest;
+  console.log(`TOTAL_ANALISADO ${n(m.totalAnalisado)} · TOTAL_ELEGIVEL ${n(m.totalElegivel)} · TOTAL_RECUSADO ${n(m.totalRecusado)}`);
+  console.log('\n  elegiveis por sinal      :', r1.dist.sinal.map(([k, v]) => `${k} ${v}`).join(' · '));
+  console.log('  elegiveis por destinacao :', r1.dist.destinacao.map(([k, v]) => `${k} ${v}`).join(' · '));
+  console.log('  elegiveis por municipio  :', r1.dist.municipio.slice(0, 15).map(([k, v]) => `${k} ${v}`).join(' · '));
+  console.log('  elegiveis por area       :', r1.dist.area.map(([k, v]) => `${k} ${v}`).join(' · '));
+  console.log('  elegiveis por qualif.    :', r1.dist.qualificacao.map(([k, v]) => `${k} ${v}`).join(' · '));
+  console.log('  elegiveis por idade      :', r1.dist.idade.map(([k, v]) => `${k} ${v}`).join(' · '));
+  console.log('  motivos de recusa        :', Object.entries(r1.recusas).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${n(v)}`).join(' · '));
+
+  const met = metricasLote(m.lote);
+  console.log(`\n=== LOTE (${met.tamanho} de ${m.totalElegivel}; ordem: evento DESC, CNO ASC — controle, nao prioridade) ===`);
+  console.log(`  sinal ${met.porSinal.map(([k, v]) => `${k} ${v}`).join(' · ')} · area p50 ${met.areaP50 ?? '—'} m2 · p90 ${met.areaP90 ?? '—'} m2`);
+  console.log(`  CNPJs unicos ${met.cnpjsUnicos} · maior ocupacao ${met.maiorOcupacao} vagas · CNPJs com >1 vaga ${met.cnpjsComMaisDeUmaVaga}`);
+  console.log(`  municipios: ${met.municipios.map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+  console.log(`  destinacoes: ${met.destinacoes.map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+
+  console.log('\n=== CAP POR EMPRESA — simulado, NAO aplicado ===');
+  const caps = [null, 5, 3, 1].map((cap) => simularCap(r1.elegiveis, cap, limite));
+  for (const c of caps) console.log(`  cap ${c.cap === null ? 'nenhum' : String(c.cap).padStart(6)} → lote ${String(c.lote).padStart(3)} · empresas unicas ${String(c.empresasUnicasNoLote).padStart(3)} · CNOs fora pelo cap ${String(c.cnosExcluidosPeloCap).padStart(4)} · maior ocupacao ${c.maiorOcupacaoNoLote}`);
+
+  console.log('\n=== PRE-VISUALIZACAO DOS ' + m.lote.length + ' (so PJ; sem evidence, sem endereco) ===');
+  console.log('  ' + ['#', 'CNO', 'evento', 'municipio', 'tipo', 'm2', 'destinacao', 'razao social da PJ'].map((h, i) => h.padEnd([3, 13, 11, 22, 14, 8, 26, 40][i])).join(''));
+  m.lote.forEach((e, i) => console.log('  ' + [
+    String(i + 1), e.cno, e.eventoEm, (e.municipio ?? '—').slice(0, 21), e.tipoSinal, String(e.areaTotal ?? '—'), (e.destinacoes.join(', ') || '—').slice(0, 25), e.nomeResponsavel.slice(0, 40),
+  ].map((v, j) => v.padEnd([3, 13, 11, 22, 14, 8, 26, 40][j])).join('')));
+
+  mkdirSync(dirname(saida), { recursive: true });
+  writeFileSync(saida, JSON.stringify({
+    geradoEm: new Date().toISOString(),
+    resumo: { policy: m.politica, versaoPolitica: m.versaoPolitica, dataReferencia: m.dataReferencia, snapshot: m.snapshot, totalAnalisado: m.totalAnalisado, totalElegiveis: m.totalElegivel, totalRecusado: m.totalRecusado, batchSize: m.batchSize, deterministico, fingerprints: m.fingerprints },
+    distribuicoesElegiveis: r1.dist,
+    motivosRecusa: r1.recusas,
+    metricasLote: met,
+    simulacaoCap: caps,
+    lote: m.lote,
+  }, null, 2));
+  console.log(`\nmanifest salvo em ${saida} (local, gitignored; sem evidence, sem dado de PF)`);
+  console.log('PERSISTENCIA = NENHUMA · INGESTAO = NENHUMA');
+  if (!deterministico) process.exitCode = 1;
+}
+
 // ------------------------------------------------------------------------------------------------ cli
 const argv = process.argv.slice(2).filter((a) => a !== '--');
 const comando = argv[0];
@@ -562,8 +679,9 @@ try {
   else if (comando === 'ordenacao') await ordenacao(opcao('arquivo'));
   else if (comando === 'perfil') await perfil(opcao('arquivo'), opcao('saida'), opcao('referencia'));
   else if (comando === 'simular') await simular(opcao('perfil'), opcao('arquivo'), opcao('referencia'));
+  else if (comando === 'piloto') await piloto(opcao('arquivo'), opcao('data'), opcao('limite'), opcao('saida'));
   else {
-    console.log('uso: npx vite-node scripts/cno.mts -- <probe | validar | amostra | baixar | ordenacao | perfil | simular> [--arquivo <cno.zip>] [--limite N] [--destino <dir>] [--saida <perfil.json>] [--perfil <perfil.json>] [--referencia AAAA-MM-DD]');
+    console.log('uso: npx vite-node scripts/cno.mts -- <probe | validar | amostra | baixar | ordenacao | perfil | simular | piloto> [--arquivo <cno.zip>] [--limite N] [--destino <dir>] [--saida <perfil.json>] [--perfil <perfil.json>] [--referencia AAAA-MM-DD]');
     process.exitCode = 1;
   }
 } catch (e) {

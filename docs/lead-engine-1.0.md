@@ -1,6 +1,6 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34) e **LE3-B fechado** (perfil do universo e simulador de política, §35; nenhuma política adotada, zero ingestão). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE-2 RELEASED** em 23/09/2026 — migration `0055` aplicada em produção (§33) e PR #9 mesclado em `main` (`0273da87`). **LE3-A/A1 fechados** (contrato e evidência do CNO, §34), **LE3-B fechado** (perfil do universo, §35) e **LE3-C fechado** (política piloto V1 congelada e lote de 50 em dry-run, §36; zero ingestão). **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
@@ -1492,3 +1492,104 @@ Suítes: `cnoSnapshot` 5 · `cnoDiscoveryPolicy` 14 · `cnoStreamJoin` 12 · `cn
 Não escolheu política. Não ingeriu. Não criou scheduler. Não tocou PNCP, RFB, Vibe ou notícias. A próxima
 decisão é de negócio: "obras novas/expansões dos últimos X dias, acima de Y m², nestas regiões e destinos" —
 e a matriz do §35.8 diz quantas obras cada escolha traz.
+
+---
+
+## 36. LE3-C — política piloto congelada e lote determinístico de dry-run
+
+Gate de 23/09/2026, `feature/lead-engine-3`. Congela a **primeira política piloto** do CNO, roda o dry-run
+sobre o snapshot inteiro e produz o manifest dos 50 primeiros candidatos — provando **exatamente** o que seria
+ingerido. **Zero persistência, zero `RegistroFonte`, zero Supabase.** A ingestão real é gate próprio.
+
+### 36.1 `CNO_PILOT_POLICY_V1` — piloto, não regra definitiva
+
+```
+ufs                    ['GO']
+situacoes              ['02']  (ATIVA)
+exigirPessoaJuridica   true
+exigirCnpjValido       true
+exigirSinal            true    (CNO_NEW ou CNO_EXPANSION; NENHUM não passa; sem peso entre os dois)
+areaMinimaM2           1000
+janelaDias             90      → eventoDepoisDe derivado da data de referência informada pela execução
+categorias             ['Obra Nova', 'Acréscimo', 'Reforma']
+destinacoes            (nenhum filtro — deliberado)
+```
+
+A destinação **não filtra** e acompanha cada candidato: o objetivo é medir quais destinações convertem antes
+de transformá-las em regra. A data de referência é explícita (`--data`), nunca o relógio; `cnoPilot.ts` não
+contém `new Date()` e um teste prende isso. Para 23/09/2026, `eventoDepoisDe = 2026-06-25`, inclusivo
+(exatamente 90 dias aceita, 91 rejeita).
+
+### 36.2 Dry-run sobre o snapshot real
+
+```
+TOTAL_ANALISADO   3.604.156
+TOTAL_ELEGIVEL          115
+TOTAL_RECUSADO    3.604.041
+```
+
+Coerência com a matriz do LE3-B: a célula GO × 90 dias × ≥ 1.000 m² valia **140** com referência 12/09 e sem
+filtro de situação/categoria. Com referência 23/09 (janela deslocada 11 dias, nada novo depois de 12/09),
+ATIVA e categorias explícitas, o resultado é **115 ≤ 140** — como esperado, sem ajuste.
+
+Elegíveis por sinal: CNO_NEW 82 · CNO_EXPANSION 33. Por destinação: Comercial salas e lojas 42 · Residencial
+multifamiliar 28 · Conjunto habitacional popular 24 · **Galpão industrial 16** · Residencial unifamiliar 5.
+Por município: Goiânia 16 · Anápolis 12 · Águas Lindas 9 · Aparecida, Jataí, Rio Verde, Senador Canedo 5 cada.
+Por área: 1.000–1.999 37 · 2.000–4.999 34 · 10.000–19.999 22 · 5.000–9.999 12 · 20.000+ 10. Por
+qualificação: PJ Construtora 46 · Dono da Obra 29 · Proprietário 21 · Incorporador 19. Por idade: 31–90 dias
+96 · 0–30 dias 19.
+
+Motivos de recusa (uma obra pode ter vários): EVENTO_ANTIGO 3.566.701 · UF_FORA 3.414.377 · AREA_ABAIXO
+3.159.280 · SITUACAO_FORA 2.573.795 · SEM_PJ / SEM_CNPJ_VALIDO 2.392.842 · CATEGORIA_FORA / SEM_SINAL 330.954 ·
+SEM_AREA 199.504.
+
+### 36.3 O lote de 50
+
+Ordem de **controle** — `eventoEm` DESC, `CNO` ASC — não prioridade. Sem score, classe, FIT ou Commercial Queue.
+
+```
+CNO_NEW 36 · CNO_EXPANSION 14
+área p50 4.316 m² · p90 17.142 m²
+CNPJs únicos 45 · maior ocupação 4 vagas · CNPJs com > 1 vaga: 3
+eventos de 31/07/2026 a 11/09/2026
+municípios: Anápolis 8 · Goiânia 6 · Senador Canedo 5 · Rio Verde 4 · (+23 municípios com 1–2)
+destinações: Comercial 18 · Conj. habitacional popular 11 · Resid. multifamiliar 11 · Galpão industrial 6 · Resid. unifamiliar 4
+```
+
+### 36.4 Cap por empresa — medido, não aplicado
+
+| cap | lote | empresas únicas | CNOs fora pelo cap | maior ocupação |
+|---|---|---|---|---|
+| nenhum | 50 | 45 | 0 | 4 |
+| 5 | 50 | 45 | 0 | 4 |
+| 3 | 50 | 46 | 1 | 3 |
+| 1 | 50 | 50 | 20 | 1 |
+
+Neste recorte a concentração é baixa: um cap de 5 não muda nada e cap 3 exclui um único CNO. Só cap 1 altera o
+lote de fato (20 obras cedem lugar a outras empresas). Nenhum cap foi adotado.
+
+### 36.5 Manifest e determinismo
+
+`dados/cno/pilot-manifest-v1.json` (52 KB, gitignored): política, versão, data de referência, descritor do
+snapshot (ETag `"76bb7f93…"`, `Last-Modified` 12/09/2026, 330.628.581 bytes — **fora do envelope e fora do
+fingerprint**, provado por teste), totais, `batchSize`, os 50 fingerprints, distribuições, métricas, simulação
+de cap e o lote. Cada entrada: CNO, evento e origem, tipo de sinal, município/UF, área, categorias,
+destinações, situação, CNPJ e razão social da PJ, qualificação, `payloadFingerprint`. **Sem evidence, sem
+endereço, sem dado de PF** (a política exige PJ). O envelope completo é reconstruído só na ingestão.
+
+O `payloadFingerprint` de cada entrada é o **mesmo** que `validarIntake(pedidoIntakeCno(obs))` calcula — o
+manifest é a promessa exata do que o intake verá.
+
+Duas execuções sobre o mesmo snapshot: mesmo total (115), mesmos 50 CNOs, mesma ordem, mesmos fingerprints.
+`PILOT_MANIFEST_DETERMINISTIC = YES`. Tempo por execução: 136–167 s.
+
+### 36.6 Código e testes
+
+`cnoPilot.ts` (puro: política V1, `avaliarPiloto`, `projetarEntrada`, `ordenarLote`, `montarLote`,
+`simularCap`, `metricasLote`, `montarManifest`, `manifestosIguais`) e `scripts/cno.mts -- piloto --arquivo
+--data --limite` (I/O; sem `--executar`, sem opção de persistir). Suíte `cnoPilot.test.ts`: 31 testes.
+
+### 36.7 O que este gate não fez
+
+Não ingeriu. Não criou candidato, empresa, projeto, sinal, oportunidade, tarefa, atividade ou comunicação.
+Não adotou cap. Não tornou a política definitiva. Termina com um arquivo local e números.
