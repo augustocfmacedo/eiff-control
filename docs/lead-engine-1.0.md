@@ -1,6 +1,6 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado: **LE2-F fechado** (rebaseline sobre `main @ 5e7b3be` e certificação da linha, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
+Estado: **LE2-G parcial** — migration `0055` **aplicada em produção** em 23/09/2026 (§33); código **ainda não liberado**. **LE2-F fechado** (rebaseline e certificação, §32). **LE-0 fechado** (contrato, §1 a §26), **LE-1 fechado** (intake canônico, §27) e **LE2-A fechado**
 (fundação de persistência, §28). **LE2-B fechado** (núcleo de revisão e decisão, §29). **LE2-C fechado** (fronteira do store, §30). **LE2-E fechado** (UI no Command Center, §31). **LE-3 não iniciado.**
 LE-3 a LE-8 não iniciados.
 Branch ATUAL da linha: `feature/lead-engine-2`, agora com `origin/main @ 5e7b3be` incorporada por merge (§32) sobre a base `origin/main @ 14d2ff7` com LE-0 e LE-1 recuperados
@@ -428,7 +428,7 @@ ignorar supressão; reescrever payload bruto; criar segunda ACL ou segundo camin
 
 | Bloco | Escopo | Runtime? | Migration? |
 | --- | --- | --- | --- |
-| ~~**LE-1**~~ | **FECHADO** (§27): `DiscoveryRecord` + staging lógico + idempotência em duas chaves. Core puro, sem rede. | `src/core/radar/**` | sim, `0055` (não aplicada) |
+| ~~**LE-1**~~ | **FECHADO** (§27): `DiscoveryRecord` + staging lógico + idempotência em duas chaves. Core puro, sem rede. | `src/core/radar/**` | sim, `0055` — **aplicada em produção em 23/09/2026** (§33) |
 | **LE-2** | Fila de revisão de candidatos + promoção humana, pelo store, auditada. | core + tela + store | não |
 | **LE-3** | Adapter CNO real, server-side, disparado por pessoa. | função Netlify + core | não |
 | **LE-4** | Adapters PNCP e CNPJ/RFB (identidade e enriquecimento cadastral). | função Netlify + core | não |
@@ -664,7 +664,7 @@ payload jsonb not null · entity_id uuid · received_at timestamptz not null def
 index radar_source_record_source_idx (source_id, received_at desc)
 ```
 
-Depois (migration 0055, **não aplicada**). Cinco colunas, todas anuláveis:
+Depois (migration 0055, aplicada em produção em 23/09/2026 — §33). Cinco colunas, todas anuláveis:
 
 | Coluna | Por que existe |
 | --- | --- |
@@ -751,7 +751,7 @@ mutável — e aí perde-se o `delete`-quando-some do ramo imutável, que hoje �
 46 prende `imutavel: true` justamente para que o LE-2 tenha de mudar isso **conscientemente**, com o trigger do
 banco já no lugar para impedir que a mutabilidade toque o bruto.
 
-### 27.7 Migration não aplicada
+### 27.7 Migration (não aplicada à época; aplicada em 23/09/2026, §33)
 
 `supabase/migrations/0055_lead_engine_intake.sql` está no repositório e **não foi aplicada em produção**. Nenhum
 comando foi rodado contra o banco remoto. A aplicação pertence a um release futuro do Lead Engine. O número 0055 foi
@@ -1085,3 +1085,62 @@ LE2-E 29/29, PGlite 0055 17/17, Mission Control e Commercial UX 94/94, suíte co
 CREATE/ASSOCIATE → RESOLVED → sai da fila, com empresa/projeto/sinal criados, uma auditoria e **zero** oportunidade,
 tarefa, atividade e comunicação; suprimido → seção auditável → REJECTED/`SUPRIMIDO`; impressão velha → recusa
 `CONTEXTO_MUDOU` com zero commit e zero auditoria.
+
+---
+
+## 33. LE2-G — a 0055 aplicada em produção
+
+Gate de 23/09/2026, bloco do banco. A migration foi aplicada **antes** do deploy do app, pela razão registrada
+em §32.4. O release do código **não** foi concluído neste gate (ver §33.4).
+
+### 33.1 Preflight
+
+Estado imediatamente antes da escrita, lido do schema real (este projeto não tem ledger de migrations, §32.3):
+108 linhas, todas com `external_id` e `entity_id`; as 8 colunas da 0031; **zero** coluna, CHECK, índice, função
+ou trigger da 0055. RLS ligada, duas policies (`radar_source_record_select`, `radar_source_record_write`),
+28 grants. Nenhum estado parcial.
+
+### 33.2 Aplicação
+
+Artefato aplicado sem qualquer alteração:
+`supabase/migrations/0055_lead_engine_intake.sql`, sha256 `1f0529b7a791e40f15b0d7145d7deec0…`, 59 linhas,
+por `supabase db query --linked -f`, execução única. DDL puramente aditiva: cinco colunas anuláveis, três CHECKs,
+dois índices, uma função e um trigger. Nenhum DML, nenhum DROP, nenhum backfill.
+
+### 33.3 Prova pós-migration
+
+Cinco colunas presentes com o tipo declarado (`payload_fingerprint` text, `intake_status` text, `decided_at`
+timestamptz, `decided_by` uuid com FK para `profile`, `decision_reason` text). Os três CHECKs de intake e os dois
+índices (`radar_source_record_observacao_uidx` UNIQUE parcial e `radar_source_record_intake_idx` parcial) com a
+definição esperada. Função `radar_source_record_evidencia_imutavel()` e trigger `radar_source_record_evidencia`
+com `tgtype = 19` (ROW + BEFORE + UPDATE) e `tgenabled = 'O'` — ativo, não apenas presente.
+
+RLS, policies e grants **inalterados**: mesmo `relrowsecurity`, mesmas duas policies, mesmos 28 grants de antes.
+
+Legado: as 108 linhas continuam lá, e para todas as cinco colunas novas são NULL.
+`LEGACY_ROWS_PRESERVED = YES`, `LEGACY_ROWS_ENROLLED_IN_LEAD_ENGINE = NO`. Sem backfill, sem dado artificial
+criado em produção para testar.
+
+### 33.4 O app que está no ar continua íntegro
+
+O deploy vigente é `main @ 5e7b3be`, cujo `radar.supabase.ts` marca `registrosFonte` como `imutavel: true`:
+só insert e delete, **nunca** UPDATE. Logo o trigger `BEFORE UPDATE` não pode disparar para ele, e seus inserts
+omitem as cinco colunas novas, o que deixa `intake_status` NULL e satisfaz os três CHECKs por construção
+(todos são `intake_status is null or …`). O índice único é parcial em `payload_fingerprint is not null`, fora do
+alcance do app antigo. É a mesma linha legada que o smoke PGlite já cobria.
+
+### 33.5 O que este gate NÃO fez
+
+O PR `feature/lead-engine-2` → `main` **não foi aberto**: esta sessão não tem credencial do GitHub
+(`gh` não autenticado, sem `GH_TOKEN`; o push funciona pelo Credential Manager do Windows, que não é fonte de
+token para a API). Sem PR não houve CI, merge, deploy nem smoke de produção. Merge em `main` e publicação em
+Production continuam dependendo das duas frases-senha separadas do projeto.
+
+```
+MIGRATION_0055  = PASS       PR_RELEASE = BLOCKED (credencial)
+PROD_0055_STATE = APPLIED    LE2_STATUS = NOT_RELEASED
+LE2_DB_READY    = YES
+```
+
+O banco está pronto para o app antigo e para o novo. A descoberta automática segue desligada: sem CNO, PNCP,
+Vibe, notícias ou scheduler. LE-3 não iniciado.
