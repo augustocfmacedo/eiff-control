@@ -32,19 +32,41 @@ const texto = (o: Record<string, unknown>, ...ks: string[]) => { for (const k of
 const num = (o: Record<string, unknown>, ...ks: string[]) => { const t = texto(o, ...ks); const n = t ? Number(t.replace(/[^\d.,-]/g, '').replace(',', '.')) : NaN; return Number.isFinite(n) ? n : undefined; };
 const obj = (b: unknown): Record<string, unknown> | undefined => (b && typeof b === 'object' ? (b as Record<string, unknown>) : undefined);
 
-/** CNO (Cadastro Nacional de Obras): uma obra registrada vira empresa (responsavel) + projeto + sinal CNO_NEW/CNO_EXPANSION. */
+/**
+ * CNO (Cadastro Nacional de Obras): uma obra registrada vira empresa (responsavel) + projeto + sinal
+ * CNO_NEW/CNO_EXPANSION.
+ *
+ * LE-3A ajustou tres coisas ao contrato REAL da fonte oficial (`cnoDadosAbertos.ts`):
+ *
+ * 1. `nome` saiu da cadeia da razao social. No CSV oficial `Nome` e o NOME DA OBRA e `Nome empresarial` e a
+ *    razao social da PJ — no snapshot real 3.653 obras de uma amostra de 44.254 tem `Nome` igual a string
+ *    literal "null". Deixar `nome` na cadeia transformava nome de obra (ou "null") em conta comercial.
+ * 2. `tipoSinal` explicito vence a heuristica de texto. O CNO_AREAS oficial ja diz a Categoria (Obra Nova /
+ *    Acrescimo / Reforma / Demolicao / Existente); adivinhar por regex quando existe dado estruturado
+ *    transformava demolicao em obra nova. A regex continua valendo so para payload generico sem `tipoSinal`.
+ * 3. sem data oficial nao ha sinal. O fallback anterior era `new Date()`, que dataria de hoje uma obra de 1992.
+ *
+ * LE-3A1: o payload do CNO virou um ENVELOPE `{ schema, evidence, canonical }` — a evidencia como a fonte
+ * entregou ao lado da projecao normalizada. A normalizacao le `canonical`; a LINHAGEM continua recebendo o
+ * envelope inteiro (`payload: bruto`), porque quem preserva a origem e o registro, nao o adapter. A escolha e
+ * por VERSAO declarada, nunca por heuristica: sem `schema` reconhecido, vale o formato antigo, plano.
+ */
 export const adapterCNO: AdapterFonte = {
   fonte: 'CNO', nome: 'Cadastro Nacional de Obras',
   normalizar(bruto) {
-    const o = obj(bruto); if (!o) return undefined;
-    const razao = texto(o, 'nomeResponsavel', 'responsavel', 'razaoSocial', 'nome'); if (!razao) return undefined;
-    const inicio = texto(o, 'dataInicio', 'inicio', 'dataRegistro');
-    const expansao = /reforma|amplia|expans/i.test(texto(o, 'tipoObra', 'categoria', 'descricao') ?? '');
+    const envelope = obj(bruto);
+    const o = envelope?.schema === 'CNO_OPEN_DATA_V1' ? obj(envelope.canonical) : envelope;
+    if (!o) return undefined;
+    const razao = texto(o, 'nomeResponsavel', 'responsavel', 'razaoSocial'); if (!razao) return undefined;
+    const inicio = texto(o, 'dataEvento', 'dataInicio', 'inicio', 'dataRegistro');
+    const declarado = texto(o, 'tipoSinal');
+    const expansao = declarado ? declarado === 'CNO_EXPANSION' : /reforma|amplia|expans/i.test(texto(o, 'tipoObra', 'categoria', 'descricao') ?? '');
+    const semSinal = declarado === 'NENHUM' || !inicio;
     return {
       fonte: 'CNO', externoId: texto(o, 'cno', 'numero', 'id'),
       empresa: { cnpj: texto(o, 'cnpjResponsavel', 'cnpj'), razaoSocial: razao, cidade: texto(o, 'municipio', 'cidade'), uf: texto(o, 'uf'), externoId: texto(o, 'cnpjResponsavel', 'cnpj') },
       projeto: { nome: texto(o, 'nomeObra', 'descricao') ?? `Obra CNO ${texto(o, 'cno', 'numero') ?? ''}`.trim(), tipo: texto(o, 'tipoObra', 'categoria'), cidade: texto(o, 'municipio', 'cidade'), uf: texto(o, 'uf'), endereco: texto(o, 'endereco', 'logradouro'), areaM2: num(o, 'areaTotal', 'area', 'metragem'), estagio: 'Obra', inicioPrevisto: inicio, externoId: texto(o, 'cno', 'numero', 'id') },
-      sinais: [{ tipo: expansao ? 'CNO_EXPANSION' : 'CNO_NEW', titulo: `${expansao ? 'Expansão' : 'Obra nova'} registrada no CNO${texto(o, 'municipio', 'cidade') ? ` em ${texto(o, 'municipio', 'cidade')}` : ''}`, descricao: texto(o, 'descricao', 'tipoObra'), eventoEm: inicio ?? new Date().toISOString().slice(0, 10), confianca: 0.9, externoId: texto(o, 'cno', 'numero', 'id') }],
+      sinais: semSinal ? [] : [{ tipo: expansao ? 'CNO_EXPANSION' : 'CNO_NEW', titulo: `${expansao ? 'Expansão' : 'Obra nova'} registrada no CNO${texto(o, 'municipio', 'cidade') ? ` em ${texto(o, 'municipio', 'cidade')}` : ''}`, descricao: texto(o, 'descricao', 'tipoObra'), eventoEm: inicio as string, confianca: 0.9, externoId: texto(o, 'cno', 'numero', 'id') }],
       payload: bruto,
     };
   },
