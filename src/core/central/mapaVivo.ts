@@ -15,7 +15,7 @@
 //
 // PUREZA: zero fetch, zero store, zero React. So dado e funcao total.
 import { CAMADAS, GATES, type CamadaArquitetura } from './missionControl';
-import type { McFonte } from './workItem';
+import type { McAtor, McFonte, MissionControlWorkItem } from './workItem';
 
 export const DOMINIOS_MAPA = ['CENTRAL', 'DESENVOLVIMENTO', 'COMERCIAL'] as const;
 export type DominioMapa = (typeof DOMINIOS_MAPA)[number];
@@ -173,3 +173,108 @@ export const gatesDesconhecidosNoMapa = (): string[] => {
   const conhecidos = new Set(GATES.map((g) => g.id));
   return [...new Set(NOS.flatMap((n) => n.gates).filter((g) => !conhecidos.has(g)))];
 };
+
+// ------------------------------------------------------------------- estado vivo por no (MC-CONSTRUCTION-1)
+
+/**
+ * Quais itens vivos "estao" em cada no. A regra usa SO dado normalizado que ja existe no item:
+ *   - nos da fabrica: `responsavel.tipo` (quem esta com a bola, derivado de ATOR_POR_ESTADO_FACTORY);
+ *   - PR: `source = 'GITHUB'`; DEMANDA: `source = 'ARCHITECTURE'` (issue sem estado de job).
+ * Nenhum titulo e lido, nada e inferido: no fora desta tabela nao tem item vivo — e a tela diz isso.
+ */
+export const ATORES_DO_NO: Readonly<Record<string, readonly McAtor[]>> = {
+  ARCHITECT: ['ARCHITECT'],
+  DISPATCHER: ['DISPATCHER'],
+  WORKER: ['WORKER', 'SUPERVISOR'],
+  APROVACAO: ['HUMAN', 'INTEGRATOR'],
+};
+
+export const FONTE_DO_NO: Readonly<Record<string, McFonte>> = { PR: 'GITHUB', DEMANDA: 'ARCHITECTURE' };
+
+export function itensDoNo(id: string, itens: readonly MissionControlWorkItem[]): MissionControlWorkItem[] {
+  const atores = ATORES_DO_NO[id];
+  if (atores) return itens.filter((i) => i.source === 'FACTORY' && !!i.responsavel && atores.includes(i.responsavel.tipo));
+  const fonte = FONTE_DO_NO[id];
+  if (fonte) return itens.filter((i) => i.source === fonte);
+  return [];
+}
+
+/** O no tem como receber item vivo pela regra acima. Falso = so estado de desenho (gates) ou nenhum. */
+export const noRecebeItensVivos = (id: string): boolean => id in ATORES_DO_NO || id in FONTE_DO_NO;
+
+// ------------------------------------------------------------------------------- layout deterministico
+
+export interface PosicaoNo { id: string; dominio: DominioMapa; coluna: number; linha: number; x: number; y: number }
+export interface LayoutMapa {
+  nos: PosicaoNo[];
+  /** faixas horizontais, uma por dominio, na ordem de DOMINIOS_MAPA */
+  faixas: { dominio: DominioMapa; y: number; altura: number }[];
+  largura: number;
+  altura: number;
+  largNo: number;
+  altNo: number;
+}
+
+/**
+ * Camada de cada no = caminho mais longo a partir das fontes, contando so arestas que implicam ordem
+ * (fluxo e dependencia). O grafo e aciclico nessas arestas (invariante testada), entao o calculo termina.
+ */
+export function camadasDoMapa(): Map<string, number> {
+  const entrada = new Map<string, string[]>();
+  for (const n of NOS) entrada.set(n.id, []);
+  for (const a of ARESTAS) if (a.tipo === 'fluxo' || a.tipo === 'dependencia') entrada.get(a.para)?.push(a.de);
+  const memo = new Map<string, number>();
+  const camada = (id: string, pilha: Set<string>): number => {
+    const m = memo.get(id);
+    if (m !== undefined) return m;
+    if (pilha.has(id)) return 0; // defesa: ciclo nunca deveria existir aqui
+    pilha.add(id);
+    const pais = entrada.get(id) ?? [];
+    const v = pais.length === 0 ? 0 : 1 + Math.max(...pais.map((p) => camada(p, pilha)));
+    pilha.delete(id);
+    memo.set(id, v);
+    return v;
+  };
+  for (const n of NOS) camada(n.id, new Set());
+  return memo;
+}
+
+/**
+ * Posicoes em pixels, uma faixa por dominio, colunas compactadas dentro da faixa (ranking denso das camadas
+ * globais presentes no dominio). Mesma entrada, mesma saida: a tela nao treme entre renders.
+ */
+export function layoutDoMapa(opts: { largNo?: number; altNo?: number; gapX?: number; gapY?: number; margem?: number; faixaTitulo?: number } = {}): LayoutMapa {
+  const largNo = opts.largNo ?? 172;
+  const altNo = opts.altNo ?? 62;
+  const gapX = opts.gapX ?? 44;
+  const gapY = opts.gapY ?? 12;
+  const margem = opts.margem ?? 16;
+  const faixaTitulo = opts.faixaTitulo ?? 26;
+  const camadas = camadasDoMapa();
+  const nos: PosicaoNo[] = [];
+  const faixas: LayoutMapa['faixas'] = [];
+  let y = margem;
+  let maxColuna = 0;
+  for (const dominio of DOMINIOS_MAPA) {
+    const doDominio = NOS.filter((n) => n.dominio === dominio);
+    if (doDominio.length === 0) continue;
+    // coluna = posicao da camada global entre as camadas DISTINTAS do dominio (ranking denso): a ordem entre
+    // os nos do dominio e preservada e nenhuma coluna fica vazia por causa de uma dependencia de outro dominio
+    const distintas = [...new Set(doDominio.map((n) => camadas.get(n.id) ?? 0))].sort((a, b) => a - b);
+    const porColuna = new Map<number, number>();
+    const inicio = y + faixaTitulo;
+    let linhas = 0;
+    for (const n of doDominio) {
+      const coluna = distintas.indexOf(camadas.get(n.id) ?? 0);
+      const linha = porColuna.get(coluna) ?? 0;
+      porColuna.set(coluna, linha + 1);
+      linhas = Math.max(linhas, linha + 1);
+      maxColuna = Math.max(maxColuna, coluna);
+      nos.push({ id: n.id, dominio, coluna, linha, x: margem + coluna * (largNo + gapX), y: inicio + linha * (altNo + gapY) });
+    }
+    const altura = faixaTitulo + linhas * (altNo + gapY) - gapY + margem;
+    faixas.push({ dominio, y, altura });
+    y += altura + margem;
+  }
+  return { nos, faixas, largura: margem * 2 + (maxColuna + 1) * (largNo + gapX) - gapX, altura: y, largNo, altNo };
+}

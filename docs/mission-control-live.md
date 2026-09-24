@@ -575,11 +575,12 @@ não um clone do Miro.
 | **MC-LIVE-2B** | correções do smoke real: procedência por `source` + `procedencia`, CI não inferido do estado cru | **concluída (22/09/2026)** |
 | MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | depende da W5 da fábrica |
 | MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | — |
-| MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | — |
+| MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | **primeira UI entregue na MC-CONSTRUCTION-1 (23/09/2026, § 17)**; o gate segue aberto até a correlação (`WORK_ITEM_CORRELACAO`) dar estado real a todo nó |
 | MC-LIVE-5 | quadro de execução + realtime (`EXECUCAO_LIVE`, `MC_REALTIME`) — única migration prevista | — |
 | MC-LIVE-6 | projeção comercial | — |
 | MC-LIVE-7 | eventos, timeline e observabilidade | — |
 | MC-LIVE-8 | hardening e fechamento de `MISSION_CONTROL_LIVE` | — |
+| **MC-CONSTRUCTION-1** | Central de Construção: catálogo de módulos, panorama, "Construindo agora", drill-down, abas e a primeira UI do Mapa Vivo (§ 17) | **concluída (23/09/2026)** |
 
 ## 22. Diagrama
 
@@ -731,3 +732,119 @@ A **API da Factory não existe** nesta linha. Tudo que o painel mostra da fábri
 (`GITHUB_PROJECTION`), e por isso um item da fábrica visto por aí se chama "GitHub projection of Factory" e nunca
 "estado operacional da Factory" — este último rótulo está reservado para quando `FACTORY_API` for real. Heartbeat,
 turno, lease, custo e última ferramenta continuam fora: não existem nesta fonte e não são inventados.
+
+---
+
+## 17. MC-CONSTRUCTION-1 — Central de Construção do EIFF
+
+Entrega de 23/09/2026. O `#/mission-control` deixou de abrir no painel de gates e passou a abrir na **Central de
+Construção**: o que compõe o EIFF, o que já foi construído, o que está sendo construído agora, o que é plano, o
+que está bloqueado, quais tarefas pertencem a cada módulo e qual é o próximo passo. **Nada foi removido**: gates,
+marcos, bloqueios, escada de liberação, frentes, camadas, evidências, benefícios e linha do tempo continuam
+inteiros, na aba **Governança**. Não é uma wave nova do roadmap MC-LIVE: é a camada de produto sobre o que as
+waves 0, 1, 2A e 2B já entregaram, e carrega dentro dela a **primeira UI do Mapa Vivo** (MC-LIVE-4).
+
+### 17.1 Hierarquia da página
+
+`Visão geral | Execução | Mapa vivo | Governança` (`Tabs` do sistema, estado local da tela).
+
+- **Visão geral** (padrão): dois `KpiHero` (módulos do catálogo por estado; tarefas ativas por status), bloco
+  **Atenção**, bloco **Construindo agora** e o **Panorama dos módulos** em cartões agrupados por domínio, com
+  drill-down em painel lateral.
+- **Execução**: o bloco "Desenvolvimento ao vivo" (MC-LIVE-1) e o quadro operacional (MC-LIVE-2A/2B), **sem
+  nenhuma mudança** — 8 colunas, filtros, busca e contadores iguais.
+- **Mapa vivo**: o grafo de `mapaVivo.ts` desenhado em SVG (§ 17.4).
+- **Governança**: tudo que era a primeira dobra antes desta entrega (`MissionControlGovernanca.tsx`).
+
+**Uma leitura remota só**: `useStatusRemoto` continua sendo chamado uma única vez em `MissionControl.tsx` e o
+estado desce por prop para as quatro abas. Nenhuma aba cria polling, `fetch`, relógio ou acesso ao GitHub — o
+teste `construcao.test.ts` varre as telas atrás disso.
+
+### 17.2 Modelo de construção (`src/core/central/construcao.ts`, puro)
+
+| Conceito | O que é | De onde vem o estado |
+| --- | --- | --- |
+| `ModuloConstrucao` | um módulo do EIFF: id, título, descrição, domínio (`GESTAO`, `COMERCIAL`, `CENTRAL`, `DESENVOLVIMENTO`), rota, componentes, `dependeDe`, `workstreams`, `observaFonte` | catálogo compilado (SNAPSHOT) |
+| `ComponenteConstrucao` | uma capacidade do módulo | `gates` do catálogo → prontidão; senão `evidencias` (arquivo + símbolo que o teste abre); senão plano declarado |
+| `EstadoConstrucao` | vocabulário **fechado**: `CONCLUIDO`, `EM_CONSTRUCAO`, `PLANEJADO`, `BLOQUEADO`, `SEM_EVIDENCIA` | derivado, nunca digitado |
+| `ModuloProjetado` | módulo + estado + `concluidos/total` + tarefas ligadas + bloqueios + próximo passo + dependentes + procedências | `projetarModulo` |
+| `PanoramaConstrucao` | os módulos projetados, contagem por estado e as contagens de tarefas (`null` sem leitura) | `panoramaConstrucao` |
+
+Regras que o teste prende:
+
+1. **Nenhum módulo inventado**: 19 módulos, todos com pelo menos um componente com evidência ou gate; toda
+   evidência aponta para arquivo que existe e símbolo que está dentro dele; gates, frentes e dependências citados
+   existem; dependências sem ciclo. Módulo sem nada disso cai em `SEM_EVIDENCIA` — hoje, nenhum.
+2. **Nenhum percentual digitado**: o progresso é `concluídos/total` de componentes (`fracaoTexto`), e a porcentagem,
+   quando aparece, é arredondamento dessa fração (`pctConstrucao`). O teste varre o domínio e as telas atrás de
+   porcentagem literal.
+3. **Estado do componente**: gate fechado → concluído; gate bloqueado real → bloqueado; gate bloqueado **por
+   desenho** → bloqueado sem bloquear o módulo (segurança intencional não é falha, a mesma regra de sempre);
+   evidência → concluído; nada → planejado.
+4. **Estado do módulo**: bloqueio real em qualquer componente → `BLOQUEADO`; todos concluídos → `CONCLUIDO`;
+   algum concluído/em andamento ou tarefa viva ativa → `EM_CONSTRUCAO`; senão `PLANEJADO`.
+5. **Próximo passo é derivado**: o primeiro componente não concluído na ordem declarada (bloqueio real vira
+   "desbloquear: …"; gate aberto cita o gate que falta). Nenhuma frase digitada como plano.
+
+### 17.3 Task → módulo: só relação segura
+
+A única regra de pertença é `moduloDaTarefa`: `workstreamId` de uma frente do módulo, ou `gateIds` que cruzam os
+gates do módulo — os dois são campos do contrato `MissionControlWorkItem`. Título, prefixo do `taskId`,
+repositório e nome parecido **não entram** (o teste prova que uma tarefa com o título exato do módulo continua
+sem módulo). Sem relação, a tarefa aparece como **"Módulo não informado"** (`SEM_MODULO`) e **continua visível**
+em "Construindo agora", contada em `tarefas.semModulo`.
+
+**Lacuna de contrato registrada**: o bloco `factory-task:v1` (JOB_CONTRACT.md da fábrica) informa `taskId` e
+`repository`, mas não informa frente nem módulo, e o adapter só extrai o `taskId`. Logo, **toda tarefa viva do
+GitHub aparece hoje sem módulo** — é a fonte que não informa, não a tela que esconde. Quando o contrato ganhar
+um campo de frente/módulo, ele entra pelo adapter e pela normalização, nunca por heurística na tela. A fábrica
+(`FACTORY`) tem um caso à parte: os itens `source = 'FACTORY'` aparecem no módulo "EIFF Dev Factory (observada)"
+como **jobs observados** (`observaFonte`), não como pertença — o módulo a que cada job se refere segue não informado.
+
+### 17.4 Mapa vivo (primeira UI do MC-LIVE-4)
+
+`src/screens/MissionControlMapa.tsx` desenha `NOS` e `ARESTAS` de `mapaVivo.ts` em SVG, sem dependência nova e sem
+grafo paralelo (o teste confere que a tela importa o modelo e não declara nós nem arestas). O que entrou no
+domínio, puro e testado:
+
+- `camadasDoMapa`: camada de cada nó = caminho mais longo a partir das fontes, só por arestas `fluxo` e
+  `dependencia` (o grafo é acíclico nessas arestas, invariante já existente);
+- `layoutDoMapa`: uma faixa por domínio, colunas por ranking denso das camadas presentes no domínio, posições em
+  pixels determinísticas (mesma entrada, mesma saída; nenhum par de nós na mesma célula);
+- `ATORES_DO_NO` / `FONTE_DO_NO` / `itensDoNo`: os itens vivos "de" cada nó, só por `responsavel.tipo` (Architect,
+  Dispatcher, Worker/Supervisor, Humano/Integrator) e por `source` (PR ← `GITHUB`, Demanda ← `ARCHITECTURE`).
+  Nó fora dessas tabelas não recebe item vivo, e a tela diz "sem leitura"/"desenho" em vez de inventar.
+
+Cada nó mostra o estado que vem da sua fonte: gates → `fechados/exigidos` (snapshot); fonte viva → `n item(ns)`
+(live) ou "sem leitura"; os quatro tipos de aresta têm traço próprio (cheio, tracejado, pontilhado, laranja) e
+arestas que apontam para trás (observa, evidência) contornam por cima — observar não cria ordem. Clique abre o
+detalhe (papel, gates, itens vivos, arestas de entrada e saída; o nó CI mostra o CI de `main` dos repositórios).
+O mapa rola dentro do próprio viewport; a página nunca ganha scroll horizontal.
+
+O gate `MAPA_VIVO` **continua aberto**: a prova exige "cada nó mostrando o estado que vem da sua fonte" e isso só
+fecha quando a correlação (`WORK_ITEM_CORRELACAO`) der estado real a todo nó — hoje, os nós de fonte viva mostram
+contagem por responsável/fonte da projeção do GitHub, e os nós de desenho, só gates.
+
+### 17.5 LIVE × SNAPSHOT, atenção e degradação
+
+- Cada cartão de módulo é SNAPSHOT (catálogo do build); as tarefas ligadas trazem a procedência do item
+  (`GITHUB_PROJECTION` etc.). O painel do módulo mostra as duas procedências lado a lado (`procedencias`), e o
+  teste prova que módulo sem tarefa viva declara só `REPOSITORIO`.
+- **Atenção** lista só fatos derivados (`atencaoConstrucao`): sem leitura, fonte indisponível, módulos com bloqueio
+  real, tarefas bloqueadas, aguardando humano, itens com leitura vencida, tarefas sem módulo. Nada opinativo.
+- **Erro de fonte não vira zero**: sem leitura válida, `panorama.tarefas` é `null` e a tela mostra "—" e "sem
+  leitura"; os módulos continuam todos lá (catálogo). O último estado conhecido segue a regra da MC-LIVE-1.
+
+### 17.6 O que NÃO entrou (dívidas declaradas)
+
+- Nenhuma migration, tabela, realtime, cron ou função nova: a Central funciona com `/api/development-status` e o
+  catálogo compilado.
+- Timeline/eventos continuam fora (§ 14-A).
+- `FACTORY_ADAPTER_READONLY`, `WORK_ITEM_CORRELACAO`, `MAPA_VIVO`, `EXECUCAO_LIVE`, `MC_REALTIME`, `MC_DEGRADACAO` e
+  `MISSION_CONTROL_LIVE` seguem abertos — esta entrega não fechou gate nenhum.
+- Correção lateral necessária para a prova de responsividade: em 390 px a aba Governança estourava a largura da
+  página (grade `.mc-camadas` sem `minmax(0, 1fr)` e pills de gate com `white-space: nowrap`). Corrigido só em CSS
+  (`.mc-camadas`, `.mc-camada .mc-pill`, `.mc-gov`); as tabelas rolam dentro do próprio cartão.
+
+Testes: `src/core/central/construcao.test.ts` (31 casos, cobrindo as doze provas pedidas) mais os já existentes de
+`workItem`, `quadroOperacional`, `missionControl` e `developmentStatus`, que seguem verdes.

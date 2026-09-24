@@ -964,3 +964,122 @@ tr.arrastando td { opacity: 0.55; }
 .inbox-triagem .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .inbox-sinais summary { cursor: pointer; }
 .inbox-sinais ul { margin: 6px 0 0 16px; padding: 0; display: grid; gap: 2px; }
+
+/* MC-CONSTRUCTION-1 — Central de Construção. Panorama de módulos (mcc-*) e Mapa vivo em SVG (mcm-*).
+   Estado nunca depende só de cor: o ponto tem título/aria-label e o Badge traz o texto. Nenhuma regra de
+   negócio aqui: só layout. Sem scroll horizontal da página; o mapa rola dentro do próprio viewport. */
+.mcc-topo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--space-3); }
+.mcc-topo h2 { margin: 0; }
+.mcc-topo .spacer { flex: 1 1 auto; }
+
+.mcc-atencao-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mcc-atencao-lista li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: var(--text-sm); }
+.mcc-atencao-lista li.warn { border-left-color: var(--warn); }
+.mcc-atencao-lista li.info { border-left-color: var(--info); }
+
+.mcc-tarefas { display: grid; gap: 6px; margin-bottom: var(--space-3); }
+.mcc-tarefa { border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 6px; background: var(--surface-1); min-width: 0; }
+.mcc-tarefa[data-status="EXECUTANDO"] { border-left-color: var(--brand); }
+.mcc-tarefa[data-status="BLOQUEADO"] { border-left-color: var(--neg); }
+.mcc-tarefa[data-status="AGUARDANDO_HUMANO"] { border-left-color: var(--warn); }
+.mcc-tarefa[data-status="EM_VALIDACAO"] { border-left-color: var(--info); }
+.mcc-tarefa > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; min-height: 40px; }
+.mcc-tarefa > summary::-webkit-details-marker { display: none; }
+.mcc-tarefa > summary:hover { background: var(--surface-2); }
+.mcc-tarefa-id { font-variant-numeric: tabular-nums; font-size: var(--text-sm); white-space: nowrap; }
+.mcc-tarefa-titulo { flex: 1 1 240px; min-width: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+.mcc-tarefa-mod { font-size: var(--text-xs); padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; }
+.mcc-tarefa-mod.muted { border-style: dashed; }
+.mcc-tarefa-corpo { display: grid; gap: 4px; padding: 6px 12px 10px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.mcc-tarefa-corpo .muted { margin-right: 4px; }
+
+.mcc-dominio { margin-top: var(--space-3); }
+.mcc-dominio .mc-sub { display: flex; align-items: baseline; gap: 8px; }
+.mcc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.mcc-card { border: 1px solid var(--border); border-top: 3px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.mcc-card.CONCLUIDO { border-top-color: var(--ok); }
+.mcc-card.EM_CONSTRUCAO { border-top-color: var(--brand); }
+.mcc-card.BLOQUEADO { border-top-color: var(--bad); }
+.mcc-card.SEM_EVIDENCIA { border-top-color: var(--info); }
+.mcc-card-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mcc-card-cab b { flex: 1 1 auto; min-width: 0; }
+.mcc-comp { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: var(--text-xs); color: var(--muted); }
+.mcc-comp li { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.mcc-comp li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcc-ponto { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--border-strong); background: transparent; }
+.mcc-ponto.CONCLUIDO { background: var(--ok); border-color: var(--ok); }
+.mcc-ponto.EM_CONSTRUCAO { background: linear-gradient(90deg, var(--brand) 50%, transparent 50%); border-color: var(--brand); }
+.mcc-ponto.BLOQUEADO { background: var(--bad); border-color: var(--bad); }
+.mcc-ponto.desenho { background: var(--info); border-color: var(--info); }
+.mcc-ponto.SEM_EVIDENCIA { border-style: dashed; }
+.mcc-card-meta { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); }
+.mcc-card-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.mcc-card-meta .neg { color: var(--neg); }
+.mcc-proximo { overflow-wrap: anywhere; }
+.mcc-dep { overflow-wrap: anywhere; }
+.mcc-abrir { align-self: flex-start; margin-top: auto; }
+
+.mcc-lista { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.mcc-lista li { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: var(--text-sm); min-width: 0; }
+.mcc-lista li > span:not(.mc-conta):not(.mcq-cru) { overflow-wrap: anywhere; }
+.mcc-pill-btn { cursor: pointer; font: inherit; font-size: var(--text-xs); }
+.mcc-pill-btn:hover { border-color: var(--brand); color: var(--text); }
+
+.mcc-painel-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 60; }
+.mcc-painel { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); overflow-y: auto; z-index: 61; padding: 18px 20px 28px;
+  background: var(--surface); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); }
+.mcc-painel-cab { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.mcc-painel-cab > div:first-child { flex: 1 1 auto; min-width: 0; }
+.mcc-painel-cab h2 { margin: 2px 0 0; }
+.mcc-painel-cab .btn { margin-left: auto; }
+.mcc-painel-proc { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.mcc-painel .mc-sub { margin-top: 14px; }
+
+/* Mapa vivo */
+.mcm-legenda { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; color: var(--muted); }
+.mcm-leg { display: inline-flex; align-items: center; gap: 6px; }
+.mcm-leg i { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--text); }
+.mcm-leg.dependencia i { border-top-style: dashed; }
+.mcm-leg.observa i { border-top-style: dotted; border-top-color: var(--muted); }
+.mcm-leg.evidencia i { border-top-color: var(--brand); }
+.mcm-viewport { overflow: auto; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1); }
+.mcm-svg { display: block; font-family: inherit; }
+.mcm-faixa rect { fill: var(--surface-2); stroke: var(--border); }
+.mcm-faixa text { fill: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.mcm-aresta { fill: none; stroke: var(--text); stroke-width: 1.4; opacity: 0.55; }
+.mcm-aresta.dependencia { stroke-dasharray: 7 4; }
+.mcm-aresta.observa { stroke: var(--muted); stroke-dasharray: 2 4; stroke-width: 1.2; }
+.mcm-aresta.evidencia { stroke: var(--brand); }
+.mcm-aresta.ativa { opacity: 1; stroke-width: 2.2; }
+#mcm-seta path { fill: var(--text); }
+.mcm-no { cursor: pointer; }
+.mcm-no rect { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1.2; }
+.mcm-no.ok rect { stroke: var(--ok); }
+.mcm-no.warn rect { stroke: var(--warn); }
+.mcm-no.bad rect { stroke: var(--bad); }
+.mcm-no.sel rect { stroke: var(--brand); stroke-width: 2.4; }
+.mcm-no:focus { outline: none; }
+.mcm-no:focus rect { stroke: var(--brand); }
+.mcm-titulo { fill: var(--text); font-size: 12.5px; font-weight: 700; }
+.mcm-estado { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mcm-origem { fill: var(--border-strong); }
+.mcm-no.ok .mcm-origem { fill: var(--ok); }
+.mcm-no.warn .mcm-origem { fill: var(--warn); }
+.mcm-no.bad .mcm-origem { fill: var(--bad); }
+.mcm-detalhe { margin-top: var(--space-3); padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.mcm-ci { display: inline-block; margin-right: 10px; }
+
+/* Governança no celular: nada ultrapassa a largura da página — a tabela rola dentro do próprio cartão */
+.mc-gov { min-width: 0; max-width: 100%; }
+.mc-gov .card, .mc-gov .tabela { min-width: 0; max-width: 100%; }
+/* as camadas da Central (Governança) nunca podem ultrapassar a largura do cartão no celular */
+.mc-camadas { grid-template-columns: minmax(0, 1fr); }
+.mc-camada { min-width: 0; }
+.mc-camada .mc-pill, .mcm-detalhe .mc-pill { white-space: normal; max-width: 100%; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .mcc-grid { grid-template-columns: 1fr; }
+  .mcc-painel { width: 100vw; padding: 14px 16px 24px; }
+  .mcc-tarefa-titulo { flex-basis: 100%; }
+}
+@media print { .mcc-painel, .mcc-painel-bg { display: none !important; } .mcc-card, .mcc-tarefa { break-inside: avoid; } }
