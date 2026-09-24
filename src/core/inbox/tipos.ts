@@ -136,6 +136,8 @@ export interface InboxThread {
   codigoObra?: string;
   labels: string[];
   classificacao?: Classificacao;
+  /** Decisao do Octopus Router (fase 3): setor/equipe/responsavel recomendados, confianca, sinais, automacao, reavaliacao, override. */
+  roteamento?: DecisaoOctopus;
   resumo?: string;
   sla?: SlaThread;
   abertaEm: string;
@@ -204,7 +206,7 @@ export const TIPOS_EVENTO_THREAD = [
   'THREAD_CREATED', 'THREAD_REOPENED', 'MESSAGE_RECEIVED', 'MESSAGE_REGISTERED', 'NOTE_ADDED', 'AI_ANALYZED', 'TRIAGED', 'ROUTED',
   'ASSIGNED', 'REASSIGNED', 'RELEASED', 'STATUS_CHANGED', 'PRIORITY_CHANGED', 'LABELS_CHANGED', 'SLA_ESCALATED',
   'ACTION_PROPOSED', 'ACTION_APPROVED', 'ACTION_REJECTED', 'ACTION_EXECUTED', 'JOB_CREATED', 'JOB_COMPLETED', 'JOB_FAILED',
-  'RESOLVED', 'CLOSED',
+  'RESOLVED', 'CLOSED', 'ROUTING_DECIDED', 'ROUTING_OVERRIDDEN', 'ROUTING_REEVALUATED',
 ] as const;
 export type TipoEventoThread = (typeof TIPOS_EVENTO_THREAD)[number];
 
@@ -351,7 +353,7 @@ export interface RegraNivel {
 export interface RegraRoteamento {
   id: string;
   ordem: number;
-  condicao: { intencoes?: string[]; tiposRelacao?: TipoRelacao[]; palavras?: string[]; contexto?: CommunicationContext };
+  condicao: { intencoes?: string[]; tiposRelacao?: TipoRelacao[]; palavras?: string[]; contexto?: CommunicationContext; temObra?: boolean; canais?: CanalInbox[] };
   destino: { setorCodigo: string; equipeId?: string; responsavelId?: string; prioridade?: Prioridade };
   motivo: string;
   ativa: boolean;
@@ -363,6 +365,8 @@ export interface ConfiguracaoInbox {
   nivelPadrao: NivelAtendimento;
   regrasNivel: RegraNivel[];
   regrasRoteamento: RegraRoteamento[];
+  regrasAutomacao: RegraAutomacao[];
+  autoRoteamento: AutoRoteamento;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +404,10 @@ export const SETORES_PADRAO: Setor[] = [
 ];
 
 export const NIVEL_PADRAO: NivelAtendimento = 'B';
+export const VERSAO_OCTOPUS = 'octopus-1';
+export const AUTO_ROTEAMENTO_PADRAO: AutoRoteamento = { confiancaAtribuirPessoa: 0.85, confiancaAtribuirSetor: 0.6, automacaoPadrao: 'APPROVAL', transferenciaAutomatica: false, confiancaTransferir: 0.9 };
+/** Cortes das bandas de confianca (HIGH >= pessoa, MEDIUM >= setor, LOW abaixo) vem de AutoRoteamento. */
+export const bandaDe = (confianca: number, a: AutoRoteamento): BandaConfianca => (confianca >= a.confiancaAtribuirPessoa ? 'HIGH' : confianca >= a.confiancaAtribuirSetor ? 'MEDIUM' : 'LOW');
 
 export const CONFIGURACAO_PADRAO: ConfiguracaoInbox = {
   setorFallback: 'ADMINISTRATIVO',
@@ -420,7 +428,14 @@ export const CONFIGURACAO_PADRAO: ConfiguracaoInbox = {
     { id: 'ROT-06', ordem: 6, condicao: { intencoes: ['revisao_projeto', 'duvida_tecnica'] }, destino: { setorCodigo: 'ENGENHARIA' }, motivo: 'projeto e engenharia', ativa: true },
     { id: 'ROT-07', ordem: 7, condicao: { intencoes: ['reclamacao', 'garantia', 'assistencia'] }, destino: { setorCodigo: 'POS_VENDA', prioridade: 'Alta' }, motivo: 'pós-venda', ativa: true },
     { id: 'ROT-08', ordem: 8, condicao: { tiposRelacao: ['fornecedor'] }, destino: { setorCodigo: 'FORNECEDORES' }, motivo: 'contato de fornecedor sem intenção específica', ativa: true },
+    { id: 'ROT-09', ordem: 9, condicao: { intencoes: ['defeito_sistema'] }, destino: { setorCodigo: 'SISTEMA' }, motivo: 'defeito ou pedido no EIFF Control', ativa: true },
   ],
+  regrasAutomacao: [
+    { id: 'AUT-01', ordem: 1, intencoes: ['juridico', 'alteracao_contratual', 'conflito', 'excecao_financeira', 'risco_operacional', 'reclamacao'], modo: 'HUMAN', risco: 'ALTO', motivo: 'tema sensível: humano obrigatório', ativa: true },
+    { id: 'AUT-02', ordem: 2, intencoes: ['consultar_horario', 'consultar_endereco', 'solicitar_documento', 'confirmar_recebimento', 'consultar_status'], modo: 'AUTO', risco: 'BAIXO', motivo: 'pergunta padronizada dentro dos limites pré-autorizados', ativa: true },
+    { id: 'AUT-03', ordem: 3, intencoes: ['consultar_pagamento', 'cobranca', 'negociacao', 'solicitar_orcamento', 'prazo_obra', 'logistica_entrega'], modo: 'APPROVAL', risco: 'MEDIO', motivo: 'resposta com compromisso: IA prepara, humano aprova', ativa: true },
+  ],
+  autoRoteamento: AUTO_ROTEAMENTO_PADRAO,
 };
 
 export const inboxVazio = (): InboxDataset => ({
@@ -434,4 +449,116 @@ export function identificadorMascarado(i: IdentidadeCanal): string {
   if (i.canal === 'WHATSAPP') return v.length > 6 ? `${v.slice(0, 4)}${'*'.repeat(v.length - 6)}${v.slice(-2)}` : '***';
   if (i.canal === 'EMAIL') { const [u, d] = v.split('@'); return d ? `${u.slice(0, 2)}***@${d}` : '***'; }
   return v;
+}
+
+// ---------------------------------------------------------------------------
+// 8) Octopus Router: decisao de roteamento, confianca, automacao e reavaliacao (fase 3)
+// ---------------------------------------------------------------------------
+export const BANDAS_CONFIANCA = ['HIGH', 'MEDIUM', 'LOW'] as const;
+export type BandaConfianca = (typeof BANDAS_CONFIANCA)[number];
+export const MODOS_AUTOMACAO = ['AUTO', 'APPROVAL', 'HUMAN'] as const;
+export type ModoAutomacao = (typeof MODOS_AUTOMACAO)[number];
+export const RISCOS = ['BAIXO', 'MEDIO', 'ALTO'] as const;
+export type Risco = (typeof RISCOS)[number];
+export const APLICACOES_ROTEAMENTO = ['ATRIBUIR_PESSOA', 'ATRIBUIR_SETOR', 'TRIAGEM'] as const;
+export type AplicacaoRoteamento = (typeof APLICACOES_ROTEAMENTO)[number];
+export const ORIGENS_DECISAO = ['DETERMINISTICO', 'IA', 'HIBRIDO', 'HUMANO'] as const;
+export type OrigemDecisao = (typeof ORIGENS_DECISAO)[number];
+export const REAVALIACOES = ['KEEP', 'RECOMMEND_TRANSFER', 'AUTO_TRANSFER'] as const;
+export type VeredictoReavaliacao = (typeof REAVALIACOES)[number];
+
+/** Um sinal objetivo que sustentou a decisao (auditavel; nunca raciocinio encadeado). */
+export interface SinalRoteamento { codigo: string; peso: number; descricao: string }
+
+/** Politica IA x humano para ESTA conversa, decidida por regra (nunca `if` espalhado pela aplicacao). */
+export interface DecisaoAutomacao {
+  modo: ModoAutomacao;
+  motivo: string;
+  /** Papel do EIFF Control que precisa aprovar quando o modo e APPROVAL (vazio = o responsavel da conversa). */
+  papelExigido?: string;
+  /** Acoes que a IA pode propor/executar dentro deste modo. */
+  acoesPermitidas: TipoAcao[];
+  risco: Risco;
+  confianca: number;
+  regraId?: string;
+}
+
+export interface Reavaliacao {
+  veredicto: VeredictoReavaliacao;
+  em: string;
+  mensagemId?: string;
+  setorSugerido?: string;
+  equipeSugeridaId?: string;
+  confianca: number;
+  motivo: string;
+}
+
+export interface OverrideRoteamento {
+  por: string;
+  em: string;
+  motivo?: string;
+  de: { setorCodigo?: string; equipeId?: string; responsavelId?: string };
+  para: { setorCodigo?: string; equipeId?: string; responsavelId?: string };
+}
+
+/**
+ * A decisao operacional do Octopus Router para uma thread — o que responde "por que essa conversa foi para o Financeiro?".
+ * Persistida em inbox_thread.routing (jsonb) e resumida no evento ROUTING_DECIDED.
+ */
+export interface DecisaoOctopus {
+  versao: string;
+  em: string;
+  mensagemId?: string;
+  origem: OrigemDecisao;
+  intencao: string;
+  assunto: string;
+  entidades: EntidadeExtraida[];
+  prioridade: Prioridade;
+  urgente: boolean;
+  nivel: NivelAtendimento;
+  setorCodigo?: string;
+  equipeId?: string;
+  responsavelId?: string;
+  /** O que o motor faz com a decisao dada a confianca: atribui pessoa, so setor/equipe, ou manda para triagem. */
+  aplicacao: AplicacaoRoteamento;
+  automacao: DecisaoAutomacao;
+  confianca: number;
+  banda: BandaConfianca;
+  sinais: SinalRoteamento[];
+  /** Uma frase curta e auditavel. */
+  motivoOperacional: string;
+  fallback: boolean;
+  slaAte: string;
+  /** Caminho de escalacao (contrato; sem scheduler): equipe -> gestor -> setor -> diretoria/fallback. */
+  escalacao: string[];
+  reavaliacao?: Reavaliacao;
+  override?: OverrideRoteamento;
+}
+
+/** Regra de automacao (dados): a primeira que casar define o modo; sem regra, a politica de nivel (A/B/C) decide. */
+export interface RegraAutomacao {
+  id: string;
+  ordem: number;
+  intencoes?: string[];
+  setores?: string[];
+  tiposRelacao?: TipoRelacao[];
+  modo: ModoAutomacao;
+  risco: Risco;
+  papelExigido?: string;
+  motivo: string;
+  ativa: boolean;
+}
+
+/** Limiares e padroes do roteamento automatico (configuraveis em inbox_config.auto_routing). */
+export interface AutoRoteamento {
+  /** Confianca minima para atribuir uma PESSOA automaticamente. */
+  confiancaAtribuirPessoa: number;
+  /** Confianca minima para atribuir SETOR/EQUIPE automaticamente; abaixo disso vai para Nao atribuidos (triagem humana). */
+  confiancaAtribuirSetor: number;
+  /** Modo de automacao quando nenhuma regra decide. */
+  automacaoPadrao: ModoAutomacao;
+  /** Reavaliacao: transferir sozinho quando a thread muda de assunto? (sempre falso com override humano). */
+  transferenciaAutomatica: boolean;
+  /** Confianca minima da reavaliacao para transferir sozinho. */
+  confiancaTransferir: number;
 }

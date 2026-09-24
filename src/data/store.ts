@@ -57,7 +57,7 @@ import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { MATRIZ, pode, type Acao } from '../core/permissoes';
-import { NOME_STATUS, aoResponder, aplicarStatus, classificacaoAuditavel, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
+import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATUS, RISCOS, alvoDaDecisao, aoResponder, aplicarStatus, classificacaoAuditavel, decidirRoteamento, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, reavaliar, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type DecisaoOctopus, type EntradaRoteador, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
@@ -376,7 +376,12 @@ function exigirProximaAcao(o: Oportunidade, tarefas: TarefaRadar[]) {
  * inbox_* (migration 0056) — sem elas, vazio. Nenhum exemplo entra em producao: `inboxCarregarExemplo` so no modo local.
  */
 export function garantirInbox(ds: Dataset, modo: 'local' | 'remoto'): Dataset {
-  if (ds.inbox && Array.isArray(ds.inbox.threads) && Array.isArray(ds.inbox.atribuicoes) && ds.inbox.configuracao) return ds;
+  if (ds.inbox && Array.isArray(ds.inbox.threads) && Array.isArray(ds.inbox.atribuicoes) && ds.inbox.configuracao) {
+    const c = ds.inbox.configuracao;
+    if (Array.isArray(c.regrasAutomacao) && c.autoRoteamento) return ds;
+    // dataset guardado antes do Octopus Router (fase 3): completa a configuracao com os padroes
+    return { ...ds, inbox: { ...ds.inbox, configuracao: { ...c, regrasAutomacao: c.regrasAutomacao ?? CONFIG_INBOX_PADRAO.regrasAutomacao, autoRoteamento: { ...CONFIG_INBOX_PADRAO.autoRoteamento, ...(c.autoRoteamento ?? {}) } } } };
+  }
   // new Date() direto: esta funcao roda em carregar(), na inicializacao do modulo, antes de `agora` existir
   return { ...ds, inbox: modo === 'local' ? seedInbox(new Date().toISOString()) : inboxVazio() };
 }
@@ -410,6 +415,98 @@ const recorteAtual = (i: InboxDataset) => recorteDe(state.usuario, i.membros);
 function registrarAtribuicao(i: InboxDataset, ids: Relogio, threadId: string, alvo: { setorCodigo?: string; equipeId?: string; usuarioId?: string }, origem: Atribuicao['origem'], motivo?: string): Atribuicao[] {
   const fechadas = i.atribuicoes.map((a) => (a.threadId === threadId && !a.liberadaEm ? { ...a, liberadaEm: ids.agora } : a));
   return [...fechadas, { id: ids.novoId('ATR'), threadId, setorCodigo: alvo.setorCodigo, equipeId: alvo.equipeId, usuarioId: alvo.usuarioId, atribuidaEm: ids.agora, origem, motivo: motivo?.trim() || undefined, atorId: state.usuario.id }];
+}
+const eventoSistema = (ids: Relogio, threadId: string, tipo: ThreadEvent['tipo'], detalhe: string, antes?: string, depois?: string, mensagemId?: string): ThreadEvent =>
+  ({ id: ids.novoId('EVT'), threadId, mensagemId, tipo, em: ids.agora, ator: { tipo: 'sistema', nome: 'Octopus Router' }, detalhe: detalhe.replace(/\d{9,}/g, (d) => `${d.slice(0, 4)}***${d.slice(-2)}`).slice(0, 500), antes, depois });
+/** Entrada do Octopus Router a partir do Dataset: obras (responsavel = usuario), usuarios ativos, ultima mensagem recebida. */
+function entradaRoteador(ds: Dataset, i: InboxDataset, t: InboxThread, mensagem: InboxMessage, agoraIso: string): EntradaRoteador {
+  return {
+    inbox: i, thread: t, mensagem, agora: agoraIso, classificacaoIa: t.classificacao?.provedor === 'LLM' ? t.classificacao : undefined,
+    obras: ds.obras.map((o) => ({ codigo: o.codigo, nome: o.nome, responsavelId: o.responsavel || undefined, emExecucao: o.status === 'Em execução' })),
+    usuarios: ds.usuarios.map((u) => ({ id: u.id, ativo: u.ativo, papel: u.papel })),
+  };
+}
+const ultimaInbound = (i: InboxDataset, t: InboxThread): InboxMessage | undefined => [...i.mensagens].filter((m) => m.threadId === t.id && m.direcao === 'inbound').sort((a, b) => b.em.localeCompare(a.em))[0];
+/**
+ * Passos 13-15 do Octopus Router no modo em memoria: persiste a decisao na thread (ROUTING_DECIDED), aplica a atribuicao
+ * conforme a banda (pessoa / setor / triagem) e emite os eventos. Um override humano registrado nunca e sobrescrito.
+ * Devolve o slice atualizado; nao faz commit (quem chama decide a auditoria).
+ */
+function aplicarDecisaoOctopus(ds: Dataset, i: InboxDataset, ids: Relogio, t: InboxThread, d: DecisaoOctopus, origem: Atribuicao['origem']): { inbox: InboxDataset; thread: InboxThread; aplicada: boolean } {
+  const eventos: ThreadEvent[] = [eventoSistema(ids, t.id, 'ROUTING_DECIDED', `${d.aplicacao === 'TRIAGEM' ? 'sugestão' : 'decisão'} ${d.setorCodigo ?? '—'} · ${Math.round(d.confianca * 100)}% (${d.banda}) · automação ${d.automacao.modo} · ${d.motivoOperacional}`, t.setorCodigo, d.setorCodigo, d.mensagemId)];
+  let novo: InboxThread = { ...t, roteamento: d, prioridade: maiorPrioridade(t.prioridade, d.prioridade), sla: t.sla ?? { primeiraRespostaAte: d.slaAte } };
+  if (!t.setorCodigo && t.nivel === 'C' && d.intencao !== 'indefinida') novo = { ...novo, nivel: d.nivel };
+  if (novo.prioridade !== t.prioridade) eventos.push(eventoSistema(ids, t.id, 'PRIORITY_CHANGED', 'prioridade pelo roteamento', t.prioridade, novo.prioridade));
+  let atribuicoes = i.atribuicoes; let aplicada = false;
+  const alvo = alvoDaDecisao(d);
+  if (alvo && !t.roteamento?.override) {
+    const setorCodigo = alvo.setorCodigo; const equipeId = alvo.equipeId; const responsavelId = alvo.responsavelId ?? (setorCodigo === t.setorCodigo ? t.responsavelId : undefined);
+    if (setorCodigo !== t.setorCodigo || equipeId !== t.equipeId || responsavelId !== t.responsavelId) {
+      const status = statusAposAtribuicao(novo, setorCodigo, responsavelId);
+      if (setorCodigo !== t.setorCodigo || equipeId !== t.equipeId) eventos.push(eventoSistema(ids, t.id, t.setorCodigo ? 'REASSIGNED' : 'ROUTED', `setor ${t.setorCodigo ?? '—'} → ${setorCodigo ?? '—'}${equipeId ? ` · equipe ${i.equipes.find((e) => e.id === equipeId)?.nome ?? equipeId}` : ''} · ${d.sinais.find((s) => ['regra_explicita', 'historico_mesmo_setor', 'setor_do_catalogo', 'setor_da_ia', 'fallback'].includes(s.codigo))?.descricao ?? d.motivoOperacional}`, t.setorCodigo, setorCodigo));
+      if (responsavelId !== t.responsavelId) eventos.push(eventoSistema(ids, t.id, !responsavelId ? 'RELEASED' : t.responsavelId ? 'REASSIGNED' : 'ASSIGNED', `responsável ${nomeUsuario(ds, t.responsavelId)} → ${nomeUsuario(ds, responsavelId)} · ${d.sinais.find((s) => s.codigo.startsWith('responsavel_'))?.descricao ?? 'roteamento'}`, t.responsavelId, responsavelId));
+      if (status !== t.status) eventos.push(eventoSistema(ids, t.id, 'STATUS_CHANGED', 'status derivado do roteamento', t.status, status));
+      novo = { ...novo, setorCodigo, equipeId, responsavelId, status };
+      atribuicoes = registrarAtribuicaoSistema(i, ids, t.id, { setorCodigo, equipeId, usuarioId: responsavelId }, origem, d.motivoOperacional);
+      aplicada = true;
+    }
+  }
+  return { inbox: { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos], atribuicoes }, thread: novo, aplicada };
+}
+/** Atribuicao feita pelo sistema (roteamento automatico): sem ator humano. */
+function registrarAtribuicaoSistema(i: InboxDataset, ids: Relogio, threadId: string, alvo: { setorCodigo?: string; equipeId?: string; usuarioId?: string }, origem: Atribuicao['origem'], motivo?: string): Atribuicao[] {
+  const fechadas = i.atribuicoes.map((a) => (a.threadId === threadId && !a.liberadaEm ? { ...a, liberadaEm: ids.agora } : a));
+  return [...fechadas, { id: ids.novoId('ATR'), threadId, setorCodigo: alvo.setorCodigo, equipeId: alvo.equipeId, usuarioId: alvo.usuarioId, atribuidaEm: ids.agora, origem, motivo: motivo?.trim().slice(0, 500) || undefined }];
+}
+/** Registra o override humano na decisao do router quando a pessoa escolhe outro destino que o sugerido/aplicado. */
+function comOverride(t: InboxThread, para: { setorCodigo?: string; equipeId?: string; responsavelId?: string }, motivo: string | undefined, ids: Relogio): { thread: InboxThread; evento?: ThreadEvent } {
+  const r = t.roteamento;
+  if (!r || !r.setorCodigo) return { thread: t };
+  const difere = para.setorCodigo !== r.setorCodigo || (r.aplicacao === 'ATRIBUIR_PESSOA' && para.responsavelId !== r.responsavelId) || (para.responsavelId !== undefined && para.responsavelId !== r.responsavelId && r.responsavelId !== undefined);
+  if (!difere) return { thread: t };
+  const override = { por: state.usuario.id, em: ids.agora, motivo: motivo?.trim() || undefined, de: { setorCodigo: r.setorCodigo, equipeId: r.equipeId, responsavelId: r.responsavelId }, para };
+  return { thread: { ...t, roteamento: { ...r, override } }, evento: eventoInbox(ids, t.id, 'ROUTING_OVERRIDDEN', `humano escolheu ${para.setorCodigo ?? '—'}${para.responsavelId ? ` / ${para.responsavelId}` : ''} em vez de ${r.setorCodigo}${r.responsavelId ? ` / ${r.responsavelId}` : ''}${motivo?.trim() ? `: ${motivo.trim()}` : ''}`, r.setorCodigo, para.setorCodigo) };
+}
+/** Decide (thread sem setor) ou reavalia (thread ja roteada) e aplica no slice. Puro sobre o slice; sem commit. */
+function rotearNoSlice(ds: Dataset, i: InboxDataset, ids: Relogio, t: InboxThread, m: InboxMessage): { inbox: InboxDataset; resumo: Record<string, unknown> } {
+  const d = decidirRoteamento(entradaRoteador(ds, i, t, m, ids.agora));
+  if (!t.setorCodigo) {
+    const r = aplicarDecisaoOctopus(ds, i, ids, t, d, 'roteamento');
+    return { inbox: r.inbox, resumo: { setorCodigo: d.setorCodigo, responsavelId: d.responsavelId, confianca: d.confianca, banda: d.banda, aplicacao: d.aplicacao, automacao: d.automacao.modo, aplicada: r.aplicada } };
+  }
+  const rv = reavaliar(t, d, i.configuracao.autoRoteamento);
+  const decisao: DecisaoOctopus = { ...d, reavaliacao: rv, override: t.roteamento?.override };
+  const ev = eventoSistema(ids, t.id, 'ROUTING_REEVALUATED', `${rv.veredicto}: ${rv.motivo}`, t.setorCodigo, rv.setorSugerido, d.mensagemId);
+  if (rv.veredicto === 'AUTO_TRANSFER') {
+    const r = aplicarDecisaoOctopus(ds, { ...i, eventos: [...i.eventos, ev] }, ids, t, { ...decisao, aplicacao: 'ATRIBUIR_SETOR' }, 'roteamento');
+    return { inbox: r.inbox, resumo: { reavaliacao: rv.veredicto, setorCodigo: d.setorCodigo, confianca: d.confianca, aplicada: r.aplicada } };
+  }
+  const novo: InboxThread = { ...t, roteamento: decisao, prioridade: maiorPrioridade(t.prioridade, d.prioridade) };
+  return { inbox: { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ev] }, resumo: { reavaliacao: rv.veredicto, setorSugerido: rv.setorSugerido, confianca: d.confianca, aplicada: false } };
+}
+function validarConfiguracaoOctopus(i: InboxDataset, c: ConfiguracaoInbox) {
+  const a = c.autoRoteamento;
+  for (const k of ['confiancaAtribuirPessoa', 'confiancaAtribuirSetor', 'confiancaTransferir'] as const) if (!(a[k] >= 0 && a[k] <= 1)) throw new RegraDeNegocioError(`Limiar ${k} precisa estar entre 0 e 1.`);
+  if (a.confiancaAtribuirPessoa < a.confiancaAtribuirSetor) throw new RegraDeNegocioError('O limiar para atribuir pessoa não pode ser menor que o de setor.');
+  if (!MODOS_AUTOMACAO.includes(a.automacaoPadrao)) throw new RegraDeNegocioError('Modo de automação padrão inválido.');
+  const ativos = new Set(i.setores.filter((s) => s.codigo && s.ativo).map((s) => s.codigo));
+  const ids = new Set<string>();
+  for (const r of c.regrasRoteamento) {
+    if (!r.id?.trim() || ids.has(r.id)) throw new RegraDeNegocioError(`Regra de roteamento com id vazio ou repetido: ${r.id}.`); ids.add(r.id);
+    if (!ativos.has(r.destino.setorCodigo)) throw new RegraDeNegocioError(`Regra ${r.id}: destino precisa ser um setor ativo.`);
+    if (r.destino.equipeId && !i.equipes.some((e) => e.id === r.destino.equipeId && e.ativo && e.setorCodigo === r.destino.setorCodigo)) throw new RegraDeNegocioError(`Regra ${r.id}: equipe precisa ser do setor de destino.`);
+    if (r.destino.responsavelId && !state.ds.usuarios.some((u) => u.id === r.destino.responsavelId && u.ativo)) throw new RegraDeNegocioError(`Regra ${r.id}: responsável inválido.`);
+    const cond = r.condicao;
+    if (!cond.intencoes?.length && !cond.tiposRelacao?.length && !cond.palavras?.length && !cond.contexto && cond.temObra === undefined && !cond.canais?.length) throw new RegraDeNegocioError(`Regra ${r.id}: precisa de pelo menos uma condição.`);
+  }
+  const idsA = new Set<string>();
+  for (const r of c.regrasAutomacao) {
+    if (!r.id?.trim() || idsA.has(r.id)) throw new RegraDeNegocioError(`Regra de automação com id vazio ou repetido: ${r.id}.`); idsA.add(r.id);
+    if (!MODOS_AUTOMACAO.includes(r.modo)) throw new RegraDeNegocioError(`Regra ${r.id}: modo inválido.`);
+    if (!RISCOS.includes(r.risco)) throw new RegraDeNegocioError(`Regra ${r.id}: risco inválido.`);
+    if (r.setores?.some((s) => !ativos.has(s))) throw new RegraDeNegocioError(`Regra ${r.id}: setor inexistente ou inativo.`);
+    if (!r.intencoes?.length && !r.setores?.length && !r.tiposRelacao?.length) throw new RegraDeNegocioError(`Regra ${r.id}: precisa de pelo menos uma condição.`);
+  }
 }
 function registrar(ds: Dataset, acao: string, entidade: string, entidadeId: string, antes?: unknown, depois?: unknown, motivo?: string): Dataset {
   const a: Auditoria = { id: seq('AUD', ds.auditoria.map((x) => x.id)), ts: agora(), usuario: state.usuario.nome, acao, entidade, entidadeId, antes, depois, motivo };
@@ -2891,7 +2988,10 @@ export const actions = {
     if (responsavelId !== t.responsavelId) eventos.push(eventoInbox(ids, t.id, !responsavelId ? 'RELEASED' : t.responsavelId ? 'REASSIGNED' : 'ASSIGNED', `responsável ${nomeUsuario(ds, t.responsavelId)} → ${nomeUsuario(ds, responsavelId)}${motivo}`, t.responsavelId, responsavelId));
     if (status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'status derivado da atribuição', t.status, status));
     const atribuicoes = registrarAtribuicao(i, ids, t.id, { setorCodigo, equipeId, usuarioId: responsavelId }, dados.origem ?? 'manual', dados.motivo);
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos], atribuicoes }), 'inbox_atribuir', 'inbox_thread', t.id, { setorCodigo: t.setorCodigo, equipeId: t.equipeId, responsavelId: t.responsavelId, status: t.status }, { setorCodigo, equipeId, responsavelId, status }, dados.motivo));
+    // Octopus Router: escolha humana diferente da sugerida/aplicada vira override registrado (nunca sobrescrito depois)
+    const ov = comOverride(novo, { setorCodigo, equipeId, responsavelId }, dados.motivo, ids);
+    if (ov.evento) eventos.push(ov.evento);
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, ov.thread), eventos: [...i.eventos, ...eventos], atribuicoes }), 'inbox_atribuir', 'inbox_thread', t.id, { setorCodigo: t.setorCodigo, equipeId: t.equipeId, responsavelId: t.responsavelId, status: t.status }, { setorCodigo, equipeId, responsavelId, status }, dados.motivo));
   },
 
   inboxMudarStatus(threadId: string, para: StatusThread, motivo?: string) {
@@ -2998,7 +3098,9 @@ export const actions = {
     if (responsavelId !== t.responsavelId) eventos.push(eventoInbox(ids, t.id, 'ASSIGNED', `responsável ${nomeUsuario(ds, responsavelId)} (padrão do setor)`, t.responsavelId, responsavelId));
     if (status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'status derivado da triagem', t.status, status));
     const atribuicoes = setorCodigo !== t.setorCodigo || responsavelId !== t.responsavelId || equipeId !== t.equipeId ? registrarAtribuicao(i, ids, t.id, { setorCodigo, equipeId, usuarioId: responsavelId }, 'triagem') : i.atribuicoes;
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), eventos: [...i.eventos, ...eventos], atribuicoes }), 'inbox_triar', 'inbox_thread', t.id, { status: t.status, setorCodigo: t.setorCodigo, nivel: t.nivel }, { intencao: classificacao.intencao, setorCodigo, equipeId, responsavelId, prioridade, nivel, status, regra: decisao.regraRoteamentoId }));
+    const ov = dados.setorCodigo ? comOverride(novo, { setorCodigo, equipeId, responsavelId }, undefined, ids) : { thread: novo };
+    if (ov.evento) eventos.push(ov.evento);
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, ov.thread), eventos: [...i.eventos, ...eventos], atribuicoes }), 'inbox_triar', 'inbox_thread', t.id, { status: t.status, setorCodigo: t.setorCodigo, nivel: t.nivel }, { intencao: classificacao.intencao, setorCodigo, equipeId, responsavelId, prioridade, nivel, status, regra: decisao.regraRoteamentoId }));
   },
 
   /** Propoe uma acao a partir da conversa. Com aprovacao exigida, a thread vai para AGUARDANDO_APROVACAO (se a transicao valer). */
@@ -3098,10 +3200,45 @@ export const actions = {
     const ds = state.ds; const i = inboxDe(ds); const ids = idsInbox(i);
     const r = receberMensagem(i, { ...m, texto: m.texto.trim() }, ids);
     if (r.duplicada || !r.thread) return r;
-    const t = r.thread;
-    const threads = t.sla ? r.ds.threads : trocar(r.ds.threads, { ...t, sla: { primeiraRespostaAte: slaDe(i.configuracao, t.prioridade, t.abertaEm) } });
-    commit(registrar(comInbox(ds, { ...r.ds, threads }), 'inbox_receber', 'inbox_thread', t.id, undefined, { mensagemId: r.mensagem?.id, novaThread: r.novaThread, novoContato: r.novoContato, reaberta: r.reaberta, canal: m.canal, contexto: m.contexto }));
+    const t0 = r.thread;
+    const comSla: InboxThread = t0.sla ? t0 : { ...t0, sla: { primeiraRespostaAte: slaDe(i.configuracao, t0.prioridade, t0.abertaEm) } };
+    let slice: InboxDataset = { ...r.ds, threads: trocar(r.ds.threads, comSla) };
+    let roteamento: Record<string, unknown>;
+    // OCTOPUS ROUTER: a mensagem ja esta no slice; o roteamento e um passo seguinte e qualquer falha dele nao a perde
+    try {
+      const rot = rotearNoSlice(ds, slice, ids, comSla, r.mensagem!);
+      slice = rot.inbox; roteamento = rot.resumo;
+    } catch (e) { roteamento = { erro: (e as Error).message ?? 'falha no roteamento' }; }
+    commit(registrar(comInbox(ds, slice), 'inbox_receber', 'inbox_thread', t0.id, undefined, { mensagemId: r.mensagem?.id, novaThread: r.novaThread, novoContato: r.novoContato, reaberta: r.reaberta, canal: m.canal, contexto: m.contexto, roteamento }));
     return r;
+  },
+
+  /**
+   * Octopus Router sob demanda (botao "Rotear de novo" / simulacao): decide e aplica pela banda de confianca; em conversa
+   * ja roteada REAVALIA (KEEP / RECOMMEND_TRANSFER / AUTO_TRANSFER) e nunca sobrescreve um override humano. Quem pode: quem
+   * tem autoridade sobre a conversa (transversal, responsavel, gestor do setor) ou quem a enxerga sem setor (triagem).
+   */
+  inboxRotear(threadId: string) {
+    exigir('inbox');
+    const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
+    const aut = podeAtribuir(recorteAtual(i), t, { setorCodigo: t.setorCodigo, responsavelId: t.responsavelId });
+    if (!aut.ok) throw new RegraDeNegocioError(aut.motivo);
+    const m = ultimaInbound(i, t);
+    if (!m) throw new RegraDeNegocioError('Conversa sem mensagem recebida para rotear.');
+    const rot = rotearNoSlice(ds, i, ids, t, m);
+    commit(registrar(comInbox(ds, rot.inbox), 'inbox_rotear', 'inbox_thread', t.id, { setorCodigo: t.setorCodigo, responsavelId: t.responsavelId, status: t.status }, rot.resumo));
+    return rot.resumo;
+  },
+
+  /** Triagem em um clique: aplica a sugestao do router (ou um ajuste dela) como decisao HUMANA, com origem "triagem". */
+  inboxConfirmarRoteamento(threadId: string, ajuste?: { setorCodigo?: string; equipeId?: string; responsavelId?: string; motivo?: string }) {
+    exigir('inbox');
+    const i = inboxDe(state.ds); const t = threadDoInbox(i, threadId);
+    const r = t.roteamento;
+    if (!r) throw new RegraDeNegocioError('Esta conversa ainda não tem sugestão do roteamento.');
+    const alvo = { setorCodigo: ajuste?.setorCodigo ?? r.setorCodigo ?? '', equipeId: ajuste?.equipeId ?? (ajuste?.setorCodigo && ajuste.setorCodigo !== r.setorCodigo ? '' : r.equipeId ?? ''), responsavelId: ajuste?.responsavelId ?? r.responsavelId ?? '' };
+    if (!alvo.setorCodigo) throw new RegraDeNegocioError('Escolha um setor para confirmar.');
+    actions.inboxAtribuir(threadId, { ...alvo, origem: 'triagem', motivo: ajuste?.motivo?.trim() || (ajuste?.setorCodigo && ajuste.setorCodigo !== r.setorCodigo ? 'sugestão do Octopus Router ajustada' : 'sugestão do Octopus Router confirmada') });
   },
 
   /** Substitui o slice do Inbox pelo exemplo ficticio. SO no modo local: no remoto o slice vem das tabelas inbox_*. */
@@ -3161,10 +3298,11 @@ export const actions = {
     commit(registrar(comInbox(ds, { ...i, membros: i.membros.filter((x) => x.id !== id) }), 'inbox_remover_membro', 'inbox_membro', id, m, undefined));
   },
 
-  inboxSalvarConfiguracao(c: Partial<Pick<ConfiguracaoInbox, 'setorFallback' | 'setorEscalacao' | 'slaHorasPorPrioridade' | 'nivelPadrao'>>) {
+  inboxSalvarConfiguracao(c: Partial<Pick<ConfiguracaoInbox, 'setorFallback' | 'setorEscalacao' | 'slaHorasPorPrioridade' | 'nivelPadrao' | 'autoRoteamento' | 'regrasRoteamento' | 'regrasAutomacao'>>) {
     exigir('inbox_config');
     const ds = state.ds; const i = inboxDe(ds);
     const nova: ConfiguracaoInbox = { ...i.configuracao, ...c };
+    validarConfiguracaoOctopus(i, nova);
     for (const k of ['setorFallback', 'setorEscalacao'] as const) if (!i.setores.some((s) => s.codigo === nova[k] && s.ativo)) throw new RegraDeNegocioError(`${k === 'setorFallback' ? 'Setor de fallback' : 'Setor de escalação'} precisa ser um setor ativo.`);
     for (const p of Object.keys(nova.slaHorasPorPrioridade) as Prioridade[]) if (!(nova.slaHorasPorPrioridade[p] > 0)) throw new RegraDeNegocioError(`SLA de ${p} precisa ser maior que zero.`);
     commit(registrar(comInbox(ds, { ...i, configuracao: nova }), 'inbox_alterar_configuracao', 'inbox_config', 'configuracao', i.configuracao, nova));

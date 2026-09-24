@@ -382,7 +382,7 @@ recusados pelo trigger; decisão de ação com papel errado, pelo proponente ou 
 Participantes: decisão da §12.3 preservada — participante é quem contribuiu; encaminhamento dá acesso só enquanto a
 atribuição vigente for de quem encaminhou; histórico em `inbox_assignment` e eventos.
 
-## 13. Próxima fase — Octopus Router (contrato arquitetural, não implementado)
+## 13. Octopus Router — contrato arquitetural (escrito no checkpoint; implementado na §14)
 
 ```
 Inbound Message            ChannelInboundEvent + conteúdo, já persistido por inbox_ingest (nunca se perde)
@@ -406,3 +406,124 @@ SLA / Escalation           slaDe()/estadoSla()/escalacoesPendentes() → SLA_ESC
 
 Regras que a fase 3 herda sem renegociar: IA interpreta, motor decide, permissão autoriza, servidor executa, auditoria
 registra; texto que chega é dado, nunca instrução; nada é enviado sem rito de canário; Factory só por `ExecutionProvider`.
+
+## 14. Fase 3 — Octopus Router (23/09/2026, branch `feature/eiff-inbox-octopus-router`, migration 0057)
+
+O cérebro de roteamento como **pipeline explícito e auditável**, determinístico primeiro, com a IA como refino opcional e
+fallback obrigatório: com a IA fora do ar a cadeia inteira continua funcionando. Nada aqui envia mensagem, nada altera o
+webhook da Meta além de entregar os eventos já validados à porta de roteamento, e a Factory continua fora.
+
+### 14.1 Pipeline (`src/core/inbox/roteador.ts`, puro)
+
+`decidirRoteamento(EntradaRoteador) → DecisaoOctopus` encadeia funções pequenas, cada uma com entrada e saída próprias:
+
+| # | Passo | Função | O que produz |
+| --- | --- | --- | --- |
+| 1 | Resolve Identity | `resolverIdentidade` | contato conhecido? relação, colaborador, identidade verificada, obras |
+| 2 | Resolve Thread | `receberMensagem` (fase 2) | nova / reaberta / em andamento — vira sinal em `carregarContexto` |
+| 3 | Load Context | `carregarContexto` | obra e responsável da obra (`Obra.responsavel` = usuário), **memória operacional** (últimas 5 conversas do contato: setor, equipe, pessoa, intenção — sinal, nunca regra), mensagens recentes, setores/equipes/membros ativos, configuração |
+| 4 | Analyze Message | `analisarMensagem` | texto normalizado, urgência no texto, pergunta, anexos |
+| 5 | Detect Intent | `detectarIntencao` | catálogo determinístico `CATALOGO_INTENCOES` (palavras → intenção → setor padrão → risco); a IA só desempata quando o catálogo empata e ela tem ≥ 0,80; sem catálogo e sem IA = `indefinida` |
+| 6 | Detect Entities | `detectarEntidades` | NF, pedido, medição, valor, data, obra (código ou nome); a IA acrescenta sem duplicar |
+| 7 | Determine Priority | `determinarPrioridade` | **só sobe**: intenção do catálogo, urgência, risco alto, reaberta, recomendação da IA |
+| 8 | Select Sector | `selecionarSetor` | **regra explícita da configuração > memória operacional (mesma intenção) > catálogo > IA > fallback**; IA vencida por regra fica registrada como sinal `ia_vencida_pela_regra` |
+| 9 | Select Team | `selecionarEquipe` | equipe da regra > do histórico > do responsável da obra > única equipe do setor; nunca de outro setor |
+| 10 | Select Assignee | `selecionarResponsavel` | regra > responsável da obra > histórico > IA > padrão da equipe > padrão do setor — **sempre pessoa ativa e membro do setor (ou padrão do setor/equipe)**; fora disso, fica com o setor |
+| 11 | Automation Policy | `decidirAutomacao` (`automacao.ts`) | `DecisaoAutomacao { modo AUTO/APPROVAL/HUMAN, motivo, papelExigido?, acoesPermitidas, risco, confianca, regraId? }` |
+| 12 | Determine SLA | `slaDe` | `slaAte` pela prioridade (mantém o SLA já existente da thread) |
+| 13–15 | Persist / Apply / Emit | store (`aplicarDecisaoOctopus`) ou RPC `inbox_apply_routing` | `inbox_thread.routing`, atribuição pela banda, eventos `ROUTING_DECIDED`, `ROUTED`/`ASSIGNED`/`STATUS_CHANGED`, `PRIORITY_CHANGED` |
+
+**Confiança** é modelo explícito (`calcularConfianca`): piso pela fonte do setor (regra 0,90 · memória 0,75 · catálogo
+0,70 · IA 0,50 + 0,3 × confiança dela · fallback 0,30) mais sinais com peso declarado (contato conhecido +0,05, ligado a
+obra +0,05, IA concorda +0,10, IA discorda −0,15, contato desconhecido −0,10, intenção indefinida −0,15) e o ajuste da
+intenção (fora de regra explícita). A **banda** vem dos limiares configuráveis (`AutoRoteamento`): HIGH ≥
+`confiancaAtribuirPessoa` (0,85) atribui pessoa; MEDIUM ≥ `confiancaAtribuirSetor` (0,60) atribui só setor/equipe; LOW
+= `TRIAGEM`: a sugestão fica registrada e a conversa continua NOVA em "Não atribuídos". A decisão guarda até 24 sinais
+curtos, um `motivoOperacional` de uma frase, a cadeia de escalação (pessoa → equipe → gestor → setor → setor de
+escalação; contrato, sem scheduler) e a versão `octopus-1`. Nunca raciocínio encadeado; nunca telefone.
+
+**Reavaliação** (`reavaliar`): mensagem nova em conversa já roteada devolve `KEEP`, `RECOMMEND_TRANSFER` (assunto
+mudou; alguém já atende ou a opção automática está desligada) ou `AUTO_TRANSFER` (só com `transferenciaAutomatica`
+ligada, confiança ≥ `confiancaTransferir` e ninguém atendendo). **Override humano** (`DecisaoOctopus.override`):
+atribuição manual ou triagem com destino diferente do sugerido/aplicado grava quem, quando, de → para e motivo (evento
+`ROUTING_OVERRIDDEN`) e a reavaliação nunca o sobrescreve. `resumoParaHumano` é o handoff de uma linha.
+
+### 14.2 Política de automação (`automacao.ts`)
+
+Ordem: regra de automação configurada (`RegraAutomacao`: intenções/setores/tipos de relação → modo, risco, papel
+exigido) → sem regra, o nível A/B/C da política (`nivelPara`) → intenção indefinida usa `automacaoPadrao`. As guardas
+só apertam: risco ALTO → HUMAN; confiança abaixo de `confiancaAtribuirSetor` → HUMAN; contato não identificado e
+contexto INTERNAL sem identidade verificada nunca recebem AUTO. `ACOES_POR_MODO` diz o que a IA pode propor em cada
+modo. Padrões: AUT-01 (jurídico, alteração contratual, conflito, exceção financeira, risco operacional, reclamação →
+HUMAN/ALTO), AUT-02 (horário, endereço, documento, confirmação, status → AUTO/BAIXO), AUT-03 (pagamento, cobrança,
+negociação, orçamento, prazo, logística → APPROVAL/MEDIO).
+
+### 14.3 Inteligência real e fallback
+
+- **Navegador / modo local**: só o determinístico (`inboxReceber`, `inboxRotear`). Nenhuma chave, nenhum fetch — o
+  teste de fronteira varre `index.ts`, store, adapter, telas e App por `inteligenciaLlm`, `roteamentoPorta` e
+  `ANTHROPIC`, e o bundle por `ANTHROPIC`/`SERVICE_ROLE`/`inbox_apply_routing`.
+- **Servidor** (`inteligenciaLlm.ts`, mesma infraestrutura do Diretor Financeiro: `fetch` a `/v1/messages` com
+  `output_config.format` json_schema, `effort: low`, 700 tokens, timeout 20 s, sem retry; chave `ANTHROPIC_API_KEY` só
+  no painel do Netlify; modelo `ANTHROPIC_INBOX_MODEL` → `claude-sonnet-5`; `ANTHROPIC_INBOX_TIMEOUT_MS`). Contexto
+  controlado (`contextoParaIa`): mensagem, thread, contato **sem telefone/e-mail**, histórico limitado a 10, obras,
+  setores, equipes, regras resumidas, intenções conhecidas; o prompt declara o conteúdo como dado não confiável. Saída
+  validada por `interpretarSaidaIa` contra os catálogos (setor/equipe fora → nulo, confiança 0–1 ou recusa, sinais ≤
+  160 caracteres e no máximo 8, entidades só dos tipos conhecidos e sem sequência de dígitos longa, IA nunca ultrapassa
+  0,85 quando decide sozinha). `classificarSeguro` converte qualquer falha em "sem IA".
+- **Fluxo no webhook** (`channel-meta-webhook.ts` → `ingerirEventosCentral` com a porta `rotear` →
+  `rotearNoServidor` em `roteamentoPorta.ts`): `inbox_ingest` persiste → `portaContextoRest` lê só o necessário
+  daquela thread (PostgREST com a chave de serviço) → determinístico → IA se houver chave → reavaliação se a thread já
+  tinha setor → RPC `inbox_apply_routing`. Falha em qualquer ponto do roteamento não desfaz a ingestão (log com ids e
+  outcomes; nunca texto, telefone ou chave). O relatório da ingestão ganhou `roteados`/`atribuidos`.
+
+### 14.4 Persistência — migration `0057_inbox_octopus_router.sql` (só em código; a 0056 não foi alterada)
+
+`inbox_thread.routing` jsonb (CHECK `inbox_jsonb_seguro`; `authenticated` pode atualizar como dado, igual a
+`classification`), eventos `ROUTING_DECIDED`/`ROUTING_OVERRIDDEN`/`ROUTING_REEVALUATED`, `inbox_config.auto_routing`
+e `automation_rules`. RPC **`inbox_apply_routing`** (SECURITY DEFINER, `search_path` fixo, EXECUTE só para
+`service_role`; `auth.uid()` presente = recusa): valida routing/classification (PII), prioridade e nível, thread da
+organização, mensagem da thread, **destino dentro do contexto permitido** (setor ativo da organização, equipe do setor,
+pessoa ativa da organização **e** membro do setor ou padrão do setor/equipe), prioridade só sobe, SLA se faltava; grava
+decisão/classificação/resumo; `p_apply` falso ou banda LOW só registra a sugestão; **override humano preservado e nada
+movido** (`motivo = override_humano`); aplicar = encerra a atribuição vigente, cria a nova (`origin = roteamento`,
+`actor_id` nulo), deriva o status e registra os eventos — numa transação. O trigger `inbox_thread_autoridade` ganhou a
+regra do override: só quem tem autoridade de atribuir (transversal, responsável, gestor do setor, triagem sem setor) e
+sempre em nome próprio (`override.por = auth.uid()`). A atribuição humana continua exclusivamente pela
+`inbox_assign_thread` da 0056.
+
+### 14.5 Store, adapter e UI
+
+Store: `inboxReceber` roteia (thread sem setor) ou reavalia (com setor) logo depois de persistir a mensagem, dentro de
+`try` — falha do router nunca perde a mensagem; `inboxRotear` (sob demanda, exige autoridade de atribuir);
+`inboxConfirmarRoteamento` (triagem em um clique: aplica a sugestão ou um ajuste como decisão humana, origem
+`triagem`); `inboxAtribuir`/`inboxTriar` registram override quando o destino difere; `inboxSalvarConfiguracao` aceita
+`autoRoteamento`, `regrasRoteamento` e `regrasAutomacao` com `validarConfiguracaoOctopus` (limiares 0–1, pessoa ≥
+setor, setor ativo, equipe do setor, condição obrigatória, modo/risco do catálogo). Adapter: `routing` na thread,
+`auto_routing`/`automation_rules` na configuração; datasets guardados antes da fase 3 são completados com os padrões
+(`garantirInbox`). UI: bloco **Roteamento** no painel de contexto (destino, confiança/banda, por quê, automação, SLA
+restante, intenção/entidades, reavaliação com "Transferir para X", override, sinais e escalação em `details`, "Rotear
+de novo", "Assumir"); em confiança baixa a faixa **Sugestão do Octopus Router … [Confirmar] [Assumir]** (Alterar =
+formulário de atribuição); configuração com limiares, automação padrão, transferência automática e editores de linha
+para regras de roteamento e de automação (dados tipados, sem DSL).
+
+### 14.6 Provas
+
+`roteador.test.ts` (fornecedor+pagamento → Financeiro; cliente+logística → Obras; memória operacional; regra vence IA;
+baixa confiança → triagem; setor inválido/inativo nunca escolhido; equipe do setor e responsável no contexto; prioridade
+só sobe; bandas pelos limiares; decisão auditável; passos isolados; política AUTO/APPROVAL/HUMAN e guardas; reavaliação e
+override), `inbox.store.test.ts` (roteamento ao receber, baixa confiança fica NOVA, HIGH atribui pessoa, confirmar,
+override não sobrescrito, recomendação × transferência automática, autoridade do "rotear de novo", validação da
+configuração), `roteamentoServidor.test.ts` (portas REST/RPC com fetch falso e chave que nunca vaza; orquestração com e
+sem IA, IA quebrada, baixa confiança, reavaliação, override; porta `rotear` na ingestão; provedor Anthropic com
+json_schema, validação, HTTP/JSON/truncada/timeout), fronteiras em `inbox.test.ts`, e no PGlite `npm run smoke:inbox`
+provas **S–X** (RPC aplica dentro do contexto e deriva status; destinos inválidos, outra organização e PII recusados sem
+gravar; navegador não chama a RPC; override só por quem tem autoridade e em nome próprio, e o servidor não move depois
+dele; TRIAGEM só registra e prioridade não desce; 0057 idempotente). Preflight aplica 0001..0057.
+
+### 14.7 Fora de escopo e pendências
+
+Envio real (canário da Central), scheduler de escalação (a cadeia é contrato; `SLA_ESCALATED` continua decisão),
+Factory, aprendizado com overrides (só ficam registrados), `/api` para a IA pela tela (o refino da IA acontece no
+servidor, na ingestão). Aplicar 0056 + 0057 em produção e configurar `ANTHROPIC_API_KEY` (opcional) são decisões do
+usuário.

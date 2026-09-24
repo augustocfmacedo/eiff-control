@@ -956,3 +956,11 @@ tr.arrastando td { opacity: 0.55; }
 .inbox-decisao { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); border-left: 3px solid var(--brand); margin-bottom: 6px; }
 .inbox-decisao > div { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: baseline; font-size: 13px; }
 .inbox-decisao b { font-weight: 600; }
+
+/* EIFF Inbox — Octopus Router (fase 3): bloco de roteamento e triagem em um clique */
+.inbox-roteamento { display: grid; gap: 6px; margin-bottom: 10px; }
+.inbox-roteamento.triagem .inbox-decisao { border-left-color: var(--warn, #d9a441); }
+.inbox-triagem { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--brand) 12%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--brand) 40%, transparent); font-size: 13px; }
+.inbox-triagem .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inbox-sinais summary { cursor: pointer; }
+.inbox-sinais ul { margin: 6px 0 0 16px; padding: 0; display: grid; gap: 2px; }

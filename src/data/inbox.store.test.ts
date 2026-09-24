@@ -200,11 +200,18 @@ describe('configuração (inbox_config)', () => {
 });
 
 describe('gateway de entrada pelo store', () => {
-  it('cria contato, thread NOVA com SLA e auditoria; reenvio é ignorado sem gravar nada', () => {
+  it('cria contato e thread com SLA, roteia pelo Octopus Router (contato desconhecido: setor sem pessoa) e audita; reenvio é ignorado sem gravar nada', () => {
     const r = actions.inboxReceber(msg());
     expect(r.novaThread && r.novoContato).toBe(true);
     const t = thread(r.thread!.id);
-    expect(t.status).toBe('NOVA'); expect(t.sla?.primeiraRespostaAte).toBeTruthy(); expect(t.nivel).toBe('C');
+    expect(t.sla?.primeiraRespostaAte).toBeTruthy();
+    // "preciso de um orçamento" de contato desconhecido: regra explicita para COMERCIAL, confianca MEDIUM -> setor, sem pessoa
+    expect(t.roteamento?.setorCodigo).toBe('COMERCIAL'); expect(t.roteamento?.aplicacao).toBe('ATRIBUIR_SETOR'); expect(t.roteamento?.automacao.modo).toBe('APPROVAL');
+    expect(t.status).toBe('TRIADA'); expect(t.setorCodigo).toBe('COMERCIAL'); expect(t.responsavelId).toBeUndefined();
+    const tipos = inbox().eventos.filter((e) => e.threadId === t.id).map((e) => e.tipo);
+    expect(tipos).toEqual(expect.arrayContaining(['THREAD_CREATED', 'MESSAGE_RECEIVED', 'ROUTING_DECIDED', 'ROUTED']));
+    expect(inbox().atribuicoes.filter((a) => a.threadId === t.id)).toMatchObject([{ setorCodigo: 'COMERCIAL', origem: 'roteamento' }]);
+    expect(audits()[0].depois).toMatchObject({ roteamento: { setorCodigo: 'COMERCIAL', aplicada: true } });
     const n = audits().length;
     const r2 = actions.inboxReceber(msg());
     expect(r2.duplicada).toBe(true); expect(audits()).toHaveLength(n); expect(inbox().mensagens.filter((m) => m.externalMessageId === 'ext-1')).toHaveLength(1);
@@ -212,5 +219,85 @@ describe('gateway de entrada pelo store', () => {
   it('mensagem de contato conhecido entra na thread dele', () => {
     const r = actions.inboxReceber(msg({ identidade: { canal: 'WHATSAPP', identificador: '5562900000101', verificada: false }, externalMessageId: 'ext-2' }));
     expect(r.novoContato).toBe(false); expect(r.thread?.id).toBe('THR-00001');
+  });
+});
+
+describe('Octopus Router pelo store (fase 3)', () => {
+  it('baixa confiança fica NOVA em Não atribuídos com a sugestão registrada; IA ausente nunca perde a mensagem', () => {
+    const r = actions.inboxReceber(msg({ texto: 'oi', externalMessageId: 'ext-low' }));
+    const t = thread(r.thread!.id);
+    expect(t.status).toBe('NOVA'); expect(t.setorCodigo).toBeUndefined(); expect(t.roteamento?.aplicacao).toBe('TRIAGEM'); expect(t.roteamento?.banda).toBe('LOW');
+    expect(inbox().mensagens.some((m) => m.externalMessageId === 'ext-low')).toBe(true);
+    expect(inbox().eventos.filter((e) => e.threadId === t.id).map((e) => e.tipo)).toContain('ROUTING_DECIDED');
+  });
+  it('conversa RESOLVIDA do contato é reaberta e só recebe recomendação; com o limiar de pessoa menor a decisão HIGH atribui u-fin e é auditável', () => {
+    // CTI-00008 tem a THR-00009 RESOLVIDA em FORNECEDORES: a mensagem nova a REABRE (mesma identidade + canal + contexto) e o router so recomenda a transferencia
+    const r0 = actions.inboxReceber(msg({ identidade: { canal: 'WHATSAPP', identificador: '5562900000108', verificada: false }, externalMessageId: 'ext-nf-0', texto: 'A NF 900 já está liberada para pagamento?' }));
+    expect(r0.thread!.id).toBe('THR-00009'); expect(r0.novaThread).toBe(false);
+    expect(thread('THR-00009').setorCodigo).toBe('FORNECEDORES'); expect(thread('THR-00009').roteamento?.reavaliacao).toMatchObject({ veredicto: 'RECOMMEND_TRANSFER', setorSugerido: 'FINANCEIRO' });
+    // limiar de pessoa em 70%: contato novo (desconhecido, -0,10) com regra explicita (0,90) chega a HIGH e recebe o responsavel padrao do setor
+    actions.inboxSalvarConfiguracao({ autoRoteamento: { ...inbox().configuracao.autoRoteamento, confiancaAtribuirPessoa: 0.7 } });
+    const r = actions.inboxReceber(msg({ identidade: { canal: 'WHATSAPP', identificador: '5562900000909', nomeInformado: 'Novo fornecedor', verificada: false }, externalMessageId: 'ext-nf', texto: 'A NF 900 já está liberada para pagamento?' }));
+    expect(r.novaThread).toBe(true);
+    const t = thread(r.thread!.id);
+    expect(t.setorCodigo).toBe('FINANCEIRO'); expect(t.responsavelId).toBe('u-fin'); expect(t.status).toBe('ATRIBUIDA');
+    expect(t.roteamento).toMatchObject({ banda: 'HIGH', aplicacao: 'ATRIBUIR_PESSOA', origem: 'DETERMINISTICO', versao: 'octopus-1' });
+    expect(t.roteamento!.sinais.length).toBeGreaterThan(2); expect(t.roteamento!.motivoOperacional.length).toBeLessThanOrEqual(300);
+    const atr = inbox().atribuicoes.filter((a) => a.threadId === t.id); expect(atr).toHaveLength(1); expect(atr[0].atorId).toBeUndefined(); expect(atr[0].origem).toBe('roteamento');
+    expect(inbox().eventos.filter((e) => e.threadId === t.id).map((e) => e.tipo)).toEqual(expect.arrayContaining(['ROUTING_DECIDED', 'ROUTED', 'ASSIGNED', 'STATUS_CHANGED']));
+  });
+  it('confirmar a sugestão aplica como triagem humana; confirmar com ajuste registra override; override não é sobrescrito pela reavaliação', () => {
+    const r = actions.inboxReceber(msg({ texto: 'oi, tudo bem?', externalMessageId: 'ext-tri' }));
+    const id = r.thread!.id;
+    expect(() => actions.inboxConfirmarRoteamento('THR-00001')).toThrow(RegraDeNegocioError); // sem sugestao
+    actions.inboxConfirmarRoteamento(id, { setorCodigo: 'OBRAS', responsavelId: 'u-obra', motivo: 'é o cliente da Smart Fit' });
+    let t = thread(id);
+    expect(t.setorCodigo).toBe('OBRAS'); expect(t.responsavelId).toBe('u-obra'); expect(t.status).toBe('ATRIBUIDA');
+    expect(t.roteamento?.override).toMatchObject({ por: 'u-admin', para: { setorCodigo: 'OBRAS', responsavelId: 'u-obra' }, motivo: 'é o cliente da Smart Fit' });
+    expect(inbox().eventos.filter((e) => e.threadId === id).map((e) => e.tipo)).toContain('ROUTING_OVERRIDDEN');
+    expect(inbox().atribuicoes.filter((a) => a.threadId === id).at(-1)).toMatchObject({ origem: 'triagem', atorId: 'u-admin' });
+    // mensagem nova com assunto claramente financeiro: reavaliacao recomenda, mas o override humano segura a conversa
+    actions.inboxReceber(msg({ texto: 'A NF 12 já foi paga? Preciso do comprovante do pagamento.', externalMessageId: 'ext-tri-2' }));
+    t = thread(id);
+    expect(t.setorCodigo).toBe('OBRAS'); expect(t.responsavelId).toBe('u-obra');
+    expect(t.roteamento?.reavaliacao?.veredicto).toBe('KEEP'); expect(t.roteamento?.reavaliacao?.motivo).toMatch(/override humano/);
+    expect(t.roteamento?.override?.por).toBe('u-admin');
+    expect(inbox().eventos.filter((e) => e.threadId === id).map((e) => e.tipo)).toContain('ROUTING_REEVALUATED');
+  });
+  it('mudança de assunto em conversa já atendida por alguém só RECOMENDA; com transferência automática ligada e ninguém atendendo, transfere', () => {
+    actions.inboxReceber(msg({ identidade: { canal: 'WHATSAPP', identificador: '5562900000101', verificada: false }, externalMessageId: 'ext-rv', texto: 'A carreta chega amanhã? Precisamos liberar a descarga na obra.' }));
+    let t = thread('THR-00001'); // FINANCEIRO, u-fin atende
+    expect(t.setorCodigo).toBe('FINANCEIRO'); expect(t.roteamento?.reavaliacao?.veredicto).toBe('RECOMMEND_TRANSFER'); expect(t.roteamento?.reavaliacao?.setorSugerido).toBe('OBRAS');
+    // THR-00010: JURIDICO sem responsavel; liga a transferencia automatica e manda assunto de obra com confianca alta
+    actions.inboxSalvarConfiguracao({ autoRoteamento: { ...inbox().configuracao.autoRoteamento, transferenciaAutomatica: true, confiancaTransferir: 0.8 } });
+    actions.inboxReceber(msg({ canal: 'EMAIL', identidade: { canal: 'EMAIL', identificador: 'juridico@horizontenorte.exemplo', verificada: false }, externalMessageId: 'ext-rv2', texto: 'A carreta com as vigas chega amanhã cedo, favor liberar a descarga na obra.' }));
+    t = thread('THR-00010');
+    expect(t.setorCodigo).toBe('OBRAS'); expect(t.roteamento?.reavaliacao?.veredicto).toBe('AUTO_TRANSFER');
+    expect(inbox().atribuicoes.filter((a) => a.threadId === 'THR-00010').at(-1)).toMatchObject({ setorCodigo: 'OBRAS', origem: 'roteamento' });
+  });
+  it('rotear de novo exige autoridade; atribuição manual diferente da aplicada registra override; sem diferença não registra', () => {
+    actions.trocarUsuario('u-contab'); // atendente do Financeiro: sem autoridade sobre THR-00002 (OBRAS)
+    expect(() => actions.inboxRotear('THR-00002')).toThrow(RegraDeNegocioError);
+    actions.trocarUsuario('u-admin');
+    const r = actions.inboxRotear('THR-00007'); // NOVA sem setor: decide
+    expect(r).toMatchObject({ setorCodigo: expect.any(String) });
+    const t = thread('THR-00007');
+    expect(t.roteamento?.versao).toBe('octopus-1');
+    if (t.roteamento?.aplicacao === 'TRIAGEM') { actions.inboxAtribuir('THR-00007', { setorCodigo: 'FORNECEDORES', motivo: 'na verdade é fornecedor' }); expect(thread('THR-00007').roteamento?.override?.para.setorCodigo).toBe('FORNECEDORES'); }
+    else { const s = t.roteamento!.setorCodigo!; actions.inboxAtribuir('THR-00007', { setorCodigo: s }); expect(thread('THR-00007').roteamento?.override).toBeUndefined(); }
+  });
+  it('configuração do router valida limiares, regras de roteamento (setor ativo, equipe do setor) e de automação (modo, risco, condição)', () => {
+    const c = inbox().configuracao;
+    expect(() => actions.inboxSalvarConfiguracao({ autoRoteamento: { ...c.autoRoteamento, confiancaAtribuirPessoa: 0.5, confiancaAtribuirSetor: 0.7 } })).toThrow(/menor que o de setor/);
+    expect(() => actions.inboxSalvarConfiguracao({ autoRoteamento: { ...c.autoRoteamento, confiancaTransferir: 1.5 } })).toThrow(/entre 0 e 1/);
+    expect(() => actions.inboxSalvarConfiguracao({ regrasRoteamento: [...c.regrasRoteamento, { id: 'X', ordem: 99, condicao: { palavras: ['x'] }, destino: { setorCodigo: 'NAO_EXISTE' }, motivo: 't', ativa: true }] })).toThrow(/setor ativo/);
+    expect(() => actions.inboxSalvarConfiguracao({ regrasRoteamento: [...c.regrasRoteamento, { id: 'X', ordem: 99, condicao: { palavras: ['x'] }, destino: { setorCodigo: 'COMPRAS', equipeId: 'EQP-00003' }, motivo: 't', ativa: true }] })).toThrow(/equipe/);
+    expect(() => actions.inboxSalvarConfiguracao({ regrasRoteamento: [...c.regrasRoteamento, { id: 'X', ordem: 99, condicao: {}, destino: { setorCodigo: 'COMPRAS' }, motivo: 't', ativa: true }] })).toThrow(/condição/);
+    expect(() => actions.inboxSalvarConfiguracao({ regrasAutomacao: [{ id: 'A', ordem: 1, intencoes: ['x'], modo: 'TURBO' as never, risco: 'BAIXO', motivo: 't', ativa: true }] })).toThrow(/modo/);
+    actions.inboxSalvarConfiguracao({ regrasRoteamento: [...c.regrasRoteamento, { id: 'ROT-99', ordem: 99, condicao: { palavras: ['chumbador'] }, destino: { setorCodigo: 'COMPRAS' }, motivo: 'chumbadores são compra', ativa: true }], regrasAutomacao: [...c.regrasAutomacao, { id: 'AUT-99', ordem: 99, intencoes: ['compra_insumo'], modo: 'HUMAN', risco: 'MEDIO', motivo: 'compras decide', ativa: true }] });
+    expect(inbox().configuracao.regrasRoteamento.some((r) => r.id === 'ROT-99')).toBe(true);
+    expect(audits()[0].acao).toBe('inbox_alterar_configuracao');
+    actions.trocarUsuario('u-fin');
+    expect(() => actions.inboxSalvarConfiguracao({ autoRoteamento: c.autoRoteamento })).toThrow(RegraDeNegocioError);
   });
 });
