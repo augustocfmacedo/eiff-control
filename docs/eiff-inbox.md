@@ -527,3 +527,62 @@ Envio real (canário da Central), scheduler de escalação (a cadeia é contrato
 Factory, aprendizado com overrides (só ficam registrados), `/api` para a IA pela tela (o refino da IA acontece no
 servidor, na ingestão). Aplicar 0056 + 0057 em produção e configurar `ANTHROPIC_API_KEY` (opcional) são decisões do
 usuário.
+
+## 15. Ativação controlada em produção — SHADOW MODE (24/09/2026)
+
+### 15.1 O que foi feito
+- PR #14 (Octopus Router) mesclado na `main` como `7a0e723`; Netlify publicou a `main` em produção (deploy `ready`).
+- **Migrations aplicadas em produção**, cada uma numa transação (`begin … commit`) pelo Supabase CLI, depois do preflight
+  local 0001..0057 e do inventário do schema real: **0056** (12 tabelas `inbox_*`, 16 funções, 21 triggers, 31 políticas)
+  e **0057** (`inbox_thread.routing`, `inbox_config.auto_routing`/`automation_rules`, RPC `inbox_apply_routing` com
+  EXECUTE só para `service_role`, eventos `ROUTING_*`). 0049–0051 já estavam aplicadas (tabelas `central_*` e
+  `whatsapp_identity` presentes, 0 conversas/mensagens). Não há ledger de migrations: o estado é o schema.
+- `EIFF_INBOX_ORGANIZATION_ID` configurado no contexto de produção do Netlify com o id da única organização (EIFF).
+  Nunca vem de payload: só do ambiente do servidor.
+- Drift Factory ↔ Control tratado em PR separado (#16): a fábrica passou a escrever `LEASE_LOST_INFRA` e
+  `ATTEMPT_TIMEOUT` (W2-04A, 6c9e14c); o espelho do Mission Control ganha os dois como TASK_PROGRESS.
+
+### 15.2 Estágio operacional: SHADOW MODE
+O Inbox roda com infraestrutura real, mas **sem nenhuma ação externa**: mensagens chegam, persistem, são classificadas e
+roteadas, aparecem em `#/atendimento`; nada responde automaticamente, nada é enviado por WhatsApp, nenhum compromisso
+externo é criado e a Factory não é chamada. Isso não depende de flag: o único `ChannelProvider` é MANUAL (a resposta
+fica `registrada`), a Central não envia (`sendApproved` fail-closed) e o `ExecutionProvider` FACTORY recusa. O modo
+de automação AUTO só marca a política — nenhum caminho executa uma resposta. Cada mensagem real deixa em
+`inbox_thread.routing` e nos eventos: decisão determinística, classificação da IA quando houver, sugestão final,
+confiança/banda, setor/equipe/responsável, modo de automação e SLA. Override humano fica em `routing.override`
+(sugestão original → decisão humana) e no evento `ROUTING_OVERRIDDEN`; não alimenta nenhum aprendizado.
+
+Estado da ativação (o que falta para tráfego real, decisões do usuário, nunca do código):
+| Peça | Estado | Efeito |
+| --- | --- | --- |
+| `SUPABASE_SERVICE_ROLE_KEY` no Netlify | **ausente** | a ingestão pelo webhook é pulada (`nao_configurado`); a Central segue respondendo 200 |
+| `META_WHATSAPP_*`, `EIFF_CENTRAL_PHONE_NUMBER_ID`, `EIFF_COMMERCIAL_PHONE_NUMBER_ID` | **ausentes** | o webhook da Meta não está ligado: nenhuma mensagem real chega ainda |
+| `ANTHROPIC_API_KEY` | presente (compartilhada com Assistente e Diretor Financeiro) | o refino da IA liga sozinho quando a ingestão ligar; `ANTHROPIC_INBOX_MODEL` ausente → `claude-sonnet-5` |
+| Setores/configuração do Inbox na organização | **vazios** | o router decide TRIAGEM (confiança 0) até existirem setores: criar em `#/atendimento/configuracao` ou autorizar a semente dos 12 setores padrão |
+
+### 15.3 Rollback operacional = desligar recurso, nunca apagar dado
+| Objetivo | Como |
+| --- | --- |
+| Impedir ingestão do Inbox | remover `EIFF_INBOX_ORGANIZATION_ID` (ou a chave de serviço) do Netlify e redeployar: o webhook loga `inbox_ingest nao_configurado` e devolve 200 à Meta; nada é gravado |
+| Desligar inteligência | a chave `ANTHROPIC_API_KEY` é compartilhada; para desligar só o Inbox hoje é preciso um flag (pendência: `EIFF_INBOX_LLM=off`); sem chave, o determinístico segue |
+| Desativar o Router | pendência: flag `EIFF_INBOX_ROUTER=off` para pular a porta `rotear` (hoje o router só roda depois da ingestão; sem ingestão, não roda) |
+| Central sem Inbox | a Central nunca dependeu do Inbox: com a ingestão desligada volta ao comportamento anterior |
+| Preservar mensagens recebidas | nada apaga: `inbox_message` é imutável e sem DELETE; threads podem ser FECHADAS |
+| Evitar outbound | já é o estado: MANUAL registra, Meta/Octadesk fail-closed; nenhuma variável liga envio pelo Inbox |
+
+### 15.4 Provas executadas em produção (dados de teste, contagens apenas)
+- **E2E** pela mesma porta que a Central usa (`inbox_ingest`, via Supabase CLI, porque a chave de serviço não está no
+  Netlify): evento de teste marcado (`[TESTE EIFF Inbox — shadow mode]`, identificador fictício) → 1 contato +
+  identidade, 1 thread NOVA com SLA, 1 mensagem, eventos THREAD_CREATED e MESSAGE_RECEIVED. **Idempotência**: o mesmo
+  evento repetido devolveu `duplicada = true` e as contagens (contato, thread, mensagem, eventos, atribuições) não
+  mudaram. **Router**: `decidirRoteamento` (o mesmo código) sobre o contexto lido do banco → intenção
+  `consultar_pagamento` detectada; sem setores cadastrados a decisão foi TRIAGEM/HUMAN e `inbox_apply_routing`
+  registrou `routing` e o evento ROUTING_DECIDED sem mover a thread (`sugestao_registrada`). A thread de teste ficou
+  em "Não atribuídos" para a conferência visual.
+- **RLS/autoridade** (transação com rollback): Administrador autenticado vê a thread; usuário autenticado sem perfil
+  na organização vê 0 threads/mensagens/config e não altera config; `anon` vê 0; pelo navegador `inbox_apply_routing`
+  e `inbox_ingest` são `permission denied`; UPDATE direto de `assignee_id` e INSERT em `inbox_assignment` são
+  `permission denied` (a atribuição continua só pela RPC governada).
+- Métricas (derivadas dos eventos, sem tabela nova): 1 mensagem recebida, 1 thread criada, 0 reutilizadas, 0 roteadas
+  automaticamente, 1 baixa confiança, 1 não atribuída, 0 override, 0 falha de IA, 0 enviadas.
+- Verificação da UI com backend real exige sessão do usuário (login em produção não é feito pelo agente).
