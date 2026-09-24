@@ -544,6 +544,10 @@ describe('ameaça 8: mutação direta por LLM', () => {
     }
   });
   it('as funções Netlify da Central são leitura: não gravam no PostgREST nem chamam a Anthropic', () => {
+    // EIFF Inbox (fase 2): o webhook ENTREGA os eventos normalizados a fronteira de ingestao do Inbox
+    // (src/core/inbox/ingestaoServidor.ts); a escrita — RPC inbox_ingest com a chave de servico — mora na porta do
+    // Inbox (src/core/inbox/ingestaoPorta.ts), nunca aqui. A Central segue sem chave e sem cliente de banco.
+    expect(ler('netlify/functions/channel-meta-webhook.ts')).toMatch(/ingerirEventosCentral/);
     for (const f of ['netlify/functions/channel-meta.ts', 'netlify/functions/channel-meta-webhook.ts']) {
       const t = ler(f);
       expect(t, f).not.toMatch(/api\.anthropic\.com/);

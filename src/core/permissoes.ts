@@ -32,7 +32,9 @@ export type Acao =
   | 'orcar'
   | 'comprar'
   | 'radar'
-  | 'radar_config';
+  | 'radar_config'
+  | 'inbox'
+  | 'inbox_config';
 
 export const MATRIZ: Record<Acao, Papel[]> = {
   ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
@@ -57,6 +59,9 @@ export const MATRIZ: Record<Acao, Papel[]> = {
   comprar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
   radar: [...PAPEIS_RADAR], // mesma lista que a funcao /api/comunicacao confere no perfil do banco
   radar_config: ['Administrador', 'Diretoria'],
+  // EIFF Inbox: a permissao abre a central; o recorte por setor e feito DENTRO dela (src/core/inbox/roteamento.ts), nunca uma segunda ACL.
+  inbox: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
+  inbox_config: ['Administrador', 'Diretoria'],
 };
 
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {

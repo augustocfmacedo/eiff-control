@@ -16,6 +16,7 @@ import type {
 import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
 import { carregarRadar, persistirRadar } from './radar.supabase';
+import { carregarInbox, persistirInbox } from './inbox.supabase';
 
 const URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
 const KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
@@ -389,6 +390,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.funcoes = funcRows.map((x) => ({ id: x.id, nome: x.name, categoria: x.category, custoHoraPadrao: x.default_hourly_cost === null || x.default_hourly_cost === undefined ? undefined : Number(x.default_hourly_cost), descricao: x.description ?? '', ativa: !!x.active }));
   ds.alocacoes = alocRows.map((x) => ({ id: x.id, colaboradorId: x.worker_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? undefined : undefined, de: x.starts_on, ate: x.ends_on ?? undefined, percentual: Number(x.share), observacoes: x.notes ?? '' }));
   ds.radar = await carregarRadar({ sel: selTodos, orgId: org.id });
+  // EIFF Inbox (tabelas inbox_*, migration 0056): sem as tabelas no banco, o slice fica vazio e o app segue
+  ds.inbox = await carregarInbox({ sel: selTodos, orgId: org.id, obraCodigo: (id) => (id ? r.obrasInv.get(id) : undefined) }).catch(() => undefined);
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
   return { ds, usuario };
 }
@@ -914,6 +917,27 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     },
     apagar: async (tabela, id) => { const { error } = await sb.from(tabela).delete().eq('id', id); falha(`apagar ${tabela}`, error); },
   }, antes.radar, depois.radar);
+
+  // EIFF Inbox
+  await persistirInbox({
+    sel: selTodos, orgId: r.orgId, atorId, uuid: uuidOuNulo,
+    perfil: (id) => uuidOuNulo(id) ?? (id ? r.perfisInv.get(id) ?? null : null),
+    obra: (codigo) => (codigo ? r.obras.get(codigo) ?? null : null), obraCodigo: (id) => (id ? r.obrasInv.get(id) : undefined),
+    inserir: async (tabela, rows) => { const { data, error } = await sb.from(tabela).insert(rows).select('id'); falha(`inserir ${tabela}`, error); return data ?? []; },
+    atualizar: async (tabela, id, row) => { const { error } = await sb.from(tabela).update(row).eq('id', id); falha(`atualizar ${tabela}`, error); },
+    gravarComposta: async (tabela, chave, row) => {
+      let q = sb.from(tabela).update(row);
+      for (const [k, v] of Object.entries(chave)) q = q.eq(k, v);
+      const { data, error } = await q.select(Object.keys(chave).join(','));
+      falha(`atualizar ${tabela}`, error);
+      if (data?.length) return;
+      const { error: e2 } = await sb.from(tabela).insert({ ...row, ...chave });
+      falha(`inserir ${tabela}`, e2);
+    },
+    apagar: async (tabela, id) => { const { error } = await sb.from(tabela).delete().eq('id', id); falha(`apagar ${tabela}`, error); },
+    // operacao governada (inbox_assign_thread): com o JWT do usuario; a autoridade e conferida no banco
+    rpc: async (nome, args) => { const { data, error } = await sb.rpc(nome, args); falha(`rpc ${nome}`, error); return (data ?? {}) as Row; },
+  }, antes.inbox, depois.inbox);
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger)
   const audAntes = new Set(antes.auditoria.map((a) => a.id));

@@ -123,5 +123,12 @@ jobs:
       # o schema completo reconstruído do repositório (com shims do Supabase e a ordem histórica corrigida), não a
       # produção. Sai com código 1 se qualquer migration, prova ou reaplicação falhar — e é o código de saída que
       # decide o step. Não toca em banco externo, não usa --linked, não usa segredo.
+      # scripts/pg-smoke-inbox.mjs aplica a 0056 (EIFF Inbox) num PGlite descartável e prova ingestão idempotente,
+      # resolução de thread, append-only, imutabilidade da mensagem, o RLS por setor e a autoridade de transferência no banco
+      # (RPC inbox_assign_thread, privilégios de coluna e triggers) — 18 provas A–R, ROLLBACK ao final.
+      # Sai com código 1 se qualquer prova falhar. Não toca em banco externo, não usa segredo.
+      - name: PostgreSQL Smoke (EIFF Inbox)
+        run: node scripts/pg-smoke-inbox.mjs
+
       - name: Full Migration Preflight
         run: node scripts/pg-preflight-central.mjs --ordem-corrigida

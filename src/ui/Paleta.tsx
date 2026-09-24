@@ -12,7 +12,7 @@ interface Item { id: string; grupo: string; rotulo: string; sub?: string; icone:
 
 /** Telas do sistema (mesma lista da barra lateral; manter alinhada ao App). */
 export const ROTAS_NAV: { to: string; rotulo: string; grupo: string; icone: IconName; permissao?: string }[] = [
-  { to: '/', rotulo: 'Painel executivo', grupo: 'Início', icone: 'painel' }, { to: '/inbox', rotulo: 'Minha caixa de entrada', grupo: 'Início', icone: 'inbox' }, { to: '/capacitacao', rotulo: 'Capacitação', grupo: 'Início', icone: 'capacitacao' },
+  { to: '/', rotulo: 'Painel executivo', grupo: 'Início', icone: 'painel' }, { to: '/inbox', rotulo: 'Minha caixa de entrada', grupo: 'Início', icone: 'inbox' }, { to: '/atendimento', rotulo: 'EIFF Inbox', grupo: 'Início', icone: 'atendimento', permissao: 'inbox' }, { to: '/capacitacao', rotulo: 'Capacitação', grupo: 'Início', icone: 'capacitacao' },
   { to: '/central', rotulo: 'Central de obras', grupo: 'Obras', icone: 'central' }, { to: '/obras', rotulo: 'Obras e contratos', grupo: 'Obras', icone: 'obras' }, { to: '/orcamentos', rotulo: 'Orçamentos e composições', grupo: 'Obras', icone: 'orcamento' },
   { to: '/producao', rotulo: 'Fábrica e montagem', grupo: 'Obras', icone: 'fabrica' }, { to: '/estoque', rotulo: 'Estoque de aço', grupo: 'Obras', icone: 'estoque' }, { to: '/equipe', rotulo: 'Equipe e produtividade', grupo: 'Obras', icone: 'equipe' }, { to: '/campo', rotulo: 'Modo campo (celular)', grupo: 'Obras', icone: 'campo' },
   { to: '/radar', rotulo: 'Radar · Command Center', grupo: 'Comercial', icone: 'radar' }, { to: '/radar/hoje', rotulo: 'Radar · Hoje', grupo: 'Comercial', icone: 'hoje' }, { to: '/radar/empresas', rotulo: 'Radar · Empresas', grupo: 'Comercial', icone: 'empresas' },

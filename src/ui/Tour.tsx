@@ -19,6 +19,14 @@ const GERAL: PassoTour[] = [
 ];
 /** Exportado para teste: o conteudo do tour e parte do contrato da tela, nao so decoracao. */
 export const POR_ROTA: Record<string, PassoTour[]> = {
+  '/atendimento': [
+    { seletor: '.content .page-head', titulo: 'EIFF Inbox', texto: 'Uma EIFF para quem está fora; setores e pessoas por dentro. Fundação: canal, IA e persistência entram nas próximas etapas.' },
+    { seletor: '.content .strip', titulo: 'Visão executiva', texto: 'O que precisa de você, o que está urgente, SLA vencido, o que espera o contato ou a EIFF, e o que a IA resolveu.' },
+    { seletor: '.content .inbox-caixas', titulo: 'Caixas virtuais', texto: 'Um número só de WhatsApp, várias caixas por dentro: minha, precisa de mim, não atribuídos, urgentes e uma por setor.' },
+    { seletor: '.content .inbox-lista', titulo: 'Ordem de trabalho', texto: 'SLA vencido primeiro, depois prioridade, depois a mais antiga sem resposta. A lista não reordena por filtro.' },
+    { seletor: '.content .inbox-conversa', titulo: 'Conversa', texto: 'Mensagens, notas internas e o composer. Nesta fase a resposta fica registrada: nenhum canal está conectado.' },
+    { seletor: '.content .inbox-contexto', titulo: 'Contexto e decisão', texto: 'Contato, classificação, setor e responsável, ações com aprovação, jobs e o histórico completo da conversa.' },
+  ],
   '/': [
     { seletor: '.content .page-head', titulo: 'Painel executivo', texto: 'A leitura de 1 minuto: caixa, carteira, compromissos e alertas na data-base. "Apresentar" abre o modo para reunião.' },
     { seletor: '.content .hero-grid .kpi:first-child', titulo: 'Caixa', texto: 'Saldo bancário hoje (só extrato) e a projeção de 13 semanas com a reserva mínima tracejada.' },
