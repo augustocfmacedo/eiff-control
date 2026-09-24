@@ -586,3 +586,86 @@ Estado da ativação (o que falta para tráfego real, decisões do usuário, nun
 - Métricas (derivadas dos eventos, sem tabela nova): 1 mensagem recebida, 1 thread criada, 0 reutilizadas, 0 roteadas
   automaticamente, 1 baixa confiança, 1 não atribuída, 0 override, 0 falha de IA, 0 enviadas.
 - Verificação da UI com backend real exige sessão do usuário (login em produção não é feito pelo agente).
+
+## 16. SHADOW MODE real — defaults, kill switches e preparação do inbound da Meta (24/09/2026)
+
+### 16.1 Defaults versionados (migration `0058_inbox_defaults.sql`)
+Só dados, idempotente, por organização (`select id from organization … on conflict do nothing`, sem UUID fixo — o mesmo
+padrão da 0034): os 12 setores de `SETORES_PADRAO` (códigos, nomes e ordem exatos; teste `ativacao.test.ts` prende a
+migration ao código) e a linha de `inbox_config` com os defaults do banco (listas de regras vazias = "use as regras do
+código"). **Sem equipes**: não há evidência operacional suficiente para "Contas a pagar", "Atendimento comercial" ou
+"Operações" além do exemplo fictício; o router trabalha setor → sem equipe → fila do setor, e equipes entram pela tela
+quando houver necessidade. Sem responsável padrão por setor: pessoa é decisão humana. Aplicada em produção em
+24/09/2026 (12 setores, 1 configuração). Prova Y no smoke: 12 por organização, existentes preservados, reaplicação sem
+duplicar.
+
+### 16.2 Kill switches (`src/core/inbox/ativacao.ts`, lidos só no servidor)
+| Flag | Padrão | Efeito |
+| --- | --- | --- |
+| `EIFF_INBOX_ENABLED=false` | true | Central segue respondendo 200; nenhuma porta do Inbox é montada; nada gravado, nada apagado |
+| `EIFF_INBOX_ROUTER_ENABLED=false` | true | Central → Inbox → `inbox_ingest` → thread NOVA em Não atribuídos; sem porta `rotear`, sem leitura de contexto |
+| `EIFF_INBOX_LLM_ENABLED=false` | **false** | router só determinístico mesmo com `ANTHROPIC_API_KEY` presente (a chave é compartilhada com Assistente e Diretor Financeiro; desligar o Inbox não os desliga); `true` sem chave = determinístico |
+| `EIFF_INBOX_OUTBOUND_ENABLED` | sempre false | não existe caminho de envio no Inbox; `true` é ignorado com aviso no log |
+
+`montarPortasInbox(env, deps)` é o único ponto que decide o que o webhook monta; o webhook da Central só chama
+`ingerirEventosCentral` com o que recebeu dela. Provas em `ativacao.test.ts`: inbox off → nenhuma chamada; router off →
+mensagem persiste e cai em triagem; LLM off → determinístico sem provedor; IA que lança → relatório sem falhas; outbound →
+nenhum módulo do Inbox nem o webhook referencia Graph `/messages`, `send-template`, `sendApproved`, Octadesk ou o
+provider Meta, e as únicas requisições do Inbox são as RPCs do próprio banco e a API de análise da Anthropic (leitura).
+
+**Valores em produção (contexto production do Netlify):** `EIFF_INBOX_ENABLED=true`, `EIFF_INBOX_ROUTER_ENABLED=true`,
+`EIFF_INBOX_LLM_ENABLED=false`, `EIFF_INBOX_OUTBOUND_ENABLED=false`. Política inicial: DETERMINISTIC ROUTER ON ·
+ANTHROPIC OFF · OUTBOUND OFF · FACTORY OFF.
+
+### 16.3 Ambiente (presença/ausência, nunca valores)
+Presentes: `EIFF_INBOX_*` (as quatro flags e a organização), `ANTHROPIC_API_KEY`, `VITE_SUPABASE_*`, `VIBE_API_KEY`,
+`GITHUB_READ_TOKEN`. **Ausentes**: `SUPABASE_SERVICE_ROLE_KEY` (nenhuma outra função a tem; `vibe.ts` e
+`channel-octadesk.ts` também a leem) e todas as variáveis da Meta.
+
+**Onde adicionar a chave de serviço**: Netlify → Site configuration → Environment variables → *Add a variable* →
+`SUPABASE_SERVICE_ROLE_KEY`, escopo *Functions*, contexto **Production** (não Deploy Previews), valor copiado do Supabase
+Dashboard → Project Settings → API → *service_role* (secret). Depois, *Trigger deploy*. Sem ela a ingestão fica
+`nao_configurado` (a Central responde 200 e nada é gravado). O agente valida só PRESENT/ABSENT.
+
+### 16.4 Meta WhatsApp — variáveis reais lidas pela Central
+Lidas em `netlify/functions/channel-meta-webhook.ts`/`channel-meta.ts` e `src/core/central/metaServidor.ts`:
+`VARIAVEIS_META` = `META_WHATSAPP_ACCESS_TOKEN`, `META_WHATSAPP_PHONE_NUMBER_ID`, `META_WHATSAPP_WABA_ID`,
+`META_WHATSAPP_VERIFY_TOKEN` (GET de verificação do webhook), `META_WHATSAPP_APP_SECRET` (HMAC do POST; sem ele todo
+POST é recusado) e, para o CONTEXTO da mensagem, `EIFF_CENTRAL_PHONE_NUMBER_ID` (INTERNAL) / `EIFF_COMMERCIAL_PHONE_NUMBER_ID`
+(EXTERNAL); opcionais `META_GRAPH_VERSION` (padrão v21.0), `META_WHATSAPP_SEND_MODE`/`META_WHATSAPP_CANARY_NUMBERS`
+(envio, que fica desligado). Nenhuma presente. Arquitetura: Meta → `/api/channel/meta/webhook` (Central, assinatura
+validada) → `ChannelInboundEvent` → Inbox; não existe segundo webhook (teste garante) e o Inbox não conhece a Graph API.
+
+### 16.5 Ponto exato em que a cadeia espera credencial
+Pronto: schema (0056–0058), setores, organização, flags, código do webhook com router determinístico, UI. Aguardando
+o usuário: (1) `SUPABASE_SERVICE_ROLE_KEY`; (2) as sete variáveis da Meta acima e o registro da URL
+`https://eiffcontrol.com.br/api/channel/meta/webhook` no app da Meta com o mesmo `META_WHATSAPP_VERIFY_TOKEN`.
+Com isso, o teste controlado (§16.7) roda sem nenhuma alteração de código.
+
+### 16.6 Observabilidade e ground truth
+Cada mensagem roteada deixa em `inbox_thread.routing` e no log `inbox_roteamento` (só ids): intenção, setor/equipe/
+responsável sugeridos, confiança/banda, origem (DETERMINISTICO/IA/HIBRIDO), aplicação, automação, prioridade, nível, SLA,
+se há override e o veredicto da reavaliação. Override humano = `routing.override { por, em, de, para, motivo }` +
+evento `ROUTING_OVERRIDDEN` (sugestão original preservada; nada treina nada). Aba **Shadow mode** em
+`#/atendimento/configuracao` (`src/core/inbox/observabilidade.ts`, derivado do routing/atribuições/eventos): últimas 20
+decisões (conversa → destino sugerido → confiança → decisão humana: confirmou / assumiu / sobrescreveu / pendente /
+automática) e a baseline: % HIGH/MEDIUM/LOW, % confirmadas × override, por setor sugerido (confirmadas/sobrescritas),
+intenções fora do catálogo, threads NOVA sem setor, falhas de IA. Critérios para ligar a IA depois: comparar essa baseline
+determinística com um período equivalente com `EIFF_INBOX_LLM_ENABLED=true` — sem meta arbitrária até haver volume real.
+
+### 16.7 Testes controlados reais (quando as credenciais existirem)
+1. Número autorizado da equipe → "Preciso saber a previsão de pagamento da NF 583." Esperado: identidade → thread →
+   mensagem → intenção `consultar_pagamento` → FINANCEIRO (regra ROT-02) → routing persistido → UI. Sem resposta.
+2. "A estrutura chega amanhã. Podemos descarregar às 8h?" Esperado conceitualmente OBRAS (`logistica_entrega`), ou
+   fallback justificável; observar, não forçar.
+Na ativação de hoje, com os setores no ar, o router determinístico sobre a thread de teste (`inbox_ingest` pelo CLI)
+já decide FINANCEIRO para a mensagem da NF — ver §16.8.
+
+### 16.8 Resultado em produção nesta ativação (dados de teste, só contagens)
+Com a 0058 aplicada, o router determinístico (o mesmo `decidirRoteamento`, sobre o contexto lido do banco) reavaliou
+a thread de teste `[TESTE EIFF Inbox — shadow mode]` ("a NF 999 já está liberada para pagamento?"): intenção
+`consultar_pagamento`, regra explícita ROT-02 → **FINANCEIRO**, confiança 0,80 (MEDIUM: contato desconhecido, sem
+responsável padrão) → `ATRIBUIR_SETOR`, automação APPROVAL, nível B; `inbox_apply_routing` aplicou (thread TRIADA em
+FINANCEIRO, atribuição `roteamento` sem ator, eventos ROUTING_DECIDED, ROUTED e STATUS_CHANGED). Sem resposta, sem envio.
+Métricas desta ativação: 1 mensagem recebida, 1 thread, 1 decisão MEDIUM, 1 roteada automaticamente, 0 override,
+0 falhas de IA, 0 mensagens enviadas.
