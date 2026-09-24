@@ -26,6 +26,7 @@ export const POR_ROTA: Record<string, PassoTour[]> = {
     { seletor: '.content .inbox-lista', titulo: 'Ordem de trabalho', texto: 'SLA vencido primeiro, depois prioridade, depois a mais antiga sem resposta. A lista não reordena por filtro.' },
     { seletor: '.content .inbox-conversa', titulo: 'Conversa', texto: 'Mensagens, notas internas e o composer. Nesta fase a resposta fica registrada: nenhum canal está conectado.' },
     { seletor: '.content .inbox-contexto', titulo: 'Contexto e decisão', texto: 'Contato, classificação, setor e responsável, ações com aprovação, jobs e o histórico completo da conversa.' },
+    { seletor: '.content .inbox-roteamento', titulo: 'Octopus Router', texto: 'Para onde a conversa foi e por quê: setor, equipe e pessoa sugeridos, confiança, automação (IA responde / prepara / humano) e SLA. Confiança baixa vira sugestão para você confirmar ou alterar; sua escolha nunca é sobrescrita.' },
   ],
   '/': [
     { seletor: '.content .page-head', titulo: 'Painel executivo', texto: 'A leitura de 1 minuto: caixa, carteira, compromissos e alertas na data-base. "Apresentar" abre o modo para reunião.' },
