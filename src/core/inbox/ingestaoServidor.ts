@@ -3,7 +3,8 @@
 // Fluxo (docs/eiff-inbox.md § fase 2):
 //   Channel Provider -> EIFF Central (webhook assinado, normalizacao) -> ChannelInboundEvent + conteudo
 //     -> deEventoCentral (adapter) -> porta `ingerir` (RPC inbox_ingest, server-only, idempotente)
-//     -> [inteligencia disponivel? classifica e roteia : fica NOVA em "Nao atribuidos"]
+//     -> [porta `rotear` (Octopus Router, roteamentoPorta.ts): deterministico + IA opcional + RPC inbox_apply_routing]
+//     -> [sem a porta: inteligencia disponivel? classifica : fica NOVA em "Nao atribuidos"]
 //
 // Regras:
 // - a Central continua sendo a UNICA porta do webhook: nenhuma assinatura e revalidada aqui e o payload bruto nunca chega;
@@ -48,6 +49,8 @@ export interface PortasIngestao {
   carregarParaAnalise?(threadId: string, messageId: string): Promise<{ thread: InboxThread; mensagem: InboxMessage; historico: InboxMessage[]; setores: { codigo: string; nome: string }[] } | undefined>;
   /** Opcional: aplica a classificacao (thread + evento AI_ANALYZED). Nunca chamado sem sucesso da inteligencia. */
   aplicarClassificacao?(threadId: string, classificacao: Classificacao, resumo?: string): Promise<void>;
+  /** Fase 3: Octopus Router no servidor (deterministico + IA opcional + RPC). Quando presente, substitui o caminho de classificacao acima. Nunca lanca. */
+  rotear?(threadId: string, messageId: string): Promise<{ ok: boolean; aplicado: boolean; classificado: boolean; motivo?: string }>;
   log?(t: Record<string, unknown>): void;
   agora?(): string;
 }
@@ -60,6 +63,9 @@ export interface RelatorioIngestao {
   falhas: { externalMessageId: string; erro: string }[];
   classificados: number;
   semInteligencia: number;
+  /** Fase 3: threads roteadas pelo Octopus Router (decisao persistida) e quantas tiveram atribuicao aplicada. */
+  roteados: number;
+  atribuidos: number;
   threads: string[];
 }
 
@@ -75,7 +81,7 @@ export const pedidoDe = (organizationId: string, m: MensagemRecebida): PedidoIng
  * RPC e idempotente, entao o reenvio so completa o que faltou).
  */
 export async function ingerirEventosCentral(organizationId: string, eventos: ChannelInboundEvent[], conteudos: ConteudoMensagem[], portas: PortasIngestao): Promise<RelatorioIngestao> {
-  const r: RelatorioIngestao = { recebidos: eventos.length, ingeridos: 0, duplicados: 0, ignorados: [], falhas: [], classificados: 0, semInteligencia: 0, threads: [] };
+  const r: RelatorioIngestao = { recebidos: eventos.length, ingeridos: 0, duplicados: 0, ignorados: [], falhas: [], classificados: 0, semInteligencia: 0, roteados: 0, atribuidos: 0, threads: [] };
   const porId = new Map(conteudos.map((c) => [c.externalMessageId, c]));
   const agora = portas.agora?.() ?? new Date().toISOString();
   for (const e of eventos) {
@@ -92,6 +98,12 @@ export async function ingerirEventosCentral(organizationId: string, eventos: Cha
     if (res.threadId && !r.threads.includes(res.threadId)) r.threads.push(res.threadId);
     portas.log?.({ evento: 'inbox_ingest', outcome: 'ok', threadId: res.threadId, novaThread: res.novaThread, novoContato: res.novoContato, reaberta: res.reaberta, telefone: mascararTelefone(e.contactPhone) });
 
+    // OCTOPUS ROUTER (fase 3): roteia no servidor — deterministico sempre, IA como refino. Nunca desfaz a ingestao.
+    if (portas.rotear && res.threadId && res.messageId) {
+      const rot = await portas.rotear(res.threadId, res.messageId);
+      if (rot.ok) r.roteados++; if (rot.aplicado) r.atribuidos++; if (rot.classificado) r.classificados++; else r.semInteligencia++;
+      continue;
+    }
     // FALLBACK SEM IA: tudo abaixo e opcional e nunca desfaz o que ja foi persistido
     if (!portas.inteligencia || !portas.carregarParaAnalise || !portas.aplicarClassificacao || !res.threadId || !res.messageId) { r.semInteligencia++; continue; }
     try {

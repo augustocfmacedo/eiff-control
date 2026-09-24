@@ -1,8 +1,8 @@
 // EIFF Inbox — configuracao minima (permissao inbox_config): setores, equipes, membros, fallback/escalacao e SLA.
-// Tela administrativa simples: nenhum motor visual de regras. As regras de nivel e roteamento continuam em dados
-// (ConfiguracaoInbox) e so mudam por migration/codigo nesta fase.
+// Fase 3 (Octopus Router): limiares de confianca, modo de automacao padrao e regras de roteamento/automacao editaveis
+// como DADOS tipados (linhas simples, sem DSL); a validacao mora no store (validarConfiguracaoOctopus).
 import React, { useState } from 'react';
-import { PRIORIDADES, type Equipe, type MembroSetor, type Prioridade, type Setor } from '../core/inbox';
+import { MODOS_AUTOMACAO, PRIORIDADES, RISCOS, type ConfiguracaoInbox, type Equipe, type MembroSetor, type ModoAutomacao, type Prioridade, type RegraAutomacao, type RegraRoteamento, type Risco, type Setor, type TipoRelacao } from '../core/inbox';
 import { RegraDeNegocioError, actions, pode, useStore } from '../data/store';
 import { Badge, EstadoErro, Field, Input, Link, PageHead, Select, Tabs, useToast } from '../ui/components';
 
@@ -30,7 +30,7 @@ export default function InboxConfig() {
         {aba === 'setores' && <Setores setores={setoresOrdenados} usuarios={usuarios} nomeUsuario={nomeUsuario} onSalvar={(s) => tentar(() => actions.inboxSalvarSetor(s), 'Setor salvo')} />}
         {aba === 'equipes' && <Equipes equipes={inbox.equipes} setores={setoresOrdenados} usuarios={usuarios} nomeUsuario={nomeUsuario} onSalvar={(e) => tentar(() => actions.inboxSalvarEquipe(e), 'Equipe salva')} />}
         {aba === 'membros' && <Membros membros={inbox.membros} equipes={inbox.equipes} setores={setoresOrdenados} usuarios={usuarios} nomeUsuario={nomeUsuario} onSalvar={(m) => tentar(() => actions.inboxSalvarMembro(m), 'Membro salvo')} onRemover={(id) => { if (window.confirm('Remover este membro do setor?')) tentar(() => actions.inboxRemoverMembro(id), 'Membro removido'); }} />}
-        {aba === 'roteamento' && <Roteamento cfg={inbox.configuracao} setores={setoresOrdenados} onSalvar={(c) => tentar(() => actions.inboxSalvarConfiguracao(c), 'Configuração salva')} />}
+        {aba === 'roteamento' && <Roteamento cfg={inbox.configuracao} setores={setoresOrdenados} equipes={inbox.equipes} usuarios={usuarios} onSalvar={(c) => tentar(() => actions.inboxSalvarConfiguracao(c), 'Configuração salva')} />}
       </div>
       {el}
     </>
@@ -126,9 +126,18 @@ function Membros({ membros, equipes, setores, usuarios, nomeUsuario, onSalvar, o
   );
 }
 
-function Roteamento({ cfg, setores, onSalvar }: { cfg: { setorFallback: string; setorEscalacao: string; slaHorasPorPrioridade: Record<Prioridade, number>; nivelPadrao: 'A' | 'B' | 'C'; regrasRoteamento: { id: string; motivo: string; destino: { setorCodigo: string }; ativa: boolean }[]; regrasNivel: { id: string; motivo: string; nivel: string; ativa: boolean }[] }; setores: Setor[]; onSalvar: (c: { setorFallback: string; setorEscalacao: string; slaHorasPorPrioridade: Record<Prioridade, number>; nivelPadrao: 'A' | 'B' | 'C' }) => void }) {
-  const [c, setC] = useState({ setorFallback: cfg.setorFallback, setorEscalacao: cfg.setorEscalacao, slaHorasPorPrioridade: { ...cfg.slaHorasPorPrioridade }, nivelPadrao: cfg.nivelPadrao });
+function Roteamento({ cfg, setores, equipes, usuarios, onSalvar }: { cfg: ConfiguracaoInbox; setores: Setor[]; equipes: Equipe[]; usuarios: { id: string; nome: string }[]; onSalvar: (c: Partial<ConfiguracaoInbox>) => void }) {
+  const [c, setC] = useState({ setorFallback: cfg.setorFallback, setorEscalacao: cfg.setorEscalacao, slaHorasPorPrioridade: { ...cfg.slaHorasPorPrioridade }, nivelPadrao: cfg.nivelPadrao, autoRoteamento: { ...cfg.autoRoteamento } });
+  const [regras, setRegras] = useState<RegraRoteamento[]>(cfg.regrasRoteamento.map((r) => ({ ...r, condicao: { ...r.condicao }, destino: { ...r.destino } })));
+  const [automacao, setAutomacao] = useState<RegraAutomacao[]>(cfg.regrasAutomacao.map((r) => ({ ...r })));
   const ativos = setores.filter((s) => s.ativo);
+  const a = c.autoRoteamento;
+  const pct = (v: number) => Math.round(v * 100);
+  const setPct = (k: 'confiancaAtribuirPessoa' | 'confiancaAtribuirSetor' | 'confiancaTransferir', v: string) => setC({ ...c, autoRoteamento: { ...a, [k]: Math.max(0, Math.min(100, Number(v))) / 100 } });
+  const lista = (v?: string[]) => (v ?? []).join(', ');
+  const deLista = (v: string) => v.split(',').map((x) => x.trim()).filter(Boolean);
+  const upR = (i: number, p: Partial<RegraRoteamento>) => setRegras(regras.map((r, k) => (k === i ? { ...r, ...p } : r)));
+  const upA = (i: number, p: Partial<RegraAutomacao>) => setAutomacao(automacao.map((r, k) => (k === i ? { ...r, ...p } : r)));
   return (
     <>
       <div className="form">
@@ -136,16 +145,63 @@ function Roteamento({ cfg, setores, onSalvar }: { cfg: { setorFallback: string; 
         <Field label="Setor de escalação" hint="para onde escala quando o SLA vence"><Select value={c.setorEscalacao} onChange={(v) => setC({ ...c, setorEscalacao: v })} options={ativos.map((s) => ({ value: s.codigo, label: s.nome }))} /></Field>
         <Field label="Nível padrão" hint="A = IA responde · B = IA prepara · C = humano"><Select value={c.nivelPadrao} onChange={(v) => setC({ ...c, nivelPadrao: v as 'A' | 'B' | 'C' })} options={['A', 'B', 'C']} /></Field>
         {PRIORIDADES.map((p) => <Field key={p} label={`SLA ${p} (horas)`}><Input type="number" min={0.5} step={0.5} value={c.slaHorasPorPrioridade[p]} onChange={(e) => setC({ ...c, slaHorasPorPrioridade: { ...c.slaHorasPorPrioridade, [p]: Number(e.target.value) } })} /></Field>)}
-        <div className="full actions"><button className="btn primary" onClick={() => onSalvar(c)}>Salvar</button></div>
+        <h3 className="full" style={{ marginTop: 8 }}>Octopus Router · confiança e automação</h3>
+        <Field label="Atribuir pessoa a partir de (%)" hint="banda HIGH: setor, equipe e responsável automáticos"><Input type="number" min={0} max={100} value={pct(a.confiancaAtribuirPessoa)} onChange={(e) => setPct('confiancaAtribuirPessoa', e.target.value)} /></Field>
+        <Field label="Atribuir setor a partir de (%)" hint="banda MEDIUM: só setor/equipe; abaixo vai para Não atribuídos"><Input type="number" min={0} max={100} value={pct(a.confiancaAtribuirSetor)} onChange={(e) => setPct('confiancaAtribuirSetor', e.target.value)} /></Field>
+        <Field label="Automação padrão" hint="quando nenhuma regra decide"><Select value={a.automacaoPadrao} onChange={(v) => setC({ ...c, autoRoteamento: { ...a, automacaoPadrao: v as ModoAutomacao } })} options={[...MODOS_AUTOMACAO]} /></Field>
+        <Field label="Transferência automática" hint="reavaliação move a conversa sozinha (nunca com override humano nem com responsável)"><Select value={a.transferenciaAutomatica ? 'sim' : 'nao'} onChange={(v) => setC({ ...c, autoRoteamento: { ...a, transferenciaAutomatica: v === 'sim' } })} options={[{ value: 'nao', label: 'Não: só recomenda' }, { value: 'sim', label: 'Sim, acima da confiança abaixo' }]} /></Field>
+        <Field label="Transferir sozinho a partir de (%)"><Input type="number" min={0} max={100} value={pct(a.confiancaTransferir)} onChange={(e) => setPct('confiancaTransferir', e.target.value)} /></Field>
+        <div className="full actions"><button className="btn primary" onClick={() => onSalvar({ ...c, regrasRoteamento: regras, regrasAutomacao: automacao })}>Salvar</button></div>
       </div>
-      <h3 style={{ marginTop: 16 }}>Regras (somente leitura nesta fase)</h3>
-      <p className="small muted">As regras de roteamento e de nível são dados da configuração e ainda não têm editor visual. A primeira regra que casa vence; sem regra, vale o fallback.</p>
+      <h3 style={{ marginTop: 16 }}>Regras de roteamento <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setRegras([...regras, { id: `ROT-${String(regras.length + 1).padStart(2, '0')}`, ordem: regras.length + 1, condicao: { palavras: [] }, destino: { setorCodigo: ativos[0]?.codigo ?? '' }, motivo: '', ativa: true }])}>Adicionar</button></h3>
+      <p className="small muted">A primeira regra que casa (por ordem) decide o setor e vence qualquer sugestão da IA. Condições: intenções, palavras no texto, tipo de relação do contato (separe por vírgula). Sem regra, valem a memória operacional, o catálogo de intenções, a IA e o fallback.</p>
       <div className="table-wrap"><table>
-        <thead><tr><th>Regra</th><th>Motivo</th><th>Destino / nível</th><th>Situação</th></tr></thead>
+        <thead><tr><th>Id</th><th>Ordem</th><th>Intenções</th><th>Palavras</th><th>Relação</th><th>Setor</th><th>Equipe</th><th>Responsável</th><th>Prioridade</th><th>Motivo</th><th>Ativa</th><th /></tr></thead>
         <tbody>
-          {cfg.regrasRoteamento.map((r) => <tr key={r.id}><td className="mono">{r.id}</td><td>{r.motivo}</td><td>{setores.find((s) => s.codigo === r.destino.setorCodigo)?.nome ?? r.destino.setorCodigo}</td><td><Badge tone={r.ativa ? 'ok' : 'muted'}>{r.ativa ? 'ativa' : 'inativa'}</Badge></td></tr>)}
-          {cfg.regrasNivel.map((r) => <tr key={r.id}><td className="mono">{r.id}</td><td>{r.motivo}</td><td>nível {r.nivel}</td><td><Badge tone={r.ativa ? 'ok' : 'muted'}>{r.ativa ? 'ativa' : 'inativa'}</Badge></td></tr>)}
+          {regras.map((r, i) => (
+            <tr key={i}>
+              <td><Input value={r.id} onChange={(e) => upR(i, { id: e.target.value })} style={{ width: 80 }} /></td>
+              <td><Input type="number" value={r.ordem} onChange={(e) => upR(i, { ordem: Number(e.target.value) })} style={{ width: 60 }} /></td>
+              <td><Input value={lista(r.condicao.intencoes)} onChange={(e) => upR(i, { condicao: { ...r.condicao, intencoes: deLista(e.target.value) } })} placeholder="consultar_pagamento, cobranca" /></td>
+              <td><Input value={lista(r.condicao.palavras)} onChange={(e) => upR(i, { condicao: { ...r.condicao, palavras: deLista(e.target.value) } })} placeholder="nota fiscal, boleto" /></td>
+              <td><Input value={lista(r.condicao.tiposRelacao)} onChange={(e) => upR(i, { condicao: { ...r.condicao, tiposRelacao: deLista(e.target.value) as TipoRelacao[] } })} placeholder="fornecedor" /></td>
+              <td><Select value={r.destino.setorCodigo} onChange={(v) => upR(i, { destino: { ...r.destino, setorCodigo: v, equipeId: undefined } })} options={ativos.map((s) => ({ value: s.codigo, label: s.nome }))} /></td>
+              <td><Select value={r.destino.equipeId ?? ''} onChange={(v) => upR(i, { destino: { ...r.destino, equipeId: v || undefined } })} options={equipes.filter((e) => e.ativo && e.setorCodigo === r.destino.setorCodigo).map((e) => ({ value: e.id, label: e.nome }))} allowEmpty="—" /></td>
+              <td><Select value={r.destino.responsavelId ?? ''} onChange={(v) => upR(i, { destino: { ...r.destino, responsavelId: v || undefined } })} options={usuarios.map((u) => ({ value: u.id, label: u.nome }))} allowEmpty="—" /></td>
+              <td><Select value={r.destino.prioridade ?? ''} onChange={(v) => upR(i, { destino: { ...r.destino, prioridade: (v || undefined) as Prioridade | undefined } })} options={[...PRIORIDADES]} allowEmpty="—" /></td>
+              <td><Input value={r.motivo} onChange={(e) => upR(i, { motivo: e.target.value })} /></td>
+              <td><input type="checkbox" checked={r.ativa} onChange={(e) => upR(i, { ativa: e.target.checked })} /></td>
+              <td><button className="btn sm" onClick={() => setRegras(regras.filter((_, k) => k !== i))}>Remover</button></td>
+            </tr>
+          ))}
         </tbody>
+      </table></div>
+      <h3 style={{ marginTop: 16 }}>Regras de automação <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setAutomacao([...automacao, { id: `AUT-${String(automacao.length + 1).padStart(2, '0')}`, ordem: automacao.length + 1, intencoes: [], modo: 'APPROVAL', risco: 'MEDIO', motivo: '', ativa: true }])}>Adicionar</button></h3>
+      <p className="small muted">AUTO = a IA responde sozinha · APPROVAL = a IA prepara e um humano aprova · HUMAN = humano obrigatório. Sem regra vale o nível (A/B/C). As guardas só apertam: risco alto, confiança abaixo do mínimo e contato não identificado nunca recebem AUTO.</p>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Id</th><th>Ordem</th><th>Intenções</th><th>Setores</th><th>Relação</th><th>Modo</th><th>Risco</th><th>Papel exigido</th><th>Motivo</th><th>Ativa</th><th /></tr></thead>
+        <tbody>
+          {automacao.map((r, i) => (
+            <tr key={i}>
+              <td><Input value={r.id} onChange={(e) => upA(i, { id: e.target.value })} style={{ width: 80 }} /></td>
+              <td><Input type="number" value={r.ordem} onChange={(e) => upA(i, { ordem: Number(e.target.value) })} style={{ width: 60 }} /></td>
+              <td><Input value={lista(r.intencoes)} onChange={(e) => upA(i, { intencoes: deLista(e.target.value) })} /></td>
+              <td><Input value={lista(r.setores)} onChange={(e) => upA(i, { setores: deLista(e.target.value) })} placeholder="FINANCEIRO" /></td>
+              <td><Input value={lista(r.tiposRelacao)} onChange={(e) => upA(i, { tiposRelacao: deLista(e.target.value) as TipoRelacao[] })} /></td>
+              <td><Select value={r.modo} onChange={(v) => upA(i, { modo: v as ModoAutomacao })} options={[...MODOS_AUTOMACAO]} /></td>
+              <td><Select value={r.risco} onChange={(v) => upA(i, { risco: v as Risco })} options={[...RISCOS]} /></td>
+              <td><Input value={r.papelExigido ?? ''} onChange={(e) => upA(i, { papelExigido: e.target.value || undefined })} placeholder="Financeiro" /></td>
+              <td><Input value={r.motivo} onChange={(e) => upA(i, { motivo: e.target.value })} /></td>
+              <td><input type="checkbox" checked={r.ativa} onChange={(e) => upA(i, { ativa: e.target.checked })} /></td>
+              <td><button className="btn sm" onClick={() => setAutomacao(automacao.filter((_, k) => k !== i))}>Remover</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+      <h3 style={{ marginTop: 16 }}>Regras de nível (somente leitura)</h3>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Regra</th><th>Motivo</th><th>Nível</th><th>Situação</th></tr></thead>
+        <tbody>{cfg.regrasNivel.map((r) => <tr key={r.id}><td className="mono">{r.id}</td><td>{r.motivo}</td><td>nível {r.nivel}</td><td><Badge tone={r.ativa ? 'ok' : 'muted'}>{r.ativa ? 'ativa' : 'inativa'}</Badge></td></tr>)}</tbody>
       </table></div>
     </>
   );

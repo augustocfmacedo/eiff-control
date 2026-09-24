@@ -61,6 +61,10 @@ export type EstadoFabrica = (typeof ESPELHO_FACTORY_STATES)[number];
 /** ESPELHO de COMMENT_KINDS — os eventos que a fabrica escreve na issue. */
 export const ESPELHO_COMMENT_KINDS = [
   'SPEC_WRITTEN', 'ARCH_APPROVE_SPEC', 'ARCH_RETURN_SPEC', 'ADMITTED', 'CLAIMED', 'LEASE_EXPIRED',
+  // W2-04A da fabrica (6c9e14c): LEASE_EXPIRED virou legado; a perda de infraestrutura (nao consome tentativa) e o
+  // estouro de tempo (consome tentativa) passaram a ser comentarios distintos. O Mission Control NAO infere resultado
+  // deles: ambos seguem como TASK_PROGRESS com o fato bruto preservado em tipoOrigem.
+  'LEASE_LOST_INFRA', 'ATTEMPT_TIMEOUT',
   'WORKER_REPORT', 'CI_RESULT', 'ARCH_REVIEW', 'ARCH_DECISION_DISCARDED', 'HUMAN_DECISION', 'INTEGRATED',
   'BLOCKED', 'REPLANNED', 'DONE', 'MODEL_ESCALATION', 'RECONCILED',
 ] as const;

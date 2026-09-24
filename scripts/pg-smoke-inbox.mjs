@@ -1,9 +1,12 @@
-// Smoke test da migration 0056 (EIFF Inbox) contra um PostgreSQL DE VERDADE (PGlite, em memoria, ROLLBACK ao final).
+// Smoke test das migrations 0056 (EIFF Inbox) e 0057 (Octopus Router) contra um PostgreSQL DE VERDADE (PGlite, em memoria, ROLLBACK ao final).
 //
 // Por que existe: a suite vitest prova o que o CORE decide (src/core/inbox) e o que o adapter MANDA (src/data); nao prova
 // o que o BANCO aceita. Aqui se prova a outra metade: idempotencia da ingestao, resolucao de thread, append-only,
 // imutabilidade da mensagem, o RLS por setor e — gate final do PR #13 — a autoridade de transferencia no banco (RPC
-// inbox_assign_thread, privilegios de coluna e triggers): 18 provas A–R.
+// inbox_assign_thread, privilegios de coluna e triggers): 18 provas A–R. Fase 3 (0057): provas S–X — RPC inbox_apply_routing
+// server-only (aplica dentro do contexto permitido, deriva status, eventos), destinos invalidos recusados, navegador nao
+// chama a RPC, override humano so por quem tem autoridade e nunca sobrescrito pelo roteamento, sugestao (TRIAGEM) nao move,
+// prioridade so sobe, e reaplicacao idempotente da 0057.
 //
 // Como rodar:  node scripts/pg-smoke-inbox.mjs        (imprime JSON; sai com 1 se qualquer prova falhar)
 //
@@ -15,6 +18,7 @@ import fs from 'node:fs';
 
 const RAIZ = new URL('../supabase/migrations/', import.meta.url);
 const SQL_0056 = fs.readFileSync(new URL('0056_inbox.sql', RAIZ), 'utf8');
+const SQL_0057 = fs.readFileSync(new URL('0057_inbox_octopus_router.sql', RAIZ), 'utf8');
 
 const ORG_A = '11111111-1111-1111-1111-111111111111';
 const ORG_B = '22222222-2222-2222-2222-222222222222';
@@ -103,7 +107,8 @@ async function main() {
   try {
     await db.exec(PRELUDIO);
     await db.exec(SQL_0056);
-    res.migration = 'APLICADA sem erro';
+    await db.exec(SQL_0057);
+    res.migration = 'APLICADAS sem erro (0056 + 0057)';
     await db.exec('begin');
     await db.exec(SEMENTE);
 
@@ -259,6 +264,73 @@ async function main() {
     try { await db.exec(SQL_0056); } catch (e) { reaplica = String(e.message); }
     await db.exec('rollback to savepoint reaplica');
     ok('R', reaplica === 'ok', reaplica === 'ok' ? '0056 reaplicada sem erro' : reaplica.split('\n')[0]);
+
+    // ------------------------------------------------------------------ fase 3: Octopus Router (0057)
+    const SETOR_FIN = 'cccccccc-0000-0000-0000-000000000001', SETOR_OBRAS = 'cccccccc-0000-0000-0000-000000000002';
+    const EQ_OBRAS = (await db.query(`insert into inbox_team (organization_id, sector_id, name) values ($1, $2, 'Canteiro') returning id`, [ORG_A, SETOR_OBRAS])).rows[0].id;
+    const routing = (extra = {}) => JSON.stringify({ versao: 'octopus-1', em: '2026-09-23T12:00:00Z', origem: 'DETERMINISTICO', intencao: 'consultar_pagamento', assunto: 'Pagamento', entidades: [], prioridade: 'Alta', urgente: false, nivel: 'B', setorCodigo: 'FINANCEIRO', aplicacao: 'ATRIBUIR_PESSOA', automacao: { modo: 'APPROVAL', motivo: 'regra AUT-03', acoesPermitidas: ['responder'], risco: 'MEDIO', confianca: 0.9 }, confianca: 0.9, banda: 'HIGH', sinais: [{ codigo: 'regra_explicita', peso: 0, descricao: 'regra ROT-02' }], motivoOperacional: 'regra ROT-02 → Financeiro (90%)', fallback: false, slaAte: '2026-09-24T12:00:00Z', escalacao: ['setor FINANCEIRO'], ...extra });
+    const aplicar = (threadId, msgId, p = {}) => db.query(
+      'select inbox_apply_routing($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, $11, $12) j',
+      [p.org ?? ORG_A, threadId, msgId, p.routing ?? routing(), p.classification ?? null, p.summary ?? null, 'sectorCode' in p ? p.sectorCode : 'FINANCEIRO', p.teamId ?? null, 'assigneeId' in p ? p.assigneeId : FIN_A, p.priority ?? 'Alta', p.level ?? 'B', p.apply ?? true]);
+
+    // S) servidor aplica: thread NOVA do ingest -> FINANCEIRO / FIN_A, ATRIBUIDA, atribuicao origem roteamento sem ator, routing gravado, eventos
+    const s0 = j(await ingest({ externalId: 'wamid.s1', identifier: '5562955556666', nome: 'Quinto', body: 'A NF 7 já foi paga?' }));
+    const s1 = j(await aplicar(s0.thread_id, s0.message_id, { classification: JSON.stringify({ intencao: 'consultar_pagamento', assunto: 'Pagamento', entidades: [], prioridadeRecomendada: 'Alta', nivelRecomendado: 'B', confianca: 0.9, sinais: ['NF'], evidencias: [], provedor: 'LLM', versao: 'inbox-router-llm-1', em: '2026-09-23T12:00:00Z' }), summary: 'Fornecedor pergunta pela NF 7.' }));
+    const thS = (await db.query('select status, sector_id, assignee_id, priority, service_level, routing, classification, summary from inbox_thread where id = $1', [s0.thread_id])).rows[0];
+    const atS = (await db.query('select origin, actor_id, released_at from inbox_assignment where thread_id = $1 order by assigned_at', [s0.thread_id])).rows;
+    const evS = (await db.query(`select event_type, actor_name from inbox_thread_event where thread_id = $1 and event_type in ('AI_ANALYZED', 'ROUTING_DECIDED', 'PRIORITY_CHANGED', 'ROUTED', 'ASSIGNED', 'STATUS_CHANGED') order by created_at`, [s0.thread_id])).rows;
+    ok('S', s1.ok && s1.aplicado && thS.status === 'ATRIBUIDA' && thS.sector_id === SETOR_FIN && thS.assignee_id === FIN_A && thS.priority === 'Alta' && thS.service_level === 'B' && thS.routing?.banda === 'HIGH' && thS.classification?.provedor === 'LLM' && thS.summary?.startsWith('Fornecedor')
+      && atS.length === 1 && atS[0].origin === 'roteamento' && atS[0].actor_id === null && atS[0].released_at === null
+      && evS.map((e) => e.event_type).join(',') === 'AI_ANALYZED,ROUTING_DECIDED,PRIORITY_CHANGED,ROUTED,ASSIGNED,STATUS_CHANGED' && evS.every((e) => e.event_type === 'AI_ANALYZED' || e.actor_name === 'Octopus Router'),
+      `status ${thS.status} · setor FIN · responsável FIN · prioridade ${thS.priority} · eventos ${evS.map((e) => e.event_type).join(',')}`);
+
+    // T) destinos invalidos sao recusados ANTES de escrever: setor inexistente, equipe de outro setor, pessoa fora do setor, pessoa de outra org, thread de outra org, routing com PII
+    const s2 = j(await ingest({ externalId: 'wamid.t1', identifier: '5562977778888', nome: 'Sexto', body: 'entrega' }));
+    const antesT = (await db.query('select (select count(*) from inbox_thread_event) e, (select count(*) from inbox_assignment) a, (select routing from inbox_thread where id = $1) r', [s2.thread_id])).rows[0];
+    const t1 = j(await aplicar(s2.thread_id, s2.message_id, { sectorCode: 'NAO_EXISTE', assigneeId: null }));
+    const t2 = j(await aplicar(s2.thread_id, s2.message_id, { sectorCode: 'FINANCEIRO', teamId: EQ_OBRAS, assigneeId: null }));
+    const t3 = j(await aplicar(s2.thread_id, s2.message_id, { sectorCode: 'FINANCEIRO', assigneeId: ENG_A }));
+    const t4b = j(await aplicar(s2.thread_id, s2.message_id, { sectorCode: 'FINANCEIRO', assigneeId: ADM_B }));
+    const t5 = j(await aplicar(s2.thread_id, s2.message_id, { org: ORG_B }));
+    const t6 = j(await aplicar(s2.thread_id, s2.message_id, { routing: routing({ raw_payload: { telefone: TEL } }) }));
+    const t7 = j(await aplicar(s2.thread_id, s2.message_id, { priority: 'Máxima' }));
+    const depoisT = (await db.query('select (select count(*) from inbox_thread_event) e, (select count(*) from inbox_assignment) a, (select routing from inbox_thread where id = $1) r', [s2.thread_id])).rows[0];
+    ok('T', t1.erro === 'setor_invalido' && t2.erro === 'equipe_invalida' && t3.erro === 'responsavel_fora_do_contexto' && t4b.erro === 'responsavel_fora_do_contexto' && t5.erro === 'thread_nao_encontrada' && t6.erro === 'routing_invalido' && t7.erro === 'prioridade_invalida' && JSON.stringify(antesT) === JSON.stringify(depoisT),
+      `setor: ${t1.erro} · equipe: ${t2.erro} · pessoa fora do setor: ${t3.erro} · pessoa de outra org: ${t4b.erro} · outra org: ${t5.erro} · PII: ${t6.erro} · prioridade: ${t7.erro} · nada gravado: ${JSON.stringify(antesT) === JSON.stringify(depoisT)}`);
+
+    // U) o navegador (authenticated, mesmo Diretoria) nao chama a RPC; e o UPDATE direto de routing SEM override por quem enxerga continua permitido (e dado, como classification)
+    const u1 = await comoUsuarioFalha(DIR_A, 'select inbox_apply_routing($1, $2, $3, $4::jsonb)', [ORG_A, s2.thread_id, s2.message_id, routing()]);
+    const u2 = await comoUsuarioFalha(DIR_A, 'update inbox_thread set routing = $2::jsonb where id = $1', [s2.thread_id, routing({ aplicacao: 'TRIAGEM' })]);
+    ok('U', /permission denied/i.test(u1 ?? '') && u2 === null, `RPC pelo navegador: ${u1 ? 'negada' : 'ACEITA'} · routing (dado) por Diretoria: ${u2 ? 'NEGADO' : 'ok'}`);
+
+    // V) override humano: so por quem tem autoridade de atribuir e sempre em nome proprio; depois disso o servidor NAO move a conversa
+    // OUTRO_FIN: atendente de FINANCEIRO — ENXERGA a thread s0 (setor dele) mas nao e responsavel nem gestor: sem autoridade para o override
+    const OUTRO_FIN = 'aaaaaaaa-0000-0000-0000-000000000006';
+    await db.query(`insert into profile (id, organization_id, name, email, role) values ($1, $2, 'Outro Financeiro', 'of@eiff', 'Financeiro')`, [OUTRO_FIN, ORG_A]);
+    await db.query(`insert into inbox_member (organization_id, profile_id, sector_id, member_role) values ($1, $2, $3, 'atendente')`, [ORG_A, OUTRO_FIN, SETOR_FIN]);
+    const v1 = await comoUsuarioFalha(OUTRO_FIN, 'update inbox_thread set routing = $2::jsonb where id = $1', [s0.thread_id, routing({ override: { por: OUTRO_FIN, em: '2026-09-23T13:00:00Z', de: { setorCodigo: 'FINANCEIRO' }, para: { setorCodigo: 'OBRAS' } } })]); // atendente do setor: enxerga, mas sem autoridade
+    const v2 = await comoUsuarioFalha(FIN_A, 'update inbox_thread set routing = $2::jsonb where id = $1', [s0.thread_id, routing({ override: { por: DIR_A, em: '2026-09-23T13:00:00Z', de: { setorCodigo: 'FINANCEIRO' }, para: { setorCodigo: 'OBRAS' } } })]); // em nome de outro
+    const v3 = await comoUsuarioFalha(FIN_A, 'update inbox_thread set routing = $2::jsonb where id = $1', [s0.thread_id, routing({ override: { por: FIN_A, em: '2026-09-23T13:00:00Z', de: { setorCodigo: 'FINANCEIRO' }, para: { setorCodigo: 'FINANCEIRO', responsavelId: FIN_A }, motivo: 'fico com ela' } })]); // responsavel: pode
+    const v4 = j(await aplicar(s0.thread_id, s0.message_id, { routing: routing({ setorCodigo: 'OBRAS', aplicacao: 'ATRIBUIR_SETOR' }), sectorCode: 'OBRAS', assigneeId: null }));
+    const thV = (await db.query('select sector_id, assignee_id, routing from inbox_thread where id = $1', [s0.thread_id])).rows[0];
+    ok('V', /policy|autoridade|permission/i.test(v1 ?? '') && /auth\.uid/i.test(v2 ?? '') && v3 === null && v4.ok && !v4.aplicado && v4.motivo === 'override_humano' && thV.sector_id === SETOR_FIN && thV.assignee_id === FIN_A && thV.routing?.override?.por === FIN_A && thV.routing?.setorCodigo === 'OBRAS',
+      `sem autoridade: ${v1 ? 'negado' : 'ACEITO'} · em nome de outro: ${v2 ? 'negado' : 'ACEITO'} · responsável: ${v3 ? 'NEGADO' : 'ok'} · servidor depois do override: aplicado=${v4.aplicado} motivo=${v4.motivo} · setor segue FIN e override preservado`);
+
+    // W) TRIAGEM (apply=false) so registra a sugestao — thread continua NOVA e sem setor; prioridade nunca desce; ROUTING_DECIDED sem ROUTED
+    const w1 = j(await aplicar(s2.thread_id, s2.message_id, { routing: routing({ aplicacao: 'TRIAGEM', banda: 'LOW', confianca: 0.4, prioridade: 'Normal' }), sectorCode: 'OBRAS', assigneeId: null, priority: 'Normal', apply: false }));
+    await db.query(`update inbox_thread set priority = 'Urgente' where id = $1`, [s2.thread_id]);
+    const w2 = j(await aplicar(s2.thread_id, s2.message_id, { routing: routing({ aplicacao: 'TRIAGEM' }), sectorCode: 'OBRAS', assigneeId: null, priority: 'Baixa', apply: false }));
+    const thW = (await db.query('select status, sector_id, priority, routing from inbox_thread where id = $1', [s2.thread_id])).rows[0];
+    const evW = (await db.query(`select event_type from inbox_thread_event where thread_id = $1 and event_type in ('ROUTING_DECIDED', 'ROUTED', 'ASSIGNED')`, [s2.thread_id])).rows.map((e) => e.event_type);
+    ok('W', w1.ok && !w1.aplicado && w1.motivo === 'sugestao_registrada' && w2.ok && thW.status === 'NOVA' && thW.sector_id === null && thW.priority === 'Urgente' && thW.routing?.aplicacao === 'TRIAGEM' && evW.includes('ROUTING_DECIDED') && !evW.includes('ROUTED'),
+      `status ${thW.status} · sem setor · prioridade ${thW.priority} (não desceu para Baixa) · eventos ${evW.join(',')}`);
+
+    // X) reaplicacao da 0057: idempotente
+    await db.exec('savepoint reaplica57');
+    let reaplica57 = 'ok';
+    try { await db.exec(SQL_0057); } catch (e) { reaplica57 = String(e.message); }
+    await db.exec('rollback to savepoint reaplica57');
+    ok('X', reaplica57 === 'ok', reaplica57 === 'ok' ? '0057 reaplicada sem erro' : reaplica57.split('\n')[0]);
 
     await db.exec('rollback');
     const sobrou = (await db.query('select count(*)::int n from inbox_thread')).rows[0].n;

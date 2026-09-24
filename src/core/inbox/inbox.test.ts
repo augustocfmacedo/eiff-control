@@ -289,8 +289,10 @@ describe('seed e higiene', () => {
   });
   it('o domínio é puro: nada de React, fetch, Supabase, GSAP ou Factory/Mission Control no core do Inbox', () => {
     const dir = path.join(process.cwd(), 'src/core/inbox');
-    // ingestaoPorta.ts e a UNICA excecao declarada: porta server-side (fetch injetado, chave do ambiente), como vibeServidor
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.ts') && !x.endsWith('.test.ts') && x !== 'ingestaoPorta.ts')) {
+    // ingestaoPorta.ts, roteamentoPorta.ts e inteligenciaLlm.ts sao as excecoes declaradas: portas server-side (fetch e chave
+    // INJETADOS, nunca lidos do ambiente do navegador), como vibeServidor
+    const SERVER_SIDE = new Set(['ingestaoPorta.ts', 'roteamentoPorta.ts', 'inteligenciaLlm.ts']);
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.ts') && !x.endsWith('.test.ts') && !SERVER_SIDE.has(x))) {
       const s = fs.readFileSync(path.join(dir, f), 'utf8');
       for (const proibido of ["from 'react'", 'fetch(', 'supabase', 'gsap', '../central/', 'eiff-dev-factory', 'githubAdapter', 'localStorage', 'import.meta.env']) expect(s, `${f} contém ${proibido}`).not.toContain(proibido);
     }
@@ -298,6 +300,11 @@ describe('seed e higiene', () => {
   it('o navegador nunca chama IA ou canal real pelo Inbox: a tela só usa actions do store', () => {
     const tela = fs.readFileSync(path.join(process.cwd(), 'src/screens/Inbox.tsx'), 'utf8');
     for (const proibido of ['fetch(', '/api/', 'anthropic', 'META_WHATSAPP', 'OCTADESK']) expect(tela).not.toContain(proibido);
+    // Octopus Router: o provedor LLM e as portas do servidor nunca entram em codigo do navegador (nem pelo index do modulo)
+    for (const f of ['src/core/inbox/index.ts', 'src/data/store.ts', 'src/data/supabase.ts', 'src/data/inbox.supabase.ts', 'src/screens/Inbox.tsx', 'src/screens/InboxConfig.tsx', 'src/App.tsx']) {
+      const s = fs.readFileSync(path.join(process.cwd(), f), 'utf8');
+      expect(s, f).not.toMatch(/inteligenciaLlm|roteamentoPorta|ANTHROPIC/);
+    }
   });
 });
 

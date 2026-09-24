@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   CANAIS_INBOX, NIVEIS_ATENDIMENTO, NOME_STATUS, PRIORIDADES, TIPOS_ACAO, TRANSICOES_THREAD, caixasVirtuais, ehAberta, escalacoesPendentes, estadoSla,
   identificadorMascarado, ordenarParaTrabalho, resumoExecutivo, threadsDaCaixa, validarTransicao,
-  type CanalInbox, type EstadoSla, type InboxAction, type InboxJob, type InboxThread, type NivelAtendimento, type Prioridade, type StatusThread, type TipoAcao, type TipoEventoThread,
+  type CanalInbox, type DecisaoOctopus, type EstadoSla, type InboxAction, type InboxJob, type InboxThread, type NivelAtendimento, type Prioridade, type StatusThread, type TipoAcao, type TipoEventoThread,
 } from '../core/inbox';
 import { RegraDeNegocioError, actions, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, dataHora, useToast, type Tone } from '../ui/components';
@@ -22,7 +22,9 @@ const TOM_SLA: Record<EstadoSla, Tone> = { sem_sla: 'muted', no_prazo: 'ok', ven
 const NOME_NIVEL: Record<NivelAtendimento, string> = { A: 'A · IA responde', B: 'B · IA prepara, humano aprova', C: 'C · humano obrigatório' };
 const NOME_ACAO: Record<TipoAcao, string> = { responder: 'Responder', encaminhar: 'Encaminhar', criar_tarefa: 'Criar tarefa', consultar_sistema: 'Consultar sistema', registrar_previsao: 'Registrar previsão', criar_job: 'Criar job' };
 const TOM_ACAO: Record<InboxAction['estado'], Tone> = { proposta: 'muted', aguardando_aprovacao: 'warn', aprovada: 'info', rejeitada: 'bad', executada: 'ok', falhou: 'bad' };
-const NOME_EVENTO: Partial<Record<TipoEventoThread, string>> = { THREAD_CREATED: 'conversa aberta', THREAD_REOPENED: 'reaberta', MESSAGE_RECEIVED: 'mensagem recebida', MESSAGE_REGISTERED: 'rascunho registrado', NOTE_ADDED: 'nota interna', AI_ANALYZED: 'analisada pela IA', TRIAGED: 'triada', ROUTED: 'roteada', ASSIGNED: 'atribuída', REASSIGNED: 'transferida', RELEASED: 'liberada', STATUS_CHANGED: 'status', PRIORITY_CHANGED: 'prioridade', ACTION_PROPOSED: 'ação proposta', ACTION_APPROVED: 'ação aprovada', ACTION_REJECTED: 'ação rejeitada', ACTION_EXECUTED: 'ação executada', JOB_CREATED: 'job criado', JOB_COMPLETED: 'job concluído', JOB_FAILED: 'job falhou', RESOLVED: 'resolvida', CLOSED: 'fechada', SLA_ESCALATED: 'escalada por SLA', LABELS_CHANGED: 'etiquetas' };
+const NOME_MODO: Record<DecisaoOctopus['automacao']['modo'], string> = { AUTO: 'IA responde', APPROVAL: 'IA prepara, humano aprova', HUMAN: 'humano obrigatório' };
+const TOM_BANDA: Record<DecisaoOctopus['banda'], Tone> = { HIGH: 'ok', MEDIUM: 'warn', LOW: 'bad' };
+const NOME_EVENTO: Partial<Record<TipoEventoThread, string>> = { THREAD_CREATED: 'conversa aberta', ROUTING_DECIDED: 'roteamento decidido', ROUTING_OVERRIDDEN: 'roteamento sobrescrito', ROUTING_REEVALUATED: 'roteamento reavaliado', THREAD_REOPENED: 'reaberta', MESSAGE_RECEIVED: 'mensagem recebida', MESSAGE_REGISTERED: 'rascunho registrado', NOTE_ADDED: 'nota interna', AI_ANALYZED: 'analisada pela IA', TRIAGED: 'triada', ROUTED: 'roteada', ASSIGNED: 'atribuída', REASSIGNED: 'transferida', RELEASED: 'liberada', STATUS_CHANGED: 'status', PRIORITY_CHANGED: 'prioridade', ACTION_PROPOSED: 'ação proposta', ACTION_APPROVED: 'ação aprovada', ACTION_REJECTED: 'ação rejeitada', ACTION_EXECUTED: 'ação executada', JOB_CREATED: 'job criado', JOB_COMPLETED: 'job concluído', JOB_FAILED: 'job falhou', RESOLVED: 'resolvida', CLOSED: 'fechada', SLA_ESCALATED: 'escalada por SLA', LABELS_CHANGED: 'etiquetas' };
 const TOM_JOB: Record<InboxJob['estado'], Tone> = { RASCUNHO: 'muted', ENVIADO: 'info', EM_EXECUCAO: 'info', CONCLUIDO: 'ok', FALHOU: 'bad', CANCELADO: 'muted' };
 
 function haQuanto(iso: string, agoraIso: string): string {
@@ -218,6 +220,13 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                     <div><span className="muted small">Esperando</span><b>{thread.status === 'AGUARDANDO_CONTATO' ? 'o contato responder' : thread.status === 'AGUARDANDO_APROVACAO' ? `aprovação de ${acoes.find((a) => a.estado === 'aguardando_aprovacao')?.aprovacao.papelDecisor ?? 'alguém'}` : thread.status === 'AGUARDANDO_INTERNO' ? 'a EIFF (interno)' : thread.status === 'NOVA' ? 'triagem' : thread.status === 'TRIADA' ? 'alguém assumir' : thread.status === 'ATRIBUIDA' ? 'a primeira resposta' : ehAberta(thread.status) ? 'o atendimento avançar' : 'nada: encerrada'}</b></div>
                     <div><span className="muted small">Próxima ação</span><b>{sugestao ? 'revisar a resposta sugerida' : thread.classificacao?.acaoSugerida ?? (thread.status === 'NOVA' ? 'triar e rotear' : !thread.responsavelId ? 'assumir a conversa' : 'responder')}</b></div>
                   </div>
+                  <h3>Roteamento <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => tentar(() => actions.inboxRotear(thread.id), 'Roteamento recalculado')}>Rotear de novo</button></h3>
+                  {thread.roteamento ? (
+                    <Roteamento r={thread.roteamento} thread={thread} agora={agora} usuarioId={usuario.id} nomeSetor={(c) => inbox.setores.find((s) => s.codigo === c)?.nome ?? c ?? '—'} nomeEquipe={(id) => inbox.equipes.find((e) => e.id === id)?.nome ?? id ?? '—'} nomeUsuario={nomeUsuario}
+                      onConfirmar={() => tentar(() => actions.inboxConfirmarRoteamento(thread.id), 'Sugestão confirmada')}
+                      onAssumir={() => tentar(() => actions.inboxAtribuir(thread.id, { setorCodigo: thread.setorCodigo ?? thread.roteamento?.setorCodigo, responsavelId: usuario.id, origem: 'triagem', motivo: 'assumida na triagem' }), 'Conversa assumida')}
+                      onTransferir={(setorCodigo, equipeId) => tentar(() => actions.inboxAtribuir(thread.id, { setorCodigo, equipeId: equipeId ?? '', responsavelId: '', motivo: 'transferida pela reavaliação do roteamento' }), 'Conversa transferida')} />
+                  ) : <div className="small muted">Sem decisão do roteamento ainda. "Rotear de novo" roda o Octopus Router sobre a última mensagem recebida.</div>}
                   <h3>Contato</h3>
                   <dl className="kv">
                     <dt>Nome</dt><dd>{contato?.nome}</dd>
@@ -294,6 +303,49 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
       {modal === 'simular' && <SimularModal onClose={() => setModal(null)} onOk={(d) => tentar(() => { const r = actions.inboxReceber(d); setModal(null); if (r.thread) abrir(r.thread.id); toast(r.duplicada ? 'Mensagem repetida: ignorada pelo gateway' : r.motivo); }) } />}
       {el}
     </>
+  );
+}
+
+/**
+ * Bloco do Octopus Router: o que o motor decidiu (setor/equipe/pessoa, confianca, motivo, automacao, SLA, escalacao) e as
+ * acoes humanas — Confirmar (triagem em um clique), Assumir, Transferir (quando a reavaliacao recomenda) e Alterar (pelo
+ * formulario de atribuicao abaixo). A tela so apresenta: nada aqui decide.
+ */
+function Roteamento({ r, thread, agora, usuarioId, nomeSetor, nomeEquipe, nomeUsuario, onConfirmar, onAssumir, onTransferir }: {
+  r: DecisaoOctopus; thread: InboxThread; agora: string; usuarioId: string; nomeSetor: (c?: string) => string; nomeEquipe: (id?: string) => string; nomeUsuario: (id?: string) => string;
+  onConfirmar: () => void; onAssumir: () => void; onTransferir: (setorCodigo: string, equipeId?: string) => void;
+}) {
+  const pct = Math.round(r.confianca * 100);
+  const triagem = r.aplicacao === 'TRIAGEM' && !thread.setorCodigo;
+  const slaAte = thread.sla?.primeiraRespostaAte ?? r.slaAte;
+  const restanteMin = Math.round((new Date(slaAte).getTime() - new Date(agora).getTime()) / 60_000);
+  const restante = thread.sla?.primeiraRespostaEm ? 'respondida' : restanteMin < 0 ? `vencido há ${haQuanto(slaAte, agora)}` : restanteMin < 60 ? `${restanteMin} min` : `${Math.round(restanteMin / 60)} h`;
+  const fonte = r.sinais.find((s) => ['regra_explicita', 'historico_mesmo_setor', 'setor_do_catalogo', 'setor_da_ia', 'fallback'].includes(s.codigo));
+  const rv = r.reavaliacao;
+  return (
+    <div className={`inbox-roteamento${triagem ? ' triagem' : ''}`}>
+      {triagem && (
+        <div className="inbox-triagem">
+          <div><b>Sugestão do Octopus Router:</b> {nomeSetor(r.setorCodigo)}{r.responsavelId ? ` · ${nomeUsuario(r.responsavelId)}` : ''} <Badge tone={TOM_BANDA[r.banda]}>{pct}%</Badge></div>
+          <div className="small muted">{r.motivoOperacional}</div>
+          <div className="actions"><button className="btn sm primary" onClick={onConfirmar}>Confirmar</button><button className="btn sm" onClick={onAssumir}>Assumir</button><span className="small muted">Alterar: escolha setor/pessoa em Atribuição abaixo.</span></div>
+        </div>
+      )}
+      <div className="inbox-decisao">
+        <div><span className="muted small">Destino</span><b>{nomeSetor(r.setorCodigo)}{r.equipeId ? ` / ${nomeEquipe(r.equipeId)}` : ''}{r.responsavelId ? ` · ${nomeUsuario(r.responsavelId)}` : ''} <Badge tone={TOM_BANDA[r.banda]}>{pct}% · {r.banda}</Badge> <Badge tone="muted">{r.origem}</Badge></b></div>
+        <div><span className="muted small">Por quê</span><b>{fonte?.descricao ?? r.motivoOperacional}</b></div>
+        <div><span className="muted small">Automação</span><b>{r.automacao.modo} · {NOME_MODO[r.automacao.modo]} · risco {r.automacao.risco.toLowerCase()}{r.automacao.papelExigido ? ` · decide ${r.automacao.papelExigido}` : ''}</b></div>
+        <div><span className="muted small">SLA</span><b>{restante} <span className="muted small">(até {dataHora(slaAte)})</span></b></div>
+        {r.intencao !== 'indefinida' && <div><span className="muted small">Intenção</span><b>{r.intencao} · {r.assunto}{r.entidades.length ? ` · ${r.entidades.slice(0, 4).map((e) => e.valor).join(', ')}` : ''}</b></div>}
+        {rv && <div><span className="muted small">Reavaliação</span><b>{rv.veredicto === 'KEEP' ? 'mantida' : rv.veredicto === 'AUTO_TRANSFER' ? 'transferida automaticamente' : 'transferência recomendada'} <span className="muted small">{rv.motivo}</span>{rv.veredicto === 'RECOMMEND_TRANSFER' && rv.setorSugerido && <> <button className="btn sm" onClick={() => onTransferir(rv.setorSugerido!, rv.equipeSugeridaId)}>Transferir para {nomeSetor(rv.setorSugerido)}</button></>}</b></div>}
+        {r.override && <div><span className="muted small">Override</span><b>{nomeUsuario(r.override.por)} escolheu {nomeSetor(r.override.para.setorCodigo)}{r.override.para.responsavelId ? ` · ${nomeUsuario(r.override.para.responsavelId)}` : ''} em {dataHora(r.override.em)}{r.override.motivo ? ` — ${r.override.motivo}` : ''} <span className="muted small">(não é sobrescrito pelo roteamento automático)</span></b></div>}
+        {!triagem && !thread.responsavelId && ehAberta(thread.status) && <div><span className="muted small">Ação</span><b><button className="btn sm" onClick={onAssumir}>Assumir</button></b></div>}
+        {thread.responsavelId === usuarioId && <div><span className="muted small">Você</span><b>é o responsável desta conversa</b></div>}
+      </div>
+      <details className="inbox-sinais"><summary className="small muted">{r.sinais.length} sinais · escalação: {r.escalacao.join(' → ')} · {r.versao}</summary>
+        <ul className="small">{r.sinais.map((s, i) => <li key={i}>{s.descricao}{s.peso ? ` (${s.peso > 0 ? '+' : ''}${s.peso})` : ''}</li>)}</ul>
+      </details>
+    </div>
   );
 }
 

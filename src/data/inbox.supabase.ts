@@ -13,7 +13,7 @@
 //   `authenticated`). Cada atribuicao nova do store vira uma chamada a RPC inbox_assign_thread, que valida acesso,
 //   autoridade e destino no banco e grava atribuicao + thread + eventos numa transacao. Os eventos que o store gerou para
 //   essa mesma atribuicao (mesmo instante, mesma thread) sao pulados: o banco ja os registrou. A tela nao e autoridade.
-import { CONFIGURACAO_PADRAO, inboxVazio, type Atribuicao, type Classificacao, type ConfiguracaoInbox, type ContatoInbox, type Equipe, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type Setor, type ThreadEvent } from '../core/inbox';
+import { CONFIGURACAO_PADRAO, inboxVazio, type Atribuicao, type Classificacao, type DecisaoOctopus, type ConfiguracaoInbox, type ContatoInbox, type Equipe, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type Setor, type ThreadEvent } from '../core/inbox';
 
 type Row = Record<string, any>;
 export interface HelpersInbox {
@@ -73,6 +73,9 @@ export async function carregarInbox(h: Pick<HelpersInbox, 'sel' | 'orgId' | 'obr
     slaHorasPorPrioridade: { ...CONFIGURACAO_PADRAO.slaHorasPorPrioridade, ...(cfgRow.sla_hours ?? {}) }, nivelPadrao: cfgRow.default_level,
     regrasNivel: Array.isArray(cfgRow.level_rules) && cfgRow.level_rules.length ? cfgRow.level_rules : CONFIGURACAO_PADRAO.regrasNivel,
     regrasRoteamento: Array.isArray(cfgRow.routing_rules) && cfgRow.routing_rules.length ? cfgRow.routing_rules : CONFIGURACAO_PADRAO.regrasRoteamento,
+    // Octopus Router (0057): regras de automacao e limiares; linha antiga (sem as colunas) cai nos padroes
+    regrasAutomacao: Array.isArray(cfgRow.automation_rules) && cfgRow.automation_rules.length ? cfgRow.automation_rules : CONFIGURACAO_PADRAO.regrasAutomacao,
+    autoRoteamento: { ...CONFIGURACAO_PADRAO.autoRoteamento, ...(cfgRow.auto_routing && typeof cfgRow.auto_routing === 'object' ? cfgRow.auto_routing : {}) },
   } : CONFIGURACAO_PADRAO;
   const ator = (x: Row) => ({ tipo: x.actor_kind ?? x.proposed_by_kind, id: s(x.actor_id ?? x.proposed_by_id), nome: x.actor_name ?? x.proposed_by_name ?? '—' });
   return {
@@ -90,7 +93,7 @@ export async function carregarInbox(h: Pick<HelpersInbox, 'sel' | 'orgId' | 'obr
     threads: threads.map<InboxThread>((x) => ({
       id: x.id, canal: x.channel, provider: x.provider, contexto: x.context, contatoId: x.contact_id, conversaCentralId: s(x.central_conversation_id), externalConversationId: s(x.external_conversation_id),
       assunto: x.subject, status: x.status, prioridade: x.priority, nivel: x.service_level, setorCodigo: x.sector_id ? codigoDoSetor.get(x.sector_id) : undefined, equipeId: s(x.team_id), responsavelId: s(x.assignee_id),
-      participantes: x.participant_ids ?? [], codigoObra: h.obraCodigo(x.project_id), labels: x.labels ?? [], classificacao: (x.classification as Classificacao | null) ?? undefined, resumo: s(x.summary),
+      participantes: x.participant_ids ?? [], codigoObra: h.obraCodigo(x.project_id), labels: x.labels ?? [], classificacao: (x.classification as Classificacao | null) ?? undefined, roteamento: (x.routing as DecisaoOctopus | null) ?? undefined, resumo: s(x.summary),
       sla: x.sla_first_response_due ? { primeiraRespostaAte: x.sla_first_response_due, primeiraRespostaEm: s(x.sla_first_response_at), resolucaoAte: s(x.sla_resolution_due) } : undefined,
       abertaEm: x.opened_at, ultimaMensagemEm: x.last_message_at, ultimaInboundEm: s(x.last_inbound_at), resolvidaEm: s(x.resolved_at), fechadaEm: s(x.closed_at), resolvidaPor: s(x.resolved_by) as InboxThread['resolvidaPor'], origem: x.origin ?? 'MANUAL',
     })),
@@ -162,7 +165,7 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
   const threadRow = (t: InboxThread, comAtribuicao = true): Row => ({
     channel: t.canal, provider: t.provider, context: t.contexto, contact_id: ref('contatos', t.contatoId), central_conversation_id: h.uuid(t.conversaCentralId), external_conversation_id: nn(t.externalConversationId), subject: t.assunto.slice(0, 200),
     status: t.status, priority: t.prioridade, service_level: t.nivel, ...(comAtribuicao ? { sector_id: setorId(t.setorCodigo), team_id: ref('equipes', t.equipeId), assignee_id: h.perfil(t.responsavelId) } : {}),
-    participant_ids: t.participantes.map((p) => h.perfil(p)).filter((p): p is string => !!p), project_id: h.obra(t.codigoObra), labels: t.labels, classification: t.classificacao ?? null, summary: nn(t.resumo?.slice(0, 600)),
+    participant_ids: t.participantes.map((p) => h.perfil(p)).filter((p): p is string => !!p), project_id: h.obra(t.codigoObra), labels: t.labels, classification: t.classificacao ?? null, routing: t.roteamento ?? null, summary: nn(t.resumo?.slice(0, 600)),
     sla_first_response_due: nn(t.sla?.primeiraRespostaAte), sla_first_response_at: nn(t.sla?.primeiraRespostaEm), sla_resolution_due: nn(t.sla?.resolucaoAte),
     opened_at: t.abertaEm, last_message_at: t.ultimaMensagemEm, last_inbound_at: nn(t.ultimaInboundEm), resolved_at: nn(t.resolvidaEm), closed_at: nn(t.fechadaEm), resolved_by: nn(t.resolvidaPor), origin: t.origem,
   });
@@ -208,7 +211,7 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
   // 11) configuracao (uma linha por organizacao)
   if (!configExiste || !igual(a.configuracao, depois.configuracao)) {
     const c = depois.configuracao;
-    await h.gravarComposta('inbox_config', { organization_id: h.orgId }, { fallback_sector_code: c.setorFallback, escalation_sector_code: c.setorEscalacao, sla_hours: c.slaHorasPorPrioridade, default_level: c.nivelPadrao, level_rules: c.regrasNivel, routing_rules: c.regrasRoteamento });
+    await h.gravarComposta('inbox_config', { organization_id: h.orgId }, { fallback_sector_code: c.setorFallback, escalation_sector_code: c.setorEscalacao, sla_hours: c.slaHorasPorPrioridade, default_level: c.nivelPadrao, level_rules: c.regrasNivel, routing_rules: c.regrasRoteamento, auto_routing: c.autoRoteamento, automation_rules: c.regrasAutomacao });
     configExiste = true;
   }
 }
