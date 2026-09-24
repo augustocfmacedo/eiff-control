@@ -3,7 +3,7 @@
 // Por que existe: a suite vitest prova o que o CORE decide (src/core/inbox) e o que o adapter MANDA (src/data); nao prova
 // o que o BANCO aceita. Aqui se prova a outra metade: idempotencia da ingestao, resolucao de thread, append-only,
 // imutabilidade da mensagem, o RLS por setor e — gate final do PR #13 — a autoridade de transferencia no banco (RPC
-// inbox_assign_thread, privilegios de coluna e triggers): 18 provas A–R. Fase 3 (0057): provas S–X — RPC inbox_apply_routing
+// inbox_assign_thread, privilegios de coluna e triggers): 18 provas A–R. Fase 3 (0057): provas S–X; 0058 (defaults): prova Y — RPC inbox_apply_routing
 // server-only (aplica dentro do contexto permitido, deriva status, eventos), destinos invalidos recusados, navegador nao
 // chama a RPC, override humano so por quem tem autoridade e nunca sobrescrito pelo roteamento, sugestao (TRIAGEM) nao move,
 // prioridade so sobe, e reaplicacao idempotente da 0057.
@@ -19,6 +19,7 @@ import fs from 'node:fs';
 const RAIZ = new URL('../supabase/migrations/', import.meta.url);
 const SQL_0056 = fs.readFileSync(new URL('0056_inbox.sql', RAIZ), 'utf8');
 const SQL_0057 = fs.readFileSync(new URL('0057_inbox_octopus_router.sql', RAIZ), 'utf8');
+const SQL_0058 = fs.readFileSync(new URL('0058_inbox_defaults.sql', RAIZ), 'utf8');
 
 const ORG_A = '11111111-1111-1111-1111-111111111111';
 const ORG_B = '22222222-2222-2222-2222-222222222222';
@@ -331,6 +332,17 @@ async function main() {
     try { await db.exec(SQL_0057); } catch (e) { reaplica57 = String(e.message); }
     await db.exec('rollback to savepoint reaplica57');
     ok('X', reaplica57 === 'ok', reaplica57 === 'ok' ? '0057 reaplicada sem erro' : reaplica57.split('\n')[0]);
+
+    // Y) 0058 (defaults): 12 setores por organizacao (A ja tinha 2 — FINANCEIRO/OBRAS nao sao sobrescritos), config por organizacao, idempotente
+    const nomeFinAntes = (await db.query(`select name from inbox_sector where organization_id = $1 and code = 'FINANCEIRO'`, [ORG_A])).rows[0].name;
+    await db.exec(SQL_0058);
+    const y1 = (await db.query(`select organization_id, count(*)::int n from inbox_sector group by organization_id order by organization_id`)).rows;
+    const y2 = (await db.query(`select count(*)::int n from inbox_config`)).rows[0].n;
+    const nomeFinDepois = (await db.query(`select name from inbox_sector where organization_id = $1 and code = 'FINANCEIRO'`, [ORG_A])).rows[0].name;
+    await db.exec(SQL_0058);
+    const y3 = (await db.query(`select count(*)::int n from inbox_sector`)).rows[0].n;
+    ok('Y', y1.length === 2 && y1.every((r) => r.n === 12) && y2 === 2 && nomeFinAntes === nomeFinDepois && y3 === 24,
+      `setores por organização: ${y1.map((r) => r.n).join('/')} · configs ${y2} · FINANCEIRO existente preservado: ${nomeFinAntes === nomeFinDepois} · reaplicação: ${y3} setores (sem duplicar)`);
 
     await db.exec('rollback');
     const sobrou = (await db.query('select count(*)::int n from inbox_thread')).rows[0].n;
