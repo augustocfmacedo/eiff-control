@@ -4,7 +4,7 @@ Estado em 23/09/2026:
 
 - **LE-0 fechado** (contrato, §1 a §26) · **LE-1 fechado** (intake canônico, §27) · **LE2-A/B/C/E fechados** (persistência §28, núcleo de revisão §29, fronteira do store §30, UI no Command Center §31) · **LE2-F fechado** (rebaseline e certificação, §32).
 - **LE-2 RELEASED**: migration `0055` aplicada em produção e PR #9 mesclado em `main` (`0273da87`, §33).
-- **LE-3 EM ANDAMENTO — piloto em produção.** LE3-A/A1 fechados (contrato e evidência do CNO, §34) · LE3-B fechado (perfil do universo, §35) · LE3-C fechado (política piloto V1 e lote de 50, §36) · LE3-D fechado (fronteira de intake e rehearsal, §37) · **ingestão piloto executada em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, aguardando decisão humana. **LE3-E não iniciado.** LE-3 não está concluído enquanto o LE3-E continuar pendente.
+- **LE-3 EM ANDAMENTO — piloto em produção.** LE3-A/A1 fechados (contrato e evidência do CNO, §34) · LE3-B fechado (perfil do universo, §35) · LE3-C fechado (política piloto V1 e lote de 50, §36) · LE3-D fechado (fronteira de intake e rehearsal, §37) · **ingestão piloto executada em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, aguardando decisão humana. **LE3-D.1 fechado** (revisão comercial dos candidatos, §39). **LE3-E desenhado, não ativado** (§40: monitor de snapshot, retenção, auditoria de executor; backfill de 90 dias ensaiado read-only — 65 novos, nada gravado). LE-3 não está concluído enquanto o LE3-E não estiver ativo.
 - **LE-4 a LE-8 não iniciados.**
 
 Branch ATUAL da linha: `feature/lead-engine-3`, criada de `origin/main @ 0273da8`; `origin/main @ d063194` foi incorporada formalmente pelo merge `aaadac4`. HEAD da linha antes desta correção documental: `52f7604`.
@@ -1743,3 +1743,143 @@ Os 50 são candidatos **PENDING** na aba **Candidatos** do Command Center (LE2-E
 LE-2. Nenhuma Empresa, Projeto ou Sinal nasceu. A promoção é humana — `ASSOCIATE_EXISTING`, `CREATE_COMPANY`,
 `KEEP_REVIEW` ou `REJECT` — pela porta governada `processarCandidatoLeadEngine`. Este documento não faz mais
 nenhuma promessa sobre eles: o que converte, e quais destinações convertem, é o que o piloto vai medir.
+
+---
+
+## 39. LE3-D.1 — revisão comercial dos candidatos
+
+Gate de 23/09/2026, `feature/lead-engine-3e` (linha nova a partir de `main @ 7ac9bde`, com o LE-3 A→D já em
+produção). Corrige um defeito de apresentação: `adapterCNO` produzia `empresa`, `projeto` e `sinais`, mas
+`ItemRevisaoLeadEngine` só projetava a empresa — a aba Candidatos perdia a obra e o sinal. Nada de autoridade
+mudou: a tela continua projeção + intenção humana.
+
+### 39.1 Projeção de apresentação (core)
+
+`ItemRevisaoLeadEngine` ganhou `projetoNormalizado`, `sinaisNormalizados` e `contextoCno`. O contexto é
+projetado pelo **adapter da fonte** (`adapterCNO` preenche `RegistroNormalizado.contextoCno` via
+`contextoCnoDoPayload`, em `cnoDadosAbertos.ts`), de modo que o núcleo de revisão continua agnóstico de fonte e
+sua lista de imports fica intacta (guarda do LE-2B). A projeção lê o `canonical` do envelope `CNO_OPEN_DATA_V1` e devolve
+só o que a revisão precisa — CNO, obra, município/UF, endereço, área em m² (outra unidade = sem área),
+situação, **data oficial do evento** e sua origem, categorias, destinações, tipo de sinal, responsável com
+CNPJ e qualificação). A UI não lê payload nem recalcula regra; um teste varre a tela por `.payload`,
+`evidence`, `canonical`, `avaliarPolitica`, `encontrarEmpresa` e afins.
+
+### 39.2 Dois conceitos que nunca se confundem
+
+```
+DISCOVERED_TODAY   = recebidoEm do Lead Engine — quando a EIFF descobriu
+OFFICIAL_CNO_DATE  = contextoCno.dataEventoCno — data oficial do evento na fonte
+```
+
+"Novo hoje" (`descobertoHoje`) compara a **data local** de `recebidoEm` (fuso fixo −03:00, não o da máquina)
+com o `hoje` da operação. Um registro recebido às 23:30 de ontem em Brasília é 02:30Z de hoje e **não** é novo
+hoje; uma obra com evento oficial de ontem descoberta há 60 dias **não** é nova hoje. A tela mostra "descoberto
+pelo EIFF em dd/mm/aaaa hh:mm" e, separado, "registro/evento CNO: dd/mm/aaaa"; nunca "incluída hoje no CNO".
+
+### 39.3 UX da aba Candidatos
+
+Cartões expansíveis no lugar da tabela horizontal. Fechado: badges (Novo hoje · Obra nova/Expansão ·
+status), título da obra, local, área, responsável com CNPJ formatado, empresa parecida com nível e motivo,
+bloqueios traduzidos, fonte · tipo · CNO, descoberta e data oficial. Aberto: três blocos — **Obra** (nome,
+CNO, endereço, área, situação, data oficial e origem, categoria, destinação, sinal), **Responsável** (razão
+social, CNPJ, qualificação, match) e **Origem** (descoberta × data oficial, fonte). As quatro decisões
+continuam as mesmas e passam pela mesma porta; "Detalhes" é leitura e aparece mesmo sem permissão.
+
+**Buscar decisores** é um *handoff* (`handoffDecisores`): com empresa parecida, abre a página dessa empresa
+(`/radar/empresas/:id?aba=contatos`), onde o fluxo de busca de decisor do Radar já existe com preview sem
+crédito; sem empresa, explica que é preciso Associar ou Criar primeiro. Nem o core nem a tela chamam Vibe,
+`buscarDecisor` ou `/api/` — nenhuma integração nova, zero consumo automático.
+
+### 39.4 Filtros e contadores de revisão (`leadEngineRevisao.ts`)
+
+`filtrarRevisao` recorta por janela de **descoberta** (hoje / 7 / 30 / 90 dias / todos), município, tipo de
+sinal, área mínima e status PENDING/REVIEW — **sem reordenar**: a ordem de chegada da fila é preservada e um
+teste prende que só há `sort` nos contadores por município. `contadoresRevisao` alimenta os botões. Estado de
+filtro e cartões abertos vivem no Command Center; os componentes continuam sem hooks. Isto é revisão, não
+Commercial Queue: zero score, zero classe, zero prioridade.
+
+### 39.5 Métricas do piloto (`metricasPiloto`)
+
+Lidas dos `RegistroFonte` gerenciados pelo Lead Engine na fonte CNO: descobertos, novos hoje, promovidos
+(associados × empresas criadas — empresa criada = empresa do Radar com o CNPJ do candidato nascida depois
+dele), em revisão, pendentes, rejeitados com motivos, e as dimensões sinal / faixa de área / município /
+destinação / qualificação. Objetivo: medir conversão da política antes de mexer nos cortes. Aparece como um
+cartão acima da fila.
+
+### 39.6 Verificação
+
+`leadEngineRevisao.test.ts` (14) e a suíte da tela atualizada (29): projeto e sinal chegam à projeção, empresa
+continua igual, UI sem regra do payload, `recebidoEm` ≠ data oficial, "Novo hoje" pela descoberta, janelas
+7/30/90, nenhuma ordenação cria score, promoção humana, handoff sem consumo. A verificação **visual** ficou
+fora deste gate: a ferramenta de preview só sobe o servidor do checkout principal (que aponta para o Supabase
+de produção), e alterar o `launch.json` daquele checkout tocaria o tree de outra sessão. A fixture temporária
+usada para tentar foi removida antes do commit.
+
+---
+
+## 40. LE3-E — desenho da descoberta contínua (não ativado)
+
+Objetivo: substituir o cap operacional de 50 — limite do **piloto**, não do Lead Engine — pela descoberta
+contínua da janela móvel de 90 dias. A política continua `CNO_PILOT_POLICY_V1` sem alteração.
+
+### 40.1 Backfill — rehearsal READ-ONLY de 23/09/2026
+
+Recalculado contra o snapshot real (ETag `"76bb7f93…"`, 12/09/2026), referência 23/09/2026, sem limite:
+
+```
+TOTAL_ELEGIVEL     115     (3.604.156 analisadas; CNO_NEW 82 · CNO_EXPANSION 33; 95 CNPJs únicos)
+JA_EXISTENTE        50     (os 50 do piloto, em produção)
+NOVO_REGISTRO       65
+NOVA_OBSERVACAO      0     (o snapshot não mudou desde a ingestão)
+IDEMPOTENT_NOOP     50
+INVALIDO             0
+WOULD_INSERT        65     ← NÃO gravado nesta sessão
+```
+
+Conferências 115/115 em snapshot, fingerprint e política; segunda simulação em memória 115 NOOP; SQL do lote
+(65 inserts, só `radar_source_record`) em `scratch/cno-backfill-90d.sql`, gitignored. O número "65" é o
+resultado do recálculo, não a subtração histórica — coincidiu porque o snapshot é o mesmo.
+
+### 40.2 Monitor diário (`cnoMonitor.ts` + `scripts/cno.mts -- monitor`)
+
+A fonte é snapshot; não há delta oficial. Ciclo:
+
+1. `HEAD` no artefato oficial — só metadados;
+2. `compararSnapshot(anterior, atual)` com ETag → Last-Modified + tamanho → INDETERMINADO;
+3. `MESMO_SNAPSHOT` → **`ENCERRAR_SEM_DOWNLOAD`** — nenhum pipeline pesado roda (provado contra a fonte real:
+   com o descritor atual gravado, o comando termina em segundos, sem baixar);
+4. `SNAPSHOT_NOVO` / `INDETERMINADO` / sem estado anterior → `PROCESSAR`: baixar, join em streaming, política
+   da janela de 90 dias, comparar com `radar_source_record`, planejar só novos/novas observações;
+5. o descritor só é gravado como "visto" (`--marcar`) **depois** de um processamento bem-sucedido.
+
+O protótipo no script apenas decide e anuncia; processar e ingerir continuam comandos explícitos.
+
+### 40.3 Retenção
+
+Obra que sai da janela de 90 dias **não é apagada**. A janela controla descoberta, não histórico — o Lead
+Engine nunca apaga `RegistroFonte` (evidência imutável no banco). `registrosARemoverAoSairDaJanela` devolve
+sempre vazio, por desenho, e um teste prende que o módulo não tem `delete`/`splice`/`filter` de remoção.
+
+### 40.4 Executor — auditoria do ambiente
+
+O processamento completo custa ~2–3 min de CPU, ~280 MiB de RSS e 315 MiB de download. Nada disso cabe no
+browser, num request HTTP normal ou numa função curta.
+
+| opção | timeout | memória | secrets | escrita Supabase | observabilidade | retry | idempotência |
+|---|---|---|---|---|---|---|---|
+| **GitHub Actions `schedule`** (cron diário) | 6 h por job | 7 GB, 14 GB disco | Actions secrets (token de acesso do Supabase CLI, sem `service_role` no código) | via `supabase db query -f` numa transação, como os runners de hoje | log do run, artefatos (manifest/SQL sem PII), notificação de falha | `retry` manual do run; workflow_dispatch para forçar | LE-1: NOOP/NOVA_OBSERVACAO; snapshot igual encerra antes |
+| Netlify Scheduled Function | 10 s (26 s em background) | 1 GB | painel Netlify | REST com JWT | logs da função | nenhum | — |
+| Netlify Background Function | 15 min | 1 GB | painel | REST | logs | nenhum | — |
+| Supabase Edge Function + pg_cron | ~150 s CPU | 512 MB | vault | direta | logs | pg_cron | — |
+| VM/cron próprio | livre | livre | disco | CLI | precisa montar | cron | LE-1 |
+
+**Preferência arquitetural:** GitHub Actions com cron diário que roda primeiro `cno.mts -- monitor` e só
+executa o pipeline pesado quando o snapshot mudou; o step de escrita exige o mesmo hard gate do runner
+(`--executar --confirmar CNO_PILOT_V1`) e fica desligado até decisão explícita — um scheduler **não tem porta
+própria de escrita** (`planoExecucaoAgendada`: mesmo com as duas flags, snapshot igual nunca escreve). As
+funções Netlify são descartadas por timeout/memória; Edge Function fica no limite de CPU e traria um segundo
+caminho de escrita. **Nenhum cron foi ativado.**
+
+### 40.5 O que este gate não fez
+
+Não gravou os 65. Não ativou scheduler. Não consumiu Vibe. Não alterou a política. Não mesclou, não deployou.

@@ -15,6 +15,7 @@ import LeadEngineCandidatos, {
   type LeadEngineCandidatosProps,
 } from './LeadEngineCandidatos';
 import { descobertasSuprimidas, filaDeRevisao } from '../../core/radar/leadEngineReview';
+import { FILTRO_VAZIO, contadoresRevisao } from '../../core/radar/leadEngineRevisao';
 import { payloadFingerprint } from '../../core/radar/leadEngineIntake';
 import { actions } from '../../data/store';
 import { radarVazio, type Empresa, type Fonte, type RadarDataset, type RegistroFonte, type Supressao } from '../../core/radar/types';
@@ -47,9 +48,11 @@ const sup = (empresaId: string): Supressao => ({ id: `SUP-${empresaId}`, empresa
 
 const ds = (p: Partial<RadarDataset> = {}): RadarDataset => ({ ...radarVazio(), fontes: [FONTE_CNO], ...p });
 
+const HOJE = '2026-09-20';
 const props = (r: RadarDataset, podeAgir = true): LeadEngineCandidatosProps => ({
-  candidatos: filaDeRevisao(r), suprimidos: descobertasSuprimidas(r), empresas: r.empresas,
-  podeAgir, selecao: {}, onSelecionar: () => {}, onErro: () => {}, onOk: () => {},
+  candidatos: filaDeRevisao(r), visiveis: filaDeRevisao(r), suprimidos: descobertasSuprimidas(r), empresas: r.empresas,
+  podeAgir, hoje: HOJE, filtro: FILTRO_VAZIO, contadores: contadoresRevisao(filaDeRevisao(r), HOJE),
+  selecao: {}, abertos: {}, onAbrir: () => {}, onFiltro: () => {}, onSelecionar: () => {}, onErro: () => {}, onOk: () => {},
 });
 
 const html = (p: LeadEngineCandidatosProps) => renderToStaticMarkup(React.createElement(LeadEngineCandidatos, p));
@@ -83,7 +86,11 @@ function botoesDe(arvore: unknown): BotaoAchado[] {
 
 /** Botoes de UMA linha da fila. LinhaCandidato e PURO (sem hooks), entao da para chama-lo como funcao de render. */
 const botoesDaLinha = (r: RadarDataset, podeAgir = true) =>
-  botoesDe((LinhaCandidato as (p: never) => unknown)({ c: filaDeRevisao(r)[0], empresas: r.empresas, podeAgir, empresaId: filaDeRevisao(r)[0].match?.empresaId ?? '', onSelecionar: () => {}, onErro: () => {}, onOk: () => {} } as never));
+  botoesDe((LinhaCandidato as (p: never) => unknown)({ c: filaDeRevisao(r)[0], empresas: r.empresas, podeAgir, hoje: HOJE, empresaId: filaDeRevisao(r)[0].match?.empresaId ?? '', aberto: false, onAbrir: () => {}, onSelecionar: () => {}, onErro: () => {}, onOk: () => {} } as never));
+
+/** As quatro DECISOES do LE-2. 'Detalhes' e 'Buscar decisores' sao leitura/handoff, nao decisao. */
+const DECISOES = ['Associar', 'Criar empresa', 'Manter em revisão', 'Rejeitar'];
+const decisoes = (botoes: BotaoAchado[]) => botoes.filter((b) => DECISOES.includes(b.rotulo)).map((b) => b.rotulo);
 
 const botoesDaTela = (p: LeadEngineCandidatosProps) => botoesDe((LeadEngineCandidatos as (x: LeadEngineCandidatosProps) => unknown)(p));
 
@@ -162,7 +169,7 @@ describe('LE-2E · o que aparece', () => {
     expect(saida).toContain('obra-1');                     // identidade externa
     expect(saida).toContain('Construtora Fictícia Alfa Ltda'); // empresa normalizada
     expect(saida).toContain('Anápolis/GO');
-    expect(saida).toContain(`CNPJ ${CNPJ}`);
+    expect(saida).toContain('CNPJ 11.222.333/0001-81'); // formatado para leitura humana
     expect(saida).toContain('Alfa Existente');             // match
     expect(saida).toContain('certo');                      // nivel
     expect(saida).toContain('CNPJ igual');                 // motivo
@@ -186,15 +193,15 @@ describe('LE-2E · o que aparece', () => {
 describe('LE-2E · permissão', () => {
   it('18 · sem permissão não há botão de ação nenhum', () => {
     const r = ds({ empresas: [emp('EMP-1', { cnpj: CNPJ })], supressoes: [], registrosFonte: [reg({ id: 'SR-1' })] });
-    expect(botoesDaLinha(r, false)).toEqual([]);
+    expect(decisoes(botoesDaLinha(r, false))).toEqual([]);
+    expect(botoesDaLinha(r, false).map((b) => b.rotulo)).toEqual(['Detalhes']); // leitura continua permitida
     const supr = ds({ empresas: [emp('EMP-1', { cnpj: CNPJ })], supressoes: [sup('EMP-1')], registrosFonte: [reg({ id: 'SR-1' })] });
-    expect(botoesDaTela(props(supr, false))).toEqual([]);
+    expect(botoesDaTela(props(supr, false)).filter((b) => b.rotulo.includes('Encerrar'))).toEqual([]);
   });
 
   it('19 · com permissão aparecem as quatro decisões', () => {
     const r = ds({ empresas: [emp('EMP-1', { cnpj: CNPJ })], registrosFonte: [reg({ id: 'SR-1' })] });
-    const rotulos = botoesDaLinha(r).map((b) => b.rotulo);
-    expect(rotulos).toEqual(['Associar', 'Criar empresa', 'Manter em revisão', 'Rejeitar']);
+    expect(decisoes(botoesDaLinha(r))).toEqual(['Associar', 'Criar empresa', 'Manter em revisão', 'Rejeitar']);
   });
 });
 
@@ -289,7 +296,8 @@ describe('LE-2E · a tela não é autoridade', () => {
   it('38 · não mantém cópia paralela da fila em estado local', () => {
     // o unico useState da tela e a empresa escolhida na linha; a fila vem por prop, do store
     expect([...UI.matchAll(/useState/g)]).toHaveLength(0); // a tela nao guarda nada: recebe por prop e devolve intencao
-    expect(UI).toContain('candidatos.map((c) =>');
+    expect(UI).toContain('visiveis.map((c) =>'); // a fila filtrada tambem vem por prop (core filtrarRevisao), nunca filtrada aqui
+    expect(UI).not.toContain('.filter((c)');
   });
 
   it('39-40 · a tela não cria oportunidade, tarefa, atividade nem comunicação', () => {
