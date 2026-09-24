@@ -14,6 +14,8 @@ import { LIMITE_CORPO_WEBHOOK, tratarWebhookMeta, VARIAVEIS_META, type ConfigMet
 import { extrairConteudosMeta } from '../../src/core/central/metaEventos';
 import { ingerirEventosCentral } from '../../src/core/inbox/ingestaoServidor';
 import { configPortaIngest, portaIngestRpc } from '../../src/core/inbox/ingestaoPorta';
+import { portaAplicarRoteamentoRpc, portaContextoRest, rotearNoServidor } from '../../src/core/inbox/roteamentoPorta';
+import { configInteligencia, provedorAnthropic } from '../../src/core/inbox/inteligenciaLlm';
 
 const json = (corpo: unknown, status: number) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const log = (t: Record<string, unknown>) => { try { console.log(JSON.stringify({ evento: 'central', ...t })); } catch { /* ignore */ } };
@@ -50,10 +52,18 @@ export default async (req: Request): Promise<Response> => {
   const porta = configPortaIngest(process.env);
   if ('motivo' in porta) { log({ evento: 'inbox_ingest', outcome: 'nao_configurado', motivo: porta.motivo, eventos: r.eventos.length }); return respostaCentral(); }
   // o conteudo so existe aqui, a partir do payload ja validado; a Central nao o transporta no evento
-  let conteudos: ReturnType<typeof extrairConteudosMeta> = [];
+  let conteudos: ReturnType<typeof extrairConteudosMeta>;
   try { conteudos = extrairConteudosMeta(JSON.parse(corpoBruto)); } catch { conteudos = []; }
-  const relatorio = await ingerirEventosCentral(porta.organizacaoId, r.eventos, conteudos, { ingerir: portaIngestRpc(porta, fetch), log, agora: deps.agora });
-  log({ evento: 'inbox_ingest', outcome: relatorio.falhas.length ? 'parcial' : 'ok', recebidos: relatorio.recebidos, ingeridos: relatorio.ingeridos, duplicados: relatorio.duplicados, ignorados: relatorio.ignorados.length, falhas: relatorio.falhas.length, semInteligencia: relatorio.semInteligencia });
+  // Octopus Router no servidor: contexto e aplicacao pela chave de servico; IA so com ANTHROPIC_API_KEY (senao, deterministico)
+  const ia = configInteligencia(process.env);
+  const cfgRot = { url: porta.url, chave: porta.chave, organizacaoId: porta.organizacaoId };
+  const rotear = (threadId: string, messageId: string) => rotearNoServidor(threadId, messageId, {
+    contexto: portaContextoRest(cfgRot, fetch), aplicar: portaAplicarRoteamentoRpc(cfgRot, fetch), log,
+    inteligencia: 'chave' in ia ? (ctx) => provedorAnthropic(ia, { fetch }, { equipes: ctx.equipes, regras: ctx.regras, obras: ctx.obras }) : undefined,
+  });
+  if (!('chave' in ia)) log({ evento: 'inbox_inteligencia', outcome: 'nao_configurada', motivo: ia.motivo });
+  const relatorio = await ingerirEventosCentral(porta.organizacaoId, r.eventos, conteudos, { ingerir: portaIngestRpc(porta, fetch), log, agora: deps.agora , rotear });
+  log({ evento: 'inbox_ingest', outcome: relatorio.falhas.length ? 'parcial' : 'ok', recebidos: relatorio.recebidos, ingeridos: relatorio.ingeridos, duplicados: relatorio.duplicados, ignorados: relatorio.ignorados.length, falhas: relatorio.falhas.length, semInteligencia: relatorio.semInteligencia, roteados: relatorio.roteados, atribuidos: relatorio.atribuidos });
   if (relatorio.falhas.length) return json({ ok: false, erro: 'inbox_ingest_falhou', eventos: r.eventos.length, falhas: relatorio.falhas.length }, 500);
   return json({ ok: true, eventos: r.eventos.length, inbox: { ingeridos: relatorio.ingeridos, duplicados: relatorio.duplicados } }, 200);
 };

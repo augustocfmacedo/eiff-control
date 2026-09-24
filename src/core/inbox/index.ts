@@ -5,3 +5,5 @@ export * from './roteamento';
 export * from './fronteiras';
 export * from './seed';
 export * from './ingestaoServidor';
+export * from './automacao';
+export * from './roteador';
