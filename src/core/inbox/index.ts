@@ -7,3 +7,4 @@ export * from './seed';
 export * from './ingestaoServidor';
 export * from './automacao';
 export * from './roteador';
+export * from './observabilidade';
