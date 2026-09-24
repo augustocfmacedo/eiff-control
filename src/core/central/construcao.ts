@@ -46,6 +46,21 @@ export const TONE_ESTADO_CONSTRUCAO: Readonly<Record<EstadoConstrucao, 'ok' | 'w
   CONCLUIDO: 'ok', EM_CONSTRUCAO: 'warn', PLANEJADO: 'muted', BLOQUEADO: 'bad', SEM_EVIDENCIA: 'info',
 };
 
+/**
+ * NATUREZA da evidência de um componente — o que a prova prova. NÃO é estado nem máquina de estados: o estado continua
+ * sendo o vocabulário fechado acima. Serve para não confundir degraus de maturidade:
+ *   CODIGO     — existe no repositório (módulo, teste, migration escrita)
+ *   INTEGRACAO — está ligado ao resto do sistema na main (webhook chama, store usa, tela mostra)
+ *   PRODUCAO   — foi aplicado/exercitado em produção, registrado em documento integrado (nunca provado por código)
+ *   OPERACAO   — funciona com uso real (tráfego de verdade, pessoas usando); prova de produção controlada NÃO vale aqui
+ */
+export const NATUREZAS_EVIDENCIA = ['CODIGO', 'INTEGRACAO', 'PRODUCAO', 'OPERACAO'] as const;
+export type NaturezaEvidencia = (typeof NATUREZAS_EVIDENCIA)[number];
+
+export const ROTULO_NATUREZA: Readonly<Record<NaturezaEvidencia, string>> = {
+  CODIGO: 'código', INTEGRACAO: 'integrado', PRODUCAO: 'produção', OPERACAO: 'operação real',
+};
+
 /** Os status do quadro que significam "está acontecendo agora" — os mesmos MC_STATUS, sem segundo vocabulário. */
 export const STATUS_ATIVOS: readonly McStatus[] = ['EXECUTANDO', 'EM_VALIDACAO', 'AGUARDANDO_HUMANO', 'BLOQUEADO'];
 
@@ -61,6 +76,8 @@ export interface ComponenteConstrucao {
   gates?: string[];
   /** evidência concreta de que o componente existe — o teste abre o arquivo e procura o símbolo */
   evidencias?: Evidencia[];
+  /** o que a evidência prova (código, integração, produção, operação real); rótulo, nunca estado */
+  natureza?: NaturezaEvidencia;
   /**
    * Só para componente PLANEJADO (sem gate e sem evidência): artefatos EXPLÍCITOS cuja aparição indicaria que a
    * implementação nasceu. O domínio nunca lê isto para mudar estado — quem confere é o teste (guarda de frescor),
@@ -68,8 +85,14 @@ export interface ComponenteConstrucao {
    */
   sinaisDeImplementacao?: Evidencia[];
   /**
-   * Alternativa declarada a `sinaisDeImplementacao` quando o plano não deixa artefato previsível no repositório
-   * (aplicação em produção, decisão de negócio). Todo componente planejado tem de escolher um dos dois.
+   * Só para componente PLANEJADO: a frase de uma fonte integrada (doc, CLAUDE.md) que DECLARA o item pendente. Se ela
+   * sumir, a fonte deixou de dizer que está pendente — o teste falha e obriga a revisão. Foi o ponto cego da 1C: a
+   * ativação de 0056/0057 em produção não cria código, mas apaga "só em código" do CLAUDE.md.
+   */
+  pendenciaDeclarada?: Evidencia[];
+  /**
+   * Último recurso, quando nem sinal nem frase-fonte existem. Todo componente planejado tem de declarar sinais e/ou
+   * pendência declarada, OU este motivo — nunca nada.
    */
   semSinalPorque?: string;
 }
@@ -123,7 +146,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'ALCADAS', titulo: 'Alçadas e central de aprovações', evidencias: [mod('src/screens/Aprovacoes.tsx'), mod('src/core/engine.ts', 'etapasExigidas')] },
       { id: 'DRE', titulo: 'DRE gerencial por competência', evidencias: [mod('src/core/engine.ts', 'export function dre'), mod('src/screens/Dre.tsx')] },
       { id: 'CHECKS', titulo: 'Checks e fechamento de período', evidencias: [mod('src/screens/Checks.tsx')] },
-      { id: 'ALCADAS_REAIS', titulo: 'Alçadas reais da Diretoria (DEC-03)', semSinalPorque: 'Decisão de negócio da Diretoria: muda valores de parâmetro, não cria artefato previsível no repositório.' },
+      { id: 'ALCADAS_REAIS', titulo: 'Alçadas reais da Diretoria (DEC-03)', pendenciaDeclarada: [doc('CLAUDE.md', 'alçadas reais (DEC-03)')] },
     ],
   }),
   m({
@@ -136,7 +159,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'CONCILIACAO', titulo: 'Conciliação e importação OFX', evidencias: [mod('src/data/store.ts', 'conciliar'), mod('src/core/ofx.ts', 'parseOfx'), mod('src/screens/Conciliacao.tsx')] },
       { id: 'CENARIOS', titulo: 'Cenários interativos de caixa', evidencias: [mod('src/core/cenarioCaixa.ts', 'aplicarCenario')] },
       { id: 'DIVIDAS', titulo: 'Dívidas', evidencias: [mod('src/screens/Dividas.tsx')] },
-      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', semSinalPorque: 'Decisão de negócio da Diretoria: é um valor de parâmetro, não um artefato de código.' },
+      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', pendenciaDeclarada: [doc('CLAUDE.md', 'reserva mínima (DEC-09)')] },
     ],
   }),
   m({
@@ -282,7 +305,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'REVISAO', titulo: 'Fila de revisão e promoção humana', evidencias: [mod('src/core/radar/leadEngineReview.ts', 'filaDeRevisao'), mod('src/screens/radar/LeadEngineCandidatos.tsx')] },
       { id: 'CNO', titulo: 'Fonte CNO (Dados Abertos)', evidencias: [mod('src/core/radar/cnoDadosAbertos.ts', 'HOST_OFICIAL_CNO')] },
       { id: 'PILOTO_CNO', titulo: 'Piloto CNO em produção', evidencias: [mod('src/core/radar/cnoPilot.ts', 'CNO_PILOT_POLICY_V1'), doc('docs/lead-engine-1.0.md')] },
-      { id: 'FONTES_FUTURAS', titulo: 'Novas fontes e descoberta automática (PNCP, RFB)', semSinalPorque: 'O contrato do Lead Engine não nomeia o artefato da próxima fonte; o adapter PNCP do Radar já existe e não é intake. Revisão humana a cada fonte nova.' },
+      { id: 'FONTES_FUTURAS', titulo: 'Novas fontes e descoberta automática (PNCP, RFB)', pendenciaDeclarada: [doc('CLAUDE.md', 'Nada de descoberta automática, scheduler, PNCP, RFB, Vibe ou notícias ainda')] },
     ],
   }),
 
@@ -297,29 +320,40 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   // Entrou em main pelo PR #13 (7e0aa61) DURANTE a MC-CONSTRUCTION-1 — o caso que tornou o drift de SUPERFÍCIE
   // observável. O PR #14 (7a0e723, Octopus Router) tornou observável o drift de COMPONENTE: três planos do catálogo
   // (Octopus, editor de regras, IA real) ganharam código sem rota nova. Só o que a main prova entra como concluído,
-  // com a maturidade do Octopus separada em componentes: implementado → provado → integrado → (plano) produção →
-  // (plano) operação. "Código existe" não é "operando": 0056 e 0057 seguem só em código (CLAUDE.md, eiff-inbox §14.7).
+  // com a maturidade do Octopus separada em componentes: implementado → provado → integrado → produção → operação.
+  // PR #18 (d707531) registrou a ativação: 0056 e 0057 aplicadas em produção e o Inbox em SHADOW MODE, com E2E
+  // controlado (dado de teste), idempotência, router e RLS provados em produção (eiff-inbox §15). SHADOW MODE não é
+  // operação: nenhuma mensagem real chega (sem chave de serviço, sem Meta, sem setores) e nada sai. Por isso o
+  // componente de tráfego real segue PLANEJADO — a prova controlada nunca fecha a operação.
   m({
     id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', rota: '/atendimento', rotas: ['/atendimento'],
     dependeDe: ['CENTRAL_WHATSAPP', 'PLATAFORMA'],
     descricao: 'Central de comunicação, atendimento e decisão: a thread é a unidade; ingestão pela EIFF Central, Octopus Router (roteamento explícito e auditável, IA só como refino no servidor) e fronteiras fail-closed.',
     componentes: [
-      { id: 'DOMINIO', titulo: 'Domínio: threads, contatos, estados e roteamento', evidencias: [mod('src/core/inbox/tipos.ts', 'ContatoInbox'), mod('src/core/inbox/estados.ts', 'validarTransicao'), mod('src/core/inbox/roteamento.ts', 'rotear')] },
-      { id: 'TELAS', titulo: 'Tela de atendimento e configuração', evidencias: [mod('src/screens/Inbox.tsx'), mod('src/screens/InboxConfig.tsx')] },
-      { id: 'PERSISTENCIA', titulo: 'Persistência escrita: 0056, RLS por setor e RPCs', evidencias: [mig('supabase/migrations/0056_inbox.sql', 'inbox_ingest'), mig('supabase/migrations/0056_inbox.sql', 'inbox_assign_thread'), mod('src/data/inbox.supabase.ts', 'carregarInbox')] },
-      { id: 'INGESTAO', titulo: 'Ingestão pela EIFF Central (webhook → inbox_ingest)', evidencias: [mod('src/core/inbox/ingestaoServidor.ts', 'ingerirEventosCentral'), mod('src/core/inbox/fronteiras.ts', 'deEventoCentral'), fn('netlify/functions/channel-meta-webhook.ts', 'ingerirEventosCentral')] },
-      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA')] },
-      { id: 'PROVAS', titulo: 'Provas: smoke PGlite e testes de fronteira', evidencias: [scr('scripts/pg-smoke-inbox.mjs'), mod('src/core/inbox/ingestaoServidor.test.ts'), doc('docs/eiff-inbox.md')] },
-      { id: 'OCTOPUS_PIPELINE', titulo: 'Octopus Router: pipeline de roteamento e política de automação', evidencias: [mod('src/core/inbox/roteador.ts', 'decidirRoteamento'), mod('src/core/inbox/automacao.ts', 'decidirAutomacao')] },
-      { id: 'OCTOPUS_PROVAS', titulo: 'Octopus Router: testes e smoke do banco (provas S–X)', evidencias: [mod('src/core/inbox/roteador.test.ts'), mod('src/core/inbox/roteamentoServidor.test.ts'), scr('scripts/pg-smoke-inbox.mjs', 'inbox_apply_routing')] },
-      { id: 'OCTOPUS_INTEGRADO', titulo: 'Octopus Router: integrado (webhook → servidor, 0057 escrita, store e tela)', evidencias: [fn('netlify/functions/channel-meta-webhook.ts', 'rotearNoServidor'), mig('supabase/migrations/0057_inbox_octopus_router.sql', 'inbox_apply_routing'), mod('src/data/store.ts', 'inboxConfirmarRoteamento')] },
-      { id: 'IA_SERVIDOR', titulo: 'Refino por IA no servidor (opcional pela chave)', evidencias: [mod('src/core/inbox/inteligenciaLlm.ts', 'provedorAnthropic')] },
-      { id: 'EDITOR_REGRAS', titulo: 'Editores de regras de roteamento e automação', evidencias: [mod('src/screens/InboxConfig.tsx', 'RegraRoteamento'), mod('src/screens/InboxConfig.tsx', 'RegraAutomacao'), mod('src/data/store.ts', 'validarConfiguracaoOctopus')] },
-      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção', semSinalPorque: 'Aplicação em produção não deixa artefato no repositório (o projeto não tem ledger de migrations): conferir o schema real.' },
-      { id: 'OCTOPUS_PRODUCAO', titulo: 'Migration 0057 aplicada em produção', semSinalPorque: 'Aplicação em produção não deixa artefato no repositório (o projeto não tem ledger de migrations): conferir o schema real.' },
-      { id: 'OCTOPUS_OPERACAO', titulo: 'Roteamento em operação real comprovada', semSinalPorque: 'Operação real só se prova em produção, com mensagens de verdade; não há artefato de código que a demonstre.' },
+      { id: 'DOMINIO', titulo: 'Domínio: threads, contatos, estados e roteamento', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/tipos.ts', 'ContatoInbox'), mod('src/core/inbox/estados.ts', 'validarTransicao'), mod('src/core/inbox/roteamento.ts', 'rotear')] },
+      { id: 'TELAS', titulo: 'Tela de atendimento e configuração', natureza: 'CODIGO', evidencias: [mod('src/screens/Inbox.tsx'), mod('src/screens/InboxConfig.tsx')] },
+      { id: 'PERSISTENCIA', titulo: 'Persistência escrita: 0056, RLS por setor e RPCs', natureza: 'CODIGO', evidencias: [mig('supabase/migrations/0056_inbox.sql', 'inbox_ingest'), mig('supabase/migrations/0056_inbox.sql', 'inbox_assign_thread'), mod('src/data/inbox.supabase.ts', 'carregarInbox')] },
+      { id: 'INGESTAO', titulo: 'Ingestão pela EIFF Central (webhook → inbox_ingest)', natureza: 'INTEGRACAO', evidencias: [mod('src/core/inbox/ingestaoServidor.ts', 'ingerirEventosCentral'), mod('src/core/inbox/fronteiras.ts', 'deEventoCentral'), fn('netlify/functions/channel-meta-webhook.ts', 'ingerirEventosCentral')] },
+      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA')] },
+      { id: 'PROVAS', titulo: 'Provas: smoke PGlite e testes de fronteira', natureza: 'CODIGO', evidencias: [scr('scripts/pg-smoke-inbox.mjs'), mod('src/core/inbox/ingestaoServidor.test.ts'), doc('docs/eiff-inbox.md')] },
+      { id: 'OCTOPUS_PIPELINE', titulo: 'Octopus Router: pipeline de roteamento e política de automação', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.ts', 'decidirRoteamento'), mod('src/core/inbox/automacao.ts', 'decidirAutomacao')] },
+      { id: 'OCTOPUS_PROVAS', titulo: 'Octopus Router: testes e smoke do banco (provas S–X)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.test.ts'), mod('src/core/inbox/roteamentoServidor.test.ts'), scr('scripts/pg-smoke-inbox.mjs', 'inbox_apply_routing')] },
+      { id: 'OCTOPUS_INTEGRADO', titulo: 'Octopus Router: integrado (webhook → servidor, 0057 escrita, store e tela)', natureza: 'INTEGRACAO', evidencias: [fn('netlify/functions/channel-meta-webhook.ts', 'rotearNoServidor'), mig('supabase/migrations/0057_inbox_octopus_router.sql', 'inbox_apply_routing'), mod('src/data/store.ts', 'inboxConfirmarRoteamento')] },
+      { id: 'IA_SERVIDOR', titulo: 'Refino por IA no servidor (opcional pela chave)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/inteligenciaLlm.ts', 'provedorAnthropic')] },
+      { id: 'EDITOR_REGRAS', titulo: 'Editores de regras de roteamento e automação', natureza: 'CODIGO', evidencias: [mod('src/screens/InboxConfig.tsx', 'RegraRoteamento'), mod('src/screens/InboxConfig.tsx', 'RegraAutomacao'), mod('src/data/store.ts', 'validarConfiguracaoOctopus')] },
+      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0056** (12 tabelas'), doc('CLAUDE.md', '0056 e 0057 aplicadas em produção')] },
+      { id: 'OCTOPUS_PRODUCAO', titulo: 'Migration 0057 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0057** (`inbox_thread.routing`'), doc('CLAUDE.md', '0056 e 0057 aplicadas em produção')] },
+      { id: 'SHADOW_MODE', titulo: 'Shadow Mode em produção: E2E controlado, idempotência e router provados (sem ação externa)', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '### 15.2 Estágio operacional: SHADOW MODE'), doc('docs/eiff-inbox.md', '**Idempotência**: o mesmo'), doc('docs/eiff-inbox.md', 'registrou `routing` e o evento ROUTING_DECIDED')] },
+      { id: 'RLS_PRODUCAO', titulo: 'RLS e autoridade provadas em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**RLS/autoridade** (transação com rollback)')] },
       {
-        id: 'ESCALACAO_SLA', titulo: 'Escalação por SLA como execução automática',
+        id: 'TRAFEGO_REAL', titulo: 'Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)', natureza: 'OPERACAO',
+        // pré-requisitos no §15.2 (decisões do usuário): SUPABASE_SERVICE_ROLE_KEY, META_WHATSAPP_*, phone number IDs e
+        // setores do Inbox. Enquanto a fonte disser que nenhuma mensagem real chega, isto é plano.
+        pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'nenhuma mensagem real chega ainda'), doc('docs/eiff-inbox.md', '| Setores/configuração do Inbox na organização | **vazios**')],
+      },
+      {
+        id: 'ESCALACAO_SLA', titulo: 'Escalação por SLA como execução automática', natureza: 'CODIGO',
+        pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'scheduler de escalação')],
         // hoje SLA_ESCALATED existe só no catálogo de eventos e nas migrations; §14.7 diz que "continua decisão".
         // Emitir o evento a partir do código de aplicação é o sinal explícito de que a execução nasceu.
         sinaisDeImplementacao: [
@@ -428,6 +462,10 @@ export const componentesPlanejados = (modulos: readonly ModuloConstrucao[] = MOD
     .filter((c) => !(c.gates?.length) && !(c.evidencias?.length))
     .map((componente) => ({ moduloId: mo.id, componente })));
 
+/** Mensagem humana quando a frase-fonte que declarava o plano pendente sumiu. */
+export const mensagemPendenciaSumiu = (componenteId: string): string =>
+  `Componente da Central possivelmente desatualizado: a fonte deixou de declarar ${componenteId} como pendente, mas ele continua classificado como PLANEJADO.`;
+
 /** Mensagem humana da guarda de frescor. O teste falha com ela; nunca reclassifica sozinho. */
 export const mensagemDriftComponente = (componenteId: string): string =>
   `Componente da Central possivelmente desatualizado: ${componenteId} possui evidência de implementação, mas continua classificado como PLANEJADO.`;
@@ -450,6 +488,7 @@ export interface ComponenteProjetado {
   evidencias: Evidencia[];
   /** de onde veio o estado: gate, evidência ou só plano */
   origem: 'GATE' | 'EVIDENCIA' | 'PLANO';
+  natureza?: NaturezaEvidencia;
 }
 
 const bloqueioReal = (g: Gate) => g.situacao === 'bloqueado' && g.porDesenho !== true;
@@ -466,10 +505,10 @@ export function projetarComponente(c: ComponenteConstrucao): ComponenteProjetado
         : p.fechados > 0 ? 'EM_CONSTRUCAO'
           : p.faltando.every((g) => g.situacao === 'bloqueado') ? 'BLOQUEADO' : 'PLANEJADO';
     const porDesenho = estado === 'BLOQUEADO' && !p.faltando.some(bloqueioReal);
-    return { id: c.id, titulo: c.titulo, estado, porDesenho, prontidao: p, gates, evidencias, origem: 'GATE' };
+    return { id: c.id, titulo: c.titulo, estado, porDesenho, prontidao: p, gates, evidencias, origem: 'GATE', natureza: c.natureza };
   }
-  if (evidencias.length > 0) return { id: c.id, titulo: c.titulo, estado: 'CONCLUIDO', porDesenho: false, gates, evidencias, origem: 'EVIDENCIA' };
-  return { id: c.id, titulo: c.titulo, estado: 'PLANEJADO', porDesenho: false, gates, evidencias, origem: 'PLANO' };
+  if (evidencias.length > 0) return { id: c.id, titulo: c.titulo, estado: 'CONCLUIDO', porDesenho: false, gates, evidencias, origem: 'EVIDENCIA', natureza: c.natureza };
+  return { id: c.id, titulo: c.titulo, estado: 'PLANEJADO', porDesenho: false, gates, evidencias, origem: 'PLANO', natureza: c.natureza };
 }
 
 // ------------------------------------------------------------------------------------- task → módulo

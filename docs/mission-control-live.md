@@ -953,3 +953,39 @@ só os rótulos passaram a dizer isso (`… → inbox_ingest → rotearNoServido
 router lê obra e perfis`). A IA (Anthropic) não é nó do mapa e não ganhou aresta. Nenhuma aresta nova.
 
 **Task → módulo** não mudou: título com "Inbox" ou "Octopus" continua sem módulo.
+
+### 17.9 MC-CONSTRUCTION-1D — ativação em produção e Shadow Mode (24/09/2026)
+
+**O que mudou na main.** PR #18 (`d707531`, docs) registrou em `docs/eiff-inbox.md` § 15 e no CLAUDE.md a ativação
+controlada do Inbox: 0056 e 0057 aplicadas em produção, `EIFF_INBOX_ORGANIZATION_ID` no Netlify e o Inbox em
+**SHADOW MODE** — infraestrutura real, nenhuma ação externa. A Central foi reaplicada numa branch final a partir de
+`d707531` (`feature/mc-construction-1-final`; os três commits anteriores por cherry-pick, sem conflito, `styles.css` =
+`main` + bloco da Central).
+
+**Inbox sincronizado — só com o que o texto integrado diz.** Concluídos por evidência documental (§ 15.1, § 15.2,
+§ 15.4 e CLAUDE.md): *Migration 0056 aplicada em produção*, *Migration 0057 aplicada em produção*, *Shadow Mode em
+produção: E2E controlado, idempotência e router provados (sem ação externa)* e *RLS e autoridade provadas em produção*.
+Seguem planejados: *Tráfego externo real* (a fonte diz que "nenhuma mensagem real chega ainda": faltam
+`SUPABASE_SERVICE_ROLE_KEY`, `META_WHATSAPP_*`, os phone number IDs e os setores — decisões do usuário, não componentes
+novos) e *Escalação por SLA como execução automática*. Resultado derivado: **15/17, em construção**; próximo passo
+derivado: "Tráfego externo real". O antigo "Migration 0056 aplicada em produção" deixou de ser o próximo passo.
+
+**Shadow Mode não é operação.** Não há estado novo de módulo. A distinção fica em um rótulo de componente,
+`natureza` (vocabulário fechado `CODIGO` · `INTEGRACAO` · `PRODUCAO` · `OPERACAO`), que diz **o que a evidência prova**:
+o E2E de § 15.4 é prova de **produção** com dado de teste; **operação** exige uso real e segue planejada. Regras presas
+por teste: componente de produção ou operação só se prova por documento integrado (nunca por código); nenhum componente
+de operação está concluído hoje; o componente de tráfego real não herda nenhuma evidência da prova controlada. O
+rótulo aparece no painel do módulo ao lado de cada componente; ele não entra em nenhum cálculo de estado.
+
+**O ponto cego da guarda de frescor.** A guarda da 1C **não teria detectado** esta mudança: os planos de 0056/0057
+declaravam `semSinalPorque` ("aplicação em produção não deixa artefato no repositório"), e isso estava errado — o
+projeto registra o que está no ar, e a frase "0057 (Octopus Router, …) só em código" existia no CLAUDE.md em `7a0e723`
+e sumiu no PR #18. Correção dentro da mesma guarda (não é uma terceira): um componente planejado pode citar
+`pendenciaDeclarada` — a frase de uma fonte integrada que o declara pendente. Se ela sumir, o teste falha com
+`"Componente da Central possivelmente desatualizado: a fonte deixou de declarar <ID> como pendente, mas ele continua
+classificado como PLANEJADO."`. Todos os planos atuais passaram a se ancorar assim (DEC-03 e DEC-09 no CLAUDE.md, fontes
+futuras do Lead Engine no CLAUDE.md, tráfego real e escalação em `docs/eiff-inbox.md`); `semSinalPorque` fica como
+último recurso. A regressão do caso real está no teste. Como antes, o domínio não abre arquivo e nada é reclassificado
+sozinho.
+
+**Mapa vivo.** Inalterado: 20 nós, 29 arestas. O PR #18 é documental e não prova relação arquitetural nova.

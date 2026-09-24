@@ -8,7 +8,7 @@
 // A tela OBSERVA: nenhum clique escreve em fonte alguma. Task sem módulo informado pela fonte NÃO some.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  DOMINIOS_CONSTRUCAO, ROTULO_DOMINIO_CONSTRUCAO, ROTULO_ESTADO_CONSTRUCAO, SEM_MODULO, STATUS_ATIVOS, TONE_ESTADO_CONSTRUCAO,
+  DOMINIOS_CONSTRUCAO, ROTULO_DOMINIO_CONSTRUCAO, ROTULO_ESTADO_CONSTRUCAO, ROTULO_NATUREZA, SEM_MODULO, STATUS_ATIVOS, TONE_ESTADO_CONSTRUCAO,
   atencaoConstrucao, construindoAgora, fracaoTexto, moduloDaTarefa, moduloPorId, panoramaConstrucao, pctConstrucao,
   type ComponenteProjetado, type ModuloProjetado, type PanoramaConstrucao,
 } from '../core/central/construcao';
@@ -118,11 +118,11 @@ function PainelModulo({ mo, agora, tarefasDisponiveis, onFechar, onIr }: { mo: M
       <ProgressRow label="Componentes" valor={mo.fracao} texto={`${fracaoTexto(mo.concluidos, mo.total)} · ${pctConstrucao(mo.fracao)}`} tone={mo.estado === 'CONCLUIDO' ? 'ok' : mo.estado === 'BLOQUEADO' ? 'bad' : 'warn'} />
 
       <h3 className="mc-sub">Concluído ({concluidos.length})</h3>
-      <ul className="mcc-lista">{concluidos.map((c) => <li key={c.id}><Ponto c={c} /><span>{c.titulo}</span>{c.origem === 'GATE' && c.prontidao && <span className="mc-conta">{c.prontidao.conta}</span>}</li>)}{!concluidos.length && <li className="muted small">nenhum</li>}</ul>
+      <ul className="mcc-lista">{concluidos.map((c) => <li key={c.id}><Ponto c={c} /><span>{c.titulo}</span>{c.natureza && <span className="mc-pill">{ROTULO_NATUREZA[c.natureza]}</span>}{c.origem === 'GATE' && c.prontidao && <span className="mc-conta">{c.prontidao.conta}</span>}</li>)}{!concluidos.length && <li className="muted small">nenhum</li>}</ul>
       <h3 className="mc-sub">Em andamento ({andamento.length})</h3>
       <ul className="mcc-lista">{andamento.map((c) => <li key={c.id}><Ponto c={c} /><span>{c.titulo}</span>{c.prontidao && <span className="mc-conta">{c.prontidao.conta}</span>}</li>)}{!andamento.length && <li className="muted small">nenhum</li>}</ul>
       <h3 className="mc-sub">Vem depois ({depois.length})</h3>
-      <ul className="mcc-lista">{depois.map((c) => <li key={c.id}><Ponto c={c} /><span>{c.titulo}</span>{c.estado === 'BLOQUEADO' && <Badge tone={c.porDesenho ? 'info' : 'bad'}>{c.porDesenho ? 'por desenho' : 'bloqueado'}</Badge>}{c.origem === 'PLANO' && <span className="mc-conta">plano declarado, sem evidência</span>}</li>)}{!depois.length && <li className="muted small">nada pendente</li>}</ul>
+      <ul className="mcc-lista">{depois.map((c) => <li key={c.id}><Ponto c={c} /><span>{c.titulo}</span>{c.estado === 'BLOQUEADO' && <Badge tone={c.porDesenho ? 'info' : 'bad'}>{c.porDesenho ? 'por desenho' : 'bloqueado'}</Badge>}{c.natureza && <span className="mc-pill">{ROTULO_NATUREZA[c.natureza]}</span>}{c.origem === 'PLANO' && <span className="mc-conta">plano declarado, sem evidência</span>}</li>)}{!depois.length && <li className="muted small">nada pendente</li>}</ul>
 
       {mo.proximoPasso && <div className="mcc-proximo"><b>Próximo passo:</b> {mo.proximoPasso}</div>}
 
