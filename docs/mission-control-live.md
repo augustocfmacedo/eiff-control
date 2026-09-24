@@ -900,3 +900,56 @@ sintética `/nova-superficie` quebra a guarda; rotas cobertas existem, são úni
 com motivo; domínio e telas não usam a guarda em runtime; Inbox no catálogo com estado derivado, evidências
 reais (só arquivos do Inbox/Central com símbolo presente), dependências provadas, título "Inbox" em tarefa não vira
 módulo; contagens da home recalculadas; nó `INBOX` sem fonte viva, duas arestas de entrada, nenhuma de saída.
+
+### 17.8 MC-CONSTRUCTION-1C — main atual e frescor dos componentes (24/09/2026)
+
+**O que aconteceu.** Enquanto a 1B era reconciliada sobre `7e0aa61`, a `main` avançou para `7a0e723` (PR #14,
+EIFF Inbox — Fase 3: Octopus Router). A Central foi reaplicada numa branch nova a partir de `7a0e723`
+(`feature/mc-construction-1-current`; os commits da 1 e da 1B por cherry-pick, `styles.css` de novo resolvido como
+`main` inteira + bloco `mcc-*`/`mcm-*`, conferido byte a byte). As branches `feature/mc-construction-1` e
+`feature/mc-construction-1-integration` ficam como evidência.
+
+**O segundo drift.** O PR #14 não abriu rota nenhuma — então a guarda de superfície (§ 17.7) não tinha o que ver — e
+mesmo assim três componentes do Inbox que o catálogo dizia "planejados" passaram a existir em código: o Octopus
+Router, os editores de regras e o provedor de IA no servidor. O catálogo ficou **silenciosamente velho**.
+
+**Inbox na main atual (`7a0e723`).** A maturidade do Octopus fica em componentes, sem estado novo de módulo:
+
+| Componente | Estado | Evidência |
+| --- | --- | --- |
+| Octopus Router: pipeline e política de automação | concluído | `roteador.ts › decidirRoteamento`, `automacao.ts › decidirAutomacao` |
+| Octopus Router: testes e smoke do banco | concluído | `roteador.test.ts`, `roteamentoServidor.test.ts`, `pg-smoke-inbox.mjs › inbox_apply_routing` (provas S–X) |
+| Octopus Router: integrado | concluído | `channel-meta-webhook.ts › rotearNoServidor`, `0057 › inbox_apply_routing` (escrita), `store.ts › inboxConfirmarRoteamento` |
+| Refino por IA no servidor (opcional pela chave) | concluído | `inteligenciaLlm.ts › provedorAnthropic` |
+| Editores de regras de roteamento e automação | concluído | `InboxConfig.tsx › RegraRoteamento/RegraAutomacao`, `store.ts › validarConfiguracaoOctopus` |
+| Migration 0056 aplicada em produção | planejado | sem sinal: aplicação não deixa artefato no repositório |
+| Migration 0057 aplicada em produção | planejado | idem |
+| Roteamento em operação real comprovada | planejado | sem sinal: só se prova em produção |
+| Escalação por SLA como execução automática | planejado | sinais monitorados: `'SLA_ESCALATED'` emitido em `roteamento.ts`, `roteador.ts` ou `store.ts` |
+
+Resultado derivado: **11/15 componentes, em construção**, próximo passo "Migration 0056 aplicada em produção", sem
+bloqueio. "Código na main" é **implementado + provado + integrado**, não "operando": 0056 e 0057 seguem só em código
+(CLAUDE.md, `docs/eiff-inbox.md` § 14.7).
+
+**Guarda de frescor (só em teste).** Todo componente **planejado** (sem gate e sem evidência) declara exatamente
+uma de duas coisas: `sinaisDeImplementacao` — artefatos explícitos (arquivo + símbolo) cuja aparição indicaria que
+a implementação nasceu — ou `semSinalPorque`, quando o plano não deixa artefato previsível (aplicação em produção,
+decisão da Diretoria, próxima fonte do Lead Engine). O teste abre os sinais declarados; se algum existir enquanto o
+componente segue planejado, falha com `"Componente da Central possivelmente desatualizado: <ID> possui evidência de
+implementação, mas continua classificado como PLANEJADO."`. O domínio **não** abre arquivo nem reclassifica: sinal
+presente não muda estado, só vira teste vermelho. A regressão do caso real está no teste: os três planos do catálogo
+da 1B, com os sinais que o contrato do Octopus já nomeava, disparam a guarda na `main` atual.
+
+A evidência positiva continua valendo nos dois sentidos: todo componente concluído por evidência tem o arquivo e o
+símbolo reabertos pela suíte; se sumirem, o teste falha — a Central não sustenta um ✓ sobre evidência que deixou de
+existir.
+
+**As duas guardas, e só elas.** Superfície (rota nova sem classificação) e componente (sinal monitorado sob um
+planejado). Limite declarado: um componente com `semSinalPorque` depende de revisão humana — a guarda não o vigia.
+
+**Mapa vivo.** O PR #14 não trouxe relação arquitetural nova do Inbox com outro nó do grafo: o router roda **dentro**
+do Inbox, é chamado pelo mesmo webhook e lê obra e perfis do Control pela mesma dependência. As duas arestas ficam;
+só os rótulos passaram a dizer isso (`… → inbox_ingest → rotearNoServidor`; `RLS espelha a matriz (inbox_role); o
+router lê obra e perfis`). A IA (Anthropic) não é nó do mapa e não ganhou aresta. Nenhuma aresta nova.
+
+**Task → módulo** não mudou: título com "Inbox" ou "Octopus" continua sem módulo.

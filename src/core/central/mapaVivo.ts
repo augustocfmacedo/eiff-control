@@ -97,7 +97,7 @@ const NOS_COMERCIAL: NoMapa[] = [
  * RLS do Inbox espelha a MATRIZ do Control (`inbox_role` em 0056). Nada alem disso foi desenhado.
  */
 const NOS_INBOX: NoMapa[] = [
-  { id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', papel: 'Central de comunicação e atendimento: a thread é a unidade; recebe da EIFF Central, roteia por regras em dados e não envia nada (canal MANUAL).', gates: [] },
+  { id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', papel: 'Central de comunicação e atendimento: a thread é a unidade; recebe da EIFF Central, roteia pelo Octopus Router (regras em dados, IA só como refino no servidor) e não envia nada (canal MANUAL).', gates: [] },
 ];
 
 export const NOS: NoMapa[] = [...CAMADAS.map(noDaCamada), ...NOS_INBOX, ...NOS_DESENVOLVIMENTO, ...NOS_COMERCIAL];
@@ -119,8 +119,8 @@ export const ARESTAS: ArestaMapa[] = [
   { de: 'IDENTIDADE', para: 'CONTROL', tipo: 'dependencia', rotulo: 'papel e organização vêm do banco' },
   { de: 'AUDITORIA', para: 'META', tipo: 'observa', rotulo: 'saúde do canal' },
   // EIFF Inbox — só as duas relações provadas em código (ver NOS_INBOX)
-  { de: 'WEBHOOK', para: 'INBOX', tipo: 'fluxo', rotulo: 'ChannelInboundEvent + conteúdo → inbox_ingest' },
-  { de: 'CONTROL', para: 'INBOX', tipo: 'dependencia', rotulo: 'RLS espelha a matriz de permissões (inbox_role)' },
+  { de: 'WEBHOOK', para: 'INBOX', tipo: 'fluxo', rotulo: 'ChannelInboundEvent + conteúdo → inbox_ingest → rotearNoServidor' },
+  { de: 'CONTROL', para: 'INBOX', tipo: 'dependencia', rotulo: 'RLS espelha a matriz (inbox_role); o router lê obra e perfis' },
 
   // ------------------------------------------------------- ciclo de desenvolvimento (demanda -> prod)
   { de: 'DEMANDA', para: 'ARCHITECT', tipo: 'fluxo', rotulo: 'BACKLOG' },

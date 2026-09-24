@@ -11,9 +11,10 @@ import {
   DOMINIOS_CONSTRUCAO, ESTADOS_CONSTRUCAO, EXCLUSOES_SUPERFICIE, MENSAGEM_DRIFT_SUPERFICIE, MODULOS_CONSTRUCAO, ROTULO_ESTADO_CONSTRUCAO, SEM_MODULO, STATUS_ATIVOS,
   TONE_ESTADO_CONSTRUCAO, atencaoConstrucao, construindoAgora, estadoDoModulo, fracaoTexto, gatesDesconhecidosNosModulos,
   classificarSuperficie, gatesDoModulo, moduloDaTarefa, moduloPorId, panoramaConstrucao, pctConstrucao, projetarComponente, projetarModulo,
-  superficiesSemClassificacao,
+  superficiesSemClassificacao, componentesPlanejados, mensagemDriftComponente,
+  type ComponenteConstrucao, type ComponentePlanejado,
 } from './construcao';
-import { GATES, WORKSTREAMS, gatePorId } from './missionControl';
+import { GATES, WORKSTREAMS, gatePorId, type Evidencia } from './missionControl';
 import { ARESTAS, ATORES_DO_NO, FONTE_DO_NO, NOS, camadasDoMapa, itensDoNo, layoutDoMapa, noRecebeItensVivos } from './mapaVivo';
 import { COLUNAS_QUADRO, montarQuadro } from './quadroOperacional';
 import { MC_STATUS, ROTULO_MC_STATUS, type MissionControlWorkItem } from './workItem';
@@ -439,8 +440,9 @@ describe('14 · EIFF Inbox observado pela Central', () => {
     expect(p.estado).toBe('EM_CONSTRUCAO');
     const comEvidencia = p.componentes.filter((c) => c.origem === 'EVIDENCIA');
     const plano = p.componentes.filter((c) => c.origem === 'PLANO');
-    expect(comEvidencia.length).toBeGreaterThanOrEqual(5);
-    expect(plano.map((c) => c.id)).toEqual(['MIGRATION_APLICADA', 'INTELIGENCIA_REAL', 'ESCALACAO_SLA', 'EDITOR_REGRAS', 'OCTOPUS']);
+    // main 7a0e723 (PR #14): Octopus, editor de regras e IA no servidor viraram evidência; produção e operação seguem plano
+    expect(comEvidencia.map((c) => c.id)).toEqual(['DOMINIO', 'TELAS', 'PERSISTENCIA', 'INGESTAO', 'FRONTEIRAS', 'PROVAS', 'OCTOPUS_PIPELINE', 'OCTOPUS_PROVAS', 'OCTOPUS_INTEGRADO', 'IA_SERVIDOR', 'EDITOR_REGRAS']);
+    expect(plano.map((c) => c.id)).toEqual(['MIGRATION_APLICADA', 'OCTOPUS_PRODUCAO', 'OCTOPUS_OPERACAO', 'ESCALACAO_SLA']);
     for (const c of plano) expect(c.estado).toBe('PLANEJADO');
     expect(p.concluidos).toBe(comEvidencia.length);
     expect(p.proximoPasso).toBe('Migration 0056 aplicada em produção');
@@ -450,7 +452,7 @@ describe('14 · EIFF Inbox observado pela Central', () => {
     for (const c of inbox.componentes) {
       for (const e of c.evidencias ?? []) {
         expect(existe(e.referencia), e.referencia).toBe(true);
-        expect(e.referencia).toMatch(/inbox|Inbox|channel-meta-webhook/);
+        expect(e.referencia).toMatch(/inbox|Inbox|channel-meta-webhook|^src\/data\/store\.ts$/);
         if (e.simbolo) expect(conteudo(e.referencia)).toContain(e.simbolo);
       }
     }
@@ -496,5 +498,124 @@ describe('15 · Inbox no Mapa Vivo: só o que está provado', () => {
     expect(ARESTAS.filter((a) => a.de === 'INBOX')).toEqual([]);
     const c = camadasDoMapa();
     expect(c.get('INBOX')!).toBeGreaterThan(c.get('CONTROL')!);
+  });
+});
+
+// =====================================================================================================
+// MC-CONSTRUCTION-1C — guarda de FRESCOR dos componentes (drift de componente).
+// O PR #14 (7a0e723) implementou o Octopus Router sem abrir rota nova: a guarda de superfície não tinha como ver, e o
+// catálogo ficou dizendo "planejado" sobre código que já estava na main. Aqui: todo componente planejado declara
+// sinais explícitos (arquivo + símbolo) ou o motivo de não ter sinal; o TESTE confere os sinais e falha com mensagem
+// humana. O domínio nunca abre arquivo e nunca reclassifica sozinho.
+// =====================================================================================================
+
+/** Um sinal "existe" quando o arquivo existe e, se houver símbolo, o símbolo está dentro dele. Só em teste. */
+const sinalPresente = (e: Evidencia): boolean => existe(e.referencia) && (!e.simbolo || conteudo(e.referencia).includes(e.simbolo));
+const sinaisPresentes = (c: ComponenteConstrucao): Evidencia[] => (c.sinaisDeImplementacao ?? []).filter(sinalPresente);
+/** Drift de componente sobre uma lista de componentes planejados: devolve as mensagens humanas. */
+const driftDeComponentes = (planejados: readonly ComponentePlanejado[]): string[] =>
+  planejados.filter((p) => sinaisPresentes(p.componente).length > 0).map((p) => mensagemDriftComponente(p.componente.id));
+/** Evidência positiva que deixou de existir (arquivo sumiu ou símbolo sumiu). Só em teste. */
+const evidenciasAusentes = (c: ComponenteConstrucao): Evidencia[] => (c.evidencias ?? []).filter((e) => e.tipo !== 'commit' && !sinalPresente(e));
+
+/**
+ * Regressão do caso real: como os três componentes do Inbox estavam no catálogo do 1B (planejados), agora com os
+ * sinais que o contrato do Octopus (eiff-inbox §13) já nomeava. Na main 7a0e723 esses sinais existem.
+ */
+const PLANOS_DO_1B: ComponentePlanejado[] = [
+  { moduloId: 'INBOX', componente: { id: 'OCTOPUS_ROUTER', titulo: 'Octopus Router (contrato, não implementado)', sinaisDeImplementacao: [{ tipo: 'modulo', referencia: 'src/core/inbox/roteador.ts', simbolo: 'decidirRoteamento' }, { tipo: 'migration', referencia: 'supabase/migrations/0057_inbox_octopus_router.sql' }, { tipo: 'teste', referencia: 'src/core/inbox/roteador.test.ts' }] } },
+  { moduloId: 'INBOX', componente: { id: 'EDITOR_REGRAS', titulo: 'Editor de regras de nível e roteamento', sinaisDeImplementacao: [{ tipo: 'modulo', referencia: 'src/screens/InboxConfig.tsx', simbolo: 'RegraRoteamento' }] } },
+  { moduloId: 'INBOX', componente: { id: 'INTELIGENCIA_REAL', titulo: 'IntelligenceProvider real (função Netlify)', sinaisDeImplementacao: [{ tipo: 'modulo', referencia: 'src/core/inbox/inteligenciaLlm.ts', simbolo: 'provedorAnthropic' }] } },
+];
+
+describe('16 · guarda de frescor dos componentes (drift de componente)', () => {
+  it('1 · o Octopus Router não permanece PLANEJADO: na main atual ele é implementado, provado e integrado; produção e operação seguem plano', () => {
+    const p = projetarModulo(moduloPorId('INBOX')!, []);
+    const estado = (id: string) => p.componentes.find((c) => c.id === id)!.estado;
+    expect(estado('OCTOPUS_PIPELINE')).toBe('CONCLUIDO');
+    expect(estado('OCTOPUS_PROVAS')).toBe('CONCLUIDO');
+    expect(estado('OCTOPUS_INTEGRADO')).toBe('CONCLUIDO');
+    expect(estado('OCTOPUS_PRODUCAO')).toBe('PLANEJADO');
+    expect(estado('OCTOPUS_OPERACAO')).toBe('PLANEJADO');
+    expect(p.componentes.some((c) => /contrato, não implementado/.test(c.titulo))).toBe(false);
+  });
+
+  it('2 · sinais explícitos de componente planejado provocam drift, com a mensagem humana — o caso real do PR #14', () => {
+    const drift = driftDeComponentes(PLANOS_DO_1B);
+    expect(drift).toEqual([
+      'Componente da Central possivelmente desatualizado: OCTOPUS_ROUTER possui evidência de implementação, mas continua classificado como PLANEJADO.',
+      'Componente da Central possivelmente desatualizado: EDITOR_REGRAS possui evidência de implementação, mas continua classificado como PLANEJADO.',
+      'Componente da Central possivelmente desatualizado: INTELIGENCIA_REAL possui evidência de implementação, mas continua classificado como PLANEJADO.',
+    ]);
+  });
+
+  it('o catálogo atual não tem drift de componente: nenhum sinal monitorado apareceu sob um PLANEJADO', () => {
+    const drift = driftDeComponentes(componentesPlanejados());
+    expect(drift, drift.join('\n')).toEqual([]);
+  });
+
+  it('todo componente planejado escolhe: sinais explícitos OU motivo declarado — nunca os dois, nunca nenhum', () => {
+    const planejados = componentesPlanejados();
+    expect(planejados.length).toBeGreaterThan(0);
+    for (const { moduloId, componente: c } of planejados) {
+      const temSinal = (c.sinaisDeImplementacao?.length ?? 0) > 0;
+      const temMotivo = (c.semSinalPorque?.trim().length ?? 0) > 10;
+      expect(temSinal !== temMotivo, `${moduloId}/${c.id}: declare sinaisDeImplementacao ou semSinalPorque (exatamente um)`).toBe(true);
+    }
+    // sinais só existem em componente planejado; componente com gate ou evidência não os declara
+    for (const mo of MODULOS_CONSTRUCAO) for (const c of mo.componentes) {
+      if ((c.gates?.length ?? 0) > 0 || (c.evidencias?.length ?? 0) > 0) {
+        expect(c.sinaisDeImplementacao, `${mo.id}/${c.id}: sinal em componente que não é plano`).toBeUndefined();
+        expect(c.semSinalPorque, `${mo.id}/${c.id}: motivo em componente que não é plano`).toBeUndefined();
+      }
+    }
+  });
+
+  it('3 · ausência dos sinais não cria implementação: sinal inexistente não acusa drift e o componente segue PLANEJADO', () => {
+    const futuro: ComponentePlanejado = { moduloId: 'INBOX', componente: { id: 'FUTURO', titulo: 'Algo ainda não feito', sinaisDeImplementacao: [{ tipo: 'modulo', referencia: 'src/core/inbox/naoExisteAinda.ts', simbolo: 'nada' }, { tipo: 'modulo', referencia: 'src/core/inbox/roteador.ts', simbolo: 'simboloQueNaoExiste_1C' }] } };
+    expect(driftDeComponentes([futuro])).toEqual([]);
+    expect(projetarComponente(futuro.componente).estado).toBe('PLANEJADO');
+  });
+
+  it('4 · nenhuma classificação automática: sinal PRESENTE não muda o estado — só o teste acusa, a decisão é humana', () => {
+    const [octopus] = PLANOS_DO_1B;
+    expect(sinaisPresentes(octopus.componente).length).toBeGreaterThan(0);
+    expect(projetarComponente(octopus.componente).estado).toBe('PLANEJADO');
+    const src = conteudo(DOMINIO_PURO);
+    expect(src).not.toMatch(/sinaisDeImplementacao\s*\.\s*(filter|some|find|map)|existsSync|readFileSync/);
+  });
+
+  it('5 · evidência de componente concluído precisa continuar existindo: ausência é detectada e o catálogo inteiro está íntegro', () => {
+    const quebrado: ComponenteConstrucao = { id: 'X', titulo: 'x', evidencias: [{ tipo: 'modulo', referencia: 'src/core/inbox/roteador.ts', simbolo: 'simboloRemovido_1C' }, { tipo: 'modulo', referencia: 'src/nao/existe.ts' }] };
+    expect(evidenciasAusentes(quebrado).map((e) => e.referencia)).toEqual(['src/core/inbox/roteador.ts', 'src/nao/existe.ts']);
+    const ausentes = MODULOS_CONSTRUCAO.flatMap((mo) => mo.componentes.flatMap((c) => evidenciasAusentes(c).map((e) => `${mo.id}/${c.id} -> ${e.referencia}${e.simbolo ? `#${e.simbolo}` : ''}`)));
+    expect(ausentes).toEqual([]);
+  });
+
+  it('6 · o Inbox continua módulo mesmo sem dado LIVE, com X/Y recalculado do catálogo', () => {
+    const inbox = panoramaConstrucao(null).modulos.find((x) => x.modulo.id === 'INBOX')!;
+    expect(inbox).toBeDefined();
+    expect(inbox.estado).toBe('EM_CONSTRUCAO');
+    expect(inbox.total).toBe(moduloPorId('INBOX')!.componentes.length);
+    expect(inbox.concluidos).toBe(inbox.componentes.filter((c) => c.estado === 'CONCLUIDO').length);
+    expect(`${inbox.concluidos}/${inbox.total}`).toBe('11/15');
+    expect(inbox.proximoPasso).toBe('Migration 0056 aplicada em produção');
+    expect(inbox.bloqueios).toEqual([]);
+  });
+
+  it('7 · tarefa com "Inbox" ou "Octopus" no título continua sem módulo', () => {
+    for (const titulo of ['EIFF Inbox 3: Octopus Router', 'Octopus Router — pipeline determinístico', 'Inbox']) {
+      const t = item({ id: `GITHUB:x/y#${titulo.length}`, status: 'EM_VALIDACAO', title: titulo });
+      expect(moduloDaTarefa(t), titulo).toBeUndefined();
+    }
+  });
+
+  it('8 · as contagens são recalculadas depois da atualização do Inbox', () => {
+    const pan = panoramaConstrucao([]);
+    expect(pan.total).toBe(MODULOS_CONSTRUCAO.length);
+    expect(Object.values(pan.porEstado).reduce((a, b) => a + b, 0)).toBe(pan.total);
+    for (const e of ESTADOS_CONSTRUCAO) expect(pan.porEstado[e]).toBe(pan.modulos.filter((x) => x.estado === e).length);
+    const inbox = pan.modulos.find((x) => x.modulo.id === 'INBOX')!;
+    expect(inbox.fracao).toBe(inbox.concluidos / inbox.total);
   });
 });
