@@ -19,7 +19,7 @@
  *  - NAO persiste nada no Radar nem no Supabase. O maximo que produz e observacao canonica na tela;
  *  - CPF nunca e reconstruido e CNPJ sai mascarado.
  */
-import { createWriteStream, createReadStream, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createWriteStream, createReadStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createInflateRaw } from 'node:zlib';
 import { Readable } from 'node:stream';
@@ -34,6 +34,7 @@ import { juntarOrdenadoCno, verificarOrdenacao } from '../src/core/radar/cnoStre
 import { PerfilCno, faixaArea, faixaIdade, type ResumoPerfil } from '../src/core/radar/cnoPerfil';
 import { exigirArquivo, fluxoLido, inicioDosDados, lerDiretorioCentral, lerPedaco, membroDe, membrosLocais, type MembroZip } from './lib/cnoZip.mts';
 import { diasEntre } from '../src/core/radar/cnoDiscoveryPolicy';
+import { decidirMonitor } from '../src/core/radar/cnoMonitor';
 import { CNO_PILOT_POLICY_V1, CNO_PILOT_POLICY_VERSION, avaliarPiloto, manifestosIguais, metricasLote, montarManifest, politicaPiloto, simularCap, type EntradaManifest, type ManifestPiloto } from '../src/core/radar/cnoPilot';
 
 // --------------------------------------------------------------------------------------------------- fonte
@@ -551,6 +552,29 @@ async function piloto(arquivoOpt?: string, dataReferencia?: string, limiteOpt?: 
   if (!deterministico) process.exitCode = 1;
 }
 
+
+// ------------------------------------------------------------------------------------------ LE-3E: monitor diario (prototipo)
+/**
+ * So metadados: HEAD no artefato oficial, compara com o ultimo descritor visto (arquivo local) e decide.
+ * MESMO_SNAPSHOT encerra aqui, sem download e sem pipeline pesado. SNAPSHOT_NOVO/INDETERMINADO apenas ANUNCIA
+ * que ha trabalho a fazer — o processamento e o intake continuam sendo comandos explicitos (perfil, piloto, cno-intake-producao.mts
+ *  com o hard gate). O descritor so e gravado como "visto" com --marcar, e isso deve
+ * acontecer DEPOIS de um processamento bem-sucedido, nunca antes.
+ */
+async function monitor(estadoArq = 'dados/cno/snapshot-descriptor.json', marcar = false): Promise<void> {
+  const r = await buscar(URL_DADOS, {}, 'HEAD');
+  const atual = { etag: r.headers.get('etag') ?? undefined, lastModified: r.headers.get('last-modified') ?? undefined, contentLength: Number(r.headers.get('content-length')) || undefined };
+  const anterior = existsSync(estadoArq) ? (JSON.parse(readFileSync(estadoArq, 'utf8')) as { etag?: string; lastModified?: string; contentLength?: number }) : undefined;
+  const decisao = decidirMonitor(anterior, atual);
+  console.log('=== LE-3E · monitor da fonte CNO (so metadados; nada baixado) ===');
+  console.log('anterior :', anterior ? JSON.stringify(anterior) : '(nenhum)');
+  console.log('atual    :', JSON.stringify(atual));
+  console.log('comparacao:', decisao.comparacao, '→', decisao.acao, '·', decisao.motivo);
+  if (decisao.acao === 'ENCERRAR_SEM_DOWNLOAD') { console.log('MONITOR = MESMO_SNAPSHOT · pipeline pesado NAO executado'); return; }
+  console.log('MONITOR = HA_TRABALHO · proximo passo (explicito, nao automatico): perfil/piloto sobre o snapshot novo e cno-intake-producao.mts em simulacao');
+  if (marcar) { mkdirSync(dirname(estadoArq), { recursive: true }); writeFileSync(estadoArq, JSON.stringify(atual, null, 2)); console.log('descritor gravado como visto em', estadoArq, '(use so apos processamento bem-sucedido)'); }
+}
+
 // ------------------------------------------------------------------------------------------------ cli
 const argv = process.argv.slice(2).filter((a) => a !== '--');
 const comando = argv[0];
@@ -568,8 +592,9 @@ try {
   else if (comando === 'perfil') await perfil(opcao('arquivo'), opcao('saida'), opcao('referencia'));
   else if (comando === 'simular') await simular(opcao('perfil'), opcao('arquivo'), opcao('referencia'));
   else if (comando === 'piloto') await piloto(opcao('arquivo'), opcao('data'), opcao('limite'), opcao('saida'));
+  else if (comando === 'monitor') await monitor(opcao('estado'), argv.includes('--marcar'));
   else {
-    console.log('uso: npx vite-node scripts/cno.mts -- <probe | validar | amostra | baixar | ordenacao | perfil | simular | piloto> [--arquivo <cno.zip>] [--limite N] [--destino <dir>] [--saida <perfil.json>] [--perfil <perfil.json>] [--referencia AAAA-MM-DD]');
+    console.log('uso: npx vite-node scripts/cno.mts -- <probe | validar | amostra | baixar | ordenacao | perfil | simular | piloto | monitor> [--arquivo <cno.zip>] [--limite N] [--destino <dir>] [--saida <perfil.json>] [--perfil <perfil.json>] [--referencia AAAA-MM-DD]');
     process.exitCode = 1;
   }
 } catch (e) {

@@ -611,6 +611,70 @@ export function envelopeCno(o: CnoObservacao): EnvelopeCno {
   return { schema: SCHEMA_CNO, evidence: o.evidence, canonical: payloadCno(o.canonical) };
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// 14. Contexto CNO para APRESENTACAO na revisao (LE3-D.1)
+//
+// A tela de candidatos nao pode interpretar payload bruto em React nem recalcular regra. Esta projecao le o
+// `canonical` do envelope e devolve so o que a revisao comercial precisa ler. Nada aqui decide nada.
+
+export interface ContextoCnoRevisao {
+  cno: string;
+  nomeObra?: string;
+  municipio?: string;
+  uf?: string;
+  endereco?: string;
+  bairro?: string;
+  areaM2?: number;
+  unidadeMedida?: string;
+  situacao?: string;
+  situacaoNome?: string;
+  /** data OFICIAL do evento no CNO (precedencia do §34.7) — NUNCA a data em que a EIFF descobriu */
+  dataEventoCno?: string;
+  origemDataEvento?: string;
+  categorias: string[];
+  destinacoes: string[];
+  tipoSinal: SinalCno;
+  cnpjResponsavel?: string;
+  nomeResponsavel?: string;
+  qualificacaoResponsavel?: string;
+  qualificacaoResponsavelNome?: string;
+}
+
+const lista = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((x) => (x && typeof x === 'object' ? String((x as Record<string, unknown>).categoria ?? (x as Record<string, unknown>).destinacao ?? '') : String(x ?? ''))).filter(Boolean))].sort() : []);
+
+/** Le o envelope `CNO_OPEN_DATA_V1` e projeta o contexto de revisao. Payload que nao e desse schema -> undefined. */
+export function contextoCnoDoPayload(payload: unknown): ContextoCnoRevisao | undefined {
+  const env = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : undefined;
+  if (!env || env.schema !== SCHEMA_CNO) return undefined;
+  const c = env.canonical && typeof env.canonical === 'object' ? (env.canonical as Record<string, unknown>) : undefined;
+  if (!c || typeof c.cno !== 'string') return undefined;
+  const s = (k: string): string | undefined => (typeof c[k] === 'string' && (c[k] as string).trim() ? (c[k] as string) : undefined);
+  const areas = Array.isArray(c.areas) ? (c.areas as Record<string, unknown>[]) : [];
+  const tipoSinal = (['CNO_NEW', 'CNO_EXPANSION', 'NENHUM'] as const).find((x) => x === c.tipoSinal) ?? 'NENHUM';
+  const unidade = s('unidadeMedida');
+  return {
+    cno: c.cno,
+    nomeObra: s('nomeObra'),
+    municipio: s('municipio'),
+    uf: s('uf'),
+    endereco: s('endereco'),
+    bairro: s('bairro'),
+    areaM2: typeof c.areaTotal === 'number' && (unidade ?? '').toLowerCase() === 'm2' ? (c.areaTotal as number) : undefined,
+    unidadeMedida: unidade,
+    situacao: s('situacao'),
+    situacaoNome: s('situacaoNome'),
+    dataEventoCno: s('dataEvento'),
+    origemDataEvento: s('origemDataEvento'),
+    categorias: lista(areas.map((a) => a.categoria)),
+    destinacoes: lista(areas.map((a) => a.destinacao)),
+    tipoSinal,
+    cnpjResponsavel: s('cnpjResponsavel'),
+    nomeResponsavel: s('nomeResponsavel'),
+    qualificacaoResponsavel: s('qualificacaoResponsavel'),
+    qualificacaoResponsavelNome: s('qualificacaoResponsavelNome'),
+  };
+}
+
 /** A observacao vira pedido de intake. `tipo` e `projeto`: uma obra e um projeto, nunca uma empresa por si so. */
 export function pedidoIntakeCno(o: CnoObservacao, fonteId: string, recebidoEm: string): PedidoIntake {
   return { fonteId, tipo: 'projeto', externoId: externoIdCno(o), payload: envelopeCno(o), recebidoEm };

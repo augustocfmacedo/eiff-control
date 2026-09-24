@@ -2,6 +2,8 @@
 // O core so conhece o formato normalizado; a integracao profunda (chamadas de API) vem depois, adapter por adapter.
 // O payload bruto nunca e descartado: vai para registrosFonte (source_records) e para signal.payload.
 import type { TipoFonte, TipoSinal } from './types';
+import { contextoCnoDoPayload, type ContextoCnoRevisao } from './cnoDadosAbertos';
+export type { ContextoCnoRevisao } from './cnoDadosAbertos';
 
 export interface EmpresaNormalizada { businessId?: string; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais?: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; externoId?: string }
 export interface ContatoNormalizado { nome: string; cargo?: string; email?: string; telefone?: string; celular?: string; linkedin?: string; decisor?: boolean; externoId?: string }
@@ -16,6 +18,8 @@ export interface RegistroNormalizado {
   contatos?: ContatoNormalizado[];
   projeto?: ProjetoNormalizado;
   sinais?: SinalNormalizado[];
+  /** LE3-D.1: contexto de APRESENTACAO projetado pelo adapter da fonte (so leitura; nenhuma regra). */
+  contextoCno?: ContextoCnoRevisao;
   payload: unknown; // bruto, preservado
 }
 
@@ -66,6 +70,7 @@ export const adapterCNO: AdapterFonte = {
       fonte: 'CNO', externoId: texto(o, 'cno', 'numero', 'id'),
       empresa: { cnpj: texto(o, 'cnpjResponsavel', 'cnpj'), razaoSocial: razao, cidade: texto(o, 'municipio', 'cidade'), uf: texto(o, 'uf'), externoId: texto(o, 'cnpjResponsavel', 'cnpj') },
       projeto: { nome: texto(o, 'nomeObra', 'descricao') ?? `Obra CNO ${texto(o, 'cno', 'numero') ?? ''}`.trim(), tipo: texto(o, 'tipoObra', 'categoria'), cidade: texto(o, 'municipio', 'cidade'), uf: texto(o, 'uf'), endereco: texto(o, 'endereco', 'logradouro'), areaM2: num(o, 'areaTotal', 'area', 'metragem'), estagio: 'Obra', inicioPrevisto: inicio, externoId: texto(o, 'cno', 'numero', 'id') },
+      contextoCno: contextoCnoDoPayload(bruto),
       sinais: semSinal ? [] : [{ tipo: expansao ? 'CNO_EXPANSION' : 'CNO_NEW', titulo: `${expansao ? 'Expansão' : 'Obra nova'} registrada no CNO${texto(o, 'municipio', 'cidade') ? ` em ${texto(o, 'municipio', 'cidade')}` : ''}`, descricao: texto(o, 'descricao', 'tipoObra'), eventoEm: inicio as string, confianca: 0.9, externoId: texto(o, 'cno', 'numero', 'id') }],
       payload: bruto,
     };

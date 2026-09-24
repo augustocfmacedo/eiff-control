@@ -7,6 +7,7 @@ import { ImportarForm, ScorePill, d, dh, nomeUsuario } from './comum';
 import { VibePainel } from './Vibe';
 import { CoberturaDecisores } from './Cobertura';
 import LeadEngineCandidatos from './LeadEngineCandidatos';
+import { FILTRO_VAZIO, contadoresRevisao, filtrarRevisao, metricasPiloto, type FiltroRevisao } from '../../core/radar/leadEngineRevisao';
 import { SignalPilot } from './SignalPilot';
 
 type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'candidatos' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe' | 'signal';
@@ -31,6 +32,12 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const candidatosLE = filaDeRevisao(r);
   // LE-2E: a escolha de empresa por candidato vive AQUI para LeadEngineCandidatos/LinhaCandidato ficarem puros
   const [selecaoLE, setSelecaoLE] = useState<Record<string, string>>({});
+  // LE3-D.1: filtro de REVISAO e cartoes abertos tambem vivem aqui; a fila filtrada/contada vem do core
+  const [filtroLE, setFiltroLE] = useState<FiltroRevisao>(FILTRO_VAZIO);
+  const [abertosLE, setAbertosLE] = useState<Record<string, boolean>>({});
+  const visiveisLE = filtrarRevisao(candidatosLE, filtroLE, hoje);
+  const contadoresLE = contadoresRevisao(candidatosLE, hoje);
+  const metricasLE = metricasPiloto(r, hoje);
   const suprimidosLE = descobertasSuprimidas(r);
   const empresaNome = (id: string) => { const e = r.empresas.find((x) => x.id === id); return e ? e.nomeFantasia ?? e.razaoSocial : id; };
   const salvarRegra = (g: RegraScore) => tentar(() => actions.salvarRegraScoreRadar(g), toast);
@@ -176,7 +183,7 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
       {aba === 'vibe' && podeConfig && <VibePainel onErro={toast} onOk={toast} />}
       {aba === 'signal' && <SignalPilot />}
 
-      {aba === 'candidatos' && <LeadEngineCandidatos candidatos={candidatosLE} suprimidos={suprimidosLE} empresas={r.empresas} podeAgir={podeAgir} selecao={selecaoLE} onSelecionar={(id, empresaId) => setSelecaoLE((s) => ({ ...s, [id]: empresaId }))} onErro={toast} onOk={toast} />}
+      {aba === 'candidatos' && <LeadEngineCandidatos candidatos={candidatosLE} visiveis={visiveisLE} suprimidos={suprimidosLE} empresas={r.empresas} podeAgir={podeAgir} hoje={hoje} filtro={filtroLE} contadores={contadoresLE} metricas={metricasLE} selecao={selecaoLE} abertos={abertosLE} onAbrir={(id) => setAbertosLE((a) => ({ ...a, [id]: !a[id] }))} onFiltro={setFiltroLE} onSelecionar={(id, empresaId) => setSelecaoLE((s) => ({ ...s, [id]: empresaId }))} onErro={toast} onOk={toast} />}
 
       {aba === 'revisao' && (
         <div className="card table-wrap">

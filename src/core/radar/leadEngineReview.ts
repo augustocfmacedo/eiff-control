@@ -17,7 +17,7 @@
 //
 // Supressao (D-12: supressao vence redescoberta): a leitura de `r.supressoes` vive aqui, com a mesma semantica de
 // `empresaSuprimida`, para o Lead Engine nao depender da autoridade legada de `pipeline.ts`.
-import type { EmpresaNormalizada, RegistroNormalizado } from './adapters';
+import type { ContextoCnoRevisao, EmpresaNormalizada, ProjetoNormalizado, RegistroNormalizado, SinalNormalizado } from './adapters';
 import { adapterDe } from './adapters';
 import { registrarSinalNormalizado, upsertEmpresa, upsertProjeto, type Ids } from './ingestao';
 import { discoveryRecordDe, discoveryRecords, payloadFingerprint, type DiscoveryRecord } from './leadEngineIntake';
@@ -109,6 +109,14 @@ export interface ItemRevisaoLeadEngine {
   match?: MatchCandidato;
   identidadeForte: boolean;
   bloqueios: CodigoBloqueio[];
+  /**
+   * LE3-D.1 — projecoes de APRESENTACAO. O adapter da fonte ja produz projeto e sinais; sem eles a tela via
+   * so a empresa e perdia a obra e o sinal. Nada aqui e regra: e o que a revisao comercial precisa LER.
+   */
+  projetoNormalizado?: ProjetoNormalizado;
+  sinaisNormalizados?: SinalNormalizado[];
+  /** contexto do CNO (obra, responsavel, data oficial do evento), so quando o payload e o envelope do CNO */
+  contextoCno?: ContextoCnoRevisao;
 }
 
 const registroPorId = (r: Pick<RadarDataset, 'registrosFonte'>, id: string): RegistroFonte | undefined => r.registrosFonte.find((x) => x.id === id);
@@ -204,6 +212,9 @@ const itemDe = (r: RadarDataset, d: DiscoveryRecord & { status: 'PENDING' | 'REV
     match: a?.match,
     identidadeForte: !!a?.identidadeForte,
     bloqueios: a?.bloqueios ?? [],
+    projetoNormalizado: a?.normalizado?.projeto,
+    sinaisNormalizados: a?.normalizado?.sinais,
+    contextoCno: a?.normalizado?.contextoCno,
   };
 };
 
