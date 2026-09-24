@@ -69,13 +69,21 @@ export const SEM_MODULO = 'Módulo não informado';
 
 // --------------------------------------------------------------------------------------------------- modelo
 
+/**
+ * Evidência da Central. `secao` é a AUTORIDADE DO ESTADO ATUAL: o título exato (linha inteira, com os `#`) da seção de
+ * um documento integrado onde o símbolo tem de estar. Obrigatória para estado operacional mutável (produção, operação,
+ * configuração, flags, credenciais): uma frase antiga em seção histórica não sustenta o estado vigente. Nada aqui é
+ * lido em runtime — quem recorta a seção e procura o símbolo é o teste.
+ */
+export interface EvidenciaConstrucao extends Evidencia { secao?: string }
+
 export interface ComponenteConstrucao {
   id: string;
   titulo: string;
   /** gates do catálogo que dão o estado por prontidão (o gate continua sendo a autoridade) */
   gates?: string[];
   /** evidência concreta de que o componente existe — o teste abre o arquivo e procura o símbolo */
-  evidencias?: Evidencia[];
+  evidencias?: EvidenciaConstrucao[];
   /** o que a evidência prova (código, integração, produção, operação real); rótulo, nunca estado */
   natureza?: NaturezaEvidencia;
   /**
@@ -83,13 +91,13 @@ export interface ComponenteConstrucao {
    * implementação nasceu. O domínio nunca lê isto para mudar estado — quem confere é o teste (guarda de frescor),
    * que FALHA e obriga decisão humana. Nada de descoberta por nome, nada de varredura do repositório.
    */
-  sinaisDeImplementacao?: Evidencia[];
+  sinaisDeImplementacao?: EvidenciaConstrucao[];
   /**
    * Só para componente PLANEJADO: a frase de uma fonte integrada (doc, CLAUDE.md) que DECLARA o item pendente. Se ela
    * sumir, a fonte deixou de dizer que está pendente — o teste falha e obriga a revisão. Foi o ponto cego da 1C: a
    * ativação de 0056/0057 em produção não cria código, mas apaga "só em código" do CLAUDE.md.
    */
-  pendenciaDeclarada?: Evidencia[];
+  pendenciaDeclarada?: EvidenciaConstrucao[];
   /**
    * Último recurso, quando nem sinal nem frase-fonte existem. Todo componente planejado tem de declarar sinais e/ou
    * pendência declarada, OU este motivo — nunca nada.
@@ -125,10 +133,25 @@ export interface ModuloConstrucao {
 
 const m = (x: ModuloConstrucao): ModuloConstrucao => x;
 const mod = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'modulo', referencia, simbolo });
-const doc = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'documento', referencia, simbolo });
+const doc = (referencia: string, simbolo?: string, secao?: string): EvidenciaConstrucao => ({ tipo: 'documento', referencia, simbolo, ...(secao ? { secao } : {}) });
 const fn = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'funcao', referencia, simbolo });
 const scr = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'script', referencia, simbolo });
 const mig = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'migration', referencia, simbolo });
+
+/** Títulos exatos das seções que a Central usa como autoridade do estado atual. Um lugar só. */
+export const SECOES_ATUAIS = {
+  inboxAplicacao: '### 15.1 O que foi feito',
+  inboxShadow: '### 15.2 Estágio operacional: SHADOW MODE',
+  inboxProvas: '### 15.4 Provas executadas em produção (dados de teste, contagens apenas)',
+  inboxDefaults: '### 16.1 Defaults versionados (migration `0058_inbox_defaults.sql`)',
+  inboxFlags: '### 16.2 Kill switches (`src/core/inbox/ativacao.ts`, lidos só no servidor)',
+  inboxAmbiente: '### 16.3 Ambiente (presença/ausência, nunca valores)',
+  inboxCredencial: '### 16.5 Ponto exato em que a cadeia espera credencial',
+  inboxRoteamentoProducao: '### 16.8 Resultado em produção nesta ativação (dados de teste, só contagens)',
+  inboxPendencias: '### 14.7 Fora de escopo e pendências',
+  estadoProjeto: '## Estado e decisões (atualizar ao mudar)',
+} as const;
+
 
 /**
  * O catálogo. Reconstruído das estruturas reais do repositório (core, telas, funções Netlify, migrations e docs)
@@ -146,7 +169,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'ALCADAS', titulo: 'Alçadas e central de aprovações', evidencias: [mod('src/screens/Aprovacoes.tsx'), mod('src/core/engine.ts', 'etapasExigidas')] },
       { id: 'DRE', titulo: 'DRE gerencial por competência', evidencias: [mod('src/core/engine.ts', 'export function dre'), mod('src/screens/Dre.tsx')] },
       { id: 'CHECKS', titulo: 'Checks e fechamento de período', evidencias: [mod('src/screens/Checks.tsx')] },
-      { id: 'ALCADAS_REAIS', titulo: 'Alçadas reais da Diretoria (DEC-03)', pendenciaDeclarada: [doc('CLAUDE.md', 'alçadas reais (DEC-03)')] },
+      { id: 'ALCADAS_REAIS', titulo: 'Alçadas reais da Diretoria (DEC-03)', pendenciaDeclarada: [doc('CLAUDE.md', 'alçadas reais (DEC-03)', SECOES_ATUAIS.estadoProjeto)] },
     ],
   }),
   m({
@@ -159,7 +182,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'CONCILIACAO', titulo: 'Conciliação e importação OFX', evidencias: [mod('src/data/store.ts', 'conciliar'), mod('src/core/ofx.ts', 'parseOfx'), mod('src/screens/Conciliacao.tsx')] },
       { id: 'CENARIOS', titulo: 'Cenários interativos de caixa', evidencias: [mod('src/core/cenarioCaixa.ts', 'aplicarCenario')] },
       { id: 'DIVIDAS', titulo: 'Dívidas', evidencias: [mod('src/screens/Dividas.tsx')] },
-      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', pendenciaDeclarada: [doc('CLAUDE.md', 'reserva mínima (DEC-09)')] },
+      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', pendenciaDeclarada: [doc('CLAUDE.md', 'reserva mínima (DEC-09)', SECOES_ATUAIS.estadoProjeto)] },
     ],
   }),
   m({
@@ -325,6 +348,10 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   // controlado (dado de teste), idempotência, router e RLS provados em produção (eiff-inbox §15). SHADOW MODE não é
   // operação: nenhuma mensagem real chega (sem chave de serviço, sem Meta, sem setores) e nada sai. Por isso o
   // componente de tráfego real segue PLANEJADO — a prova controlada nunca fecha a operação.
+  // PR #19 (0d8fe73): 0058 (12 setores + configuração) aplicada em produção, kill switches em ativacao.ts
+  // (montarPortasInbox é o único ponto que monta ingestão/router/IA; produção: inbox ON, router ON, LLM OFF, outbound OFF),
+  // observabilidade do Shadow Mode e o router determinístico APLICANDO em produção com dado de teste (§16.8). Estado
+  // mutável (produção, flags, ambiente) sempre com `secao`: §15.2 é histórico ("setores vazios"), §16 é o vigente.
   m({
     id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', rota: '/atendimento', rotas: ['/atendimento'],
     dependeDe: ['CENTRAL_WHATSAPP', 'PLATAFORMA'],
@@ -334,26 +361,34 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'TELAS', titulo: 'Tela de atendimento e configuração', natureza: 'CODIGO', evidencias: [mod('src/screens/Inbox.tsx'), mod('src/screens/InboxConfig.tsx')] },
       { id: 'PERSISTENCIA', titulo: 'Persistência escrita: 0056, RLS por setor e RPCs', natureza: 'CODIGO', evidencias: [mig('supabase/migrations/0056_inbox.sql', 'inbox_ingest'), mig('supabase/migrations/0056_inbox.sql', 'inbox_assign_thread'), mod('src/data/inbox.supabase.ts', 'carregarInbox')] },
       { id: 'INGESTAO', titulo: 'Ingestão pela EIFF Central (webhook → inbox_ingest)', natureza: 'INTEGRACAO', evidencias: [mod('src/core/inbox/ingestaoServidor.ts', 'ingerirEventosCentral'), mod('src/core/inbox/fronteiras.ts', 'deEventoCentral'), fn('netlify/functions/channel-meta-webhook.ts', 'ingerirEventosCentral')] },
-      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA')] },
+      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA'), mod('src/core/inbox/ativacao.ts', 'outbound: false')] },
       { id: 'PROVAS', titulo: 'Provas: smoke PGlite e testes de fronteira', natureza: 'CODIGO', evidencias: [scr('scripts/pg-smoke-inbox.mjs'), mod('src/core/inbox/ingestaoServidor.test.ts'), doc('docs/eiff-inbox.md')] },
       { id: 'OCTOPUS_PIPELINE', titulo: 'Octopus Router: pipeline de roteamento e política de automação', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.ts', 'decidirRoteamento'), mod('src/core/inbox/automacao.ts', 'decidirAutomacao')] },
       { id: 'OCTOPUS_PROVAS', titulo: 'Octopus Router: testes e smoke do banco (provas S–X)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.test.ts'), mod('src/core/inbox/roteamentoServidor.test.ts'), scr('scripts/pg-smoke-inbox.mjs', 'inbox_apply_routing')] },
-      { id: 'OCTOPUS_INTEGRADO', titulo: 'Octopus Router: integrado (webhook → servidor, 0057 escrita, store e tela)', natureza: 'INTEGRACAO', evidencias: [fn('netlify/functions/channel-meta-webhook.ts', 'rotearNoServidor'), mig('supabase/migrations/0057_inbox_octopus_router.sql', 'inbox_apply_routing'), mod('src/data/store.ts', 'inboxConfirmarRoteamento')] },
+      { id: 'OCTOPUS_INTEGRADO', titulo: 'Octopus Router: integrado (webhook → montarPortasInbox → rotearNoServidor, 0057, store e tela)', natureza: 'INTEGRACAO', evidencias: [fn('netlify/functions/channel-meta-webhook.ts', 'montarPortasInbox'), mod('src/core/inbox/ativacao.ts', 'rotearNoServidor'), mig('supabase/migrations/0057_inbox_octopus_router.sql', 'inbox_apply_routing'), mod('src/data/store.ts', 'inboxConfirmarRoteamento')] },
       { id: 'IA_SERVIDOR', titulo: 'Refino por IA no servidor (opcional pela chave)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/inteligenciaLlm.ts', 'provedorAnthropic')] },
       { id: 'EDITOR_REGRAS', titulo: 'Editores de regras de roteamento e automação', natureza: 'CODIGO', evidencias: [mod('src/screens/InboxConfig.tsx', 'RegraRoteamento'), mod('src/screens/InboxConfig.tsx', 'RegraAutomacao'), mod('src/data/store.ts', 'validarConfiguracaoOctopus')] },
-      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0056** (12 tabelas'), doc('CLAUDE.md', '0056 e 0057 aplicadas em produção')] },
-      { id: 'OCTOPUS_PRODUCAO', titulo: 'Migration 0057 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0057** (`inbox_thread.routing`'), doc('CLAUDE.md', '0056 e 0057 aplicadas em produção')] },
-      { id: 'SHADOW_MODE', titulo: 'Shadow Mode em produção: E2E controlado, idempotência e router provados (sem ação externa)', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '### 15.2 Estágio operacional: SHADOW MODE'), doc('docs/eiff-inbox.md', '**Idempotência**: o mesmo'), doc('docs/eiff-inbox.md', 'registrou `routing` e o evento ROUTING_DECIDED')] },
-      { id: 'RLS_PRODUCAO', titulo: 'RLS e autoridade provadas em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**RLS/autoridade** (transação com rollback)')] },
+      { id: 'ATIVACAO', titulo: 'Controles de ativação: kill switches server-side (inbox, router, IA, outbound)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/ativacao.ts', 'lerFlagsInbox'), mod('src/core/inbox/ativacao.ts', 'montarPortasInbox'), mod('src/core/inbox/ativacao.test.ts')] },
+      { id: 'OBSERVABILIDADE', titulo: 'Observabilidade do Shadow Mode: últimas decisões e baseline (confirmação × override)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/observabilidade.ts', 'ultimasDecisoes'), mod('src/core/inbox/observabilidade.ts', 'metricasShadow'), mod('src/screens/InboxConfig.tsx', "label: 'Shadow mode'")] },
+      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0056** (12 tabelas', SECOES_ATUAIS.inboxAplicacao), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'OCTOPUS_PRODUCAO', titulo: 'Migration 0057 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0057** (`inbox_thread.routing`', SECOES_ATUAIS.inboxAplicacao), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'DEFAULTS_0058', titulo: 'Defaults versionados em produção: 0058 com 12 setores e configuração padrão', natureza: 'PRODUCAO', evidencias: [mig('supabase/migrations/0058_inbox_defaults.sql', '12 setores padrão'), scr('scripts/pg-smoke-inbox.mjs', "ok('Y'"), doc('docs/eiff-inbox.md', '24/09/2026 (12 setores, 1 configuração)', SECOES_ATUAIS.inboxDefaults), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'SHADOW_MODE', titulo: 'Shadow Mode em produção: E2E controlado, idempotência e router determinístico aplicando (dado de teste, sem ação externa)', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '### 15.2 Estágio operacional: SHADOW MODE', SECOES_ATUAIS.inboxShadow), doc('docs/eiff-inbox.md', '**Idempotência**: o mesmo', SECOES_ATUAIS.inboxProvas), doc('docs/eiff-inbox.md', '`EIFF_INBOX_ENABLED=true`, `EIFF_INBOX_ROUTER_ENABLED=true`,', SECOES_ATUAIS.inboxFlags), doc('docs/eiff-inbox.md', '`consultar_pagamento`, regra explícita ROT-02 → **FINANCEIRO**', SECOES_ATUAIS.inboxRoteamentoProducao), doc('docs/eiff-inbox.md', '0 falhas de IA, 0 mensagens enviadas', SECOES_ATUAIS.inboxRoteamentoProducao)] },
+      { id: 'RLS_PRODUCAO', titulo: 'RLS e autoridade provadas em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**RLS/autoridade** (transação com rollback)', SECOES_ATUAIS.inboxProvas)] },
       {
         id: 'TRAFEGO_REAL', titulo: 'Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)', natureza: 'OPERACAO',
-        // pré-requisitos no §15.2 (decisões do usuário): SUPABASE_SERVICE_ROLE_KEY, META_WHATSAPP_*, phone number IDs e
-        // setores do Inbox. Enquanto a fonte disser que nenhuma mensagem real chega, isto é plano.
-        pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'nenhuma mensagem real chega ainda'), doc('docs/eiff-inbox.md', '| Setores/configuração do Inbox na organização | **vazios**')],
+        // autoridade atual: §16.5 e §16.3 — faltam SUPABASE_SERVICE_ROLE_KEY e as variáveis da Meta (com os phone number
+        // IDs e o registro do webhook). Setores NÃO são mais pré-requisito: a 0058 os criou (§16.1). O §15.2 é histórico.
+        pendenciaDeclarada: [doc('docs/eiff-inbox.md', '(1) `SUPABASE_SERVICE_ROLE_KEY`; (2) as sete variáveis da Meta', SECOES_ATUAIS.inboxCredencial), doc('docs/eiff-inbox.md', '**Ausentes**: `SUPABASE_SERVICE_ROLE_KEY`', SECOES_ATUAIS.inboxAmbiente)],
+      },
+      {
+        id: 'IA_OPERACIONAL', titulo: 'Refino por IA ligado no roteamento em produção (depois da baseline do Shadow Mode)', natureza: 'OPERACAO',
+        // implementação existe (IA_SERVIDOR); em produção está DESLIGADA por decisão: EIFF_INBOX_LLM_ENABLED=false (§16.2).
+        pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'ANTHROPIC OFF · OUTBOUND OFF · FACTORY OFF', SECOES_ATUAIS.inboxFlags)],
       },
       {
         id: 'ESCALACAO_SLA', titulo: 'Escalação por SLA como execução automática', natureza: 'CODIGO',
-        pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'scheduler de escalação')],
+        pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'scheduler de escalação', SECOES_ATUAIS.inboxPendencias)],
         // hoje SLA_ESCALATED existe só no catálogo de eventos e nas migrations; §14.7 diz que "continua decisão".
         // Emitir o evento a partir do código de aplicação é o sinal explícito de que a execução nasceu.
         sinaisDeImplementacao: [

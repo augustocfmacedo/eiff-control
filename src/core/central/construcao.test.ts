@@ -12,6 +12,7 @@ import {
   TONE_ESTADO_CONSTRUCAO, atencaoConstrucao, construindoAgora, estadoDoModulo, fracaoTexto, gatesDesconhecidosNosModulos,
   classificarSuperficie, gatesDoModulo, moduloDaTarefa, moduloPorId, panoramaConstrucao, pctConstrucao, projetarComponente, projetarModulo,
   superficiesSemClassificacao, componentesPlanejados, mensagemDriftComponente, mensagemPendenciaSumiu, NATUREZAS_EVIDENCIA,
+  SECOES_ATUAIS, type EvidenciaConstrucao,
   type ComponenteConstrucao, type ComponentePlanejado,
 } from './construcao';
 import { GATES, WORKSTREAMS, gatePorId, type Evidencia } from './missionControl';
@@ -28,6 +29,19 @@ const item = (p: Partial<MissionControlWorkItem> & { id: string }): MissionContr
 
 const existe = (c: string) => fs.existsSync(c);
 const conteudo = (c: string) => fs.readFileSync(c, 'utf8');
+/**
+ * Recorte EXPLÍCITO de seção: da linha cujo texto é exatamente o título até o próximo título de nível igual ou maior.
+ * Não é parser de Markdown nem inferência cronológica — é a seção que o componente declarou como estado atual.
+ */
+const secaoDe = (texto: string, titulo: string): string | null => {
+  const ls = texto.split('\n');
+  const i = ls.findIndex((l) => l.trim() === titulo);
+  if (i < 0) return null;
+  const nivel = (titulo.match(/^#+/) ?? [''])[0].length;
+  let f = ls.length;
+  for (let j = i + 1; j < ls.length; j++) { const m = ls[j].match(/^(#+)\s/); if (m && m[1].length <= nivel) { f = j; break; } }
+  return ls.slice(i, f).join('\n');
+};
 const TELAS = ['src/screens/MissionControl.tsx', 'src/screens/MissionControlVisao.tsx', 'src/screens/MissionControlMapa.tsx', 'src/screens/MissionControlGovernanca.tsx', 'src/screens/MissionControlQuadro.tsx'];
 const DOMINIO_PURO = 'src/core/central/construcao.ts';
 
@@ -440,9 +454,9 @@ describe('14 · EIFF Inbox observado pela Central', () => {
     expect(p.estado).toBe('EM_CONSTRUCAO');
     const comEvidencia = p.componentes.filter((c) => c.origem === 'EVIDENCIA');
     const plano = p.componentes.filter((c) => c.origem === 'PLANO');
-    // main d707531 (PR #18): 0056/0057 em produção e Shadow Mode viraram evidência; tráfego real e escalação seguem plano
-    expect(comEvidencia.map((c) => c.id)).toEqual(['DOMINIO', 'TELAS', 'PERSISTENCIA', 'INGESTAO', 'FRONTEIRAS', 'PROVAS', 'OCTOPUS_PIPELINE', 'OCTOPUS_PROVAS', 'OCTOPUS_INTEGRADO', 'IA_SERVIDOR', 'EDITOR_REGRAS', 'MIGRATION_APLICADA', 'OCTOPUS_PRODUCAO', 'SHADOW_MODE', 'RLS_PRODUCAO']);
-    expect(plano.map((c) => c.id)).toEqual(['TRAFEGO_REAL', 'ESCALACAO_SLA']);
+    // main 0d8fe73 (PR #19): ativação, observabilidade e 0058 em produção entram; IA em produção vira plano explícito
+    expect(comEvidencia.map((c) => c.id)).toEqual(['DOMINIO', 'TELAS', 'PERSISTENCIA', 'INGESTAO', 'FRONTEIRAS', 'PROVAS', 'OCTOPUS_PIPELINE', 'OCTOPUS_PROVAS', 'OCTOPUS_INTEGRADO', 'IA_SERVIDOR', 'EDITOR_REGRAS', 'ATIVACAO', 'OBSERVABILIDADE', 'MIGRATION_APLICADA', 'OCTOPUS_PRODUCAO', 'DEFAULTS_0058', 'SHADOW_MODE', 'RLS_PRODUCAO']);
+    expect(plano.map((c) => c.id)).toEqual(['TRAFEGO_REAL', 'IA_OPERACIONAL', 'ESCALACAO_SLA']);
     for (const c of plano) expect(c.estado).toBe('PLANEJADO');
     expect(p.concluidos).toBe(comEvidencia.length);
     expect(p.proximoPasso).toBe('Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)');
@@ -511,7 +525,12 @@ describe('15 · Inbox no Mapa Vivo: só o que está provado', () => {
 // =====================================================================================================
 
 /** Um sinal "existe" quando o arquivo existe e, se houver símbolo, o símbolo está dentro dele. Só em teste. */
-const sinalPresente = (e: Evidencia): boolean => existe(e.referencia) && (!e.simbolo || conteudo(e.referencia).includes(e.simbolo));
+const sinalPresente = (e: EvidenciaConstrucao): boolean => {
+  if (!existe(e.referencia)) return false;
+  if (!e.simbolo) return true;
+  const alvo = e.secao ? secaoDe(conteudo(e.referencia), e.secao) : conteudo(e.referencia);
+  return alvo !== null && alvo.includes(e.simbolo);
+};
 const sinaisPresentes = (c: ComponenteConstrucao): Evidencia[] => (c.sinaisDeImplementacao ?? []).filter(sinalPresente);
 /** Drift de componente sobre uma lista de componentes planejados: devolve as mensagens humanas. */
 const driftDeComponentes = (planejados: readonly ComponentePlanejado[]): string[] =>
@@ -600,8 +619,8 @@ describe('16 · guarda de frescor dos componentes (drift de componente)', () => 
     expect(inbox.estado).toBe('EM_CONSTRUCAO');
     expect(inbox.total).toBe(moduloPorId('INBOX')!.componentes.length);
     expect(inbox.concluidos).toBe(inbox.componentes.filter((c) => c.estado === 'CONCLUIDO').length);
-    // valor derivado do catálogo da main d707531 (era 11/15 antes do PR #18): conferido contra a contagem, não digitado no modelo
-    expect(`${inbox.concluidos}/${inbox.total}`).toBe('15/17');
+    // valor derivado do catálogo da main 0d8fe73 (11/15 antes do PR #18, 15/17 antes do PR #19): conferido, não digitado no modelo
+    expect(`${inbox.concluidos}/${inbox.total}`).toBe('18/21');
     expect(inbox.proximoPasso).toBe('Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)');
     expect(inbox.bloqueios).toEqual([]);
   });
@@ -665,7 +684,8 @@ describe('17 · produção e Shadow Mode (PR #18) sem confundir com operação',
     expect(comp('TRAFEGO_REAL').estado).toBe('PLANEJADO');
     expect(trafego.natureza).toBe('OPERACAO');
     expect(trafego.evidencias).toBeUndefined();
-    expect(trafego.pendenciaDeclarada!.some((e) => e.simbolo === 'nenhuma mensagem real chega ainda')).toBe(true);
+    // autoridade atual = §16.5 (credenciais que faltam); a frase do §15.2 é histórica e não é mais usada
+    expect(trafego.pendenciaDeclarada!.every((e) => e.secao === SECOES_ATUAIS.inboxCredencial || e.secao === SECOES_ATUAIS.inboxAmbiente)).toBe(true);
     for (const e of trafego.pendenciaDeclarada!) expect(sinalPresente(e), e.simbolo).toBe(true);
     // nenhum componente de OPERAÇÃO está concluído em módulo nenhum hoje: a Central não fecha operação por prova controlada
     for (const mo of MODULOS_CONSTRUCAO) for (const c of mo.componentes) {
@@ -673,12 +693,12 @@ describe('17 · produção e Shadow Mode (PR #18) sem confundir com operação',
     }
   });
 
-  it('natureza é rótulo de vocabulário fechado, não estado; produção e operação concluídas só se provam por documento integrado', () => {
+  it('natureza é rótulo de vocabulário fechado, não estado; produção e operação nunca se provam só por código', () => {
     expect([...NATUREZAS_EVIDENCIA]).toEqual(['CODIGO', 'INTEGRACAO', 'PRODUCAO', 'OPERACAO']);
     for (const mo of MODULOS_CONSTRUCAO) for (const c of mo.componentes) {
       if (c.natureza) expect(NATUREZAS_EVIDENCIA).toContain(c.natureza);
       if ((c.natureza === 'PRODUCAO' || c.natureza === 'OPERACAO') && (c.evidencias?.length ?? 0) > 0) {
-        expect(c.evidencias!.every((e) => e.tipo === 'documento'), `${mo.id}/${c.id}: produção provada por código`).toBe(true);
+        expect(c.evidencias!.some((e) => e.tipo === 'documento' && !!e.secao), `${mo.id}/${c.id}: produção sem registro documental de estado atual`).toBe(true);
       }
     }
     expect(conteudo(DOMINIO_PURO)).not.toMatch(/natureza\s*===|\.natureza\s*\?/);
@@ -686,7 +706,7 @@ describe('17 · produção e Shadow Mode (PR #18) sem confundir com operação',
 
   it('o Inbox permanece EM_CONSTRUCAO enquanto houver critério restante, e o próximo passo deixou de ser "aplicar 0056"', () => {
     expect(inbox.estado).toBe('EM_CONSTRUCAO');
-    expect(inbox.componentes.filter((c) => c.estado !== 'CONCLUIDO').map((c) => c.id)).toEqual(['TRAFEGO_REAL', 'ESCALACAO_SLA']);
+    expect(inbox.componentes.filter((c) => c.estado !== 'CONCLUIDO').map((c) => c.id)).toEqual(['TRAFEGO_REAL', 'IA_OPERACIONAL', 'ESCALACAO_SLA']);
     expect(inbox.proximoPasso).not.toMatch(/0056|0057/);
     expect(inbox.proximoPasso).toBe('Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)');
   });
@@ -717,5 +737,137 @@ describe('17 · produção e Shadow Mode (PR #18) sem confundir com operação',
     const src = conteudo(DOMINIO_PURO);
     expect(src).not.toMatch(/pendenciaDeclarada\s*\.\s*(filter|some|find|map|length)|sinaisDeImplementacao\s*\.\s*(filter|some|find|map|length)/);
     expect(src).not.toMatch(/existsSync|readFileSync|import\s+fs|from 'node:/);
+  });
+});
+
+// =====================================================================================================
+// MC-CONSTRUCTION-1E — sincronização com a main 0d8fe73 (PR #19) e AUTORIDADE DO ESTADO ATUAL.
+// O §15.2 do eiff-inbox diz "setores … vazios" (retrato de antes da 0058); o §16.1 diz "12 setores, 1 configuração".
+// Procurar a frase no documento inteiro manteria um estado velho vivo. Estado operacional mutável (produção, operação,
+// flags, ambiente) só vale na SEÇÃO declarada como atual; o histórico não é apagado e não vence.
+// =====================================================================================================
+
+describe('18 · autoridade do estado atual (histórico ≠ estado vigente)', () => {
+  const inbox = projetarModulo(moduloPorId('INBOX')!, []);
+  const comp = (id: string) => inbox.componentes.find((c) => c.id === id)!;
+  const cat = (id: string) => moduloPorId('INBOX')!.componentes.find((c) => c.id === id)!;
+  const DOC_INBOX = 'docs/eiff-inbox.md';
+
+  it('1 · rotearNoServidor é provado na localização atual (ativacao.ts) e a integração passa pelo webhook → montarPortasInbox', () => {
+    const ev = cat('OCTOPUS_INTEGRADO').evidencias!;
+    expect(ev.some((e) => e.referencia === 'src/core/inbox/ativacao.ts' && e.simbolo === 'rotearNoServidor')).toBe(true);
+    expect(ev.some((e) => e.referencia === 'netlify/functions/channel-meta-webhook.ts' && e.simbolo === 'montarPortasInbox')).toBe(true);
+    expect(ev.some((e) => e.referencia === 'netlify/functions/channel-meta-webhook.ts' && e.simbolo === 'rotearNoServidor')).toBe(false);
+    for (const e of ev) expect(sinalPresente(e), `${e.referencia} # ${e.simbolo}`).toBe(true);
+    expect(comp('OCTOPUS_INTEGRADO').estado).toBe('CONCLUIDO');
+  });
+
+  it('2 · 0058 existe (migration escrita e provada no smoke)', () => {
+    const ev = cat('DEFAULTS_0058').evidencias!;
+    expect(ev.find((e) => e.tipo === 'migration')!.referencia).toBe('supabase/migrations/0058_inbox_defaults.sql');
+    for (const e of ev.filter((x) => x.tipo !== 'documento')) expect(sinalPresente(e), e.referencia).toBe(true);
+  });
+
+  it('3 · 0058 foi aplicada em produção — registro na seção atual (§16.1) e no estado do projeto (CLAUDE.md)', () => {
+    const docs = cat('DEFAULTS_0058').evidencias!.filter((e) => e.tipo === 'documento');
+    expect(docs.map((e) => e.secao)).toEqual([SECOES_ATUAIS.inboxDefaults, SECOES_ATUAIS.estadoProjeto]);
+    for (const e of docs) expect(sinalPresente(e), e.simbolo).toBe(true);
+    expect(comp('DEFAULTS_0058').estado).toBe('CONCLUIDO');
+    expect(comp('DEFAULTS_0058').natureza).toBe('PRODUCAO');
+  });
+
+  it('4 · 12 setores são estado atual: a seção vigente (§16.1) sustenta, e setores saíram dos pré-requisitos do tráfego real', () => {
+    const atual = secaoDe(conteudo(DOC_INBOX), SECOES_ATUAIS.inboxDefaults)!;
+    expect(atual).toContain('12 setores');
+    const pre = cat('TRAFEGO_REAL').pendenciaDeclarada!;
+    expect(pre.some((e) => /[Ss]etores/.test(e.simbolo ?? ''))).toBe(false);
+  });
+
+  it('5 · a seção histórica "vazios" não vence a atual: a frase existe no documento e no §15.2, mas não no §16.5; ancorada no estado atual, a guarda dispara', () => {
+    const texto = conteudo(DOC_INBOX);
+    const frase = '| Setores/configuração do Inbox na organização | **vazios**';
+    expect(texto.includes(frase)).toBe(true); // o histórico continua lá: nada foi apagado
+    expect(secaoDe(texto, SECOES_ATUAIS.inboxShadow)!.includes(frase)).toBe(true);
+    expect(secaoDe(texto, SECOES_ATUAIS.inboxCredencial)!.includes(frase)).toBe(false);
+    // o plano da 1D, lido com autoridade do estado atual, não se sustenta mais → drift humano
+    const plano1D: ComponentePlanejado = { moduloId: 'INBOX', componente: { id: 'TRAFEGO_REAL', titulo: 'Tráfego externo real', natureza: 'OPERACAO', pendenciaDeclarada: [{ tipo: 'documento', referencia: DOC_INBOX, simbolo: frase, secao: SECOES_ATUAIS.inboxCredencial }] } };
+    expect(driftDePendencias([plano1D])).toEqual([mensagemPendenciaSumiu('TRAFEGO_REAL')]);
+    // e sem seção (busca no documento inteiro) a frase histórica "sustentaria" o plano — por isso é proibido para estado operacional
+    const semSecao: ComponentePlanejado = { moduloId: 'INBOX', componente: { ...plano1D.componente, pendenciaDeclarada: [{ tipo: 'documento', referencia: DOC_INBOX, simbolo: frase }] } };
+    expect(driftDePendencias([semSecao])).toEqual([]);
+  });
+
+  it('estado operacional mutável exige autoridade atual: toda evidência documental e toda pendência de PRODUÇÃO/OPERAÇÃO declara a seção, e a seção existe', () => {
+    for (const mo of MODULOS_CONSTRUCAO) for (const c of mo.componentes) {
+      if (c.natureza !== 'PRODUCAO' && c.natureza !== 'OPERACAO') continue;
+      const docs = [...(c.evidencias ?? []).filter((e) => e.tipo === 'documento'), ...(c.pendenciaDeclarada ?? [])];
+      for (const e of docs) {
+        expect(e.secao, `${mo.id}/${c.id}: ${e.referencia} sem seção de estado atual`).toBeTruthy();
+        expect(secaoDe(conteudo(e.referencia), e.secao!), `${mo.id}/${c.id}: seção não encontrada: ${e.secao}`).not.toBeNull();
+      }
+    }
+    for (const t of Object.values(SECOES_ATUAIS)) expect(t).toMatch(/^#{2,4} /);
+  });
+
+  it('6 · kill switches têm evidência real: flags lidas no servidor, montagem única e testes; valores de produção na seção atual', () => {
+    for (const e of cat('ATIVACAO').evidencias!) expect(sinalPresente(e), `${e.referencia} # ${e.simbolo ?? ''}`).toBe(true);
+    expect(comp('ATIVACAO').estado).toBe('CONCLUIDO');
+    const flags = cat('SHADOW_MODE').evidencias!.find((e) => e.secao === SECOES_ATUAIS.inboxFlags)!;
+    expect(flags.simbolo).toContain('EIFF_INBOX_ROUTER_ENABLED=true');
+    expect(sinalPresente(flags)).toBe(true);
+  });
+
+  it('7 · router determinístico em produção (§16.8, dado de teste) ≠ tráfego externo real', () => {
+    const r = cat('SHADOW_MODE').evidencias!.filter((e) => e.secao === SECOES_ATUAIS.inboxRoteamentoProducao);
+    expect(r.length).toBe(2);
+    for (const e of r) expect(sinalPresente(e), e.simbolo).toBe(true);
+    expect(comp('SHADOW_MODE').natureza).toBe('PRODUCAO');
+    expect(comp('TRAFEGO_REAL').estado).toBe('PLANEJADO');
+    expect(comp('TRAFEGO_REAL').natureza).toBe('OPERACAO');
+    expect(cat('TRAFEGO_REAL').evidencias).toBeUndefined();
+  });
+
+  it('8 · IA implementada ≠ IA operacional: o provedor existe (código, concluído) e o uso em produção está desligado (plano ancorado em "ANTHROPIC OFF")', () => {
+    expect(comp('IA_SERVIDOR').estado).toBe('CONCLUIDO');
+    expect(comp('IA_SERVIDOR').natureza).toBe('CODIGO');
+    expect(comp('IA_OPERACIONAL').estado).toBe('PLANEJADO');
+    expect(comp('IA_OPERACIONAL').natureza).toBe('OPERACAO');
+    const p = cat('IA_OPERACIONAL').pendenciaDeclarada!;
+    expect(p.map((e) => [e.secao, e.simbolo])).toEqual([[SECOES_ATUAIS.inboxFlags, 'ANTHROPIC OFF · OUTBOUND OFF · FACTORY OFF']]);
+    expect(sinalPresente(p[0])).toBe(true);
+  });
+
+  it('9 · outbound off é segurança por desenho: evidência da fronteira, nunca bloqueio nem plano', () => {
+    const f = cat('FRONTEIRAS');
+    expect(f.evidencias!.some((e) => e.referencia === 'src/core/inbox/ativacao.ts' && e.simbolo === 'outbound: false')).toBe(true);
+    expect(comp('FRONTEIRAS').estado).toBe('CONCLUIDO');
+    expect(inbox.bloqueios).toEqual([]);
+    expect(inbox.componentes.some((c) => c.estado !== 'CONCLUIDO' && /outbound|envio/i.test(c.titulo))).toBe(false);
+  });
+
+  it('10 · a guarda detecta fonte atual incompatível: evidência de produção cuja seção atual deixou de sustentar falha', () => {
+    const velho: EvidenciaConstrucao = { tipo: 'documento', referencia: DOC_INBOX, simbolo: '| Setores/configuração do Inbox na organização | **vazios**', secao: SECOES_ATUAIS.inboxDefaults };
+    expect(sinalPresente(velho)).toBe(false);
+    expect(evidenciasAusentes({ id: 'X', titulo: 'x', natureza: 'PRODUCAO', evidencias: [velho] }).length).toBe(1);
+    const secaoInexistente: EvidenciaConstrucao = { tipo: 'documento', referencia: DOC_INBOX, simbolo: '12 setores', secao: '### 99.9 Não existe' };
+    expect(sinalPresente(secaoInexistente)).toBe(false);
+  });
+
+  it('o Inbox recalculado: em construção, próximo passo = tráfego externo real, e nada do catálogo depende de PR aberto', () => {
+    expect(inbox.estado).toBe('EM_CONSTRUCAO');
+    expect(inbox.proximoPasso).toBe('Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)');
+    const refs = moduloPorId('INBOX')!.componentes.flatMap((c) => [...(c.evidencias ?? []), ...(c.pendenciaDeclarada ?? []), ...(c.sinaisDeImplementacao ?? [])]);
+    for (const e of refs) expect(existe(e.referencia), e.referencia).toBe(true);
+  });
+
+  it('task com "Inbox"/"Octopus" no título ou branch feature/inbox-* continua sem módulo', () => {
+    for (const t of [item({ id: 'x1', title: 'EIFF Inbox: SHADOW MODE real', links: { branch: 'feature/inbox-shadow-mode' } }), item({ id: 'x2', title: 'Octopus observabilidade' })]) {
+      expect(moduloDaTarefa(t)).toBeUndefined();
+    }
+  });
+
+  it('runtime continua sem filesystem nem recorte de seção: a seção é declaração, lida só aqui', () => {
+    const src = conteudo(DOMINIO_PURO);
+    expect(src).not.toMatch(/secaoDe|split\('\\n'\)|existsSync|readFileSync|from 'node:/);
   });
 });

@@ -989,3 +989,41 @@ futuras do Lead Engine no CLAUDE.md, tráfego real e escalação em `docs/eiff-i
 sozinho.
 
 **Mapa vivo.** Inalterado: 20 nós, 29 arestas. O PR #18 é documental e não prova relação arquitetural nova.
+
+### 17.10 MC-CONSTRUCTION-1E — main 0d8fe73 e autoridade do estado atual (24/09/2026)
+
+**O que aconteceu.** Com o PR #20 já aberto, a `main` recebeu o PR #19 (EIFF Inbox — SHADOW MODE real: 0058, kill
+switches, observabilidade). A composição candidato + `0d8fe73` reprovava 5 testes da própria Central — a guarda de
+evidência funcionando: `rotearNoServidor` saiu do webhook (agora a montagem é `montarPortasInbox` em
+`src/core/inbox/ativacao.ts`) e a frase do CLAUDE.md passou de "0056 e 0057 aplicadas" para "0056, 0057 e 0058 …
+aplicadas". A `main` foi mesclada na branch do PR (merge, sem rebase nem force-push) e só a projeção da Central mudou.
+
+**Inbox na main atual.** Novos componentes concluídos, cada um com evidência real: *Controles de ativação* (kill
+switches `EIFF_INBOX_ENABLED`/`ROUTER`/`LLM`/`OUTBOUND` lidos só no servidor; `montarPortasInbox` é o único ponto de
+montagem), *Observabilidade do Shadow Mode* (últimas decisões e baseline confirmação × override) e *Defaults
+versionados em produção* (0058 com 12 setores e configuração padrão; um componente só, sem um por detalhe). O Shadow
+Mode passou a incluir o router determinístico **aplicando** em produção com dado de teste (§ 16.8: `consultar_pagamento`
+→ FINANCEIRO, confiança 0,80, `ATRIBUIR_SETOR`, eventos ROUTED e STATUS_CHANGED). Outbound desligado é segurança por
+desenho (`outbound: false` em `ativacao.ts`, evidência da fronteira), nunca bloqueio. IA: o provedor existe (código,
+concluído), mas o uso em produção está desligado por decisão (`EIFF_INBOX_LLM_ENABLED=false`, "ANTHROPIC OFF") — vira o
+plano *Refino por IA ligado no roteamento em produção*. Resultado derivado: **18/21, em construção**; próximo passo:
+*Tráfego externo real* — agora dependente só de `SUPABASE_SERVICE_ROLE_KEY` e das variáveis da Meta (§ 16.3/§ 16.5);
+os setores saíram dos pré-requisitos.
+
+**Autoridade do estado atual.** O § 15.2 continua dizendo "setores … **vazios**" — está certo como registro histórico e
+não foi editado. O erro seria a Central ler o documento inteiro e aceitar essa frase como estado vigente. Agora cada
+evidência documental e cada pendência de natureza PRODUÇÃO ou OPERAÇÃO declara `secao`: o título exato da seção que
+representa o estado atual (tabela única `SECOES_ATUAIS` em `construcao.ts`). O teste recorta **só** aquela seção (da
+linha do título ao próximo título de nível igual ou maior — recorte explícito, não parser nem "última frase vence") e
+procura o símbolo ali. Regras presas por teste: estado operacional mutável sem seção reprova; seção inexistente
+reprova; a frase histórica existe no § 15.2 e não no § 16.5, e um plano ancorado no estado atual com ela dispara a
+guarda, enquanto a mesma frase sem seção "sustentaria" o plano — por isso a busca no documento inteiro é proibida para
+estado operacional. O runtime continua sem arquivo e sem recorte.
+
+**As guardas agora protegem três situações:** (A) superfície nova sem classificação; (B) componente planejado que ganha
+sinal de implementação ou cuja frase-fonte de pendência some; (C) fonte declarada como estado atual que deixa de
+sustentar a classificação registrada — evidência de produção cuja seção vigente não contém mais o fato, ou pendência
+cuja seção vigente não a declara mais.
+
+**Mapa vivo.** Inalterado em nós e arestas (20/29); só o rótulo da aresta `WEBHOOK → INBOX` passou a citar
+`montarPortasInbox`. `ativacao.ts`, 0058 e observabilidade são partes internas do Inbox.

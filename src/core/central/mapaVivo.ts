@@ -119,7 +119,7 @@ export const ARESTAS: ArestaMapa[] = [
   { de: 'IDENTIDADE', para: 'CONTROL', tipo: 'dependencia', rotulo: 'papel e organização vêm do banco' },
   { de: 'AUDITORIA', para: 'META', tipo: 'observa', rotulo: 'saúde do canal' },
   // EIFF Inbox — só as duas relações provadas em código (ver NOS_INBOX)
-  { de: 'WEBHOOK', para: 'INBOX', tipo: 'fluxo', rotulo: 'ChannelInboundEvent + conteúdo → inbox_ingest → rotearNoServidor' },
+  { de: 'WEBHOOK', para: 'INBOX', tipo: 'fluxo', rotulo: 'ChannelInboundEvent + conteúdo → montarPortasInbox → inbox_ingest → roteamento' },
   { de: 'CONTROL', para: 'INBOX', tipo: 'dependencia', rotulo: 'RLS espelha a matriz (inbox_role); o router lê obra e perfis' },
 
   // ------------------------------------------------------- ciclo de desenvolvimento (demanda -> prod)
