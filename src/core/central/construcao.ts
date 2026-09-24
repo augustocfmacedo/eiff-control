@@ -138,7 +138,12 @@ const fn = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'funcao
 const scr = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'script', referencia, simbolo });
 const mig = (referencia: string, simbolo?: string): Evidencia => ({ tipo: 'migration', referencia, simbolo });
 
-/** Títulos exatos das seções que a Central usa como autoridade do estado atual. Um lugar só. */
+/**
+ * Títulos exatos das seções que a Central usa como autoridade do estado atual. Um lugar só.
+ * Recorte (feito só no teste): da linha do título ao próximo título de nível igual ou maior. O título do documento
+ * (nível 1) é a exceção explícita: vale o PREÂMBULO, até o primeiro título seguinte de qualquer nível — nunca o
+ * documento inteiro, que é justamente a busca proibida para estado operacional.
+ */
 export const SECOES_ATUAIS = {
   inboxAplicacao: '### 15.1 O que foi feito',
   inboxShadow: '### 15.2 Estágio operacional: SHADOW MODE',
@@ -150,6 +155,8 @@ export const SECOES_ATUAIS = {
   inboxRoteamentoProducao: '### 16.8 Resultado em produção nesta ativação (dados de teste, só contagens)',
   inboxPendencias: '### 14.7 Fora de escopo e pendências',
   estadoProjeto: '## Estado e decisões (atualizar ao mudar)',
+  /** preâmbulo "Estado em …" do docs/lead-engine-1.0.md: é ele que o Lead Engine atualiza a cada gate */
+  leadEngineEstado: '# EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida',
 } as const;
 
 
@@ -324,11 +331,27 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     rotas: [],
     descricao: 'Entrada governada de candidatos: intake idempotente, evidência imutável, revisão humana e a fonte CNO.',
     componentes: [
-      { id: 'INTAKE', titulo: 'Intake canônico e fingerprint', evidencias: [mod('src/core/radar/leadEngineIntake.ts', 'classificarIntake'), mig('supabase/migrations/0055_lead_engine_intake.sql')] },
-      { id: 'REVISAO', titulo: 'Fila de revisão e promoção humana', evidencias: [mod('src/core/radar/leadEngineReview.ts', 'filaDeRevisao'), mod('src/screens/radar/LeadEngineCandidatos.tsx')] },
-      { id: 'CNO', titulo: 'Fonte CNO (Dados Abertos)', evidencias: [mod('src/core/radar/cnoDadosAbertos.ts', 'HOST_OFICIAL_CNO')] },
-      { id: 'PILOTO_CNO', titulo: 'Piloto CNO em produção', evidencias: [mod('src/core/radar/cnoPilot.ts', 'CNO_PILOT_POLICY_V1'), doc('docs/lead-engine-1.0.md')] },
-      { id: 'FONTES_FUTURAS', titulo: 'Novas fontes e descoberta automática (PNCP, RFB)', pendenciaDeclarada: [doc('CLAUDE.md', 'Nada de descoberta automática, scheduler, PNCP, RFB, Vibe ou notícias ainda')] },
+      { id: 'INTAKE', titulo: 'Intake canônico e fingerprint', natureza: 'CODIGO', evidencias: [mod('src/core/radar/leadEngineIntake.ts', 'classificarIntake'), mig('supabase/migrations/0055_lead_engine_intake.sql')] },
+      { id: 'REVISAO', titulo: 'Fila de revisão e promoção humana', natureza: 'CODIGO', evidencias: [mod('src/core/radar/leadEngineReview.ts', 'filaDeRevisao'), mod('src/screens/radar/LeadEngineCandidatos.tsx')] },
+      { id: 'CNO', titulo: 'Fonte CNO (Dados Abertos)', natureza: 'CODIGO', evidencias: [mod('src/core/radar/cnoDadosAbertos.ts', 'HOST_OFICIAL_CNO')] },
+      { id: 'PILOTO_CNO', titulo: 'Piloto CNO em produção (candidatos PENDING aguardando decisão humana)', natureza: 'PRODUCAO', evidencias: [mod('src/core/radar/cnoPilot.ts', 'CNO_PILOT_POLICY_V1'), doc('docs/lead-engine-1.0.md', '**ingestão piloto executada em 23/09/2026**', SECOES_ATUAIS.leadEngineEstado), doc('CLAUDE.md', '**Lead Engine em produção desde 23/09/2026**', SECOES_ATUAIS.estadoProjeto)] },
+      // LE3-D.1 (PR #15, 7674125): a aba Candidatos passou a mostrar obra, sinal e data oficial do CNO, com filtros de
+      // revisão, métricas do piloto e handoff para decisores — fechado no preâmbulo "Estado em …" do documento.
+      { id: 'REVISAO_COMERCIAL', titulo: 'Revisão comercial dos candidatos: obra, sinal, filtros, métricas do piloto e handoff para decisores', natureza: 'INTEGRACAO', evidencias: [mod('src/core/radar/leadEngineRevisao.ts', 'filtrarRevisao'), mod('src/core/radar/leadEngineRevisao.ts', 'metricasPiloto'), mod('src/core/radar/cnoDadosAbertos.ts', 'contextoCnoDoPayload'), mod('src/screens/radar/LeadEngineCandidatos.tsx', 'handoffDecisores'), mod('src/core/radar/leadEngineRevisao.test.ts'), doc('docs/lead-engine-1.0.md', '**LE3-D.1 fechado**', SECOES_ATUAIS.leadEngineEstado)] },
+      // LE3-E: o DESENHO existe em código (monitor de snapshot, retenção que nunca apaga, porta do agendamento sem escrita
+      // própria) — é código, não operação. O preâmbulo diz "desenhado, não ativado"; §40 é o registro do gate (histórico).
+      { id: 'DESCOBERTA_DESENHO', titulo: 'Descoberta contínua desenhada: monitor de snapshot, retenção e executor (protótipo, não ativado)', natureza: 'CODIGO', evidencias: [mod('src/core/radar/cnoMonitor.ts', 'decidirMonitor'), mod('src/core/radar/cnoMonitor.ts', 'planoExecucaoAgendada'), mod('src/core/radar/cnoMonitor.ts', 'registrosARemoverAoSairDaJanela'), mod('src/core/radar/cnoMonitor.test.ts'), doc('docs/lead-engine-1.0.md', '**LE3-E desenhado, não ativado**', SECOES_ATUAIS.leadEngineEstado)] },
+      {
+        id: 'BACKFILL_90D', titulo: 'Descoberta contínua: backfill da janela de 90 dias gravado', natureza: 'OPERACAO',
+        // ensaiado read-only (§40.1), nada gravado: a pendência é o que o preâmbulo afirma hoje.
+        pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '65 novos, nada gravado', SECOES_ATUAIS.leadEngineEstado)],
+      },
+      {
+        id: 'MONITOR_ATIVO', titulo: 'Descoberta contínua: monitor diário agendado e ligado', natureza: 'OPERACAO',
+        // scheduler desligado por decisão (§40.4 "Nenhum cron foi ativado"); LE-3 só fecha quando isto estiver ativo.
+        pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '**LE3-E desenhado, não ativado**', SECOES_ATUAIS.leadEngineEstado), doc('docs/lead-engine-1.0.md', 'LE-3 não está concluído enquanto o LE3-E não estiver ativo', SECOES_ATUAIS.leadEngineEstado)],
+      },
+      { id: 'FONTES_FUTURAS', titulo: 'Novas fontes: PNCP e CNPJ/RFB (blocos seguintes do roadmap)', natureza: 'CODIGO', pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '**LE-4 a LE-8 não iniciados.**', SECOES_ATUAIS.leadEngineEstado)] },
     ],
   }),
 
@@ -377,9 +400,9 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'RLS_PRODUCAO', titulo: 'RLS e autoridade provadas em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**RLS/autoridade** (transação com rollback)', SECOES_ATUAIS.inboxProvas)] },
       {
         id: 'TRAFEGO_REAL', titulo: 'Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)', natureza: 'OPERACAO',
-        // autoridade atual: §16.5 e §16.3 — faltam SUPABASE_SERVICE_ROLE_KEY e as variáveis da Meta (com os phone number
+        // autoridade atual: §16.5 e §16.3 — faltam a chave de serviço do Supabase e as variáveis da Meta (com os phone number
         // IDs e o registro do webhook). Setores NÃO são mais pré-requisito: a 0058 os criou (§16.1). O §15.2 é histórico.
-        pendenciaDeclarada: [doc('docs/eiff-inbox.md', '(1) `SUPABASE_SERVICE_ROLE_KEY`; (2) as sete variáveis da Meta', SECOES_ATUAIS.inboxCredencial), doc('docs/eiff-inbox.md', '**Ausentes**: `SUPABASE_SERVICE_ROLE_KEY`', SECOES_ATUAIS.inboxAmbiente)],
+        pendenciaDeclarada: [doc('docs/eiff-inbox.md', '(2) as sete variáveis da Meta acima e o registro da URL', SECOES_ATUAIS.inboxCredencial), doc('docs/eiff-inbox.md', '(nenhuma outra função a tem;', SECOES_ATUAIS.inboxAmbiente)],
       },
       {
         id: 'IA_OPERACIONAL', titulo: 'Refino por IA ligado no roteamento em produção (depois da baseline do Shadow Mode)', natureza: 'OPERACAO',

@@ -1027,3 +1027,46 @@ cuja seção vigente não a declara mais.
 
 **Mapa vivo.** Inalterado em nós e arestas (20/29); só o rótulo da aresta `WEBHOOK → INBOX` passou a citar
 `montarPortasInbox`. `ativacao.ts`, 0058 e observabilidade são partes internas do Inbox.
+
+### 17.11 MC-CONSTRUCTION-1F — Lead Engine na main 7674125 (24/09/2026)
+
+**O que aconteceu.** A `main` recebeu o PR #15 (Lead Engine 3 — revisão comercial dos candidatos e desenho da
+descoberta contínua do CNO). Diferente do PR #19, a composição candidato + `7674125` ficou **verde**: a Central
+mostrava o Lead Engine em 4/5 com o próximo passo "Novas fontes e descoberta automática (PNCP, RFB)", e nenhuma
+guarda acusava. Motivo: o único plano do módulo estava ancorado numa frase do CLAUDE.md que continua lá ("Nada de
+descoberta automática, scheduler, …"), fora da seção de estado atual e sem `secao` — a regra da 1E só exigia seção
+para componentes de natureza PRODUÇÃO/OPERAÇÃO, e o plano não tinha natureza. A `main` foi mesclada na branch do PR
+(merge, sem rebase nem force-push) e só a projeção da Central mudou.
+
+**Autoridade atual do Lead Engine.** É o preâmbulo "Estado em …" do `docs/lead-engine-1.0.md`, que o próprio Lead
+Engine reescreve a cada gate: LE3-D.1 fechado; LE3-E desenhado, não ativado; LE-3 em andamento; LE-4 a LE-8 não
+iniciados. As §39/§40 são registros de gate — o título da §40 diz "(não ativado)" e o texto "Não ativou scheduler"
+para sempre, inclusive depois da ativação; por isso nunca sustentam estado atual. O preâmbulo não tem título próprio:
+`SECOES_ATUAIS.leadEngineEstado` é o título do documento e o recorte de **nível 1** vale só até o primeiro título
+seguinte de qualquer nível — nunca o documento inteiro (a busca proibida). Mesmo mecanismo, uma regra a mais.
+
+**Lead Engine recalculado.** Concluídos: intake, fila de revisão, fonte CNO, piloto em produção (agora PRODUÇÃO, com
+o preâmbulo e o estado do CLAUDE.md como autoridade), **revisão comercial dos candidatos** (LE3-D.1: projeção de obra
+e sinal, filtros, métricas do piloto e handoff para decisores; integrado na aba Candidatos) e **descoberta contínua
+desenhada** (LE3-E como CÓDIGO: `decidirMonitor`, `planoExecucaoAgendada`, retenção que nunca apaga). Planos:
+*backfill da janela de 90 dias gravado* (OPERAÇÃO; o preâmbulo diz "65 novos, nada gravado"), *monitor diário
+agendado e ligado* (OPERAÇÃO; "LE3-E desenhado, não ativado") e *novas fontes PNCP e CNPJ/RFB* ("LE-4 a LE-8 não
+iniciados"). Resultado derivado: **6/9, em construção**; próximo passo: *Descoberta contínua: backfill da janela de
+90 dias gravado*. Desenho não é operação: nenhum componente de OPERAÇÃO do Lead Engine está concluído.
+
+**Guarda ampliada, não nova.** A guarda C passou a exigir `secao` em **toda** pendência documental, de qualquer
+natureza — pendência é sempre afirmação sobre o estado atual ("ainda não"). O plano da 1E, reconstruído no teste,
+continua passando pela verificação de frase (a frase existe fora da seção atual) e é reprovado pela regra ampliada;
+a contraprova com o catálogo antigo reprova 7 testes. Simulação da ativação: com o preâmbulo trocado para "LE3-E
+ativado", o plano cai e a guarda dispara, enquanto a §40 e o documento inteiro ainda "sustentariam" o plano.
+
+**Mapa vivo e tarefas.** Mapa inalterado (20 nós, 29 arestas): o PR #15 evolui o Lead Engine por dentro, sem nova
+dependência entre módulos. Título "Lead Engine", branch `feature/lead-engine-*` ou arquivo `radar/*` continuam sem
+módulo.
+
+**Achado do gate (defeito da 1E, corrigido).** Duas âncoras da pendência de tráfego real do Inbox citavam o NOME da
+chave de serviço do Supabase. O catálogo vai inteiro para o bundle do navegador, e a regressão arquitetural do Inbox
+(`inbox.test.ts`) proíbe esse nome no `dist/` quando ele existe. O CI roda os testes antes do build e não via; o `dist`
+local da 1E revelou. As âncoras passaram a frases da mesma seção atual sem o nome (§16.5 "(2) as sete variáveis da Meta
+acima e o registro da URL"; §16.3 "(nenhuma outra função a tem;"), e o bloco 20 prende a regra no código-fonte da
+Central, com ou sem `dist`. Nenhum valor de segredo esteve envolvido — só o nome da variável.

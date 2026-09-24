@@ -32,6 +32,8 @@ const conteudo = (c: string) => fs.readFileSync(c, 'utf8');
 /**
  * Recorte EXPLÍCITO de seção: da linha cujo texto é exatamente o título até o próximo título de nível igual ou maior.
  * Não é parser de Markdown nem inferência cronológica — é a seção que o componente declarou como estado atual.
+ * Título de nível 1 (o do documento) recorta só o PREÂMBULO, até o primeiro título seguinte de qualquer nível: a
+ * seção de nível 1 seria o documento inteiro, que é a busca proibida para estado operacional (MC-CONSTRUCTION-1F).
  */
 const secaoDe = (texto: string, titulo: string): string | null => {
   const ls = texto.split('\n');
@@ -39,7 +41,7 @@ const secaoDe = (texto: string, titulo: string): string | null => {
   if (i < 0) return null;
   const nivel = (titulo.match(/^#+/) ?? [''])[0].length;
   let f = ls.length;
-  for (let j = i + 1; j < ls.length; j++) { const m = ls[j].match(/^(#+)\s/); if (m && m[1].length <= nivel) { f = j; break; } }
+  for (let j = i + 1; j < ls.length; j++) { const m = ls[j].match(/^(#+)\s/); if (m && (nivel === 1 || m[1].length <= nivel)) { f = j; break; } }
   return ls.slice(i, f).join('\n');
 };
 const TELAS = ['src/screens/MissionControl.tsx', 'src/screens/MissionControlVisao.tsx', 'src/screens/MissionControlMapa.tsx', 'src/screens/MissionControlGovernanca.tsx', 'src/screens/MissionControlQuadro.tsx'];
@@ -797,16 +799,19 @@ describe('18 · autoridade do estado atual (histórico ≠ estado vigente)', () 
     expect(driftDePendencias([semSecao])).toEqual([]);
   });
 
-  it('estado operacional mutável exige autoridade atual: toda evidência documental e toda pendência de PRODUÇÃO/OPERAÇÃO declara a seção, e a seção existe', () => {
+  it('estado operacional mutável exige autoridade atual: toda evidência documental de PRODUÇÃO/OPERAÇÃO e TODA pendência documental declara a seção, e a seção existe', () => {
+    // 1F: pendência é sempre afirmação sobre o estado atual ("ainda não"), qualquer que seja a natureza — o plano do Lead
+    // Engine ancorado no CLAUDE.md sem seção continuou "sustentado" enquanto a fonte atual já tinha outro estado.
     for (const mo of MODULOS_CONSTRUCAO) for (const c of mo.componentes) {
-      if (c.natureza !== 'PRODUCAO' && c.natureza !== 'OPERACAO') continue;
-      const docs = [...(c.evidencias ?? []).filter((e) => e.tipo === 'documento'), ...(c.pendenciaDeclarada ?? [])];
+      const operacional = c.natureza === 'PRODUCAO' || c.natureza === 'OPERACAO';
+      const docs = [...(operacional ? (c.evidencias ?? []).filter((e) => e.tipo === 'documento') : []), ...(c.pendenciaDeclarada ?? []).filter((e) => e.tipo === 'documento')];
       for (const e of docs) {
         expect(e.secao, `${mo.id}/${c.id}: ${e.referencia} sem seção de estado atual`).toBeTruthy();
         expect(secaoDe(conteudo(e.referencia), e.secao!), `${mo.id}/${c.id}: seção não encontrada: ${e.secao}`).not.toBeNull();
       }
     }
-    for (const t of Object.values(SECOES_ATUAIS)) expect(t).toMatch(/^#{2,4} /);
+    // nível 1 só como preâmbulo (recorte até o primeiro título); nunca o documento inteiro
+    for (const t of Object.values(SECOES_ATUAIS)) expect(t).toMatch(/^#{1,4} /);
   });
 
   it('6 · kill switches têm evidência real: flags lidas no servidor, montagem única e testes; valores de produção na seção atual', () => {
@@ -869,5 +874,121 @@ describe('18 · autoridade do estado atual (histórico ≠ estado vigente)', () 
   it('runtime continua sem filesystem nem recorte de seção: a seção é declaração, lida só aqui', () => {
     const src = conteudo(DOMINIO_PURO);
     expect(src).not.toMatch(/secaoDe|split\('\\n'\)|existsSync|readFileSync|from 'node:/);
+  });
+});
+
+
+// =====================================================================================================
+// MC-CONSTRUCTION-1F — Lead Engine na main 7674125 (PR #15): LE3-D.1 fechado, LE3-E desenhado e NÃO ativado.
+// Antes desta rodada a suíte ficava verde sobre a composição: o plano do Lead Engine estava ancorado numa frase do
+// CLAUDE.md fora da seção de estado atual e sem seção — continuava "sustentado" enquanto a fonte atual (o preâmbulo
+// "Estado em …" do docs/lead-engine-1.0.md) já registrava outro estado. A guarda C foi ampliada: toda pendência
+// documental declara a seção atual; o título do documento vale como preâmbulo.
+// =====================================================================================================
+
+describe('19 · Lead Engine: fechado ≠ desenhado ≠ operacional (autoridade do estado atual)', () => {
+  const DOC_LE = 'docs/lead-engine-1.0.md';
+  const le = projetarModulo(moduloPorId('LEAD_ENGINE')!, []);
+  const comp = (id: string) => le.componentes.find((c) => c.id === id)!;
+  const cat = (id: string) => moduloPorId('LEAD_ENGINE')!.componentes.find((c) => c.id === id)!;
+  const preambulo = () => secaoDe(conteudo(DOC_LE), SECOES_ATUAIS.leadEngineEstado)!;
+  const S40 = '## 40. LE3-E — desenho da descoberta contínua (não ativado)';
+
+  it('1 · LE3-D.1 aparece como concluído: revisão comercial implementada, testada, integrada na aba Candidatos e fechada no estado atual', () => {
+    for (const e of cat('REVISAO_COMERCIAL').evidencias!) expect(sinalPresente(e), `${e.referencia} # ${e.simbolo ?? ''}`).toBe(true);
+    expect(comp('REVISAO_COMERCIAL').estado).toBe('CONCLUIDO');
+    expect(comp('REVISAO_COMERCIAL').natureza).toBe('INTEGRACAO');
+    expect(cat('REVISAO_COMERCIAL').evidencias!.find((e) => e.tipo === 'documento')!.secao).toBe(SECOES_ATUAIS.leadEngineEstado);
+  });
+
+  it('2 · LE3-E não aparece como operacional: o desenho é código concluído, e nenhum componente de operação do Lead Engine está concluído', () => {
+    expect(comp('DESCOBERTA_DESENHO').estado).toBe('CONCLUIDO');
+    expect(comp('DESCOBERTA_DESENHO').natureza).toBe('CODIGO');
+    for (const e of cat('DESCOBERTA_DESENHO').evidencias!) expect(sinalPresente(e), `${e.referencia} # ${e.simbolo ?? ''}`).toBe(true);
+    expect(le.componentes.filter((c) => c.natureza === 'OPERACAO' && c.estado === 'CONCLUIDO')).toEqual([]);
+    expect(le.componentes.some((c) => c.estado === 'CONCLUIDO' && /ligado|agendado e/i.test(c.titulo))).toBe(false);
+  });
+
+  it('3 · scheduler desligado não vira sucesso: o monitor agendado é plano de operação, sustentado pelo preâmbulo atual', () => {
+    expect(comp('MONITOR_ATIVO').estado).toBe('PLANEJADO');
+    expect(comp('MONITOR_ATIVO').natureza).toBe('OPERACAO');
+    expect(cat('MONITOR_ATIVO').evidencias).toBeUndefined();
+    for (const e of cat('MONITOR_ATIVO').pendenciaDeclarada!) {
+      expect(e.secao).toBe(SECOES_ATUAIS.leadEngineEstado);
+      expect(sinalPresente(e), e.simbolo).toBe(true);
+    }
+  });
+
+  it('4 · backfill não executado não vira sucesso: ensaio read-only é plano, "nada gravado" vem do estado atual', () => {
+    expect(comp('BACKFILL_90D').estado).toBe('PLANEJADO');
+    expect(comp('BACKFILL_90D').natureza).toBe('OPERACAO');
+    expect(cat('BACKFILL_90D').evidencias).toBeUndefined();
+    const p = cat('BACKFILL_90D').pendenciaDeclarada!;
+    expect(p.map((e) => [e.secao, e.simbolo])).toEqual([[SECOES_ATUAIS.leadEngineEstado, '65 novos, nada gravado']]);
+    expect(sinalPresente(p[0])).toBe(true);
+  });
+
+  it('5 · o Lead Engine continua não concluído (LE-3 em andamento, LE-4..LE-8 não iniciados) e o próximo passo é legível, sem código de gate', () => {
+    expect(le.estado).toBe('EM_CONSTRUCAO');
+    expect(le.concluidos).toBeLessThan(le.total);
+    expect(le.concluidos).toBe(le.componentes.filter((c) => c.estado === 'CONCLUIDO').length);
+    expect(le.proximoPasso).toBe('Descoberta contínua: backfill da janela de 90 dias gravado');
+    expect(le.proximoPasso).not.toMatch(/LE-?\d/);
+    expect(preambulo()).toContain('**LE-3 EM ANDAMENTO');
+    expect(comp('FONTES_FUTURAS').estado).toBe('PLANEJADO');
+    expect(sinalPresente(cat('FONTES_FUTURAS').pendenciaDeclarada![0])).toBe(true);
+  });
+
+  it('6 · a autoridade atual do Lead Engine é o preâmbulo: recorte explícito, menor que o documento, terminando antes da §1', () => {
+    const texto = conteudo(DOC_LE);
+    const pre = preambulo();
+    expect(pre.startsWith(SECOES_ATUAIS.leadEngineEstado)).toBe(true);
+    expect(pre).toContain('Estado em ');
+    expect(pre).not.toContain('## 1. Verificação de baseline');
+    expect(pre.length).toBeLessThan(texto.length / 10);
+    const docs = moduloPorId('LEAD_ENGINE')!.componentes.flatMap((c) => [...(c.evidencias ?? []), ...(c.pendenciaDeclarada ?? [])]).filter((e) => e.tipo === 'documento');
+    for (const e of docs) expect(e.secao, `${e.referencia} # ${e.simbolo}`).toBeTruthy();
+  });
+
+  it('7 · histórico não sobrepõe o estado atual: §40 fica dizendo "não ativado" para sempre; ancorado nele, o plano nunca cairia', () => {
+    const texto = conteudo(DOC_LE);
+    expect(secaoDe(texto, S40)).toContain('Não ativou scheduler');
+    // simulação do dia em que o LE3-E for ativado: o preâmbulo muda; o registro do gate (§40) continua igual
+    const ativado = texto.replace('**LE3-E desenhado, não ativado**', '**LE3-E ativado**');
+    expect(secaoDe(ativado, SECOES_ATUAIS.leadEngineEstado)!.includes('**LE3-E desenhado, não ativado**')).toBe(false); // plano cai → guarda dispara
+    expect(secaoDe(ativado, S40)!.includes('Não ativou scheduler')).toBe(true); // o histórico "sustentaria" o plano
+    expect(ativado.includes('não ativado')).toBe(true); // e o documento inteiro também
+  });
+
+  it('8 · regressão: o plano da 1E (CLAUDE.md, sem seção) seguia verde com o LE3-E desenhado; a guarda ampliada o recusa', () => {
+    const plano1E: ComponentePlanejado = { moduloId: 'LEAD_ENGINE', componente: { id: 'FONTES_FUTURAS', titulo: 'Novas fontes e descoberta automática (PNCP, RFB)', pendenciaDeclarada: [{ tipo: 'documento', referencia: 'CLAUDE.md', simbolo: 'Nada de descoberta automática, scheduler, PNCP, RFB, Vibe ou notícias ainda' }] } };
+    expect(driftDePendencias([plano1E])).toEqual([]); // a frase existe fora da seção atual: sem seção, nada acusaria
+    expect(plano1E.componente.pendenciaDeclarada!.every((e) => !!(e as EvidenciaConstrucao).secao)).toBe(false); // regra ampliada do bloco 18: reprovado
+    expect(secaoDe(conteudo('CLAUDE.md'), SECOES_ATUAIS.estadoProjeto)!.includes('Nada de descoberta automática')).toBe(false);
+  });
+
+  it('9 · task continua contratual: título "Lead Engine", branch feature/lead-engine-* ou arquivo radar/* não dão módulo', () => {
+    for (const t of [
+      item({ id: 'l1', title: 'Lead Engine 3 — commercial candidate review and continuous CNO discovery design', links: { branch: 'feature/lead-engine-3e' } }),
+      item({ id: 'l2', title: 'LE3-E monitor', links: { branch: 'feature/lead-engine-3' } }),
+      item({ id: 'l3', title: 'src/core/radar/cnoMonitor.ts' }),
+    ]) expect(moduloDaTarefa(t)).toBeUndefined();
+  });
+
+  it('10 · o mapa não muda: o PR #15 evolui o Lead Engine por dentro, sem nova dependência entre módulos', () => {
+    expect(NOS.length).toBe(20);
+    expect(ARESTAS.length).toBe(29);
+    expect(moduloPorId('LEAD_ENGINE')!.dependeDe).toEqual(['RADAR']);
+  });
+});
+
+// Achado do gate da 1F: a âncora da 1E citava o NOME da chave de serviço do Supabase e o catálogo vai inteiro para o
+// bundle do navegador — a regressão arquitetural do Inbox (inbox.test.ts, que varre dist/ quando existe) reprovou. O CI
+// roda os testes antes do build e não via. Aqui a regra vale sobre o código-fonte, com ou sem dist.
+describe('20 · o catálogo vai para o navegador: nenhum nome de segredo nem RPC server-only', () => {
+  it('construcao.ts, mapaVivo.ts e as telas do Mission Control não citam a chave de serviço, a organização do ingest nem rpc/inbox_ingest', () => {
+    for (const f of [DOMINIO_PURO, 'src/core/central/mapaVivo.ts', ...TELAS]) {
+      expect(conteudo(f), f).not.toMatch(/SERVICE_ROLE|EIFF_INBOX_ORGANIZATION_ID|rpc\/inbox_ingest/);
+    }
   });
 });
