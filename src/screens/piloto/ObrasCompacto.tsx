@@ -1,8 +1,8 @@
-// UX-P03 — Obras compacto: tela do piloto (somente leitura, sem store).
+// UX-P03/UX-P04 — Obras compacto: tela do piloto (somente leitura, sem store), integrada em #/piloto/obras.
 //
-// Recebe uma `EntradaObras` ja resolvida (fixture na demonstracao isolada e nos testes; na integracao futura o App
-// fornecera Dataset, usuario, sync e o conjunto de obras visiveis ja filtrado pela regra oficial) e apresenta o modelo
-// puro de `montarObras`. A tela nao decide nada de obra nem de visibilidade: so apresenta. Blocos: cabecalho com
+// Recebe uma `EntradaObras` ja resolvida pelo App (`entradaDoApp` sobre Dataset, usuario, sync e o conjunto de obras
+// visiveis que o App calcula pela regra oficial; a fixture existe so nos testes) e apresenta o modelo puro de
+// `montarObras`. A tela nao decide nada de obra nem de visibilidade: so apresenta. Blocos: cabecalho com
 // microfrescor e sincronizacao (separados) → SITUACAO (3 ou 4 tiles conforme a visao) → OBRAS (uma linha por obra
 // visivel) → ATENCAO (agrupada pela severidade canonica; o que nao tem classificacao fica fora dos grupos) →
 // COMPOSICAO em gaveta lateral, so quando pedida. Acoes: apenas leitura ("Ver composicao", "Ver obra", "Ver obras",
@@ -20,9 +20,8 @@ const badgeTom = (t?: Tom): 'ok' | 'warn' | 'bad' | 'info' | 'muted' => (t === '
 const TOM_SEMAFORO: Record<LinhaObra['semaforo'], Tom> = { vermelho: 'bad', amarelo: 'warn', verde: 'ok' };
 const dataHoraCurta = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 
-/** Faixa curta por modo da fonte: teste (fixture) ou local (seed). Em modo remoto nao renderiza nada. */
+/** Modo local: o seed nao e a operacao real, e a tela diz isso; em modo remoto nao renderiza nada. */
 function Faixa({ fonte }: { fonte: ModeloObras['fonte'] }) {
-  if (fonte.modo === 'teste') return <div className="piloto-obra-faixa" role="note" title="Nenhum número desta tela representa a situação real da empresa."><Icon name="aviso" size={13} /><b>PILOTO · DADOS DE TESTE</b><span>dados fictícios{fonte.id ? ` · ${fonte.id}` : ''}</span></div>;
   if (fonte.modo === 'local') return <div className="piloto-obra-faixa" role="note"><Icon name="aviso" size={13} /><b>Modo local</b><span>dados do seed · não são a operação real</span></div>;
   return null;
 }

@@ -1,4 +1,4 @@
-// UX-P03 — Obras compacto: provas do piloto isolado.
+// UX-P03/UX-P04 — Obras compacto: provas do piloto e da integracao ao App.
 //
 // O vitest roda em `environment: 'node'`, sem testing-library: o componente nao e renderizado. O que o piloto DECIDE
 // mora em `obrasCompactoModel.ts` (puro) e e provado contra a saida REAL do motor sobre a fixture; o que so existe no
@@ -12,7 +12,8 @@ import { calcLancamentos, carteiraObras, dashboard } from '../../core/engine';
 import { sugestoesPara } from '../../core/sugestoes';
 import type { Dataset } from '../../core/types';
 import { DATA_BASE_TESTE, FIXTURE_GERADA_EM, OBRA_A, OBRA_B, OBRA_C, PREFIXO_TESTE, ROTULO_TESTE, TODAS_AS_OBRAS, USUARIO_DIRETORIA, USUARIO_GESTOR_A, USUARIO_SEM_OBRA, datasetTeste, entradaDaVariante, type VarianteFixture } from './obrasCompacto.fixtures';
-import { CHECKS_DE_OBRA, ROTULO_SEVERIDADE, SEVERIDADE_DE_CHECK, SEVERIDADE_DE_SEMAFORO, SEVERIDADE_DE_TOM, TETO_ATENCAO, TETO_SITUACAO, TEXTO_CARTEIRA_PARCIAL, VISOES, agruparPorSeveridade, montarObras, tempoRelativo, type EntradaObras, type ModeloObras, type Visao } from './obrasCompactoModel';
+import { CHECKS_DE_OBRA, ROTULO_SEVERIDADE, ROTULO_SINCRONIZACAO, SEVERIDADE_DE_CHECK, SEVERIDADE_DE_SEMAFORO, SEVERIDADE_DE_TOM, TETO_ATENCAO, TETO_SITUACAO, TEXTO_CARTEIRA_PARCIAL, VISOES, agruparPorSeveridade, entradaDoApp, montarObras, tempoRelativo, type EntradaObras, type EstadoDoApp, type ModeloObras, type Visao } from './obrasCompactoModel';
+import seed from '../../data/seed.json';
 
 const AGORA = '2026-09-23T15:00:00.000Z';
 const FONTE = { rotulo: ROTULO_TESTE, modo: 'teste' as const, atualizadoEm: FIXTURE_GERADA_EM, id: 'fixture' };
@@ -314,9 +315,8 @@ describe('concisao', () => {
 
 describe('guardas estaticas: isolamento, imports proibidos, piloto financeiro intacto', () => {
   const pasta = path.resolve('src/screens/piloto');
-  const meus = ['obrasCompactoModel.ts', 'obrasCompacto.fixtures.ts', 'ObrasCompacto.tsx', 'pilotoObras.css', 'mainObras.tsx'];
+  const meus = ['obrasCompactoModel.ts', 'obrasCompacto.fixtures.ts', 'ObrasCompacto.tsx', 'pilotoObras.css'];
   const fonte = (f: string) => fs.readFileSync(path.join(pasta, f), 'utf8');
-  const html = fs.readFileSync(path.resolve('piloto-obras.html'), 'utf8');
 
   it('os arquivos do piloto de obras existem e nao colidem, ignorando caixa, com os do financeiro', () => {
     const todos = fs.readdirSync(pasta);
@@ -331,7 +331,6 @@ describe('guardas estaticas: isolamento, imports proibidos, piloto financeiro in
   it('nenhum fetch, XHR, WebSocket, beacon, storage, service worker, setInterval ou subscription', () => {
     const proibidos = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /serviceWorker/, /localStorage/, /sessionStorage/, /indexedDB/, /navigator\.sendBeacon/, /setInterval/, /\bsubscribe\b/, /EventSource/];
     for (const f of meus) for (const p of proibidos) expect(fonte(f), `${f} usa ${p}`).not.toMatch(p);
-    for (const p of proibidos) expect(html).not.toMatch(p);
   });
   it('o modelo so importa funcoes canonicas de leitura (lista fechada) e nunca recalcula motor', () => {
     const vm = fonte('obrasCompactoModel.ts');
@@ -345,7 +344,7 @@ describe('guardas estaticas: isolamento, imports proibidos, piloto financeiro in
     for (const p of [/obra360\(/, /calcServico\(/, /calcMedicao\(/, /resumoMedicoes\(/, /resumoPeso\(/, /resumoProducao\(/, /producaoPorServico\(/, /fluxo13Semanas\(/, /executarChecks\(/, /consumoAco\(/, /analisarObra\(ds, o, lancs\)\.score\s*[<>]/]) expect(codigo, `chamada proibida no modelo: ${p}`).not.toMatch(p);
   });
   it('a tela e a entrada nunca chamam actions, persistir, salvar, registrar ou navegar do app, nem simulam acao operacional', () => {
-    for (const f of ['ObrasCompacto.tsx', 'mainObras.tsx']) {
+    for (const f of ['ObrasCompacto.tsx']) {
       const s = fonte(f);
       for (const p of [/\bactions\./, /persistir/, /salvar[A-Z]/, /registrar[A-Z]/, /useStore/, /inicializar\(/, /navegar\(/, /\bMedir\b/, /\bAprovar\b/, /\bFaturar\b/, /\bLiquidar\b/]) expect(s, `${f} usa ${p}`).not.toMatch(p);
     }
@@ -361,10 +360,107 @@ describe('guardas estaticas: isolamento, imports proibidos, piloto financeiro in
     for (const f of ['FinanceiroCompacto.tsx', 'financeiroCompactoModel.ts', 'financeiroCompacto.fixtures.ts', 'financeiroCompacto.test.ts', 'piloto.css']) expect(fs.existsSync(path.join(pasta, f))).toBe(true);
     for (const f of meus) expect(fonte(f)).not.toMatch(/financeiroCompacto|FinanceiroCompacto|piloto\.css|piloto-fin/);
   });
-  it('o rotulo PILOTO · DADOS DE TESTE aparece na tela e na entrada, e a fixture nunca e importada pelo modelo', () => {
-    for (const f of ['ObrasCompacto.tsx', 'mainObras.tsx']) expect(fonte(f)).toMatch(/PILOTO · DADOS DE TESTE|ROTULO_TESTE/);
-    expect(fonte('obrasCompactoModel.ts')).not.toMatch(/fixtures/);
-    expect(fonte('ObrasCompacto.tsx')).not.toMatch(/obrasCompacto\.fixtures/);
+  it('UX-P04: a marca de dados de teste saiu do runtime — tela e modelo nao importam a fixture nem citam o rotulo; a fixture segue so para testes', () => {
+    for (const f of ['ObrasCompacto.tsx', 'obrasCompactoModel.ts', 'pilotoObras.css']) {
+      expect(fonte(f)).not.toMatch(/obrasCompacto\.fixtures/);
+      expect(fonte(f)).not.toMatch(/DADOS DE TESTE|ROTULO_TESTE|datasetTeste/);
+    }
+    expect(fs.existsSync(path.join(pasta, 'obrasCompacto.fixtures.ts'))).toBe(true);
+    expect(fs.readFileSync(path.join(pasta, 'obrasCompacto.fixtures.ts'), 'utf8')).toMatch(/PILOTO · DADOS DE TESTE/);
+    expect(fs.existsSync(path.join(pasta, 'mainObras.tsx'))).toBe(false);
+    expect(fs.existsSync(path.resolve('piloto-obras.html'))).toBe(false);
+  });
+});
+
+describe('UX-P04: integracao ao App (adaptador, rota e guardas)', () => {
+  const app = fs.readFileSync(path.resolve('src/App.tsx'), 'utf8');
+  const seedDs = seed as unknown as Dataset;
+  const base = (extra: Partial<EstadoDoApp> = {}): EstadoDoApp => ({ ds: seedDs, usuario: seedDs.usuarios[0], codigosObraVisiveis: seedDs.obras.map((o) => o.codigo), modo: 'remoto', carregando: false, erroInicial: undefined, sync: { status: 'ok', em: '2026-09-23T14:00:00.000Z' }, agora: AGORA, ...extra });
+
+  it('1/3. o Dataset real (seed do app) entra no adaptador sem adaptacao e o conjunto visivel e o que o App passou', () => {
+    const r = entradaDoApp(base());
+    expect(r.estado).toBe('pronto');
+    if (r.estado === 'pronto') { expect(r.ds).toBe(seedDs); expect(r.usuario).toBe(seedDs.usuarios[0]); expect(r.codigosObraVisiveis).toEqual(seedDs.obras.map((o) => o.codigo)); }
+    const m = montarObras(r);
+    expect(m.estado).toBe('pronto');
+    if (m.estado === 'pronto') expect(m.obras.map((o) => o.codigo)).toEqual(seedDs.obras.map((o) => o.codigo));
+  });
+  it('3. codigosObraVisiveis vem da camada oficial: o App chama obrasVisiveis do store e o modelo nunca decide sozinho', () => {
+    const caso = app.slice(app.indexOf("case 'piloto':"), app.indexOf('break;', app.indexOf("case 'piloto':")));
+    expect(caso).toMatch(/p1 === 'obras'/);
+    expect(caso).toMatch(/codigosObraVisiveis: obrasVisiveis\(usuario, ds\.obras\)\.map\(\(o\) => o\.codigo\)/);
+    expect(app).toMatch(/import \{ actions, inicializar, obrasVisiveis, pode, useStore \} from '\.\/data\/store';/);
+    const vm = fs.readFileSync(path.join(path.resolve('src/screens/piloto'), 'obrasCompactoModel.ts'), 'utf8');
+    const codigoVm = vm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); // so codigo: o cabecalho explica que a regra e do App
+    expect(codigoVm).not.toMatch(/usuario\.obras|obrasVisiveis|data\/store|permissoes/);
+  });
+  it('4-7. todas as obras, subconjunto, nenhuma e codigo desconhecido: o adaptador so repassa o conjunto', () => {
+    const todas = montarObras(entradaDoApp(base()));
+    expect(todas.estado).toBe('pronto');
+    const nenhuma = montarObras(entradaDoApp(base({ codigosObraVisiveis: [] })));
+    expect(nenhuma.estado).toBe('sem-visibilidade');
+    const desconhecido = montarObras(entradaDoApp(base({ codigosObraVisiveis: ['OB-INEXISTENTE'] })));
+    expect(desconhecido.estado).toBe('sem-visibilidade');
+    // subconjunto real (fixture com 3 obras): so a obra passada aparece, carteira omitida
+    const ds = datasetTeste('padrao');
+    const sub = montarObras(entradaDoApp(base({ ds, usuario: USUARIO_GESTOR_A, codigosObraVisiveis: [OBRA_A] })));
+    expect(sub.estado).toBe('pronto');
+    if (sub.estado === 'pronto') { expect(sub.obras.map((o) => o.codigo)).toEqual([OBRA_A]); expect(sub.carteiraCompleta).toBe(false); expect(sub.situacao.find((s) => s.id === 'carteira')?.valor).toBeNull(); expect(sub.situacao.find((s) => s.id === 'carteira')?.texto).toBe(TEXTO_CARTEIRA_PARCIAL); }
+  });
+  it('9. Diretoria e Operacao preservam os mesmos numeros pelo adaptador (identico a entrada direta)', () => {
+    const ds = datasetTeste('padrao');
+    for (const visao of VISOES.map((v) => v.id)) {
+      const viaApp = montarObras(entradaDoApp({ ds, usuario: USUARIO_DIRETORIA, codigosObraVisiveis: TODAS_AS_OBRAS, modo: 'remoto', carregando: false, sync: { status: 'ok', em: FIXTURE_GERADA_EM }, agora: AGORA, visao }));
+      const direta = montarObras({ estado: 'pronto', fonte: { rotulo: 'Supabase', modo: 'remoto', atualizadoEm: FIXTURE_GERADA_EM, sincronizacao: { estado: 'sincronizado', em: FIXTURE_GERADA_EM } }, ds, usuario: USUARIO_DIRETORIA, codigosObraVisiveis: TODAS_AS_OBRAS, agora: AGORA, visao });
+      expect(JSON.stringify(viaApp)).toBe(JSON.stringify(direta));
+    }
+  });
+  it('carregando e erroInicial viram os estados correspondentes; sync espelhado 1:1 e nunca vira "desatualizado"', () => {
+    expect(entradaDoApp(base({ carregando: true }))).toMatchObject({ estado: 'carregando', fonte: { modo: 'remoto', rotulo: 'Supabase' } });
+    expect(entradaDoApp(base({ erroInicial: 'sem rede' }))).toMatchObject({ estado: 'erro', mensagem: 'sem rede' });
+    const ds = datasetTeste('padrao');
+    const frescor = (status: EstadoDoApp['sync']['status']) => { const m = montarObras(entradaDoApp(base({ ds, usuario: USUARIO_DIRETORIA, codigosObraVisiveis: TODAS_AS_OBRAS, sync: { status, em: '2026-09-23T14:00:00.000Z', desde: '2026-09-23T13:00:00.000Z', msg: 'x' } }))); if (m.estado !== 'pronto') throw new Error(m.estado); return m; };
+    const ok = frescor('ok'); const pend = frescor('pendente'); const erro = frescor('erro');
+    expect(JSON.stringify(pend.frescor)).toBe(JSON.stringify(ok.frescor));
+    expect(JSON.stringify(erro.frescor)).toBe(JSON.stringify(ok.frescor));
+    expect(pend.fonte.sincronizacao?.estado).toBe('pendente');
+    expect(erro.fonte.sincronizacao?.estado).toBe('erro');
+    expect(ROTULO_SINCRONIZACAO.pendente).toMatch(/offline/);
+  });
+  it('modo local: fonte "Modo local · seed", sem marca de teste, chip "Seed local"', () => {
+    const m = montarObras(entradaDoApp(base({ modo: 'local', sync: { status: 'local' } })));
+    expect(m.estado).toBe('pronto');
+    if (m.estado === 'pronto') { expect(m.fonte).toEqual({ rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } }); expect(m.frescor.chips.find((c) => c.id === 'atualizado')?.texto).toBe('Seed local'); }
+    expect(JSON.stringify(m)).not.toMatch(/DADOS DE TESTE/);
+  });
+  it('o adaptador nao muta o estado recebido', () => {
+    const e = congelar(base());
+    expect(() => entradaDoApp(e)).not.toThrow();
+  });
+  it('18-21. App.tsx: rota #/piloto/obras aditiva, #/piloto/financeiro intacta, rota invalida preservada, Inbox intacta, sem sidebar/paleta/tour', () => {
+    const caso = app.slice(app.indexOf("case 'piloto':"), app.indexOf('break;', app.indexOf("case 'piloto':")));
+    expect(caso).toMatch(/p1 === 'financeiro' \? <FinanceiroCompacto entrada=\{entradaDoApp\(\{ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)\} visaoInicial=\{rota\.query\.get\('visao'\) === 'operacional' \? 'operacional' : 'executivo'\} \/>/);
+    expect(caso).toMatch(/p1 === 'obras' \? <ObrasCompacto entrada=\{entradaObrasDoApp\(/);
+    expect(caso.trimEnd()).toMatch(/: <div className="empty">Página não encontrada\.<\/div>;$/);
+    expect(app).toMatch(/const ObrasCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/ObrasCompacto'\)\);/);
+    expect(app).toMatch(/import \{ entradaDoApp as entradaObrasDoApp \} from '\.\/screens\/piloto\/obrasCompactoModel';/);
+    // Inbox intacta: lazy, rota e autorizacao continuam
+    expect(app).toMatch(/const Inbox = lazy\(\(\) => import\('\.\/screens\/Inbox'\)\);/);
+    expect(app).toMatch(/case 'atendimento': tela = pode\(usuario, 'inbox'\)/);
+    // linhas que citam o piloto de obras no App: import do adaptador, lazy e a linha do case (mais comentarios)
+    const linhas = app.split('\n').filter((l) => /ObrasCompacto|obrasCompactoModel/.test(l) && !/^\s*\/\//.test(l));
+    expect(linhas).toHaveLength(3);
+    for (const f of ['src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/core/permissoes.ts', 'src/data/store.ts', 'src/core/engine.ts', 'src/core/obras.ts']) expect(fs.readFileSync(path.resolve(f), 'utf8'), `${f} referencia o piloto de obras`).not.toMatch(/piloto\/obras|ObrasCompacto|obrasCompacto/);
+  });
+  it('17. o piloto financeiro segue intacto e independente (nenhum arquivo de runtime dele cita o de obras)', () => {
+    for (const f of ['FinanceiroCompacto.tsx', 'financeiroCompactoModel.ts', 'financeiroCompacto.fixtures.ts', 'piloto.css']) {
+      const s = fs.readFileSync(path.join(path.resolve('src/screens/piloto'), f), 'utf8');
+      expect(s).not.toMatch(/ObrasCompacto|obrasCompacto|pilotoObras|piloto\/obras|piloto-obra-/); // o e-mail ficticio piloto-obra@ da fixture financeira nao e referencia ao piloto de obras
+    }
+    // o teste do financeiro guarda o App.tsx inteiro (lista exata das integracoes dos dois pilotos), entao cita as linhas do
+    // obras compacto — mas nunca importa nada dele
+    const testeFin = fs.readFileSync(path.join(path.resolve('src/screens/piloto'), 'financeiroCompacto.test.ts'), 'utf8');
+    expect(testeFin).not.toMatch(/from '\.\/(ObrasCompacto|obrasCompacto[^']*)'/);
   });
 });
 

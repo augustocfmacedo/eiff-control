@@ -1,4 +1,4 @@
-// UX-P03 — Obras compacto: view-model puro do piloto (somente leitura).
+// UX-P03/UX-P04 — Obras compacto: view-model puro do piloto (somente leitura). Integrado ao App pela UX-P04.
 //
 // Filosofia (a mesma do Financeiro compacto): SITUACAO (como a carteira/obra esta) → OBRAS (uma linha por obra visivel)
 // → ATENCAO (o que aconteceu · impacto canonico · proximo passo de leitura, agrupada pela severidade que a fonte canonica
@@ -25,7 +25,7 @@ import { acompanhamentoFaturamento } from '../../core/faturamento';
 import { sugestoesPara, type Sugestao } from '../../core/sugestoes';
 import type { Dataset, Usuario } from '../../core/types';
 
-export const VERSAO_PILOTO = 'UX-P03.1';
+export const VERSAO_PILOTO = 'UX-P04.1';
 export const TETO_SITUACAO: Record<Visao, number> = { diretoria: 3, operacao: 4 };
 export const TETO_ATENCAO = 6;
 export const TEXTO_CARTEIRA_PARCIAL = 'carteira inteira não visível';
@@ -54,6 +54,39 @@ export const CHECKS_DE_OBRA = ['ALT-05', 'ALT-06', 'ALT-07', 'ALT-08', 'ALT-09']
 export interface Sincronizacao { estado: 'sincronizado' | 'enviando' | 'pendente' | 'erro' | 'local'; em?: string; desde?: string; msg?: string }
 export const ROTULO_SINCRONIZACAO: Record<Sincronizacao['estado'], string> = { sincronizado: 'Supabase · sincronizado', enviando: 'Supabase · sincronizando…', pendente: 'offline · alterações guardadas neste aparelho', erro: 'não sincronizado', local: 'modo local · seed' };
 export interface FonteDados { rotulo: string; modo: 'teste' | 'local' | 'remoto'; atualizadoEm?: string; id?: string; sincronizacao?: Sincronizacao }
+
+/**
+ * O que o App ja tem em maos depois de `useStore()`, mais o conjunto de obras visiveis que ELE calcula pela regra oficial
+ * (`obrasVisiveis` do store) e passa explicitamente. O piloto nunca importa o store nem decide visibilidade.
+ */
+export interface EstadoDoApp {
+  ds: Dataset;
+  usuario: Usuario;
+  codigosObraVisiveis: string[];
+  modo: 'local' | 'remoto';
+  carregando: boolean;
+  erroInicial?: string;
+  sync: { status: 'ok' | 'enviando' | 'erro' | 'local' | 'pendente'; em?: string; desde?: string; msg?: string };
+  agora: string;
+  visao?: Visao;
+}
+
+const ESTADO_SYNC: Record<EstadoDoApp['sync']['status'], Sincronizacao['estado']> = { ok: 'sincronizado', enviando: 'enviando', pendente: 'pendente', erro: 'erro', local: 'local' };
+
+/**
+ * UX-P04 — adaptador puro e somente leitura: Dataset, usuario, sync e obras visiveis que o App ja carregou viram a
+ * EntradaObras. Sem fetch, sem store, sem regra: so mapeamento 1:1 (sync espelhado, nunca virando "desatualizado").
+ * Em modo local a fonte e o seed e e dita como tal.
+ */
+export function entradaDoApp(e: EstadoDoApp): EntradaObras {
+  const fonte: FonteDados =
+    e.modo === 'remoto'
+      ? { rotulo: 'Supabase', modo: 'remoto', atualizadoEm: e.sync.em, sincronizacao: { estado: ESTADO_SYNC[e.sync.status], em: e.sync.em, desde: e.sync.desde, msg: e.sync.msg } }
+      : { rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } };
+  if (e.carregando) return { estado: 'carregando', fonte };
+  if (e.erroInicial) return { estado: 'erro', fonte, mensagem: e.erroInicial };
+  return { estado: 'pronto', fonte, ds: e.ds, usuario: e.usuario, codigosObraVisiveis: e.codigosObraVisiveis, agora: e.agora, visao: e.visao };
+}
 
 export type EntradaObras =
   | { estado: 'carregando'; fonte: FonteDados }
