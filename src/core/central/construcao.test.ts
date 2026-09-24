@@ -8,9 +8,10 @@
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  DOMINIOS_CONSTRUCAO, ESTADOS_CONSTRUCAO, MODULOS_CONSTRUCAO, ROTULO_ESTADO_CONSTRUCAO, SEM_MODULO, STATUS_ATIVOS,
+  DOMINIOS_CONSTRUCAO, ESTADOS_CONSTRUCAO, EXCLUSOES_SUPERFICIE, MENSAGEM_DRIFT_SUPERFICIE, MODULOS_CONSTRUCAO, ROTULO_ESTADO_CONSTRUCAO, SEM_MODULO, STATUS_ATIVOS,
   TONE_ESTADO_CONSTRUCAO, atencaoConstrucao, construindoAgora, estadoDoModulo, fracaoTexto, gatesDesconhecidosNosModulos,
-  gatesDoModulo, moduloDaTarefa, moduloPorId, panoramaConstrucao, pctConstrucao, projetarComponente, projetarModulo,
+  classificarSuperficie, gatesDoModulo, moduloDaTarefa, moduloPorId, panoramaConstrucao, pctConstrucao, projetarComponente, projetarModulo,
+  superficiesSemClassificacao,
 } from './construcao';
 import { GATES, WORKSTREAMS, gatePorId } from './missionControl';
 import { ARESTAS, ATORES_DO_NO, FONTE_DO_NO, NOS, camadasDoMapa, itensDoNo, layoutDoMapa, noRecebeItensVivos } from './mapaVivo';
@@ -350,5 +351,150 @@ describe('12 · o Mission Control continua read-only', () => {
       expect(src, f).not.toMatch(/draggable|onDrag|onDrop|api\.github\.com|Bearer /);
       expect(src, f).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
     }
+  });
+});
+
+// =====================================================================================================
+// MC-CONSTRUCTION-1B — reconciliação com a main (Inbox) e guarda de cobertura do catálogo.
+// O Inbox entrou na main DURANTE a MC-CONSTRUCTION-1 e não apareceu na Central: drift silencioso. A guarda
+// abaixo lê o inventário REAL de superfícies (rotas da paleta e do App) em TEMPO DE TESTE e obriga decisão
+// humana — nunca inferência em runtime.
+// =====================================================================================================
+
+/** Inventário de superfícies: rotas de ROTAS_NAV (Paleta.tsx) e os `case` do switch de telas do App. */
+function inventarioDeSuperficies(): string[] {
+  const paleta = conteudo('src/ui/Paleta.tsx');
+  const app = conteudo('src/App.tsx');
+  const daPaleta = [...paleta.matchAll(/to: '([^']+)'/g)].map((m) => m[1]);
+  const doApp = [...app.matchAll(/^ {4}case '([a-z0-9-]+)'/gm)].map((m) => `/${m[1]}`);
+  const raiz = /^ {4}case undefined:/m.test(app) ? ['/'] : [];
+  return [...new Set([...daPaleta, ...doApp, ...raiz])].sort();
+}
+
+describe('13 · guarda de cobertura do catálogo (drift)', () => {
+  const inventario = inventarioDeSuperficies();
+
+  it('o inventário real tem as superfícies conhecidas, inclusive a do Inbox', () => {
+    expect(inventario.length).toBeGreaterThan(20);
+    expect(inventario).toContain('/atendimento');
+    expect(inventario).toContain('/mission-control');
+    expect(inventario).toContain('/');
+  });
+
+  it('toda superfície do EIFF está coberta por um módulo ou excluída explicitamente — senão a suíte falha com mensagem humana', () => {
+    const drift = superficiesSemClassificacao(inventario);
+    expect(drift, `${MENSAGEM_DRIFT_SUPERFICIE}: ${drift.join(', ')}`).toEqual([]);
+  });
+
+  it('uma superfície nova sem decisão quebra a guarda (prova de que ela funciona)', () => {
+    const drift = superficiesSemClassificacao([...inventario, '/nova-superficie']);
+    expect(drift).toEqual(['/nova-superficie']);
+    expect(classificarSuperficie('/nova-superficie').tipo).toBe('SEM_CLASSIFICACAO');
+    expect(MENSAGEM_DRIFT_SUPERFICIE).toBe('Nova superfície do EIFF sem classificação na Central de Construção');
+  });
+
+  it('nenhum módulo cobre rota que não existe; uma rota pertence a no máximo um módulo; a rota principal está entre as cobertas', () => {
+    const vistas = new Map<string, string>();
+    for (const mo of MODULOS_CONSTRUCAO) {
+      for (const r of mo.rotas ?? []) {
+        expect(inventario, `${mo.id} cobre rota inexistente ${r}`).toContain(r);
+        expect(vistas.has(r), `rota ${r} coberta por ${vistas.get(r)} e ${mo.id}`).toBe(false);
+        vistas.set(r, mo.id);
+      }
+      // a rota principal é "onde abrir": coberta pelo próprio módulo ou por outro (módulo que vive dentro de tela alheia)
+      if (mo.rota) expect(classificarSuperficie(mo.rota).tipo, `${mo.id}: rota principal ${mo.rota} sem módulo`).toBe('MODULO');
+    }
+  });
+
+  it('toda exclusão tem motivo, existe no inventário e não é coberta por módulo', () => {
+    for (const [rota, motivo] of Object.entries(EXCLUSOES_SUPERFICIE)) {
+      expect(motivo.length).toBeGreaterThan(10);
+      expect(inventario, `exclusão de rota inexistente: ${rota}`).toContain(rota);
+      expect(classificarSuperficie(rota).tipo).toBe('EXCLUIDA');
+    }
+  });
+
+  it('a guarda vive só no teste: o domínio não lê App, Paleta nem rota em runtime', () => {
+    const src = conteudo(DOMINIO_PURO);
+    expect(src).not.toMatch(/from '\.\.\/\.\.\/App'|from '\.\.\/\.\.\/ui\/Paleta'|window\.location|location\.hash|readFileSync/);
+    for (const f of TELAS) {
+      if (!existe(f)) continue;
+      expect(conteudo(f), f).not.toMatch(/superficiesSemClassificacao|classificarSuperficie|inventarioDeSuperficies/);
+    }
+  });
+});
+
+describe('14 · EIFF Inbox observado pela Central', () => {
+  const inbox = moduloPorId('INBOX')!;
+  const p = projetarModulo(inbox, []);
+
+  it('o Inbox está no catálogo, no domínio da Central, cobrindo /atendimento', () => {
+    expect(inbox).toBeDefined();
+    expect(inbox.dominio).toBe('CENTRAL');
+    expect(inbox.rotas).toEqual(['/atendimento']);
+    expect(classificarSuperficie('/atendimento')).toEqual({ tipo: 'MODULO', moduloId: 'INBOX' });
+  });
+
+  it('o estado do Inbox é derivado: componentes com evidência concluídos, pendências declaradas como plano, módulo em construção', () => {
+    expect(p.estado).toBe('EM_CONSTRUCAO');
+    const comEvidencia = p.componentes.filter((c) => c.origem === 'EVIDENCIA');
+    const plano = p.componentes.filter((c) => c.origem === 'PLANO');
+    expect(comEvidencia.length).toBeGreaterThanOrEqual(5);
+    expect(plano.map((c) => c.id)).toEqual(['MIGRATION_APLICADA', 'INTELIGENCIA_REAL', 'ESCALACAO_SLA', 'EDITOR_REGRAS', 'OCTOPUS']);
+    for (const c of plano) expect(c.estado).toBe('PLANEJADO');
+    expect(p.concluidos).toBe(comEvidencia.length);
+    expect(p.proximoPasso).toBe('Migration 0056 aplicada em produção');
+  });
+
+  it('nenhum componente do Inbox foi inventado: toda evidência é arquivo real do Inbox ou da Central, com símbolo presente', () => {
+    for (const c of inbox.componentes) {
+      for (const e of c.evidencias ?? []) {
+        expect(existe(e.referencia), e.referencia).toBe(true);
+        expect(e.referencia).toMatch(/inbox|Inbox|channel-meta-webhook/);
+        if (e.simbolo) expect(conteudo(e.referencia)).toContain(e.simbolo);
+      }
+    }
+  });
+
+  it('as dependências do Inbox são as provadas em código (Central e plataforma) e o grafo continua sem ciclo', () => {
+    expect(p.dependeDe).toEqual(['CENTRAL_WHATSAPP', 'PLATAFORMA']);
+    expect(projetarModulo(moduloPorId('CENTRAL_WHATSAPP')!).dependentes).toContain('INBOX');
+  });
+
+  it('tarefa com "Inbox" no título continua sem módulo — nada é inferido', () => {
+    const t = item({ id: 'GITHUB:a/b#9', status: 'EXECUTANDO', title: 'EIFF Inbox: Octopus Router', links: { repository: 'augustocfmacedo/eiff-control', branch: 'feature/eiff-inbox-octopus-router' } });
+    expect(moduloDaTarefa(t)).toBeUndefined();
+    expect(panoramaConstrucao([t]).tarefas?.semModulo).toBe(1);
+    expect(projetarModulo(inbox, [t]).tarefas).toEqual([]);
+  });
+
+  it('as contagens da home são recalculadas com o Inbox dentro', () => {
+    const pan = panoramaConstrucao(null);
+    expect(pan.total).toBe(MODULOS_CONSTRUCAO.length);
+    expect(pan.modulos.map((x) => x.modulo.id)).toContain('INBOX');
+    expect(Object.values(pan.porEstado).reduce((a, b) => a + b, 0)).toBe(pan.total);
+    expect(pan.porEstado.EM_CONSTRUCAO).toBe(pan.modulos.filter((x) => x.estado === 'EM_CONSTRUCAO').length);
+    expect(pan.modulos.filter((x) => x.modulo.dominio === 'CENTRAL').map((x) => x.modulo.id)).toEqual(['CENTRAL_WHATSAPP', 'INBOX']);
+  });
+});
+
+describe('15 · Inbox no Mapa Vivo: só o que está provado', () => {
+  it('o nó INBOX existe na faixa da Central, sem gate e sem fonte viva', () => {
+    const no = NOS.find((n) => n.id === 'INBOX')!;
+    expect(no).toBeDefined();
+    expect(no.dominio).toBe('CENTRAL');
+    expect(no.gates).toEqual([]);
+    expect(no.fonte).toBeUndefined();
+    expect(noRecebeItensVivos('INBOX')).toBe(false);
+    expect(itensDoNo('INBOX', [item({ id: 'x', title: 'Inbox' })])).toEqual([]);
+    expect(layoutDoMapa().nos.some((n) => n.id === 'INBOX')).toBe(true);
+  });
+
+  it('exatamente duas arestas chegam ao Inbox (webhook → fluxo; Control → dependência) e nenhuma sai — zero aresta inventada', () => {
+    const chegam = ARESTAS.filter((a) => a.para === 'INBOX').map((a) => `${a.de}:${a.tipo}`).sort();
+    expect(chegam).toEqual(['CONTROL:dependencia', 'WEBHOOK:fluxo']);
+    expect(ARESTAS.filter((a) => a.de === 'INBOX')).toEqual([]);
+    const c = camadasDoMapa();
+    expect(c.get('INBOX')!).toBeGreaterThan(c.get('CONTROL')!);
   });
 });

@@ -848,3 +848,55 @@ contagem por responsável/fonte da projeção do GitHub, e os nós de desenho, s
 
 Testes: `src/core/central/construcao.test.ts` (31 casos, cobrindo as doze provas pedidas) mais os já existentes de
 `workItem`, `quadroOperacional`, `missionControl` e `developmentStatus`, que seguem verdes.
+
+### 17.7 MC-CONSTRUCTION-1B — reconciliação com a main e guarda de cobertura (24/09/2026)
+
+**O que aconteceu.** Enquanto a MC-CONSTRUCTION-1 era construída sobre `7ac9bde`, a `main` avançou para `7e0aa61`
+com o PR #13 (EIFF Inbox — Foundation). O commit original (`bbac2db`) foi reaplicado por cherry-pick numa branch
+de integração criada a partir de `7e0aa61`; o único conflito foi `src/styles.css`, em que os dois lados acrescentaram
+blocos ao fim do arquivo — resolvido mantendo o CSS do Inbox exatamente como está na `main` e o bloco
+`mcc-*`/`mcm-*` da Central depois dele (o arquivo final é `main` + bloco, byte a byte; nenhum estilo do Inbox mudou).
+
+**O que o Inbox tornou visível.** Um módulo novo entrou no sistema e a Central não o mostrou: o catálogo é explícito
+por desenho (§ 17.2, regra 1), então **não havia como ele aparecer sozinho** — e não havia nada que acusasse a
+ausência. Esse silêncio era o defeito.
+
+**Inbox no catálogo.** `INBOX` (domínio EIFF Central, rota `/atendimento`, depende de `CENTRAL_WHATSAPP` e
+`PLATAFORMA`) com o que a `main` prova: domínio (`tipos.ts`, `estados.ts`, `roteamento.ts`), telas (`Inbox.tsx`,
+`InboxConfig.tsx`), persistência **escrita** (`0056_inbox.sql` com `inbox_ingest`/`inbox_assign_thread`,
+`inbox.supabase.ts`), ingestão pela Central (`ingerirEventosCentral`, `deEventoCentral`, `channel-meta-webhook.ts`),
+fronteiras fail-closed (`PROVEDOR_MANUAL`, `SEM_INTELIGENCIA`, `EXECUCAO_FACTORY_RESERVADA`) e provas
+(`scripts/pg-smoke-inbox.mjs`, testes, `docs/eiff-inbox.md`). O que `docs/eiff-inbox.md` § 11.9/§ 13 declara como
+pendente entra como **plano sem evidência** (0056 aplicada em produção, IntelligenceProvider real, escalação por
+SLA automática, editor de regras, Octopus Router). Estado derivado: **em construção**; próximo passo derivado:
+"Migration 0056 aplicada em produção". Nenhum arquivo do Inbox foi alterado; a Central só o observa.
+
+**Guarda de cobertura (só em teste, nunca em runtime).** Cada módulo declara as superfícies de navegação que cobre
+(`rotas`), e `EXCLUSOES_SUPERFICIE` lista, com motivo, as rotas que existem e por decisão não são módulo (hoje só
+`/piloto`, o protótipo de UX). O teste lê o **inventário real** — os `to:` de `ROTAS_NAV` em `Paleta.tsx` e os `case`
+do switch de telas em `App.tsx` — e exige que toda rota termine coberta por exatamente um módulo ou excluída
+explicitamente; qualquer sobra falha com `"Nova superfície do EIFF sem classificação na Central de Construção: <x>"`.
+Também falha se um módulo cobrir rota inexistente, se duas cobrirem a mesma rota ou se a rota principal do módulo
+não estiver entre as cobertas. O domínio (`construcao.ts`) não importa App, Paleta nem lê `location`: a
+classificação em runtime continua vindo apenas do catálogo (`classificarSuperficie` é função total sobre
+declarações), e uma superfície nova **não vira módulo** — vira teste vermelho até alguém decidir.
+
+**Mapa vivo.** Nó `INBOX` na faixa da Central, sem gate e sem fonte viva (mostra "desenho"), com **duas** arestas,
+as únicas provadas em código: `WEBHOOK → INBOX` (fluxo: o webhook da Central entrega `ChannelInboundEvent` +
+conteúdo a `inbox_ingest`) e `CONTROL → INBOX` (dependência: a RLS do Inbox espelha a matriz de permissões via
+`inbox_role`). Nenhuma aresta sai do Inbox; nada foi desenhado para Factory, Radar ou obra — o vínculo
+contato ↔ Radar/obra está na lista de pendências do próprio Inbox.
+
+**Revisão do catálogo (19 → 20 módulos).** Ajustes feitos por serem inequívocos: `EXPERIENCIA` passou a cobrir o
+Painel executivo e a caixa pessoal (`/`, `/inbox`) e ganhou os dois componentes correspondentes; `PLATAFORMA` passou
+a cobrir Cadastros e Auditoria (`/cadastros`, `/auditoria`). Observações registradas, **não** refatoradas (decisão
+humana): `EXPERIENCIA` e `CAPACITACAO` são módulos transversais de produto mais do que domínios de negócio;
+`COMUNICACAO` e `LEAD_ENGINE` vivem dentro das telas do Radar (rotas próprias = nenhuma) e poderiam ser lidos como
+frentes do Radar; `ESTOQUE` é pequeno (2 componentes) mas tem core, migrations e tela próprios. Nenhum módulo é
+uma tela isolada: todos têm core ou contrato além da tela.
+
+**Provas novas** (`construcao.test.ts`, blocos 13–15): inventário real contém `/atendimento`; drift = vazio; rota
+sintética `/nova-superficie` quebra a guarda; rotas cobertas existem, são únicas e incluem a principal; exclusões
+com motivo; domínio e telas não usam a guarda em runtime; Inbox no catálogo com estado derivado, evidências
+reais (só arquivos do Inbox/Central com símbolo presente), dependências provadas, título "Inbox" em tarefa não vira
+módulo; contagens da home recalculadas; nó `INBOX` sem fonte viva, duas arestas de entrada, nenhuma de saída.

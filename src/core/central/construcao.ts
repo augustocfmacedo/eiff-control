@@ -69,8 +69,14 @@ export interface ModuloConstrucao {
   /** uma frase: o que este módulo faz pela EIFF */
   descricao: string;
   dominio: DominioConstrucao;
-  /** rota do produto onde o módulo aparece; ausente quando o módulo não tem tela (ex.: fábrica observada) */
+  /** rota principal do produto onde o módulo aparece; ausente quando o módulo não tem tela (ex.: fábrica observada) */
   rota?: string;
+  /**
+   * Superfícies de navegação (rotas de ROTAS_NAV/App) que este módulo COBRE. É a base da guarda de cobertura:
+   * toda rota do EIFF tem de estar aqui em algum módulo ou em EXCLUSOES_SUPERFICIE — senão o teste falha e obriga
+   * uma decisão humana. Nunca lida em runtime para inferir módulo.
+   */
+  rotas?: string[];
   componentes: ComponenteConstrucao[];
   /** dependência arquitetural declarada entre módulos (ids deste catálogo) */
   dependeDe?: string[];
@@ -99,6 +105,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   // ------------------------------------------------------------------------------------------ gestão da EIFF
   m({
     id: 'FINANCEIRO', titulo: 'Financeiro', dominio: 'GESTAO', rota: '/lancamentos',
+    rotas: ['/lancamentos', '/pagar', '/receber', '/aprovacoes', '/dre', '/checks'],
     descricao: 'Lançamentos, alçadas de aprovação, DRE gerencial e fechamento — a regra de negócio do caixa da EIFF.',
     componentes: [
       { id: 'LANCAMENTOS', titulo: 'Lançamentos e exclusão lógica', evidencias: [mod('src/data/store.ts', 'excluirLancamento'), mod('src/screens/Lancamentos.tsx')] },
@@ -110,6 +117,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'TESOURARIA', titulo: 'Tesouraria', dominio: 'GESTAO', rota: '/fluxo13', dependeDe: ['FINANCEIRO'],
+    rotas: ['/posicao', '/fluxo13', '/fluxo24', '/conciliacao', '/dividas'],
     descricao: 'Fluxo de caixa 13 semanas e 24 meses, posição bancária pelo extrato, conciliação e cenários.',
     componentes: [
       { id: 'FLUXO', titulo: 'Fluxo 13 semanas / 24 meses', evidencias: [mod('src/core/engine.ts', 'fluxo13Semanas'), mod('src/screens/Tesouraria.tsx')] },
@@ -122,6 +130,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'OBRAS', titulo: 'Obras e contratos', dominio: 'GESTAO', rota: '/obras', dependeDe: ['FINANCEIRO'],
+    rotas: ['/obras', '/central'],
     descricao: 'Obra 360°: serviços do contrato, medições, faturamento, cronograma, lista de materiais e saúde da obra.',
     componentes: [
       { id: 'OBRA360', titulo: 'Obra 360° e custo previsto', evidencias: [mod('src/core/engine.ts', 'obra360'), mod('src/screens/Obra360.tsx')] },
@@ -134,6 +143,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'FABRICA', titulo: 'Fábrica e montagem', dominio: 'GESTAO', rota: '/producao', dependeDe: ['OBRAS'],
+    rotas: ['/producao'],
     descricao: 'Apontamento por estação, produtividade em kg/HH, romaneios, quiosque da fábrica e estrutura 3D do avanço.',
     componentes: [
       { id: 'ESTACOES', titulo: 'Apontamento por estação e kg/HH', evidencias: [mod('src/core/producao.ts', 'resumoProdutividade'), mod('src/screens/Producao.tsx')] },
@@ -143,6 +153,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'ESTOQUE', titulo: 'Estoque de aço', dominio: 'GESTAO', rota: '/estoque', dependeDe: ['OBRAS', 'COMPRAS'],
+    rotas: ['/estoque'],
     descricao: 'Itens em kg, movimentos imutáveis, custo médio móvel e rastreabilidade de corrida.',
     componentes: [
       { id: 'POSICAO_ESTOQUE', titulo: 'Posição por item, lote e local', evidencias: [mod('src/core/estoque.ts', 'posicaoEstoque'), mod('src/screens/Estoque.tsx')] },
@@ -151,6 +162,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'EQUIPE_CAMPO', titulo: 'Equipe e modo campo', dominio: 'GESTAO', rota: '/campo', dependeDe: ['OBRAS', 'FABRICA'],
+    rotas: ['/equipe', '/campo', '/apontamentos'],
     descricao: 'Apontamentos diários, alocações, fluxo guiado do dia no celular, fotos de campo e trabalho offline.',
     componentes: [
       { id: 'APONTAMENTOS', titulo: 'Apontamentos e locais do dia', evidencias: [mod('src/core/equipe.ts', 'locaisDoDia'), mod('src/screens/Equipe.tsx')] },
@@ -162,6 +174,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'ORCAMENTOS', titulo: 'Orçamentos e composições', dominio: 'GESTAO', rota: '/orcamentos', dependeDe: ['OBRAS'],
+    rotas: ['/orcamentos'],
     descricao: 'Catálogo de insumos e composições (SINAPI, TCPO, próprias), BDI, curva ABC e contratação em serviços.',
     componentes: [
       { id: 'COMPOSICOES', titulo: 'Custo por composição, BDI e curva ABC', evidencias: [mod('src/core/orcamentos.ts', 'curvaInsumos'), mod('src/screens/Orcamentos.tsx')] },
@@ -170,6 +183,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'COMPRAS', titulo: 'Compras e pedidos', dominio: 'GESTAO', rota: '/compras', dependeDe: ['ORCAMENTOS', 'FINANCEIRO'],
+    rotas: ['/compras'],
     descricao: 'Pedidos de compra que viram lançamentos previstos, recebimento e comparativo orçado × comprado.',
     componentes: [
       { id: 'PEDIDOS', titulo: 'Pedidos de compra', evidencias: [mod('src/core/compras.ts', 'calcPedido'), mod('src/screens/Compras.tsx'), mig('supabase/migrations/0024_pedidos_compra.sql')] },
@@ -178,6 +192,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'DIRETOR_FINANCEIRO', titulo: 'Diretor Financeiro virtual', dominio: 'GESTAO', rota: '/diretor', dependeDe: ['TESOURARIA'],
+    rotas: ['/diretor'],
     descricao: 'Parecer determinístico de caixa para qualquer pedido de pagamento, com a IA só interpretando o texto.',
     componentes: [
       { id: 'PARECER', titulo: 'Parecer determinístico do motor', evidencias: [mod('src/core/cfo.ts', 'analisarPagamento'), mod('src/screens/DiretorFinanceiro.tsx')] },
@@ -187,6 +202,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'CAPACITACAO', titulo: 'Capacitação e Assistente', dominio: 'GESTAO', rota: '/capacitacao',
+    rotas: ['/capacitacao'],
     descricao: 'Lições, trilhas por papel, e-books e o assistente de chat que responde pelo manual.',
     componentes: [
       { id: 'TRILHAS', titulo: 'Lições e trilhas por papel', evidencias: [mod('src/core/capacitacao.ts', 'TRILHAS'), mod('src/screens/Capacitacao.tsx')] },
@@ -195,9 +211,12 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     ],
   }),
   m({
-    id: 'EXPERIENCIA', titulo: 'Experiência e navegação', dominio: 'GESTAO', rota: '/',
-    descricao: 'Paleta de comandos, tabela unificada, tour guiado, sugestões por tela, movimento e telemetria local.',
+    id: 'EXPERIENCIA', titulo: 'Painel e experiência', dominio: 'GESTAO', rota: '/',
+    rotas: ['/', '/inbox'],
+    descricao: 'Painel executivo, caixa de entrada pessoal, paleta de comandos, tabela unificada, tour, sugestões, movimento e telemetria local.',
     componentes: [
+      { id: 'PAINEL', titulo: 'Painel executivo', evidencias: [mod('src/screens/Dashboard.tsx'), mod('src/screens/Apresentacao.tsx')] },
+      { id: 'CAIXA_PESSOAL', titulo: 'Minha caixa de entrada (pendências pessoais)', evidencias: [mod('src/screens/CaixaEntrada.tsx')] },
       { id: 'PALETA', titulo: 'Paleta de comandos e rotas', evidencias: [mod('src/ui/Paleta.tsx', 'ROTAS_NAV')] },
       { id: 'TABELA', titulo: 'Tabela unificada', evidencias: [mod('src/ui/Tabela.tsx', 'ordenarLinhas')] },
       { id: 'TOUR', titulo: 'Tour guiado', evidencias: [mod('src/ui/Tour.tsx')] },
@@ -210,6 +229,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   // ------------------------------------------------------------------------------------------- comercial
   m({
     id: 'RADAR', titulo: 'Radar', dominio: 'COMERCIAL', rota: '/radar',
+    rotas: ['/radar', '/radar/empresas'],
     descricao: 'Inteligência comercial e CRM: empresas, decisores, sinais, score por regras configuráveis e Vibe.',
     componentes: [
       { id: 'SCORE', titulo: 'Score por regras configuráveis', evidencias: [mod('src/core/radar/score.ts', 'calcularScore'), mig('supabase/migrations/0031_radar.sql')] },
@@ -222,6 +242,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'COMUNICACAO', titulo: 'Comunicação e canais', dominio: 'COMERCIAL', rota: '/radar/hoje', dependeDe: ['RADAR'],
+    rotas: [],
     descricao: 'Fatos, objetivo, playbook, geração com fact gate e entrega por canal — com o envio real fechado.',
     componentes: [
       { id: 'CONTENT_SPEC', titulo: 'Content spec e playbooks', evidencias: [mod('src/core/radar/comunicacao.ts', 'montarContentSpec')] },
@@ -233,6 +254,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'MAQUINA_COMERCIAL', titulo: 'Máquina Comercial', dominio: 'COMERCIAL', rota: '/radar/hoje', dependeDe: ['RADAR'],
+    rotas: ['/radar/hoje'],
     descricao: 'Fila comercial por regra pura (CM1), cadência (CM2) e as superfícies Panorama e Modo Foco.',
     componentes: [
       { id: 'CM1', titulo: 'Commercial Queue (CM1)', evidencias: [mod('src/core/radar/commercialMachine.ts', 'CATEGORIAS_COMMERCIAL_QUEUE')] },
@@ -242,6 +264,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'LEAD_ENGINE', titulo: 'Lead Engine', dominio: 'COMERCIAL', rota: '/radar', dependeDe: ['RADAR'],
+    rotas: [],
     descricao: 'Entrada governada de candidatos: intake idempotente, evidência imutável, revisão humana e a fonte CNO.',
     componentes: [
       { id: 'INTAKE', titulo: 'Intake canônico e fingerprint', evidencias: [mod('src/core/radar/leadEngineIntake.ts', 'classificarIntake'), mig('supabase/migrations/0055_lead_engine_intake.sql')] },
@@ -255,14 +278,38 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   // ------------------------------------------------------------------------------------------ EIFF Central
   m({
     id: 'CENTRAL_WHATSAPP', titulo: 'EIFF Central (WhatsApp)', dominio: 'CENTRAL', dependeDe: ['DIRETOR_FINANCEIRO', 'PLATAFORMA'],
+    rotas: [],
     workstreams: ['CANAL', 'NUCLEO', 'AGENTES', 'SEGURANCA', 'BANCO', 'ALPHA'],
     descricao: 'Central de WhatsApp sobre a Meta Cloud API: canal, identidade, orquestrador, agentes, banco e Alpha.',
     componentes: WORKSTREAMS.filter((w) => w.id !== 'OBSERVABILIDADE').map((w) => ({ id: w.id, titulo: w.titulo, gates: w.gates })),
+  }),
+  // Entrou em main pelo PR #13 (7e0aa61) DURANTE a MC-CONSTRUCTION-1 — o caso que tornou o drift do catálogo
+  // observável. Só o que a main prova: fundação (domínio, estados, roteamento), telas, persistência ESCRITA
+  // (0056 só em código), ingestão pela Central, fronteiras fail-closed (canal MANUAL, sem inteligência, Factory
+  // reservada) e provas. O que a documentação declara como pendente entra como PLANO, sem evidência.
+  m({
+    id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', rota: '/atendimento', rotas: ['/atendimento'],
+    dependeDe: ['CENTRAL_WHATSAPP', 'PLATAFORMA'],
+    descricao: 'Central de comunicação, atendimento e decisão: a thread é a unidade; ingestão pela EIFF Central, roteamento por regras em dados e fronteiras fail-closed.',
+    componentes: [
+      { id: 'DOMINIO', titulo: 'Domínio: threads, contatos, estados e roteamento', evidencias: [mod('src/core/inbox/tipos.ts', 'ContatoInbox'), mod('src/core/inbox/estados.ts', 'validarTransicao'), mod('src/core/inbox/roteamento.ts', 'rotear')] },
+      { id: 'TELAS', titulo: 'Tela de atendimento e configuração', evidencias: [mod('src/screens/Inbox.tsx'), mod('src/screens/InboxConfig.tsx')] },
+      { id: 'PERSISTENCIA', titulo: 'Persistência escrita: 0056, RLS por setor e RPCs', evidencias: [mig('supabase/migrations/0056_inbox.sql', 'inbox_ingest'), mig('supabase/migrations/0056_inbox.sql', 'inbox_assign_thread'), mod('src/data/inbox.supabase.ts', 'carregarInbox')] },
+      { id: 'INGESTAO', titulo: 'Ingestão pela EIFF Central (webhook → inbox_ingest)', evidencias: [mod('src/core/inbox/ingestaoServidor.ts', 'ingerirEventosCentral'), mod('src/core/inbox/fronteiras.ts', 'deEventoCentral'), fn('netlify/functions/channel-meta-webhook.ts', 'ingerirEventosCentral')] },
+      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA')] },
+      { id: 'PROVAS', titulo: 'Provas: smoke PGlite e testes de fronteira', evidencias: [scr('scripts/pg-smoke-inbox.mjs'), mod('src/core/inbox/ingestaoServidor.test.ts'), doc('docs/eiff-inbox.md')] },
+      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção' },
+      { id: 'INTELIGENCIA_REAL', titulo: 'IntelligenceProvider real (função Netlify)' },
+      { id: 'ESCALACAO_SLA', titulo: 'Escalação por SLA como execução automática' },
+      { id: 'EDITOR_REGRAS', titulo: 'Editor de regras de nível e roteamento' },
+      { id: 'OCTOPUS', titulo: 'Octopus Router (contrato, não implementado)' },
+    ],
   }),
 
   // ------------------------------------------------------------------------------ construção e fábrica
   m({
     id: 'MISSION_CONTROL', titulo: 'Mission Control', dominio: 'DESENVOLVIMENTO', rota: '/mission-control', dependeDe: ['PLATAFORMA'],
+    rotas: ['/mission-control'],
     workstreams: ['OBSERVABILIDADE'],
     descricao: 'A Central de Construção: observa GitHub, Factory e o catálogo de gates, e projeta — nunca escreve.',
     componentes: [
@@ -280,7 +327,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     ],
   }),
   m({
-    id: 'FACTORY', titulo: 'EIFF Dev Factory (observada)', dominio: 'DESENVOLVIMENTO', observaFonte: 'FACTORY',
+    id: 'FACTORY', titulo: 'EIFF Dev Factory (observada)', dominio: 'DESENVOLVIMENTO', observaFonte: 'FACTORY', rotas: [],
     descricao: 'A fábrica de software vive no repositório eiff-dev-factory; aqui ela é apenas observada pelas issues de job.',
     componentes: [
       { id: 'ESPELHO', titulo: 'Espelho do contrato da fábrica com detector de drift', evidencias: [mod('src/core/central/workItem.ts', 'ESPELHO_JOB_STATES')] },
@@ -289,9 +336,11 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     ],
   }),
   m({
-    id: 'PLATAFORMA', titulo: 'Plataforma e publicação', dominio: 'DESENVOLVIMENTO',
-    descricao: 'Supabase com RLS, funções Netlify, Quality Gate no CI e publicação com auto-publish travado.',
+    id: 'PLATAFORMA', titulo: 'Plataforma, cadastros e auditoria', dominio: 'DESENVOLVIMENTO', rota: '/cadastros', rotas: ['/cadastros', '/auditoria'],
+    descricao: 'Supabase com RLS, cadastros e parâmetros, auditoria, funções Netlify, Quality Gate no CI e publicação com auto-publish travado.',
     componentes: [
+      { id: 'CADASTROS', titulo: 'Cadastros e parâmetros', evidencias: [mod('src/screens/Cadastros.tsx')] },
+      { id: 'AUDITORIA', titulo: 'Auditoria e telemetria de uso', evidencias: [mod('src/screens/Auditoria.tsx')] },
       { id: 'SUPABASE', titulo: 'Supabase e persistência por diferenças', evidencias: [mod('src/data/supabase.ts', 'persistirRemoto'), doc('docs/implantacao-supabase.md')] },
       { id: 'CI', titulo: 'Quality Gate (CI)', evidencias: [scr('.github/workflows/quality-gate.yml')] },
       { id: 'PUBLICACAO', titulo: 'Publicação Netlify', evidencias: [scr('netlify.toml'), doc('docs/publicacao-automatica.md')] },
@@ -302,6 +351,44 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
 
 const POR_ID = new Map(MODULOS_CONSTRUCAO.map((x) => [x.id, x]));
 export const moduloPorId = (id: string): ModuloConstrucao | undefined => POR_ID.get(id);
+
+// ------------------------------------------------------------------------------ cobertura do catálogo
+
+/**
+ * Superfícies de navegação que EXISTEM no EIFF e, por decisão explícita, NÃO são cobertas por módulo nenhum.
+ * Cada exclusão tem motivo humano. A lista é o "ou" da guarda: rota fora de todo `rotas` e fora daqui = drift.
+ */
+export const EXCLUSOES_SUPERFICIE: Readonly<Record<string, string>> = {
+  '/piloto': 'Protótipo de UX (Financeiro compacto) fora do produto: não é módulo nem componente, é laboratório.',
+};
+
+/** Rotas cobertas por algum módulo. Uma rota pertence a no máximo um módulo (teste garante). */
+export const superficiesCobertas = (modulos: readonly ModuloConstrucao[] = MODULOS_CONSTRUCAO): Map<string, string> => {
+  const m = new Map<string, string>();
+  for (const mo of modulos) for (const r of mo.rotas ?? []) m.set(r, mo.id);
+  return m;
+};
+
+export type ClassificacaoSuperficie = { tipo: 'MODULO'; moduloId: string } | { tipo: 'EXCLUIDA'; motivo: string } | { tipo: 'SEM_CLASSIFICACAO' };
+
+/** Classificação de UMA superfície. Total: nunca lança, nunca adivinha — sem decisão registrada, SEM_CLASSIFICACAO. */
+export function classificarSuperficie(rota: string, modulos: readonly ModuloConstrucao[] = MODULOS_CONSTRUCAO): ClassificacaoSuperficie {
+  const moduloId = superficiesCobertas(modulos).get(rota);
+  if (moduloId) return { tipo: 'MODULO', moduloId };
+  const motivo = EXCLUSOES_SUPERFICIE[rota];
+  if (motivo) return { tipo: 'EXCLUIDA', motivo };
+  return { tipo: 'SEM_CLASSIFICACAO' };
+}
+
+/**
+ * As superfícies de um inventário (rotas reais do App/paleta, lidas pelo TESTE, nunca em runtime) que ninguém
+ * decidiu como a Central deve tratar. Vazio é a condição saudável; qualquer item é drift do catálogo.
+ */
+export const superficiesSemClassificacao = (inventario: readonly string[], modulos: readonly ModuloConstrucao[] = MODULOS_CONSTRUCAO): string[] =>
+  [...new Set(inventario)].filter((r) => classificarSuperficie(r, modulos).tipo === 'SEM_CLASSIFICACAO').sort();
+
+/** Mensagem humana da guarda. Uma frase, um lugar. */
+export const MENSAGEM_DRIFT_SUPERFICIE = 'Nova superfície do EIFF sem classificação na Central de Construção';
 
 /** Todos os gates citados pelos componentes de um módulo. */
 export const gatesDoModulo = (mo: ModuloConstrucao): string[] =>

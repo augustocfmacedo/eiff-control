@@ -90,7 +90,17 @@ const NOS_COMERCIAL: NoMapa[] = [
   { id: 'COMMERCIAL_QUEUE', titulo: 'Commercial Queue', dominio: 'COMERCIAL', papel: 'Fila derivada por regra pura. A ordem é dela, e o Mission Control não a altera.', gates: [], fonte: 'COMMERCIAL' },
 ];
 
-export const NOS: NoMapa[] = [...CAMADAS.map(noDaCamada), ...NOS_DESENVOLVIMENTO, ...NOS_COMERCIAL];
+/**
+ * EIFF Inbox (PR #13, main 7e0aa61): no da Central que NAO e camada. Sem gate no catalogo e sem fonte viva na
+ * resposta do endpoint — so estado de desenho. As duas arestas abaixo tem evidencia em codigo:
+ * o webhook da Central entrega ChannelInboundEvent[] a `ingerirEventosCentral` (fronteiras.deEventoCentral) e a
+ * RLS do Inbox espelha a MATRIZ do Control (`inbox_role` em 0056). Nada alem disso foi desenhado.
+ */
+const NOS_INBOX: NoMapa[] = [
+  { id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', papel: 'Central de comunicação e atendimento: a thread é a unidade; recebe da EIFF Central, roteia por regras em dados e não envia nada (canal MANUAL).', gates: [] },
+];
+
+export const NOS: NoMapa[] = [...CAMADAS.map(noDaCamada), ...NOS_INBOX, ...NOS_DESENVOLVIMENTO, ...NOS_COMERCIAL];
 
 export const noPorId = (id: string): NoMapa | undefined => NOS.find((n) => n.id === id);
 
@@ -108,6 +118,9 @@ export const ARESTAS: ArestaMapa[] = [
   { de: 'CONTROL', para: 'AUDITORIA', tipo: 'fluxo', rotulo: 'ator, antes e depois' },
   { de: 'IDENTIDADE', para: 'CONTROL', tipo: 'dependencia', rotulo: 'papel e organização vêm do banco' },
   { de: 'AUDITORIA', para: 'META', tipo: 'observa', rotulo: 'saúde do canal' },
+  // EIFF Inbox — só as duas relações provadas em código (ver NOS_INBOX)
+  { de: 'WEBHOOK', para: 'INBOX', tipo: 'fluxo', rotulo: 'ChannelInboundEvent + conteúdo → inbox_ingest' },
+  { de: 'CONTROL', para: 'INBOX', tipo: 'dependencia', rotulo: 'RLS espelha a matriz de permissões (inbox_role)' },
 
   // ------------------------------------------------------- ciclo de desenvolvimento (demanda -> prod)
   { de: 'DEMANDA', para: 'ARCHITECT', tipo: 'fluxo', rotulo: 'BACKLOG' },
