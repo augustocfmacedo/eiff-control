@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { CenaEstrutura, IndicadorNav, MicroInteracoes, Revelar } from './ui/motion';
 import { dashboard } from './core/engine';
-import { actions, inicializar, pode, useStore } from './data/store';
+import { actions, inicializar, obrasVisiveis, pode, useStore } from './data/store';
 import { Badge, EstadoErro, SkeletonTela, StatusBadge, dataHora } from './ui/components';
 import { href, useRota } from './ui/router';
 import Login from './screens/Login';
@@ -16,6 +16,7 @@ import { Sugestoes } from './ui/Sugestoes';
 import { registrarAcao, registrarVisita } from './data/telemetria';
 import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
 import { entradaDoApp } from './screens/piloto/financeiroCompactoModel';
+import { entradaDoApp as entradaObrasDoApp } from './screens/piloto/obrasCompactoModel';
 // telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
 const Auditoria = lazy(() => import('./screens/Auditoria'));
@@ -52,6 +53,8 @@ const Fluxo24 = lazy(() => import('./screens/Tesouraria').then((m) => ({ default
 const PosicaoDiaria = lazy(() => import('./screens/Tesouraria').then((m) => ({ default: m.PosicaoDiaria })));
 // UX-P02: piloto experimental somente leitura em #/piloto/financeiro (sem sidebar, paleta, tour ou permissao nova)
 const FinanceiroCompacto = lazy(() => import('./screens/piloto/FinanceiroCompacto'));
+// UX-P04: piloto experimental somente leitura em #/piloto/obras (mesmo padrao; obras visiveis pela regra oficial do store)
+const ObrasCompacto = lazy(() => import('./screens/piloto/ObrasCompacto'));
 
 export default function App() {
   const rota = useRota();
@@ -178,7 +181,9 @@ export default function App() {
     case 'apontamentos': tela = <ApontamentoTela id={p1 ?? 'novo'} query={rota.query} key={`${p1}-${rota.query.toString()}`} />; break;
     case 'campo': tela = <Campo secao={p1} query={rota.query} key={p1} />; break;
     // UX-P02: o piloto recebe o Dataset/usuario/sync ja carregados (passagem explicita, somente leitura); nada e buscado por ele
-    case 'piloto': tela = p1 === 'financeiro' ? <FinanceiroCompacto entrada={entradaDoApp({ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacional' ? 'operacional' : 'executivo'} /> : <div className="empty">Página não encontrada.</div>; break;
+    case 'piloto': tela = p1 === 'financeiro' ? <FinanceiroCompacto entrada={entradaDoApp({ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacional' ? 'operacional' : 'executivo'} />
+      : p1 === 'obras' ? <ObrasCompacto entrada={entradaObrasDoApp({ ds, usuario, codigosObraVisiveis: obrasVisiveis(usuario, ds.obras).map((o) => o.codigo), modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacao' ? 'operacao' : 'diretoria'} />
+      : <div className="empty">Página não encontrada.</div>; break;
     default: tela = <div className="empty">Página não encontrada.</div>;
   }
 

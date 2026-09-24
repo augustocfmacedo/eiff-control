@@ -135,7 +135,7 @@ export async function rotearNoServidor(threadId: string, messageId: string, port
       threadId, messageId, routing: d, classification: classificacao, summary: resumo,
       sectorCode: alvo?.setorCodigo ?? d.setorCodigo, teamId: alvo?.equipeId, assigneeId: alvo?.responsavelId, priority: d.prioridade, serviceLevel: d.nivel, apply: apply && !!alvo,
     });
-    portas.log?.({ evento: 'inbox_roteamento', outcome: r.ok ? 'ok' : 'recusado', threadId, aplicado: r.aplicado === true, origem: d.origem, banda: d.banda, confianca: d.confianca, setor: d.setorCodigo, automacao: d.automacao.modo, reavaliacao: reav, erro: r.erro, motivo: r.motivo });
+    portas.log?.({ evento: 'inbox_roteamento', outcome: r.ok ? 'ok' : 'recusado', threadId, aplicado: r.aplicado === true, origem: d.origem, intencao: d.intencao, banda: d.banda, confianca: d.confianca, setor: d.setorCodigo, equipe: d.equipeId, responsavel: d.responsavelId, aplicacao: d.aplicacao, automacao: d.automacao.modo, prioridade: d.prioridade, nivel: d.nivel, sla: d.slaAte, classificado, override: !!d.override, reavaliacao: reav, erro: r.erro, motivo: r.motivo });
     return { ok: r.ok, aplicado: r.aplicado === true, origem: d.origem, setorCodigo: d.setorCodigo, banda: d.banda, confianca: d.confianca, reavaliacao: reav, motivo: r.erro ?? r.motivo, classificado };
   } catch (e) {
     const motivo = ((e as Error).message ?? 'erro').slice(0, 160);

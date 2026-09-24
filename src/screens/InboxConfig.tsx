@@ -2,16 +2,16 @@
 // Fase 3 (Octopus Router): limiares de confianca, modo de automacao padrao e regras de roteamento/automacao editaveis
 // como DADOS tipados (linhas simples, sem DSL); a validacao mora no store (validarConfiguracaoOctopus).
 import React, { useState } from 'react';
-import { MODOS_AUTOMACAO, PRIORIDADES, RISCOS, type ConfiguracaoInbox, type Equipe, type MembroSetor, type ModoAutomacao, type Prioridade, type RegraAutomacao, type RegraRoteamento, type Risco, type Setor, type TipoRelacao } from '../core/inbox';
+import { MODOS_AUTOMACAO, PRIORIDADES, RISCOS, metricasShadow, ultimasDecisoes, type DecisaoObservada, type ConfiguracaoInbox, type Equipe, type MembroSetor, type ModoAutomacao, type Prioridade, type RegraAutomacao, type RegraRoteamento, type Risco, type Setor, type TipoRelacao } from '../core/inbox';
 import { RegraDeNegocioError, actions, pode, useStore } from '../data/store';
-import { Badge, EstadoErro, Field, Input, Link, PageHead, Select, Tabs, useToast } from '../ui/components';
+import { Badge, EstadoErro, Field, Input, Link, PageHead, Select, Tabs, dataHora, useToast } from '../ui/components';
 
 const erroDe = (e: unknown) => (e instanceof RegraDeNegocioError || e instanceof Error ? e.message : String(e));
 
 export default function InboxConfig() {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
-  const [aba, setAba] = useState<'setores' | 'equipes' | 'membros' | 'roteamento'>('setores');
+  const [aba, setAba] = useState<'setores' | 'equipes' | 'membros' | 'roteamento' | 'shadow'>('setores');
   if (!pode(usuario, 'inbox_config')) {
     return <EstadoErro titulo="Acesso restrito" causa={<>A configuração do EIFF Inbox exige a permissão <code>inbox_config</code> (Administrador e Diretoria). Seu perfil é <b>{usuario.papel}</b>.</>}>Peça ao Administrador se precisar alterar setores, equipes ou membros.</EstadoErro>;
   }
@@ -26,10 +26,11 @@ export default function InboxConfig() {
     <>
       <PageHead title="EIFF Inbox · Configuração" subtitle={<>Setores, equipes, membros e roteamento. <Link to="/atendimento">Voltar ao Inbox</Link></>} />
       <div className="card">
-        <Tabs value={aba} onChange={setAba} items={[{ id: 'setores', label: `Setores (${inbox.setores.length})` }, { id: 'equipes', label: `Equipes (${inbox.equipes.length})` }, { id: 'membros', label: `Membros (${inbox.membros.length})` }, { id: 'roteamento', label: 'Roteamento e SLA' }]} />
+        <Tabs value={aba} onChange={setAba} items={[{ id: 'setores', label: `Setores (${inbox.setores.length})` }, { id: 'equipes', label: `Equipes (${inbox.equipes.length})` }, { id: 'membros', label: `Membros (${inbox.membros.length})` }, { id: 'roteamento', label: 'Roteamento e SLA' }, { id: 'shadow', label: 'Shadow mode' }]} />
         {aba === 'setores' && <Setores setores={setoresOrdenados} usuarios={usuarios} nomeUsuario={nomeUsuario} onSalvar={(s) => tentar(() => actions.inboxSalvarSetor(s), 'Setor salvo')} />}
         {aba === 'equipes' && <Equipes equipes={inbox.equipes} setores={setoresOrdenados} usuarios={usuarios} nomeUsuario={nomeUsuario} onSalvar={(e) => tentar(() => actions.inboxSalvarEquipe(e), 'Equipe salva')} />}
         {aba === 'membros' && <Membros membros={inbox.membros} equipes={inbox.equipes} setores={setoresOrdenados} usuarios={usuarios} nomeUsuario={nomeUsuario} onSalvar={(m) => tentar(() => actions.inboxSalvarMembro(m), 'Membro salvo')} onRemover={(id) => { if (window.confirm('Remover este membro do setor?')) tentar(() => actions.inboxRemoverMembro(id), 'Membro removido'); }} />}
+        {aba === 'shadow' && <ShadowMode decisoes={ultimasDecisoes(inbox, 20)} metricas={metricasShadow(inbox)} nomeSetor={(c) => (c ? inbox.setores.find((s) => s.codigo === c)?.nome ?? c : '—')} nomeEquipe={(id) => (id ? inbox.equipes.find((e) => e.id === id)?.nome ?? id : '')} nomeUsuario={nomeUsuario} />}
         {aba === 'roteamento' && <Roteamento cfg={inbox.configuracao} setores={setoresOrdenados} equipes={inbox.equipes} usuarios={usuarios} onSalvar={(c) => tentar(() => actions.inboxSalvarConfiguracao(c), 'Configuração salva')} />}
       </div>
       {el}
@@ -203,6 +204,45 @@ function Roteamento({ cfg, setores, equipes, usuarios, onSalvar }: { cfg: Config
         <thead><tr><th>Regra</th><th>Motivo</th><th>Nível</th><th>Situação</th></tr></thead>
         <tbody>{cfg.regrasNivel.map((r) => <tr key={r.id}><td className="mono">{r.id}</td><td>{r.motivo}</td><td>nível {r.nivel}</td><td><Badge tone={r.ativa ? 'ok' : 'muted'}>{r.ativa ? 'ativa' : 'inativa'}</Badge></td></tr>)}</tbody>
       </table></div>
+    </>
+  );
+}
+
+const NOME_HUMANO: Record<DecisaoObservada['humano'], string> = { CONFIRMOU: 'confirmou', SOBRESCREVEU: 'sobrescreveu', ASSUMIU: 'assumiu', PENDENTE: 'sem decisão humana', AUTOMATICA: 'automática (sem humano)' };
+const TOM_HUMANO: Record<DecisaoObservada['humano'], 'ok' | 'bad' | 'info' | 'muted' | 'warn'> = { CONFIRMOU: 'ok', SOBRESCREVEU: 'bad', ASSUMIU: 'info', PENDENTE: 'muted', AUTOMATICA: 'warn' };
+/** SHADOW MODE: o que o Octopus decidiu e o que o humano fez — derivado do routing e das atribuições, nada calculado aqui. */
+function ShadowMode({ decisoes, metricas, nomeSetor, nomeEquipe, nomeUsuario }: { decisoes: DecisaoObservada[]; metricas: ReturnType<typeof metricasShadow>; nomeSetor: (c?: string) => string; nomeEquipe: (id?: string) => string; nomeUsuario: (id?: string) => string }) {
+  const m = metricas;
+  const alvo = (a: { setorCodigo?: string; equipeId?: string; responsavelId?: string }) => `${nomeSetor(a.setorCodigo)}${a.equipeId ? ` / ${nomeEquipe(a.equipeId)}` : ''}${a.responsavelId ? ` · ${nomeUsuario(a.responsavelId)}` : ''}`;
+  return (
+    <>
+      <p className="small muted">Estágio de observação: o router decide e registra, o humano confirma ou sobrescreve; nada responde nem envia. A baseline abaixo é medida, não meta — decide depois se a IA entra.</p>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Decisões</th><th>HIGH</th><th>MEDIUM</th><th>LOW</th><th>Confirmadas</th><th>Override</th><th>Sem setor (NOVA)</th><th>Intenções fora do catálogo</th><th>Falhas de IA</th></tr></thead>
+        <tbody><tr><td>{m.decisoes}</td><td>{m.bandas.HIGH} ({m.pctBandas.HIGH}%)</td><td>{m.bandas.MEDIUM} ({m.pctBandas.MEDIUM}%)</td><td>{m.bandas.LOW} ({m.pctBandas.LOW}%)</td><td>{m.humano.CONFIRMOU + m.humano.ASSUMIU} ({m.pctConfirmadas}%)</td><td>{m.humano.SOBRESCREVEU} ({m.pctOverride}%)</td><td>{m.threadsSemSetor}</td><td>{m.intencoesForaDoCatalogo.map((i) => `${i.intencao} (${i.n})`).join(', ') || '—'}</td><td>{m.falhasIa}</td></tr></tbody>
+      </table></div>
+      {m.porSetor.length > 0 && <div className="small muted" style={{ marginTop: 6 }}>Por setor sugerido: {m.porSetor.map((s) => `${nomeSetor(s.setorCodigo === '—' ? undefined : s.setorCodigo)} ${s.decisoes} (${s.confirmadas} confirmadas, ${s.sobrescritas} sobrescritas)`).join(' · ')}</div>}
+      <h3 style={{ marginTop: 16 }}>Últimas decisões do Octopus</h3>
+      {decisoes.length === 0 ? <div className="small muted">Nenhuma decisão registrada ainda.</div> : (
+        <div className="table-wrap"><table>
+          <thead><tr><th>Quando</th><th>Conversa</th><th>Intenção</th><th>Destino sugerido</th><th>Confiança</th><th>Origem</th><th>Automação</th><th>Onde está</th><th>Decisão humana</th></tr></thead>
+          <tbody>
+            {decisoes.map((d) => (
+              <tr key={d.threadId}>
+                <td className="small">{dataHora(d.em)}</td>
+                <td><Link to={`/atendimento?t=${d.threadId}`}>{d.assunto.slice(0, 60)}</Link></td>
+                <td className="mono small">{d.intencao}</td>
+                <td>{alvo(d.sugerido)}{d.aplicacao === 'TRIAGEM' ? <span className="small muted"> (sugestão)</span> : null}</td>
+                <td>{Math.round(d.confianca * 100)}% · {d.banda}</td>
+                <td className="small">{d.origem}{d.reavaliacao ? ` · ${d.reavaliacao}` : ''}</td>
+                <td className="small">{d.automacao}</td>
+                <td>{alvo(d.atual)} <span className="small muted">{d.atual.status}</span></td>
+                <td><Badge tone={TOM_HUMANO[d.humano]}>{NOME_HUMANO[d.humano]}</Badge>{d.override && <div className="small muted">{nomeUsuario(d.override.por)} · {dataHora(d.override.em)}: {alvo(d.override.de)} → {alvo(d.override.para)}{d.override.motivo ? ` — ${d.override.motivo}` : ''}</div>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      )}
     </>
   );
 }

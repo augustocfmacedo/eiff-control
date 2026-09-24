@@ -13,9 +13,7 @@
 import { LIMITE_CORPO_WEBHOOK, tratarWebhookMeta, VARIAVEIS_META, type ConfigMeta, type DepsMeta } from '../../src/core/central/metaServidor';
 import { extrairConteudosMeta } from '../../src/core/central/metaEventos';
 import { ingerirEventosCentral } from '../../src/core/inbox/ingestaoServidor';
-import { configPortaIngest, portaIngestRpc } from '../../src/core/inbox/ingestaoPorta';
-import { portaAplicarRoteamentoRpc, portaContextoRest, rotearNoServidor } from '../../src/core/inbox/roteamentoPorta';
-import { configInteligencia, provedorAnthropic } from '../../src/core/inbox/inteligenciaLlm';
+import { montarPortasInbox } from '../../src/core/inbox/ativacao';
 
 const json = (corpo: unknown, status: number) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const log = (t: Record<string, unknown>) => { try { console.log(JSON.stringify({ evento: 'central', ...t })); } catch { /* ignore */ } };
@@ -48,22 +46,16 @@ export default async (req: Request): Promise<Response> => {
   const respostaCentral = () => new Response(r.corpo, { status: r.status, headers: { 'content-type': `${r.tipo}; charset=utf-8`, 'cache-control': 'no-store' } });
   if (r.status !== 200 || req.method !== 'POST' || !r.eventos?.length) return respostaCentral();
 
-  // EIFF Inbox: entrega dos eventos ja validados e normalizados a fronteira de ingestao
-  const porta = configPortaIngest(process.env);
-  if ('motivo' in porta) { log({ evento: 'inbox_ingest', outcome: 'nao_configurado', motivo: porta.motivo, eventos: r.eventos.length }); return respostaCentral(); }
+  // EIFF Inbox: entrega dos eventos ja validados e normalizados a fronteira de ingestao. Kill switches e portas
+  // (ingestao, router, IA) sao montados em src/core/inbox/ativacao.ts a partir do ambiente: EIFF_INBOX_ENABLED,
+  // EIFF_INBOX_ROUTER_ENABLED, EIFF_INBOX_LLM_ENABLED (outbound nao existe). Desligado = a Central responde como antes.
+  const inbox = montarPortasInbox(process.env, { fetch, log, agora: deps.agora });
+  if (!inbox.ligado) { log({ evento: 'inbox_ingest', outcome: 'desligado', motivo: inbox.motivo, eventos: r.eventos.length }); return respostaCentral(); }
   // o conteudo so existe aqui, a partir do payload ja validado; a Central nao o transporta no evento
   let conteudos: ReturnType<typeof extrairConteudosMeta>;
   try { conteudos = extrairConteudosMeta(JSON.parse(corpoBruto)); } catch { conteudos = []; }
-  // Octopus Router no servidor: contexto e aplicacao pela chave de servico; IA so com ANTHROPIC_API_KEY (senao, deterministico)
-  const ia = configInteligencia(process.env);
-  const cfgRot = { url: porta.url, chave: porta.chave, organizacaoId: porta.organizacaoId };
-  const rotear = (threadId: string, messageId: string) => rotearNoServidor(threadId, messageId, {
-    contexto: portaContextoRest(cfgRot, fetch), aplicar: portaAplicarRoteamentoRpc(cfgRot, fetch), log,
-    inteligencia: 'chave' in ia ? (ctx) => provedorAnthropic(ia, { fetch }, { equipes: ctx.equipes, regras: ctx.regras, obras: ctx.obras }) : undefined,
-  });
-  if (!('chave' in ia)) log({ evento: 'inbox_inteligencia', outcome: 'nao_configurada', motivo: ia.motivo });
-  const relatorio = await ingerirEventosCentral(porta.organizacaoId, r.eventos, conteudos, { ingerir: portaIngestRpc(porta, fetch), log, agora: deps.agora , rotear });
-  log({ evento: 'inbox_ingest', outcome: relatorio.falhas.length ? 'parcial' : 'ok', recebidos: relatorio.recebidos, ingeridos: relatorio.ingeridos, duplicados: relatorio.duplicados, ignorados: relatorio.ignorados.length, falhas: relatorio.falhas.length, semInteligencia: relatorio.semInteligencia, roteados: relatorio.roteados, atribuidos: relatorio.atribuidos });
+  const relatorio = await ingerirEventosCentral(inbox.organizacaoId, r.eventos, conteudos, inbox.portas);
+  log({ evento: 'inbox_ingest', outcome: relatorio.falhas.length ? 'parcial' : 'ok', recebidos: relatorio.recebidos, ingeridos: relatorio.ingeridos, duplicados: relatorio.duplicados, ignorados: relatorio.ignorados.length, falhas: relatorio.falhas.length, semInteligencia: relatorio.semInteligencia, roteados: relatorio.roteados, atribuidos: relatorio.atribuidos, flags: inbox.flags, llm: inbox.llm });
   if (relatorio.falhas.length) return json({ ok: false, erro: 'inbox_ingest_falhou', eventos: r.eventos.length, falhas: relatorio.falhas.length }, 500);
   return json({ ok: true, eventos: r.eventos.length, inbox: { ingeridos: relatorio.ingeridos, duplicados: relatorio.duplicados } }, 200);
 };
