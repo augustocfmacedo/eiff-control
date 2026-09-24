@@ -575,11 +575,12 @@ não um clone do Miro.
 | **MC-LIVE-2B** | correções do smoke real: procedência por `source` + `procedencia`, CI não inferido do estado cru | **concluída (22/09/2026)** |
 | MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | depende da W5 da fábrica |
 | MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | — |
-| MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | — |
+| MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | **primeira UI entregue na MC-CONSTRUCTION-1 (23/09/2026, § 17)**; o gate segue aberto até a correlação (`WORK_ITEM_CORRELACAO`) dar estado real a todo nó |
 | MC-LIVE-5 | quadro de execução + realtime (`EXECUCAO_LIVE`, `MC_REALTIME`) — única migration prevista | — |
 | MC-LIVE-6 | projeção comercial | — |
 | MC-LIVE-7 | eventos, timeline e observabilidade | — |
 | MC-LIVE-8 | hardening e fechamento de `MISSION_CONTROL_LIVE` | — |
+| **MC-CONSTRUCTION-1** | Central de Construção: catálogo de módulos, panorama, "Construindo agora", drill-down, abas e a primeira UI do Mapa Vivo (§ 17) | **concluída (23/09/2026)** |
 
 ## 22. Diagrama
 
@@ -731,3 +732,341 @@ A **API da Factory não existe** nesta linha. Tudo que o painel mostra da fábri
 (`GITHUB_PROJECTION`), e por isso um item da fábrica visto por aí se chama "GitHub projection of Factory" e nunca
 "estado operacional da Factory" — este último rótulo está reservado para quando `FACTORY_API` for real. Heartbeat,
 turno, lease, custo e última ferramenta continuam fora: não existem nesta fonte e não são inventados.
+
+---
+
+## 17. MC-CONSTRUCTION-1 — Central de Construção do EIFF
+
+Entrega de 23/09/2026. O `#/mission-control` deixou de abrir no painel de gates e passou a abrir na **Central de
+Construção**: o que compõe o EIFF, o que já foi construído, o que está sendo construído agora, o que é plano, o
+que está bloqueado, quais tarefas pertencem a cada módulo e qual é o próximo passo. **Nada foi removido**: gates,
+marcos, bloqueios, escada de liberação, frentes, camadas, evidências, benefícios e linha do tempo continuam
+inteiros, na aba **Governança**. Não é uma wave nova do roadmap MC-LIVE: é a camada de produto sobre o que as
+waves 0, 1, 2A e 2B já entregaram, e carrega dentro dela a **primeira UI do Mapa Vivo** (MC-LIVE-4).
+
+### 17.1 Hierarquia da página
+
+`Visão geral | Execução | Mapa vivo | Governança` (`Tabs` do sistema, estado local da tela).
+
+- **Visão geral** (padrão): dois `KpiHero` (módulos do catálogo por estado; tarefas ativas por status), bloco
+  **Atenção**, bloco **Construindo agora** e o **Panorama dos módulos** em cartões agrupados por domínio, com
+  drill-down em painel lateral.
+- **Execução**: o bloco "Desenvolvimento ao vivo" (MC-LIVE-1) e o quadro operacional (MC-LIVE-2A/2B), **sem
+  nenhuma mudança** — 8 colunas, filtros, busca e contadores iguais.
+- **Mapa vivo**: o grafo de `mapaVivo.ts` desenhado em SVG (§ 17.4).
+- **Governança**: tudo que era a primeira dobra antes desta entrega (`MissionControlGovernanca.tsx`).
+
+**Uma leitura remota só**: `useStatusRemoto` continua sendo chamado uma única vez em `MissionControl.tsx` e o
+estado desce por prop para as quatro abas. Nenhuma aba cria polling, `fetch`, relógio ou acesso ao GitHub — o
+teste `construcao.test.ts` varre as telas atrás disso.
+
+### 17.2 Modelo de construção (`src/core/central/construcao.ts`, puro)
+
+| Conceito | O que é | De onde vem o estado |
+| --- | --- | --- |
+| `ModuloConstrucao` | um módulo do EIFF: id, título, descrição, domínio (`GESTAO`, `COMERCIAL`, `CENTRAL`, `DESENVOLVIMENTO`), rota, componentes, `dependeDe`, `workstreams`, `observaFonte` | catálogo compilado (SNAPSHOT) |
+| `ComponenteConstrucao` | uma capacidade do módulo | `gates` do catálogo → prontidão; senão `evidencias` (arquivo + símbolo que o teste abre); senão plano declarado |
+| `EstadoConstrucao` | vocabulário **fechado**: `CONCLUIDO`, `EM_CONSTRUCAO`, `PLANEJADO`, `BLOQUEADO`, `SEM_EVIDENCIA` | derivado, nunca digitado |
+| `ModuloProjetado` | módulo + estado + `concluidos/total` + tarefas ligadas + bloqueios + próximo passo + dependentes + procedências | `projetarModulo` |
+| `PanoramaConstrucao` | os módulos projetados, contagem por estado e as contagens de tarefas (`null` sem leitura) | `panoramaConstrucao` |
+
+Regras que o teste prende:
+
+1. **Nenhum módulo inventado**: 19 módulos, todos com pelo menos um componente com evidência ou gate; toda
+   evidência aponta para arquivo que existe e símbolo que está dentro dele; gates, frentes e dependências citados
+   existem; dependências sem ciclo. Módulo sem nada disso cai em `SEM_EVIDENCIA` — hoje, nenhum.
+2. **Nenhum percentual digitado**: o progresso é `concluídos/total` de componentes (`fracaoTexto`), e a porcentagem,
+   quando aparece, é arredondamento dessa fração (`pctConstrucao`). O teste varre o domínio e as telas atrás de
+   porcentagem literal.
+3. **Estado do componente**: gate fechado → concluído; gate bloqueado real → bloqueado; gate bloqueado **por
+   desenho** → bloqueado sem bloquear o módulo (segurança intencional não é falha, a mesma regra de sempre);
+   evidência → concluído; nada → planejado.
+4. **Estado do módulo**: bloqueio real em qualquer componente → `BLOQUEADO`; todos concluídos → `CONCLUIDO`;
+   algum concluído/em andamento ou tarefa viva ativa → `EM_CONSTRUCAO`; senão `PLANEJADO`.
+5. **Próximo passo é derivado**: o primeiro componente não concluído na ordem declarada (bloqueio real vira
+   "desbloquear: …"; gate aberto cita o gate que falta). Nenhuma frase digitada como plano.
+
+### 17.3 Task → módulo: só relação segura
+
+A única regra de pertença é `moduloDaTarefa`: `workstreamId` de uma frente do módulo, ou `gateIds` que cruzam os
+gates do módulo — os dois são campos do contrato `MissionControlWorkItem`. Título, prefixo do `taskId`,
+repositório e nome parecido **não entram** (o teste prova que uma tarefa com o título exato do módulo continua
+sem módulo). Sem relação, a tarefa aparece como **"Módulo não informado"** (`SEM_MODULO`) e **continua visível**
+em "Construindo agora", contada em `tarefas.semModulo`.
+
+**Lacuna de contrato registrada**: o bloco `factory-task:v1` (JOB_CONTRACT.md da fábrica) informa `taskId` e
+`repository`, mas não informa frente nem módulo, e o adapter só extrai o `taskId`. Logo, **toda tarefa viva do
+GitHub aparece hoje sem módulo** — é a fonte que não informa, não a tela que esconde. Quando o contrato ganhar
+um campo de frente/módulo, ele entra pelo adapter e pela normalização, nunca por heurística na tela. A fábrica
+(`FACTORY`) tem um caso à parte: os itens `source = 'FACTORY'` aparecem no módulo "EIFF Dev Factory (observada)"
+como **jobs observados** (`observaFonte`), não como pertença — o módulo a que cada job se refere segue não informado.
+
+### 17.4 Mapa vivo (primeira UI do MC-LIVE-4)
+
+`src/screens/MissionControlMapa.tsx` desenha `NOS` e `ARESTAS` de `mapaVivo.ts` em SVG, sem dependência nova e sem
+grafo paralelo (o teste confere que a tela importa o modelo e não declara nós nem arestas). O que entrou no
+domínio, puro e testado:
+
+- `camadasDoMapa`: camada de cada nó = caminho mais longo a partir das fontes, só por arestas `fluxo` e
+  `dependencia` (o grafo é acíclico nessas arestas, invariante já existente);
+- `layoutDoMapa`: uma faixa por domínio, colunas por ranking denso das camadas presentes no domínio, posições em
+  pixels determinísticas (mesma entrada, mesma saída; nenhum par de nós na mesma célula);
+- `ATORES_DO_NO` / `FONTE_DO_NO` / `itensDoNo`: os itens vivos "de" cada nó, só por `responsavel.tipo` (Architect,
+  Dispatcher, Worker/Supervisor, Humano/Integrator) e por `source` (PR ← `GITHUB`, Demanda ← `ARCHITECTURE`).
+  Nó fora dessas tabelas não recebe item vivo, e a tela diz "sem leitura"/"desenho" em vez de inventar.
+
+Cada nó mostra o estado que vem da sua fonte: gates → `fechados/exigidos` (snapshot); fonte viva → `n item(ns)`
+(live) ou "sem leitura"; os quatro tipos de aresta têm traço próprio (cheio, tracejado, pontilhado, laranja) e
+arestas que apontam para trás (observa, evidência) contornam por cima — observar não cria ordem. Clique abre o
+detalhe (papel, gates, itens vivos, arestas de entrada e saída; o nó CI mostra o CI de `main` dos repositórios).
+O mapa rola dentro do próprio viewport; a página nunca ganha scroll horizontal.
+
+O gate `MAPA_VIVO` **continua aberto**: a prova exige "cada nó mostrando o estado que vem da sua fonte" e isso só
+fecha quando a correlação (`WORK_ITEM_CORRELACAO`) der estado real a todo nó — hoje, os nós de fonte viva mostram
+contagem por responsável/fonte da projeção do GitHub, e os nós de desenho, só gates.
+
+### 17.5 LIVE × SNAPSHOT, atenção e degradação
+
+- Cada cartão de módulo é SNAPSHOT (catálogo do build); as tarefas ligadas trazem a procedência do item
+  (`GITHUB_PROJECTION` etc.). O painel do módulo mostra as duas procedências lado a lado (`procedencias`), e o
+  teste prova que módulo sem tarefa viva declara só `REPOSITORIO`.
+- **Atenção** lista só fatos derivados (`atencaoConstrucao`): sem leitura, fonte indisponível, módulos com bloqueio
+  real, tarefas bloqueadas, aguardando humano, itens com leitura vencida, tarefas sem módulo. Nada opinativo.
+- **Erro de fonte não vira zero**: sem leitura válida, `panorama.tarefas` é `null` e a tela mostra "—" e "sem
+  leitura"; os módulos continuam todos lá (catálogo). O último estado conhecido segue a regra da MC-LIVE-1.
+
+### 17.6 O que NÃO entrou (dívidas declaradas)
+
+- Nenhuma migration, tabela, realtime, cron ou função nova: a Central funciona com `/api/development-status` e o
+  catálogo compilado.
+- Timeline/eventos continuam fora (§ 14-A).
+- `FACTORY_ADAPTER_READONLY`, `WORK_ITEM_CORRELACAO`, `MAPA_VIVO`, `EXECUCAO_LIVE`, `MC_REALTIME`, `MC_DEGRADACAO` e
+  `MISSION_CONTROL_LIVE` seguem abertos — esta entrega não fechou gate nenhum.
+- Correção lateral necessária para a prova de responsividade: em 390 px a aba Governança estourava a largura da
+  página (grade `.mc-camadas` sem `minmax(0, 1fr)` e pills de gate com `white-space: nowrap`). Corrigido só em CSS
+  (`.mc-camadas`, `.mc-camada .mc-pill`, `.mc-gov`); as tabelas rolam dentro do próprio cartão.
+
+Testes: `src/core/central/construcao.test.ts` (31 casos, cobrindo as doze provas pedidas) mais os já existentes de
+`workItem`, `quadroOperacional`, `missionControl` e `developmentStatus`, que seguem verdes.
+
+### 17.7 MC-CONSTRUCTION-1B — reconciliação com a main e guarda de cobertura (24/09/2026)
+
+**O que aconteceu.** Enquanto a MC-CONSTRUCTION-1 era construída sobre `7ac9bde`, a `main` avançou para `7e0aa61`
+com o PR #13 (EIFF Inbox — Foundation). O commit original (`bbac2db`) foi reaplicado por cherry-pick numa branch
+de integração criada a partir de `7e0aa61`; o único conflito foi `src/styles.css`, em que os dois lados acrescentaram
+blocos ao fim do arquivo — resolvido mantendo o CSS do Inbox exatamente como está na `main` e o bloco
+`mcc-*`/`mcm-*` da Central depois dele (o arquivo final é `main` + bloco, byte a byte; nenhum estilo do Inbox mudou).
+
+**O que o Inbox tornou visível.** Um módulo novo entrou no sistema e a Central não o mostrou: o catálogo é explícito
+por desenho (§ 17.2, regra 1), então **não havia como ele aparecer sozinho** — e não havia nada que acusasse a
+ausência. Esse silêncio era o defeito.
+
+**Inbox no catálogo.** `INBOX` (domínio EIFF Central, rota `/atendimento`, depende de `CENTRAL_WHATSAPP` e
+`PLATAFORMA`) com o que a `main` prova: domínio (`tipos.ts`, `estados.ts`, `roteamento.ts`), telas (`Inbox.tsx`,
+`InboxConfig.tsx`), persistência **escrita** (`0056_inbox.sql` com `inbox_ingest`/`inbox_assign_thread`,
+`inbox.supabase.ts`), ingestão pela Central (`ingerirEventosCentral`, `deEventoCentral`, `channel-meta-webhook.ts`),
+fronteiras fail-closed (`PROVEDOR_MANUAL`, `SEM_INTELIGENCIA`, `EXECUCAO_FACTORY_RESERVADA`) e provas
+(`scripts/pg-smoke-inbox.mjs`, testes, `docs/eiff-inbox.md`). O que `docs/eiff-inbox.md` § 11.9/§ 13 declara como
+pendente entra como **plano sem evidência** (0056 aplicada em produção, IntelligenceProvider real, escalação por
+SLA automática, editor de regras, Octopus Router). Estado derivado: **em construção**; próximo passo derivado:
+"Migration 0056 aplicada em produção". Nenhum arquivo do Inbox foi alterado; a Central só o observa.
+
+**Guarda de cobertura (só em teste, nunca em runtime).** Cada módulo declara as superfícies de navegação que cobre
+(`rotas`), e `EXCLUSOES_SUPERFICIE` lista, com motivo, as rotas que existem e por decisão não são módulo (hoje só
+`/piloto`, o protótipo de UX). O teste lê o **inventário real** — os `to:` de `ROTAS_NAV` em `Paleta.tsx` e os `case`
+do switch de telas em `App.tsx` — e exige que toda rota termine coberta por exatamente um módulo ou excluída
+explicitamente; qualquer sobra falha com `"Nova superfície do EIFF sem classificação na Central de Construção: <x>"`.
+Também falha se um módulo cobrir rota inexistente, se duas cobrirem a mesma rota ou se a rota principal do módulo
+não estiver entre as cobertas. O domínio (`construcao.ts`) não importa App, Paleta nem lê `location`: a
+classificação em runtime continua vindo apenas do catálogo (`classificarSuperficie` é função total sobre
+declarações), e uma superfície nova **não vira módulo** — vira teste vermelho até alguém decidir.
+
+**Mapa vivo.** Nó `INBOX` na faixa da Central, sem gate e sem fonte viva (mostra "desenho"), com **duas** arestas,
+as únicas provadas em código: `WEBHOOK → INBOX` (fluxo: o webhook da Central entrega `ChannelInboundEvent` +
+conteúdo a `inbox_ingest`) e `CONTROL → INBOX` (dependência: a RLS do Inbox espelha a matriz de permissões via
+`inbox_role`). Nenhuma aresta sai do Inbox; nada foi desenhado para Factory, Radar ou obra — o vínculo
+contato ↔ Radar/obra está na lista de pendências do próprio Inbox.
+
+**Revisão do catálogo (19 → 20 módulos).** Ajustes feitos por serem inequívocos: `EXPERIENCIA` passou a cobrir o
+Painel executivo e a caixa pessoal (`/`, `/inbox`) e ganhou os dois componentes correspondentes; `PLATAFORMA` passou
+a cobrir Cadastros e Auditoria (`/cadastros`, `/auditoria`). Observações registradas, **não** refatoradas (decisão
+humana): `EXPERIENCIA` e `CAPACITACAO` são módulos transversais de produto mais do que domínios de negócio;
+`COMUNICACAO` e `LEAD_ENGINE` vivem dentro das telas do Radar (rotas próprias = nenhuma) e poderiam ser lidos como
+frentes do Radar; `ESTOQUE` é pequeno (2 componentes) mas tem core, migrations e tela próprios. Nenhum módulo é
+uma tela isolada: todos têm core ou contrato além da tela.
+
+**Provas novas** (`construcao.test.ts`, blocos 13–15): inventário real contém `/atendimento`; drift = vazio; rota
+sintética `/nova-superficie` quebra a guarda; rotas cobertas existem, são únicas e incluem a principal; exclusões
+com motivo; domínio e telas não usam a guarda em runtime; Inbox no catálogo com estado derivado, evidências
+reais (só arquivos do Inbox/Central com símbolo presente), dependências provadas, título "Inbox" em tarefa não vira
+módulo; contagens da home recalculadas; nó `INBOX` sem fonte viva, duas arestas de entrada, nenhuma de saída.
+
+### 17.8 MC-CONSTRUCTION-1C — main atual e frescor dos componentes (24/09/2026)
+
+**O que aconteceu.** Enquanto a 1B era reconciliada sobre `7e0aa61`, a `main` avançou para `7a0e723` (PR #14,
+EIFF Inbox — Fase 3: Octopus Router). A Central foi reaplicada numa branch nova a partir de `7a0e723`
+(`feature/mc-construction-1-current`; os commits da 1 e da 1B por cherry-pick, `styles.css` de novo resolvido como
+`main` inteira + bloco `mcc-*`/`mcm-*`, conferido byte a byte). As branches `feature/mc-construction-1` e
+`feature/mc-construction-1-integration` ficam como evidência.
+
+**O segundo drift.** O PR #14 não abriu rota nenhuma — então a guarda de superfície (§ 17.7) não tinha o que ver — e
+mesmo assim três componentes do Inbox que o catálogo dizia "planejados" passaram a existir em código: o Octopus
+Router, os editores de regras e o provedor de IA no servidor. O catálogo ficou **silenciosamente velho**.
+
+**Inbox na main atual (`7a0e723`).** A maturidade do Octopus fica em componentes, sem estado novo de módulo:
+
+| Componente | Estado | Evidência |
+| --- | --- | --- |
+| Octopus Router: pipeline e política de automação | concluído | `roteador.ts › decidirRoteamento`, `automacao.ts › decidirAutomacao` |
+| Octopus Router: testes e smoke do banco | concluído | `roteador.test.ts`, `roteamentoServidor.test.ts`, `pg-smoke-inbox.mjs › inbox_apply_routing` (provas S–X) |
+| Octopus Router: integrado | concluído | `channel-meta-webhook.ts › rotearNoServidor`, `0057 › inbox_apply_routing` (escrita), `store.ts › inboxConfirmarRoteamento` |
+| Refino por IA no servidor (opcional pela chave) | concluído | `inteligenciaLlm.ts › provedorAnthropic` |
+| Editores de regras de roteamento e automação | concluído | `InboxConfig.tsx › RegraRoteamento/RegraAutomacao`, `store.ts › validarConfiguracaoOctopus` |
+| Migration 0056 aplicada em produção | planejado | sem sinal: aplicação não deixa artefato no repositório |
+| Migration 0057 aplicada em produção | planejado | idem |
+| Roteamento em operação real comprovada | planejado | sem sinal: só se prova em produção |
+| Escalação por SLA como execução automática | planejado | sinais monitorados: `'SLA_ESCALATED'` emitido em `roteamento.ts`, `roteador.ts` ou `store.ts` |
+
+Resultado derivado: **11/15 componentes, em construção**, próximo passo "Migration 0056 aplicada em produção", sem
+bloqueio. "Código na main" é **implementado + provado + integrado**, não "operando": 0056 e 0057 seguem só em código
+(CLAUDE.md, `docs/eiff-inbox.md` § 14.7).
+
+**Guarda de frescor (só em teste).** Todo componente **planejado** (sem gate e sem evidência) declara exatamente
+uma de duas coisas: `sinaisDeImplementacao` — artefatos explícitos (arquivo + símbolo) cuja aparição indicaria que
+a implementação nasceu — ou `semSinalPorque`, quando o plano não deixa artefato previsível (aplicação em produção,
+decisão da Diretoria, próxima fonte do Lead Engine). O teste abre os sinais declarados; se algum existir enquanto o
+componente segue planejado, falha com `"Componente da Central possivelmente desatualizado: <ID> possui evidência de
+implementação, mas continua classificado como PLANEJADO."`. O domínio **não** abre arquivo nem reclassifica: sinal
+presente não muda estado, só vira teste vermelho. A regressão do caso real está no teste: os três planos do catálogo
+da 1B, com os sinais que o contrato do Octopus já nomeava, disparam a guarda na `main` atual.
+
+A evidência positiva continua valendo nos dois sentidos: todo componente concluído por evidência tem o arquivo e o
+símbolo reabertos pela suíte; se sumirem, o teste falha — a Central não sustenta um ✓ sobre evidência que deixou de
+existir.
+
+**As duas guardas, e só elas.** Superfície (rota nova sem classificação) e componente (sinal monitorado sob um
+planejado). Limite declarado: um componente com `semSinalPorque` depende de revisão humana — a guarda não o vigia.
+
+**Mapa vivo.** O PR #14 não trouxe relação arquitetural nova do Inbox com outro nó do grafo: o router roda **dentro**
+do Inbox, é chamado pelo mesmo webhook e lê obra e perfis do Control pela mesma dependência. As duas arestas ficam;
+só os rótulos passaram a dizer isso (`… → inbox_ingest → rotearNoServidor`; `RLS espelha a matriz (inbox_role); o
+router lê obra e perfis`). A IA (Anthropic) não é nó do mapa e não ganhou aresta. Nenhuma aresta nova.
+
+**Task → módulo** não mudou: título com "Inbox" ou "Octopus" continua sem módulo.
+
+### 17.9 MC-CONSTRUCTION-1D — ativação em produção e Shadow Mode (24/09/2026)
+
+**O que mudou na main.** PR #18 (`d707531`, docs) registrou em `docs/eiff-inbox.md` § 15 e no CLAUDE.md a ativação
+controlada do Inbox: 0056 e 0057 aplicadas em produção, `EIFF_INBOX_ORGANIZATION_ID` no Netlify e o Inbox em
+**SHADOW MODE** — infraestrutura real, nenhuma ação externa. A Central foi reaplicada numa branch final a partir de
+`d707531` (`feature/mc-construction-1-final`; os três commits anteriores por cherry-pick, sem conflito, `styles.css` =
+`main` + bloco da Central).
+
+**Inbox sincronizado — só com o que o texto integrado diz.** Concluídos por evidência documental (§ 15.1, § 15.2,
+§ 15.4 e CLAUDE.md): *Migration 0056 aplicada em produção*, *Migration 0057 aplicada em produção*, *Shadow Mode em
+produção: E2E controlado, idempotência e router provados (sem ação externa)* e *RLS e autoridade provadas em produção*.
+Seguem planejados: *Tráfego externo real* (a fonte diz que "nenhuma mensagem real chega ainda": faltam
+`SUPABASE_SERVICE_ROLE_KEY`, `META_WHATSAPP_*`, os phone number IDs e os setores — decisões do usuário, não componentes
+novos) e *Escalação por SLA como execução automática*. Resultado derivado: **15/17, em construção**; próximo passo
+derivado: "Tráfego externo real". O antigo "Migration 0056 aplicada em produção" deixou de ser o próximo passo.
+
+**Shadow Mode não é operação.** Não há estado novo de módulo. A distinção fica em um rótulo de componente,
+`natureza` (vocabulário fechado `CODIGO` · `INTEGRACAO` · `PRODUCAO` · `OPERACAO`), que diz **o que a evidência prova**:
+o E2E de § 15.4 é prova de **produção** com dado de teste; **operação** exige uso real e segue planejada. Regras presas
+por teste: componente de produção ou operação só se prova por documento integrado (nunca por código); nenhum componente
+de operação está concluído hoje; o componente de tráfego real não herda nenhuma evidência da prova controlada. O
+rótulo aparece no painel do módulo ao lado de cada componente; ele não entra em nenhum cálculo de estado.
+
+**O ponto cego da guarda de frescor.** A guarda da 1C **não teria detectado** esta mudança: os planos de 0056/0057
+declaravam `semSinalPorque` ("aplicação em produção não deixa artefato no repositório"), e isso estava errado — o
+projeto registra o que está no ar, e a frase "0057 (Octopus Router, …) só em código" existia no CLAUDE.md em `7a0e723`
+e sumiu no PR #18. Correção dentro da mesma guarda (não é uma terceira): um componente planejado pode citar
+`pendenciaDeclarada` — a frase de uma fonte integrada que o declara pendente. Se ela sumir, o teste falha com
+`"Componente da Central possivelmente desatualizado: a fonte deixou de declarar <ID> como pendente, mas ele continua
+classificado como PLANEJADO."`. Todos os planos atuais passaram a se ancorar assim (DEC-03 e DEC-09 no CLAUDE.md, fontes
+futuras do Lead Engine no CLAUDE.md, tráfego real e escalação em `docs/eiff-inbox.md`); `semSinalPorque` fica como
+último recurso. A regressão do caso real está no teste. Como antes, o domínio não abre arquivo e nada é reclassificado
+sozinho.
+
+**Mapa vivo.** Inalterado: 20 nós, 29 arestas. O PR #18 é documental e não prova relação arquitetural nova.
+
+### 17.10 MC-CONSTRUCTION-1E — main 0d8fe73 e autoridade do estado atual (24/09/2026)
+
+**O que aconteceu.** Com o PR #20 já aberto, a `main` recebeu o PR #19 (EIFF Inbox — SHADOW MODE real: 0058, kill
+switches, observabilidade). A composição candidato + `0d8fe73` reprovava 5 testes da própria Central — a guarda de
+evidência funcionando: `rotearNoServidor` saiu do webhook (agora a montagem é `montarPortasInbox` em
+`src/core/inbox/ativacao.ts`) e a frase do CLAUDE.md passou de "0056 e 0057 aplicadas" para "0056, 0057 e 0058 …
+aplicadas". A `main` foi mesclada na branch do PR (merge, sem rebase nem force-push) e só a projeção da Central mudou.
+
+**Inbox na main atual.** Novos componentes concluídos, cada um com evidência real: *Controles de ativação* (kill
+switches `EIFF_INBOX_ENABLED`/`ROUTER`/`LLM`/`OUTBOUND` lidos só no servidor; `montarPortasInbox` é o único ponto de
+montagem), *Observabilidade do Shadow Mode* (últimas decisões e baseline confirmação × override) e *Defaults
+versionados em produção* (0058 com 12 setores e configuração padrão; um componente só, sem um por detalhe). O Shadow
+Mode passou a incluir o router determinístico **aplicando** em produção com dado de teste (§ 16.8: `consultar_pagamento`
+→ FINANCEIRO, confiança 0,80, `ATRIBUIR_SETOR`, eventos ROUTED e STATUS_CHANGED). Outbound desligado é segurança por
+desenho (`outbound: false` em `ativacao.ts`, evidência da fronteira), nunca bloqueio. IA: o provedor existe (código,
+concluído), mas o uso em produção está desligado por decisão (`EIFF_INBOX_LLM_ENABLED=false`, "ANTHROPIC OFF") — vira o
+plano *Refino por IA ligado no roteamento em produção*. Resultado derivado: **18/21, em construção**; próximo passo:
+*Tráfego externo real* — agora dependente só de `SUPABASE_SERVICE_ROLE_KEY` e das variáveis da Meta (§ 16.3/§ 16.5);
+os setores saíram dos pré-requisitos.
+
+**Autoridade do estado atual.** O § 15.2 continua dizendo "setores … **vazios**" — está certo como registro histórico e
+não foi editado. O erro seria a Central ler o documento inteiro e aceitar essa frase como estado vigente. Agora cada
+evidência documental e cada pendência de natureza PRODUÇÃO ou OPERAÇÃO declara `secao`: o título exato da seção que
+representa o estado atual (tabela única `SECOES_ATUAIS` em `construcao.ts`). O teste recorta **só** aquela seção (da
+linha do título ao próximo título de nível igual ou maior — recorte explícito, não parser nem "última frase vence") e
+procura o símbolo ali. Regras presas por teste: estado operacional mutável sem seção reprova; seção inexistente
+reprova; a frase histórica existe no § 15.2 e não no § 16.5, e um plano ancorado no estado atual com ela dispara a
+guarda, enquanto a mesma frase sem seção "sustentaria" o plano — por isso a busca no documento inteiro é proibida para
+estado operacional. O runtime continua sem arquivo e sem recorte.
+
+**As guardas agora protegem três situações:** (A) superfície nova sem classificação; (B) componente planejado que ganha
+sinal de implementação ou cuja frase-fonte de pendência some; (C) fonte declarada como estado atual que deixa de
+sustentar a classificação registrada — evidência de produção cuja seção vigente não contém mais o fato, ou pendência
+cuja seção vigente não a declara mais.
+
+**Mapa vivo.** Inalterado em nós e arestas (20/29); só o rótulo da aresta `WEBHOOK → INBOX` passou a citar
+`montarPortasInbox`. `ativacao.ts`, 0058 e observabilidade são partes internas do Inbox.
+
+### 17.11 MC-CONSTRUCTION-1F — Lead Engine na main 7674125 (24/09/2026)
+
+**O que aconteceu.** A `main` recebeu o PR #15 (Lead Engine 3 — revisão comercial dos candidatos e desenho da
+descoberta contínua do CNO). Diferente do PR #19, a composição candidato + `7674125` ficou **verde**: a Central
+mostrava o Lead Engine em 4/5 com o próximo passo "Novas fontes e descoberta automática (PNCP, RFB)", e nenhuma
+guarda acusava. Motivo: o único plano do módulo estava ancorado numa frase do CLAUDE.md que continua lá ("Nada de
+descoberta automática, scheduler, …"), fora da seção de estado atual e sem `secao` — a regra da 1E só exigia seção
+para componentes de natureza PRODUÇÃO/OPERAÇÃO, e o plano não tinha natureza. A `main` foi mesclada na branch do PR
+(merge, sem rebase nem force-push) e só a projeção da Central mudou.
+
+**Autoridade atual do Lead Engine.** É o preâmbulo "Estado em …" do `docs/lead-engine-1.0.md`, que o próprio Lead
+Engine reescreve a cada gate: LE3-D.1 fechado; LE3-E desenhado, não ativado; LE-3 em andamento; LE-4 a LE-8 não
+iniciados. As §39/§40 são registros de gate — o título da §40 diz "(não ativado)" e o texto "Não ativou scheduler"
+para sempre, inclusive depois da ativação; por isso nunca sustentam estado atual. O preâmbulo não tem título próprio:
+`SECOES_ATUAIS.leadEngineEstado` é o título do documento e o recorte de **nível 1** vale só até o primeiro título
+seguinte de qualquer nível — nunca o documento inteiro (a busca proibida). Mesmo mecanismo, uma regra a mais.
+
+**Lead Engine recalculado.** Concluídos: intake, fila de revisão, fonte CNO, piloto em produção (agora PRODUÇÃO, com
+o preâmbulo e o estado do CLAUDE.md como autoridade), **revisão comercial dos candidatos** (LE3-D.1: projeção de obra
+e sinal, filtros, métricas do piloto e handoff para decisores; integrado na aba Candidatos) e **descoberta contínua
+desenhada** (LE3-E como CÓDIGO: `decidirMonitor`, `planoExecucaoAgendada`, retenção que nunca apaga). Planos:
+*backfill da janela de 90 dias gravado* (OPERAÇÃO; o preâmbulo diz "65 novos, nada gravado"), *monitor diário
+agendado e ligado* (OPERAÇÃO; "LE3-E desenhado, não ativado") e *novas fontes PNCP e CNPJ/RFB* ("LE-4 a LE-8 não
+iniciados"). Resultado derivado: **6/9, em construção**; próximo passo: *Descoberta contínua: backfill da janela de
+90 dias gravado*. Desenho não é operação: nenhum componente de OPERAÇÃO do Lead Engine está concluído.
+
+**Guarda ampliada, não nova.** A guarda C passou a exigir `secao` em **toda** pendência documental, de qualquer
+natureza — pendência é sempre afirmação sobre o estado atual ("ainda não"). O plano da 1E, reconstruído no teste,
+continua passando pela verificação de frase (a frase existe fora da seção atual) e é reprovado pela regra ampliada;
+a contraprova com o catálogo antigo reprova 7 testes. Simulação da ativação: com o preâmbulo trocado para "LE3-E
+ativado", o plano cai e a guarda dispara, enquanto a §40 e o documento inteiro ainda "sustentariam" o plano.
+
+**Mapa vivo e tarefas.** Mapa inalterado (20 nós, 29 arestas): o PR #15 evolui o Lead Engine por dentro, sem nova
+dependência entre módulos. Título "Lead Engine", branch `feature/lead-engine-*` ou arquivo `radar/*` continuam sem
+módulo.
+
+**Achado do gate (defeito da 1E, corrigido).** Duas âncoras da pendência de tráfego real do Inbox citavam o NOME da
+chave de serviço do Supabase. O catálogo vai inteiro para o bundle do navegador, e a regressão arquitetural do Inbox
+(`inbox.test.ts`) proíbe esse nome no `dist/` quando ele existe. O CI roda os testes antes do build e não via; o `dist`
+local da 1E revelou. As âncoras passaram a frases da mesma seção atual sem o nome (§16.5 "(2) as sete variáveis da Meta
+acima e o registro da URL"; §16.3 "(nenhuma outra função a tem;"), e o bloco 20 prende a regra no código-fonte da
+Central, com ou sem `dist`. Nenhum valor de segredo esteve envolvido — só o nome da variável.
