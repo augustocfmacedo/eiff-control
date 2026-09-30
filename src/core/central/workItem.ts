@@ -179,6 +179,38 @@ export const COR_MC_SINAL: Readonly<Record<McSinal, 'verde' | 'amarelo' | 'cinza
 
 // ------------------------------------------------------------------------------- tipos do contrato
 
+// --------------------------------------------------------------------- identidade canonica (MC-LIVE-3)
+
+/** ESPELHO de `TASK_ID` (`packages/contracts/src/texto.ts`), ANCORADO: valida um valor inteiro, nao procura num texto. */
+export const TASK_ID_CANONICO = /^[A-Z]{2,4}-\d{4}$/;
+
+/** ESPELHO de `lerBranchDoJob` (`packages/github/src/refs.ts`): `factory/<taskId>-a<attempt>`, attempt ≥ 1. */
+const BRANCH_CANONICA_DO_JOB = /^factory\/([A-Z]{2,4}-\d{4})-a(\d{1,4})$/;
+
+/**
+ * taskId de uma branch canonica da fabrica. A branch e GERADA do taskId (`branchDoJob`), entao e identidade;
+ * qualquer outra branch devolve null. Vive aqui (e nao no adapter) para a NORMALIZACAO do PR conferir a
+ * identidade por conta propria, em vez de confiar num `taskId` que alguem tenha posto na entrada.
+ */
+export function taskIdDaBranchCanonica(branch: string | null | undefined): string | null {
+  if (!branch) return null;
+  const m = BRANCH_CANONICA_DO_JOB.exec(branch);
+  return m && Number(m[2]) >= 1 ? m[1] : null;
+}
+
+/**
+ * POR ONDE a correlacao de um item foi estabelecida — so as identidades permitidas pela MC-LIVE-3:
+ *   BLOCO_DA_ISSUE    `taskId` do bloco `factory-task:v1` no corpo da issue (`lerIdentidadeCanonica`);
+ *   BRANCH_CANONICA   `factory/<taskId>-a<n>` do PR;
+ *   FACTORY_API       `taskId` entregue pelo contrato da API da fabrica;
+ *   GATE              id do gate declarado no catalogo;
+ *   FONTE_DECLARADA   identificador declarado pela propria fonte (itemId da Maquina Comercial).
+ * Titulo, nome de modulo, prefixo, arquivo alterado, branch nao canonica e palavra solta no texto NAO estao aqui
+ * e nunca estarao: nao correlacionam.
+ */
+export const ORIGENS_CORRELACAO = ['BLOCO_DA_ISSUE', 'BRANCH_CANONICA', 'FACTORY_API', 'GATE', 'FONTE_DECLARADA'] as const;
+export type OrigemCorrelacao = (typeof ORIGENS_CORRELACAO)[number];
+
 /** Idade do dado. Existe no tipo de proposito: nao ha item sem dizer quando foi observado. */
 export interface Frescor {
   /** quando a fonte foi lida com sucesso pela ultima vez */
@@ -217,6 +249,12 @@ export interface MissionControlWorkItem {
   id: string;
   /** derivado de identidade canonica da fonte (taskId na fabrica, id do gate no Mission Control) */
   correlationId?: string;
+  /**
+   * Por onde a correlacao foi ESTABELECIDA (MC-LIVE-3). Ausente = o item nao se liga a nada alem dele mesmo:
+   * `correlationId` e so o endereco dele (`repositorio#numero`) e nada se funde com ele. Na consolidacao as
+   * origens se somam, entao um cartao issue + PR diz que o taskId veio do bloco E da branch.
+   */
+  correlacaoPor?: OrigemCorrelacao[];
   source: McFonte;
   /** por qual caminho este dado chegou — projecao do GitHub nao e estado operacional da fabrica */
   procedencia: Procedencia;
@@ -433,6 +471,7 @@ export function normalizarJobFactory(job: JobFactory, ctx: ContextoNormalizacao,
   return {
     id: idWorkItem('FACTORY', job.taskId),
     correlationId: job.taskId,
+    correlacaoPor: ['FACTORY_API'],
     source: 'FACTORY',
     procedencia: 'FACTORY_API',
     sourceId: job.taskId,
@@ -468,6 +507,7 @@ export function normalizarGate(g: Gate, ctx: ContextoNormalizacao, workstreamId?
   return {
     id: idWorkItem('GATE', g.id),
     correlationId: g.id,
+    correlacaoPor: ['GATE'],
     source: 'GATE',
     procedencia: 'REPOSITORIO',
     sourceId: g.id,
@@ -521,6 +561,7 @@ export function normalizarItemComercial(e: EntradaComercial, ctx: ContextoNormal
   return {
     id: idWorkItem('COMMERCIAL', e.itemId),
     correlationId: e.itemId,
+    correlacaoPor: ['FONTE_DECLARADA'],
     source: 'COMMERCIAL',
     procedencia: 'DATASET',
     sourceId: e.itemId,
@@ -571,6 +612,10 @@ export interface EntradaPullRequest {
   branch: string;
   headSha: string;
   rascunho: boolean;
+  /**
+   * O que o adapter leu. A normalizacao NAO confia nele: recalcula pela branch (`taskIdDaBranchCanonica`) e,
+   * se a branch nao for canonica, o PR fica sem correlacao — seja qual for o valor que veio aqui.
+   */
   taskId: string | null;
   criadoEm: string;
   atualizadoEm: string;
@@ -589,9 +634,12 @@ export function normalizarIssueFactory(e: EntradaIssueFactory, ctx: ContextoNorm
   const ator = e.estadoFactory
     ? (e.estadoFactory === 'ARCH_APPROVED' && e.lane === 'RED' ? 'HUMAN' : ATOR_POR_ESTADO_FACTORY[e.estadoFactory])
     : undefined;
+  // o taskId vem do bloco canonico (`lerIdentidadeCanonica`); fora do formato ancorado ele nao e identidade
+  const taskId = e.taskId && TASK_ID_CANONICO.test(e.taskId) ? e.taskId : null;
   return {
     id: idWorkItem(e.estadoFactory ? 'FACTORY' : 'ARCHITECTURE', ref),
-    correlationId: e.taskId ?? ref,
+    correlationId: taskId ?? ref,
+    correlacaoPor: taskId ? ['BLOCO_DA_ISSUE'] : undefined,
     source: e.estadoFactory ? 'FACTORY' : 'ARCHITECTURE',
     procedencia: 'GITHUB_PROJECTION',
     sourceId: ref,
@@ -613,12 +661,17 @@ export function normalizarIssueFactory(e: EntradaIssueFactory, ctx: ContextoNorm
 /**
  * PR aberto = codigo em conferencia. O CI por PR NAO e lido aqui: uma chamada por cartao e exatamente o
  * que o desenho proibe. O CI que aparece no painel e o do `main` de cada repositorio.
+ *
+ * Identidade (MC-LIVE-3): SO a branch canonica. Titulo com `[EC-0042]`, branch `feature/EC-0042-…` ou um
+ * `taskId` posto na entrada nao colam o PR em tarefa nenhuma — o PR fica referenciado por `repositorio#numero`.
  */
 export function normalizarPullRequest(e: EntradaPullRequest, ctx: ContextoNormalizacao): MissionControlWorkItem {
   const ref = refGitHub(e.repositorio, e.numero);
+  const taskId = taskIdDaBranchCanonica(e.branch);
   return {
     id: idWorkItem('GITHUB', ref),
-    correlationId: e.taskId ?? ref,
+    correlationId: taskId ?? ref,
+    correlacaoPor: taskId ? ['BRANCH_CANONICA'] : undefined,
     source: 'GITHUB',
     procedencia: 'GITHUB_PROJECTION',
     sourceId: ref,
@@ -640,6 +693,12 @@ const PRECEDENCIA: Readonly<Record<McFonte, number>> = { FACTORY: 4, ARCHITECTUR
 const juntarLinks = (a?: LinksWorkItem, b?: LinksWorkItem): LinksWorkItem | undefined => {
   if (!a && !b) return undefined;
   return { ...(b ?? {}), ...Object.fromEntries(Object.entries(a ?? {}).filter(([, v]) => v !== undefined)) };
+};
+
+/** Origens da correlacao somadas, na ordem do catalogo (deterministica, independente da ordem de leitura). */
+const juntarOrigens = (a?: OrigemCorrelacao[], b?: OrigemCorrelacao[]): OrigemCorrelacao[] | undefined => {
+  const todas = new Set([...(a ?? []), ...(b ?? [])]);
+  return todas.size ? ORIGENS_CORRELACAO.filter((o) => todas.has(o)) : undefined;
 };
 
 /**
@@ -678,6 +737,7 @@ export function consolidarWorkItems(itens: readonly MissionControlWorkItem[]): M
       links: juntarLinks(vence.links, perde.links),
       evidencias: [...(vence.evidencias ?? []), ...(perde.evidencias ?? [])].length ? [...(vence.evidencias ?? []), ...(perde.evidencias ?? [])] : undefined,
       gateIds: [...new Set([...(vence.gateIds ?? []), ...(perde.gateIds ?? [])])].length ? [...new Set([...(vence.gateIds ?? []), ...(perde.gateIds ?? [])])] : undefined,
+      correlacaoPor: juntarOrigens(vence.correlacaoPor, perde.correlacaoPor),
     };
     resultado.set(donoId, fundido);
     porCorrelacao.set(c, donoId);

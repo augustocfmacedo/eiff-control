@@ -349,8 +349,9 @@ issue fica referenciada por `repositório#número`, sem correlação inventada. 
 ou na prosa nunca é consultado; um `[EC-0099]` no título não vence um `EC-0042` no bloco.
 
 Para o PR, a identidade é a **branch** `factory/<taskId>-a<n>` (espelho de `lerBranchDoJob` em `refs.ts`),
-porque a fábrica a gera a partir do `taskId`; o título é último recurso para PR humano fora do padrão e nunca
-vence a branch. Com issue canônica e PR na branch canônica, o resultado é **um cartão só**: a fábrica tem
+porque a fábrica a gera a partir do `taskId`. **Desde a MC-LIVE-3 a branch é a única identidade do PR**: o título
+deixou de ser "último recurso" (`extrairTaskId` foi removida) e PR humano fora do padrão fica em `repositório#número`
+(§ 18). Com issue canônica e PR na branch canônica, o resultado é **um cartão só**: a fábrica tem
 precedência sobre o GitHub, então o PR enriquece os links sem nunca sobrescrever o estado operacional do job.
 O corpo já vem na listagem `GET /issues`: nenhuma chamada por issue, teto inalterado em 8.
 
@@ -442,7 +443,10 @@ datas de criação/atualização — e delas não se deduz "testes passaram" nem
 - `updatedAt` é **opcional** no contrato: fonte que não informa data de alteração fica sem ela — `new Date()`
   nunca é usado como se fosse data do fato. O momento da observação mora em `frescor.observadoEm`.
 
-Eventos entram na MC-LIVE-3/7, com fonte que os prove.
+Eventos entram na MC-LIVE-3/7, com fonte que os prove. **Atualização (MC-LIVE-3A, § 18):** a projeção do GitHub
+passou a emitir só os eventos que têm fato e data da própria fonte — `TASK_CREATED`/`WORK_ITEM_CREATED`
+(`issue.created_at`), `PR_OPENED` (`pull_request.created_at`) e `WORK_ITEM_COMPLETED` (`issue.closed_at` + label
+`DONE`). O resto continua valendo.
 
 ## 15. Realtime (futuro, MC-LIVE-5)
 
@@ -574,7 +578,7 @@ não um clone do Miro.
 | **MC-LIVE-2A** | quadro operacional V0 (8 colunas, filtros, busca, contadores, read-only) sobre o mesmo polling | **concluída (22/09/2026)** |
 | **MC-LIVE-2B** | correções do smoke real: procedência por `source` + `procedencia`, CI não inferido do estado cru | **concluída (22/09/2026)** |
 | MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | depende da W5 da fábrica |
-| MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | — |
+| MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | **3A parcial (30/09/2026, § 18)**: cadeia e eventos confirmados sobre a projeção do GitHub; o gate segue aberto até `FACTORY_ADAPTER_READONLY` |
 | MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | **primeira UI entregue na MC-CONSTRUCTION-1 (23/09/2026, § 17)**; o gate segue aberto até a correlação (`WORK_ITEM_CORRELACAO`) dar estado real a todo nó |
 | MC-LIVE-5 | quadro de execução + realtime (`EXECUCAO_LIVE`, `MC_REALTIME`) — única migration prevista | — |
 | MC-LIVE-6 | projeção comercial | — |
@@ -1151,3 +1155,90 @@ da borda esquerda do destino. Arestas que coexistem num corredor ou numa via gan
 tocar interior de cartão, nenhum trecho sobreposto, nenhuma porta compartilhada; o mesmo teste aplicado à curva antiga
 reprova exatamente as 5 (e mostra que Plataforma → Inbox também cortava a Dev Factory). Dependências, estados e grafo
 técnico não mudaram.
+
+## 18. MC-LIVE-3A — Correlação e eventos confirmados (30/09/2026)
+
+Entrega **parcial** da MC-LIVE-3. Ela dá a cada item do quadro a cadeia issue → taskId → worker → branch → commit →
+PR → CI → merge → gate, com os elos confirmados e as ausências nomeadas, e os eventos que a fonte prova. O gate
+`WORK_ITEM_CORRELACAO` **continua aberto**: ele depende de `FACTORY_ADAPTER_READONLY`, que segue aberto, e sua prova
+exige worker, CI, merge e gate sobre fonte real — a projeção do GitHub não traz nenhum desses quatro.
+
+### 18.1 Auditoria (o que já existia e foi reaproveitado)
+
+`consolidarWorkItems` (um cartão por correlação, a fábrica com precedência), `MissionControlEvent`, `idEvento`,
+`consolidarEventos` e `ordenarEventos` em `workItem.ts`; `lerIdentidadeCanonica` (bloco `factory-task:v1`) e a
+branch canônica em `githubAdapter.ts`; `projetarWorkItems` em `statusServidor.ts`. Nada disso foi duplicado. O
+contrato da fábrica (`JOB_CONTRACT.md`, `packages/contracts/src/api.ts`) foi relido: a issue fecha por transição e não
+por merge, o PR nasce em `factory/<taskId>-a<n>` com base `integration/nightly`, e `TaskSummary` não traz data de
+criação, branch, CI por tarefa nem merge.
+
+Duas correções saíram da auditoria:
+
+- **Título deixou de correlacionar.** `lerPulls` ainda caía em `extrairTaskId(título)` quando a branch não era
+  canônica — correlação por título, que a MC-LIVE-3 proíbe. A função foi removida. `taskIdDaBranchCanonica` passou a
+  morar em `workItem.ts` e `normalizarPullRequest` recalcula a identidade **pela branch**, sem confiar no `taskId` da
+  entrada; `normalizarIssueFactory` só aceita `taskId` no formato ancorado.
+- **A origem da correlação viaja com o item.** `MissionControlWorkItem.correlacaoPor` (opcional) diz por onde a
+  identidade foi estabelecida — `BLOCO_DA_ISSUE`, `BRANCH_CANONICA`, `FACTORY_API`, `GATE` ou `FONTE_DECLARADA` —, e a
+  consolidação soma as origens (issue + PR = bloco e branch). Ausente, o item vale só por ele mesmo.
+
+### 18.2 Cadeia (`src/core/central/correlacao.ts`, puro)
+
+`cadeiaDoItem` lê só campos do item e classifica cada elo como **confirmado**, **não informado** (a fonte lê o elo,
+mas o item não tem identidade que o ligue), **não disponível nesta fonte** (a fonte, como é lida hoje, não traz o elo)
+ou **ainda não observado** (a fonte traz, a tarefa tem identidade, o elo ainda não apareceu). O que cada fonte lê é
+uma tabela declarada, `ELOS_LIDOS_POR_PROCEDENCIA`:
+
+| Elo | Projeção do GitHub | API da Factory |
+| --- | --- | --- |
+| Issue, taskId, commit, PR | lê | lê |
+| Branch | lê | não traz |
+| Worker | **não traz** (comentários não são lidos) | lê (`WorkerStatus`) |
+| CI da tarefa | **não traz** (CI por PR seria uma chamada por cartão; o CI do `main` não é da tarefa) | não traz |
+| Merge | **não traz** (só PRs abertos são lidos) | não traz |
+| Gate | **não traz** (o bloco não declara gate) | não traz |
+
+Nada é deduzido: branch não é montada de taskId + tentativa, a label `INTEGRATED` não é registro de merge, e o CI do
+`main` não vira CI de tarefa. `diagnosticarCorrelacao(item, eventos)` junta a chave (`TASK_ID`, `GATE_ID`,
+`ITEM_DA_FONTE` ou `SEM_CORRELACAO` — TASK_ID exige origem permitida **e** formato ancorado), as origens, a cadeia e os
+eventos do item.
+
+### 18.3 Eventos confirmados
+
+`projetarEventos(leitura)` sai da **mesma** leitura dos work items — nenhuma chamada a mais, teto segue 8 por ciclo — e
+só emite fato com data da própria fonte:
+
+| Evento | Fato | Correlação |
+| --- | --- | --- |
+| `TASK_CREATED` | `issue.created_at` de issue com bloco canônico | taskId do bloco |
+| `WORK_ITEM_CREATED` | `issue.created_at` de issue sem bloco | nenhuma |
+| `PR_OPENED` | `pull_request.created_at` | taskId da branch canônica, senão nenhuma |
+| `WORK_ITEM_COMPLETED` | `issue.closed_at` + label `factory:state:DONE` + issue fechada | taskId do bloco |
+
+`updated_at` nunca vira evento. `WORKER_STARTED`, `TEST_PASSED`, `CI_STARTED`, `CI_PASSED`, `MERGED` e `GATE_CLOSED`
+exigem evento específico da fonte ligado à mesma tarefa e **não são emitidos** por esta projeção
+(`EVENTOS_DA_PROJECAO_GITHUB`). Evento sem identidade segura sai **sem** `correlationId` e só se liga ao próprio objeto
+(`eventosDoItem`). Como só issues abertas são lidas, `WORK_ITEM_COMPLETED` está definido e testado, mas não aparece
+na leitura atual. O ator é `GITHUB`: quem abriu não é lido, e nunca vira humano inventado.
+
+`/api/development-status` ganhou `events: MissionControlEvent[]`, sem corpo de issue, comentário, cabeçalho ou
+payload cru.
+
+### 18.4 Tela
+
+Na aba Execução, o id do cartão (ou o corpo dele) abre a tarefa acima das colunas, com **Cadeia da tarefa** (cada
+elo com valor ou com a ausência por extenso, e a nota de origem) e **Eventos confirmados** (em ordem de data, com o
+fato bruto em `tipoOrigem`, data e hora em `America/Sao_Paulo`). Não é linha do tempo — isso é a MC-LIVE-7. V2A e
+V2B não mudaram, nenhuma aresta nova foi desenhada e continua existindo um único `useStatusRemoto`.
+
+### 18.5 Provas e o que falta
+
+`src/core/central/correlacao.test.ts`: os 15 obrigatórios (issue + PR num item; taskId vence o título; duas tasks
+nunca consolidam; branch canônica correlaciona; PR sem identidade não cola; `updatedAt` não é evento; `TASK_CREATED`
+e `PR_OPENED` com as datas da fonte; dedup; evento sem correlação sem `correlationId`; CI do `main` não é da tarefa;
+módulo sem heurística; nenhum fetch por cartão; read-only; um único `useStatusRemoto`), mais conclusão só com DONE +
+closed_at, ausências nomeadas, worker só pela Factory e gate ainda aberto.
+
+Para fechar a MC-LIVE-3 (e o gate), falta fonte que prove worker, CI da tarefa, merge e gate: o adapter da Factory
+(`FACTORY_ADAPTER_READONLY`) e/ou a leitura dos comentários estruturados da fábrica (`CLAIMED`, `CI_RESULT`,
+`INTEGRATED`), que hoje exigiria chamada por issue. Nada disso entra sem nova ordem.
