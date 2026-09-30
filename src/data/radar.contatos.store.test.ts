@@ -1,7 +1,8 @@
 // Jornada do lote piloto: empresas -> contatos por id externo/dominio/nome -> fila de revisao -> contato principal.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { RegraDeNegocioError, actions, getState } from './store';
-import { contatoRecomendado, filaHoje, resumoRadar } from '../core/radar';
+import { contatoRecomendado, recomendarAcao } from '../core/radar';
+import { snapshotComercialCD } from '../core/radar/commercialDirector';
 
 const radar = () => getState().ds.radar;
 
@@ -39,7 +40,8 @@ describe('Radar: decisores no lote piloto', () => {
     const c = actions.resolverLinhaRevisaoRadar(rev.id, { empresaId: mg.id })!;
     expect(c.empresaId).toBe(mg.id); expect(c.nome).toBe('Ambíguo Silva');
     expect(radar().importacaoLinhas.find((l) => l.id === rev.id)!.status).toBe('importada');
-    expect(resumoRadar(radar(), getState().ds.params.dataBase).revisoesPendentes).toBe(0);
+    // D-6: resumoRadar removido; o fato é o próprio estado das linhas de importação
+    expect(radar().importacaoLinhas.filter((l) => l.status === 'revisao')).toHaveLength(0);
   });
 
   it('contato principal: sugestao explicada, definicao manual e recusa de contato inelegivel', () => {
@@ -58,16 +60,19 @@ describe('Radar: decisores no lote piloto', () => {
     const roberto = radar().contatos.find((c) => c.nome === 'Roberto Silva')!;
     actions.salvarContatoRadar({ ...roberto, situacao: 'SAIU_DA_EMPRESA' });
     expect(contatoRecomendado(acme.id, radar())?.contato.nome).not.toBe('Roberto Silva');
-    const item = filaHoje(radar(), getState().ds.params.dataBase).find((i) => i.empresa.id === acme.id)!;
-    expect(item.recomendacao.estado).toBe('SEARCH_DECISION_MAKER');
+    // D-6: filaHoje removida; o item legado trazia exatamente recomendarAcao(empresa atual, radar, hoje)
+    const empresaAtual = () => radar().empresas.find((e) => e.id === acme.id)!;
+    expect(recomendarAcao(empresaAtual(), radar(), getState().ds.params.dataBase).estado).toBe('SEARCH_DECISION_MAKER');
     actions.salvarContatoRadar({ ...roberto, situacao: 'ATIVO' });
-    expect(filaHoje(radar(), getState().ds.params.dataBase).find((i) => i.empresa.id === acme.id)!.recomendacao.estado).toBe('RESEARCH_SIGNALS');
+    expect(recomendarAcao(empresaAtual(), radar(), getState().ds.params.dataBase).estado).toBe('RESEARCH_SIGNALS');
   });
 
   it('metricas de cobertura no command center e recalculo apos mudar pesos', () => {
-    const r = resumoRadar(radar(), getState().ds.params.dataBase);
-    expect(r.empresas).toBe(4); expect(r.comContato).toBe(4); expect(r.comDecisor).toBeGreaterThanOrEqual(2); expect(r.comCanal).toBeGreaterThanOrEqual(2);
-    expect(r.precisamPesquisa).toBeGreaterThan(0);
+    // D-6: resumoRadar removido. empresas e comContato têm sucessor exato no snapshot canônico (mesma definição:
+    // ativas não mescladas; contato elegível). comDecisor (fit ≥ fit.adequado), comCanal e precisamPesquisa eram
+    // definições só do legado, sem sucessor canônico: as afirmações saíram junto com ele.
+    const s = snapshotComercialCD(radar(), getState().ds.params.dataBase);
+    expect(s.base.empresasAtivas.valor).toBe(4); expect(s.decisores.comContatoElegivel.valor).toBe(4);
     const roberto = radar().contatos.find((c) => c.nome === 'Roberto Silva')!;
     actions.salvarPesoDecisionFitRadar('persona.INDUSTRIAL_DIRECTOR.grande', 10);
     actions.recalcularContatosRadar();

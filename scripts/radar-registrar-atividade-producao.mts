@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { criarIds, recalcularEmpresas } from '../src/core/radar/importacao';
-import { filaHoje, recomendarAcao } from '../src/core/radar/pipeline';
+import { lerEmpresa, recomendarAcao } from '../src/core/radar/pipeline';
 import { CANAIS, TIPOS_ATIVIDADE, TIPOS_TAREFA, radarVazio, type Atividade, type Canal, type CodigoResposta, type Empresa, type Fonte, type RadarDataset, type RegraScore, type Sinal, type TarefaRadar, type TipoAtividade, type TipoTarefa } from '../src/core/radar/types';
 import { linhaApp, linhaDb, type ChaveRadar, type HelpersRadar } from '../src/data/radar.supabase';
 
@@ -85,7 +85,8 @@ r1 = { ...r0, atividades: [...r0.atividades, ...novasAtividades], tarefas: [...r
 const afetadas = [...new Set(novasAtividades.map((a) => a.empresaId))];
 const r2 = recalcularEmpresas(r1, afetadas, ids);
 const novosSnaps = r2.snapshotsScore.filter((s) => !r0.snapshotsScore.some((x) => x.id === s.id));
-const foto = (r: RadarDataset, e: Empresa) => { const fila = filaHoje(r, hoje); const pos = fila.findIndex((i) => i.empresa.id === e.id); return { priority: e.priorityScore, classe: e.priorityClass, timing: e.timingScore, relationship: e.relationshipScore, intent: e.intentScore, crm: recomendarAcao(e, r, hoje).estado, fila: pos >= 0 ? pos + 1 : null, proximaAcao: fila[pos]?.proximaAcaoEm ?? null }; };
+// D-6: a posição na fila do dia legada saiu; a posição na Commercial Queue se confere na Hoje. A próxima ação vem de lerEmpresa.
+const foto = (r: RadarDataset, e: Empresa) => { return { priority: e.priorityScore, classe: e.priorityClass, timing: e.timingScore, relationship: e.relationshipScore, intent: e.intentScore, crm: recomendarAcao(e, r, hoje).estado, proximaAcao: lerEmpresa(e, r, hoje).proximaAcaoEm ?? null }; };
 const saida: Record<string, unknown> = {
   antes: { atividades: r0.atividades.length, tarefas: r0.tarefas.length, oportunidades: r0.oportunidades.length, opsVibe: opsAntes },
   registros: novasAtividades.map((a) => ({ empresa: nome(r0.empresas.find((e) => e.id === a.empresaId)!), contato: r0.contatos.find((c) => c.id === a.contatoId)?.nome ?? null, tipo: a.tipo, canal: a.canal, estrategia: r0.estrategias.find((x) => x.id === a.estrategiaId)?.codigo ?? null, resultado: a.resultado ?? null, notas: a.notas, conteudoBrutoChars: a.conteudoBruto?.length ?? 0 })),

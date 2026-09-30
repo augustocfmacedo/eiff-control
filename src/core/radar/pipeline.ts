@@ -1,6 +1,6 @@
 // Regras do pipeline e leitura operacional do Radar: caches da empresa, regra "oportunidade ativa sem proxima acao",
 // acao recomendada, fila do dia, indicadores do command center e pipeline financeiro.
-import { NOME_ESTAGIO, NOME_SINAL, PROBABILIDADE_ESTAGIO } from './padroes';
+import { NOME_ESTAGIO } from './padroes';
 import { sinalAcionavel } from './sinalLeitura';
 import { brutoEmpresaDe } from './fitCalibracao';
 import { calcularScore, diasEntre, motivoPrioridade, type ContextoEmpresa } from './score';
@@ -110,7 +110,7 @@ export function recomendarAcao(e: Empresa, r: RadarDataset, hoje: string): Recom
 }
 
 // ---------------------------------------------------------------------------
-// Fila do dia e leitura de empresas
+// Leitura de empresas (a fila do dia legada e o resumo legado foram removidos na D-6: a fila é a Commercial Queue)
 // ---------------------------------------------------------------------------
 export interface ItemFila {
   empresa: Empresa;
@@ -138,70 +138,4 @@ export function lerEmpresa(e: Empresa, r: RadarDataset, hoje: string): ItemFila 
   const sem = !!opp && semProximaAcao(opp, r.tarefas);
   const ordem = e.priorityScore + (vencida ? 100 : 0) + (sem ? 50 : 0) + (proximaAcaoEm && proximaAcaoEm.slice(0, 10) === hoje.slice(0, 10) ? 30 : 0);
   return { empresa: e, motivo: motivoPrioridade(x), sinal: sinalPrincipal(e.id, r, hoje), decisor: decisorDe(e.id, r), ultimaAtividade: ultimaAtividade(e.id, r), proximaAcaoEm, proximaAcao, recomendacao: recomendarAcao(e, r, hoje), oportunidade: opp, vencida, semProximaAcao: sem, ordem };
-}
-
-/** Fila ordenada: vencidas primeiro, depois prioridade. Ignora empresas inativas, mescladas e suprimidas. */
-export function filaHoje(r: RadarDataset, hoje: string, responsavelId?: string): ItemFila[] {
-  return r.empresas.filter((e) => e.ativo && !e.mescladaEm && !empresaSuprimida(e.id, r))
-    .filter((e) => !responsavelId || r.tarefas.some((t) => t.empresaId === e.id && t.status === 'Aberta' && t.responsavelId === responsavelId) || r.oportunidades.some((o) => o.empresaId === e.id && estagioAtivo(o.estagio) && o.responsavelId === responsavelId) || !r.oportunidades.some((o) => o.empresaId === e.id && estagioAtivo(o.estagio)))
-    .map((e) => lerEmpresa(e, r, hoje)).sort((a, b) => b.ordem - a.ordem);
-}
-
-// ---------------------------------------------------------------------------
-// Command center
-// ---------------------------------------------------------------------------
-export interface ResumoRadar {
-  aMais: number; a: number; b: number; c: number; d: number;
-  novosSinais7d: number; sinais30d: number;
-  followUpsVencidos: number; tarefasHoje: number;
-  oportunidadesSemAcao: number; oportunidadesAtivas: number;
-  atividades7d: number; atividades30d: number; respostas30d: number; respostasPositivas30d: number; reunioes30d: number;
-  projetosRecebidos30d: number; propostas30d: number; ganhas90d: number; perdidas90d: number;
-  pipeline: number; pipelinePonderado: number; porEstagio: { estagio: Oportunidade['estagio']; nome: string; quantidade: number; valor: number }[];
-  duplicatasPendentes: number; importacoes: number; revisoesPendentes: number;
-  topSinais: { tipo: string; nome: string; quantidade: number }[];
-  // cobertura de contatos
-  empresas: number; comContato: number; comDecisor: number; comCanal: number; precisamPesquisa: number; precisamEnriquecimento: number; semDecisor: number;
-  coberturaContato: number; coberturaDecisor: number; contatavel: number;
-}
-
-export function resumoRadar(r: RadarDataset, hoje: string): ResumoRadar {
-  const d0 = hoje.slice(0, 10);
-  const dias = (iso: string) => diasEntre(iso, hoje);
-  const ativas = r.empresas.filter((e) => e.ativo && !e.mescladaEm);
-  const cls = (c: string) => ativas.filter((e) => e.priorityClass === c).length;
-  const opps = r.oportunidades.filter((o) => estagioAtivo(o.estagio));
-  const tiposResp = new Map(r.tiposResposta.map((t) => [t.codigo, t]));
-  const ats30 = r.atividades.filter((a) => dias(a.ocorreuEm) <= 30);
-  const alcancou = (estagio: string, diasMax: number) => new Set(r.historicoEstagios.filter((h) => h.para === estagio && dias(h.em) <= diasMax).map((h) => h.oportunidadeId)).size;
-  const porEstagio = (Object.keys(NOME_ESTAGIO) as Oportunidade['estagio'][]).map((estagio) => { const os = r.oportunidades.filter((o) => o.estagio === estagio); return { estagio, nome: NOME_ESTAGIO[estagio], quantidade: os.length, valor: os.reduce((s, o) => s + (o.valorEstimado ?? 0), 0) }; }).filter((x) => x.quantidade);
-  const sin30 = r.sinais.filter((s) => dias(s.detectadoEm) <= 30);
-  const cont = new Map<string, number>(); for (const s of sin30) cont.set(s.tipo, (cont.get(s.tipo) ?? 0) + 1);
-  const fitMin = FIT_ADEQUADO(r);
-  let comContato = 0; let comDecisor = 0; let comCanal = 0; let precisamPesquisa = 0; let precisamEnriquecimento = 0;
-  for (const e of ativas) {
-    const el = contatosElegiveis(e.id, r);
-    if (el.length) comContato++;
-    const sug = contatoRecomendado(e.id, r);
-    const adequado = !!sug && sug.fit.score >= fitMin;
-    if (adequado) comDecisor++;
-    if (el.some(temCanal)) comCanal++;
-    if (!adequado || !r.sinais.some((s) => s.empresaId === e.id)) precisamPesquisa++;
-    if (adequado && !temCanal(sug!.contato)) precisamEnriquecimento++;
-  }
-  return {
-    aMais: cls('A+'), a: cls('A'), b: cls('B'), c: cls('C'), d: cls('D'),
-    novosSinais7d: r.sinais.filter((s) => dias(s.detectadoEm) <= 7).length, sinais30d: sin30.length,
-    followUpsVencidos: r.tarefas.filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) < d0).length, tarefasHoje: r.tarefas.filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) === d0).length,
-    oportunidadesSemAcao: oportunidadesSemProximaAcao(r).length, oportunidadesAtivas: opps.length,
-    atividades7d: r.atividades.filter((a) => dias(a.ocorreuEm) <= 7).length, atividades30d: ats30.length,
-    respostas30d: ats30.filter((a) => a.resultado && a.resultado !== 'NO_RESPONSE').length, respostasPositivas30d: ats30.filter((a) => a.resultado && tiposResp.get(a.resultado)?.sentimento === 'positivo').length,
-    reunioes30d: ats30.filter((a) => a.tipo === 'MEETING' || a.tipo === 'VISIT' || a.tipo === 'PRESENTATION').length,
-    projetosRecebidos30d: alcancou('PROJECT_RECEIVED', 30), propostas30d: alcancou('PROPOSAL_SENT', 30), ganhas90d: alcancou('WON', 90), perdidas90d: alcancou('LOST', 90),
-    pipeline: opps.reduce((s, o) => s + (o.valorEstimado ?? 0), 0), pipelinePonderado: opps.reduce((s, o) => s + (o.valorEstimado ?? 0) * (o.probabilidade ?? PROBABILIDADE_ESTAGIO[o.estagio]), 0), porEstagio,
-    duplicatasPendentes: r.duplicatas.filter((x) => x.status === 'pendente').length, importacoes: r.importacoes.length, revisoesPendentes: r.importacaoLinhas.filter((l) => l.status === 'revisao').length,
-    empresas: ativas.length, comContato, comDecisor, comCanal, precisamPesquisa, precisamEnriquecimento, semDecisor: ativas.length - comDecisor,
-    coberturaContato: ativas.length ? comContato / ativas.length : 0, coberturaDecisor: ativas.length ? comDecisor / ativas.length : 0, contatavel: ativas.length ? comCanal / ativas.length : 0,
-    topSinais: [...cont.entries()].map(([tipo, quantidade]) => ({ tipo, nome: NOME_SINAL[tipo as keyof typeof NOME_SINAL] ?? tipo, quantidade })).sort((a, b) => b.quantidade - a.quantidade).slice(0, 5),
-  };
 }

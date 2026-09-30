@@ -1,7 +1,7 @@
 // Nota interna (NOTE) no Radar: registra sem contar como contato, sem mexer no score e sem criar oportunidade;
 // a tarefa da proxima acao manual entra na fila.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { filaHoje } from '../core/radar/pipeline';
+import { lerEmpresa } from '../core/radar/pipeline';
 import { actions, getState } from './store';
 
 const radar = () => getState().ds.radar;
@@ -20,7 +20,8 @@ describe('nota interna no Radar', () => {
     expect(radar().oportunidades.length).toBe(antes.opps);
     expect(radar().snapshotsScore.length).toBe(antes.snaps); // score igual: sem snapshot novo
     expect(depois.proximaAcaoEm).toBe('2026-09-09');
-    const item = filaHoje(radar(), '2026-09-08').find((i) => i.empresa.id === acme.id)!;
+    // D-6: filaHoje removida; a próxima ação do item vinha de lerEmpresa, lida aqui diretamente
+    const item = lerEmpresa(depois, radar(), '2026-09-08');
     expect(item.proximaAcaoEm).toBe('2026-09-09');
     expect(radar().atividades.some((a) => a.empresaId === acme.id && a.tipo === 'NOTE' && a.estrategiaId === estrategia.id)).toBe(true);
   });
