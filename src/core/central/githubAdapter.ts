@@ -14,7 +14,7 @@
 //   6. Uma fonte ruim nao derruba as outras: cada repositorio tem seu proprio resultado.
 //
 // PUREZA: zero React, zero store, zero Supabase. A unica I/O e o `fetch` recebido por parametro.
-import { ESPELHO_JOB_STATES, type EstadoJobFactory } from './workItem';
+import { ESPELHO_JOB_STATES, TASK_ID_CANONICO, taskIdDaBranchCanonica, type EstadoJobFactory } from './workItem';
 
 // ------------------------------------------------------------------------------------- allowlist
 
@@ -130,7 +130,7 @@ export interface PullRequestObservado {
   criadoEm: string;
   atualizadoEm: string;
   url: string;
-  /** derivado da branch/titulo quando existe; nunca inventado */
+  /** derivado SO da branch canonica `factory/<taskId>-a<n>`; titulo nao conta. Nunca inventado. */
   taskId: string | null;
 }
 
@@ -193,31 +193,17 @@ export interface LeituraGitHub {
 
 // ------------------------------------------------------------------------------------- utilitarios
 
-/** Mesmo formato canonico do contrato da fabrica (`packages/contracts/src/texto.ts`: TASK_ID), SOLTO num texto. */
-export const TASK_ID_FACTORY = /\b([A-Z]{2,4}-\d{4})\b/;
-
-/** ESPELHO de `TASK_ID` (`packages/contracts/src/texto.ts`), ANCORADO: valida um valor inteiro, nao procura num texto. */
-export const TASK_ID_CANONICO = /^[A-Z]{2,4}-\d{4}$/;
-
 /**
- * taskId a partir de texto livre (titulo de PR feito por humano, por exemplo). E busca solta: serve de
- * ULTIMO recurso onde nao existe identidade canonica — nunca para issue de job, cuja identidade e o bloco.
+ * ESPELHO de `TASK_ID` (`packages/contracts/src/texto.ts`), ANCORADO. A definicao mora em `workItem.ts`, onde a
+ * normalizacao tambem a usa; aqui e so reexportada.
+ *
+ * MC-LIVE-3: nao existe mais leitura de taskId SOLTO em texto (`extrairTaskId` foi removida). Titulo de PR,
+ * titulo de issue e prosa nao sao identidade — a correlacao por titulo e proibida.
  */
-export function extrairTaskId(texto: string | null | undefined): string | null {
-  if (!texto) return null;
-  const m = TASK_ID_FACTORY.exec(texto);
-  return m ? m[1] : null;
-}
-
-/** ESPELHO de `lerBranchDoJob` (`packages/github/src/refs.ts`): `factory/<taskId>-a<attempt>`, attempt ≥ 1. */
-const BRANCH_DO_JOB = /^factory\/([A-Z]{2,4}-\d{4})-a(\d{1,4})$/;
+export { TASK_ID_CANONICO };
 
 /** Identidade canonica de um PR da fabrica: a branch e GERADA do taskId (`branchDoJob`), entao e a autoridade. */
-export function taskIdDaBranchDoJob(branch: string | null | undefined): string | null {
-  if (!branch) return null;
-  const m = BRANCH_DO_JOB.exec(branch);
-  return m && Number(m[2]) >= 1 ? m[1] : null;
-}
+export const taskIdDaBranchDoJob = taskIdDaBranchCanonica;
 
 // ------------------------------------------------------- identidade canonica da issue (JOB_CONTRACT.md)
 
@@ -449,9 +435,9 @@ function lerPulls(corpo: unknown): PullRequestObservado[] {
       branch, headSha,
       rascunho: p.draft === true,
       criadoEm, atualizadoEm, url,
-      // a branch e GERADA do taskId pela fabrica: e a identidade canonica do PR. Titulo so como ultimo
-      // recurso (PR humano fora do padrao); um id diferente no titulo nunca vence a branch canonica.
-      taskId: taskIdDaBranchDoJob(branch) ?? extrairTaskId(txt(p.title)),
+      // a branch e GERADA do taskId pela fabrica: e a UNICA identidade do PR. Titulo nunca correlaciona
+      // (MC-LIVE-3): PR humano fora do padrao fica em `repositorio#numero`, sem palpite.
+      taskId: taskIdDaBranchDoJob(branch),
     });
   }
   return saida;

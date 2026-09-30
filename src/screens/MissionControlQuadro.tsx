@@ -12,7 +12,10 @@ import {
   SEM_EVIDENCIA_DE_CI, haQuantoTempo, montarQuadro, rotuloProcedenciaDoItem, workstreamsDisponiveis,
   type EscopoQuadro, type FiltroQuadro,
 } from '../core/central/quadroOperacional';
-import { ROTULO_MC_STATUS, type McStatus, type MissionControlWorkItem } from '../core/central/workItem';
+import { ROTULO_MC_STATUS, type McStatus, type MissionControlEvent, type MissionControlWorkItem } from '../core/central/workItem';
+import {
+  ROTULO_CHAVE_CORRELACAO, ROTULO_ELO, ROTULO_ESTADO_ELO, ROTULO_TIPO_EVENTO, dataHoraEvento, diagnosticarCorrelacao,
+} from '../core/central/correlacao';
 import { LIMITE_STALE_GITHUB_S, avaliarStatusVivo, type SituacaoVivo } from '../core/central/statusVivo';
 import { type EstadoStatusRemoto } from '../data/statusRemoto';
 import { contagemViva } from '../core/central/construcao';
@@ -52,13 +55,80 @@ const curto = (url?: string) => {
   return url.replace(/^https?:\/\/(www\.)?github\.com\//, '');
 };
 
-function Cartao({ i, agora }: { i: MissionControlWorkItem; agora: string }) {
+/**
+ * MC-LIVE-3 — a tarefa aberta: cadeia (cada elo confirmado ou com a ausência nomeada) e eventos confirmados.
+ * Tudo sai de `diagnosticarCorrelacao`; aqui não se correlaciona nada, só se desenha. Lista em ordem de data,
+ * sem linha do tempo (isso é a MC-LIVE-7).
+ */
+function DetalheTarefa({ i, eventos, agora, onFechar }: { i: MissionControlWorkItem; eventos: readonly MissionControlEvent[]; agora: string; onFechar: () => void }) {
+  const d = diagnosticarCorrelacao(i, eventos);
+  return (
+    <section id="mcq-detalhe" className="mcq-detalhe" aria-label={`Tarefa ${i.correlationId ?? i.sourceId}`}>
+      <header className="mcq-detalhe-topo">
+        <b className="mcq-id">{i.correlationId ?? i.sourceId}</b>
+        <span className="mcq-detalhe-titulo">{i.title}</span>
+        <span className="spacer" />
+        <button type="button" className="btn sm" onClick={onFechar}>Fechar</button>
+      </header>
+      <p className="small muted">{ROTULO_CHAVE_CORRELACAO[d.chave]} · {d.confirmados} de {d.cadeia.length} elos confirmados</p>
+
+      <div className="mcq-detalhe-grade">
+        <div>
+          <h3>Cadeia da tarefa</h3>
+          <ol className="mcq-cadeia">
+            {d.cadeia.map((e) => (
+              <li key={e.elo} data-estado={e.estado}>
+                <span className="mcq-cadeia-elo">{ROTULO_ELO[e.elo]}</span>
+                {e.estado === 'CONFIRMADO'
+                  ? (e.href
+                    ? <a href={e.href} target="_blank" rel="noreferrer">{curto(e.href) ?? e.valor}</a>
+                    : <span className="mcq-cadeia-valor">{e.valor}</span>)
+                  : <span className="mcq-cadeia-ausente">{ROTULO_ESTADO_ELO[e.estado]}</span>}
+                {e.nota && <span className="mcq-cadeia-nota">{e.nota}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div>
+          <h3>Eventos confirmados</h3>
+          {d.eventos.length
+            ? (
+              <ul className="mcq-eventos">
+                {d.eventos.map((e) => (
+                  <li key={e.id}>
+                    <b>{ROTULO_TIPO_EVENTO[e.tipo]}</b>
+                    <time dateTime={e.ocorridoEm}>{dataHoraEvento(e.ocorridoEm)}{haQuantoTempo(e.ocorridoEm, agora) ? ` · há ${haQuantoTempo(e.ocorridoEm, agora)}` : ''}</time>
+                    <span className="mcq-cru" title="O fato bruto da fonte">{e.tipoOrigem}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+            : <p className="small muted">Nenhum evento com data confirmada pela fonte para este item.</p>}
+          <p className="small muted">
+            Só entram fatos com data da própria fonte: criação da issue, abertura do pull request e conclusão da tarefa.
+            Uma atualização sem fato conhecido não vira evento, e o CI do main não é o CI desta tarefa.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Cartao({ i, agora, aberto, onAbrir }: { i: MissionControlWorkItem; agora: string; aberto: boolean; onAbrir: () => void }) {
   const alterado = haQuantoTempo(i.updatedAt, agora);
   const observado = haQuantoTempo(i.frescor.observadoEm, agora);
   return (
-    <article className="mcq-cartao" data-status={i.status}>
+    <article
+      className="mcq-cartao"
+      data-status={i.status}
+      data-aberto={aberto || undefined}
+      // clicar no cartão abre a tarefa; clicar num link ou botão de dentro segue sendo o link ou o botão
+      onClick={(ev) => { if (!(ev.target as HTMLElement).closest('a, button')) onAbrir(); }}
+    >
       <header className="mcq-cartao-topo">
-        <b className="mcq-id">{i.correlationId ?? i.sourceId}</b>
+        <button type="button" className="mcq-abrir" aria-expanded={aberto} aria-controls={aberto ? 'mcq-detalhe' : undefined} onClick={onAbrir} title="Abrir a cadeia e os eventos desta tarefa">
+          <b className="mcq-id">{i.correlationId ?? i.sourceId}</b>
+        </button>
         {i.frescor.fonteIndisponivel
           ? <Badge tone="bad" title="A fonte não respondeu nesta leitura; o conteúdo é o último conhecido">fonte fora</Badge>
           : i.frescor.stale ? <Badge tone="warn" title="Leitura mais velha que o limite aceitável para esta fonte">vencido</Badge> : null}
@@ -103,10 +173,15 @@ function Cartao({ i, agora }: { i: MissionControlWorkItem; agora: string }) {
 export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemoto & { recarregar: () => void } }) {
   const { dados, recebidoEm, carregando, erro, recarregar } = estado;
   const [filtro, setFiltro] = useState<FiltroQuadro>(FILTRO_VAZIO);
+  const [aberto, setAberto] = useState<string | null>(null);
   const agora = new Date().toISOString();
   const itens = useMemo(() => dados?.workItems ?? [], [dados]);
   const quadro = useMemo(() => montarQuadro(itens, filtro), [itens, filtro]);
   const workstreams = useMemo(() => workstreamsDisponiveis(itens), [itens]);
+  // MC-LIVE-3: os eventos vêm da MESMA leitura (`/api/development-status`); nenhuma chamada por cartão
+  const eventos = useMemo(() => dados?.events ?? [], [dados]);
+  const itemAberto = aberto ? itens.find((i) => i.id === aberto) : undefined;
+  const alternar = (id: string) => setAberto((a) => (a === id ? null : id));
 
   const fonte = dados?.fontes.github;
   const primeiraLeitura = !dados && !erro;
@@ -185,6 +260,8 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
         )}
       </div>
 
+      {itemAberto && <DetalheTarefa i={itemAberto} eventos={eventos} agora={agora} onFechar={() => setAberto(null)} />}
+
       {!itens.length
         ? (primeiraLeitura
           ? <p className="small muted">Lendo o estado da produção…</p>
@@ -202,7 +279,7 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
                     <span className="mcq-coluna-n">{col.total}</span>
                   </header>
                   <div className="mcq-pilha">
-                    {col.itens.map((i) => <Cartao key={i.id} i={i} agora={agora} />)}
+                    {col.itens.map((i) => <Cartao key={i.id} i={i} agora={agora} aberto={i.id === aberto} onAbrir={() => alternar(i.id)} />)}
                     {!col.total && <p className="small muted mcq-vazia">—</p>}
                   </div>
                 </section>
