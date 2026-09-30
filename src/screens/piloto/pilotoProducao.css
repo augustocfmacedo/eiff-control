@@ -1,0 +1,108 @@
+/* UX-P07 — Produção compacto: estilos restritos ao piloto de produção.
+   Tudo sob o prefixo .piloto-producao; so tokens de src/styles.css (nenhuma cor nova). Nada aqui vaza para o app nem para
+   os outros pilotos (prefixos proprios deles). Producao nao tem severidade canonica para ordem, peso, romaneio ou
+   produtividade: tiles, linhas e pendencias nao tem cor de estado. A unica cor de estado e a do tom que uma sugestao do
+   core ja traz (.piloto-producao-sinal.info|warn|bad); status de check e sinal da analise aparecem como texto, sem cor. */
+
+.piloto-producao { display: grid; gap: var(--space-4); max-width: 1180px; }
+
+.piloto-producao-faixa { display: flex; align-items: center; gap: var(--space-2); padding: 4px 10px; border: 1px dashed var(--warn); border-radius: var(--radius-sm); background: var(--warn-bg); color: var(--warn); font-size: var(--text-xs); width: fit-content; }
+.piloto-producao-faixa b { letter-spacing: 0.08em; }
+.piloto-producao-faixa span { color: var(--text-2); }
+
+.piloto-producao-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.piloto-producao-titulo { display: grid; gap: 6px; }
+.piloto-producao-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.piloto-producao-chip { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* estado de sincronizacao do App (nao e frescor nem severidade de producao) */
+.piloto-producao-chip.sync-pendente { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+.piloto-producao-chip.sync-erro { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+.piloto-producao-visoes { display: flex; gap: 6px; }
+.piloto-producao-aviso { padding: 2px 0; }
+.piloto-producao-secao { margin: 0; }
+
+/* SITUACAO: tiles neutros; fabricacao e montagem lado a lado, nunca somadas */
+.piloto-producao-situacao { display: grid; gap: var(--space-3); }
+.piloto-producao-situacao.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.piloto-producao-situacao.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.piloto-producao-tile { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 10px 14px; display: grid; gap: 4px; min-width: 0; overflow: hidden; align-content: start; }
+.piloto-producao-tile.clicavel { cursor: pointer; transition: border-color 160ms, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.piloto-producao-tile.clicavel:hover, .piloto-producao-tile.clicavel:focus-visible { border-color: var(--border-strong); transform: translateY(-1px); outline: none; }
+.piloto-producao-tile.aberto { border-color: var(--brand); }
+.piloto-producao-tile-label { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; font-weight: 700; }
+.piloto-producao-tile-valor { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.piloto-producao-tile-valor.ausente { font-size: var(--text-md); font-weight: 600; color: var(--muted); white-space: normal; }
+.piloto-producao-tile-micro { font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -2px; }
+.piloto-producao-tile-partes { display: grid; gap: 1px; padding-top: 6px; margin-top: 2px; border-top: 1px solid var(--border); }
+.piloto-producao-tile-partes > div { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); min-width: 0; }
+.piloto-producao-k { color: var(--muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; white-space: nowrap; }
+.piloto-producao-v { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.piloto-producao-v.ausente { color: var(--muted); font-weight: 500; }
+.piloto-producao-tile-acao { font-size: var(--text-xs); color: var(--muted); margin-top: 2px; }
+.piloto-producao-tile.clicavel:hover .piloto-producao-tile-acao { color: var(--brand-hover); }
+
+/* OBRAS, ORDENS e PENDENCIAS: blocos compactos, uma linha por item */
+.piloto-producao-bloco { padding: 10px 14px 6px; display: grid; gap: 6px; }
+.piloto-producao-bloco-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.piloto-producao-lista { list-style: none; margin: 0; padding: 0; display: grid; }
+.piloto-producao-linha { display: grid; grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr); align-items: center; gap: var(--space-3); padding: 8px 4px 6px; border-top: 1px solid var(--border); }
+.piloto-producao-linha.aberto { background: var(--brand-soft); border-radius: var(--radius-sm); }
+.piloto-producao-linha-nome { min-width: 0; }
+.piloto-producao-linha-titulo { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; min-width: 0; flex-wrap: wrap; }
+.piloto-producao-linha-sub { font-size: var(--text-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.piloto-producao-linha-num { display: grid; gap: 1px; min-width: 0; }
+.piloto-producao-linha-num .piloto-producao-v { text-align: left; font-size: var(--text-sm); }
+.piloto-producao-linha-acoes { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.piloto-producao-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto) auto; align-items: center; gap: var(--space-3); padding: 7px 4px; border-top: 1px solid var(--border); }
+.piloto-producao-item.aberto { background: var(--brand-soft); border-radius: var(--radius-sm); }
+.piloto-producao-item-texto { min-width: 0; }
+.piloto-producao-item-tipo { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--text-2); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; }
+.piloto-producao-item-oque { font-weight: 600; }
+.piloto-producao-item-detalhe { font-size: var(--text-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.piloto-producao-item-impacto { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; font-size: var(--text-sm); max-width: 360px; }
+.piloto-producao-item-acoes { display: flex; align-items: center; gap: 12px; white-space: nowrap; min-width: 180px; justify-content: flex-end; }
+/* tom preservado de uma sugestao canonica do core (nunca atribuido pelo piloto); check e analise ficam neutros */
+.piloto-producao-sinal { text-transform: none; letter-spacing: 0; font-weight: 600; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); }
+.piloto-producao-sinal.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+.piloto-producao-sinal.bad { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+.piloto-producao-sinal.info { color: var(--info); border-color: var(--info); }
+.piloto-producao-legenda { padding: 6px 4px 4px; border-top: 1px solid var(--border); }
+.piloto-producao-link { background: none; border: 0; padding: 0; font: inherit; font-size: var(--text-sm); color: var(--link); cursor: pointer; }
+.piloto-producao-link:hover, .piloto-producao-link.ativo { color: var(--brand-hover); }
+
+/* COMPOSICAO: gaveta lateral, so quando pedida */
+.piloto-producao-veu { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 40; }
+.piloto-producao-gaveta { position: fixed; top: 0; right: 0; bottom: 0; width: min(600px, 92vw); background: var(--surface); border-left: 1px solid var(--border-strong); box-shadow: var(--shadow-lg); z-index: 41; padding: 18px 20px 24px; overflow: auto; display: grid; gap: var(--space-3); align-content: start; }
+.piloto-producao-gaveta-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.piloto-producao-gaveta-head h2 { margin: 2px 0 0; font-size: var(--text-lg); }
+.piloto-producao-pares { margin: 0; display: grid; gap: 6px; }
+.piloto-producao-pares > div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: var(--space-3); align-items: baseline; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.piloto-producao-pares dd { margin: 0; display: grid; gap: 1px; min-width: 0; }
+.piloto-producao-par-texto { font-weight: 600; font-variant-numeric: tabular-nums; }
+.piloto-producao-tabela th:last-child, .piloto-producao-tabela td:last-child { width: 140px; }
+.piloto-producao-tabela th:nth-child(2), .piloto-producao-tabela td:nth-child(2) { width: 96px; white-space: nowrap; }
+.piloto-producao-nota { padding: 6px 10px; border-left: 2px solid var(--border-strong); color: var(--text-2); }
+.piloto-producao-origem { padding-top: var(--space-3); border-top: 1px dashed var(--border-strong); font-size: var(--text-sm); display: grid; gap: 4px; }
+.piloto-producao-origem-linha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.piloto-producao-origem code { font-family: var(--mono); font-size: 11px; color: var(--text-2); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+.piloto-producao-rodape { padding: 0 2px; }
+
+@media (max-width: 1100px) { .piloto-producao-situacao.cols-4, .piloto-producao-situacao.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .piloto-producao-linha { grid-template-columns: minmax(0, 1fr) minmax(110px, auto); } }
+@media (max-width: 640px) {
+  .piloto-producao-situacao.cols-4, .piloto-producao-situacao.cols-3 { grid-template-columns: 1fr; }
+  .piloto-producao-item, .piloto-producao-linha { grid-template-columns: minmax(0, 1fr); }
+  .piloto-producao-item-impacto, .piloto-producao-item-acoes { text-align: left; justify-content: flex-start; min-width: 0; }
+  .piloto-producao-pares > div { grid-template-columns: 1fr; }
+}
+
+[data-theme="light"] .piloto-producao-veu { background: rgba(15, 23, 42, 0.35); }
+[data-theme="light"] .piloto-producao-origem code { background: var(--surface-3); }
+
+/* UX-P07: dois numeros no mesmo tile (fabricacao · montagem), sem total */
+.piloto-producao-tile-divididos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.piloto-producao-tile-divididos > div { display: grid; gap: 2px; min-width: 0; }
+.piloto-producao-tile-divididos .piloto-producao-tile-valor { font-size: 22px; }
+.piloto-producao-tile-divididos .piloto-producao-tile-valor.ausente { font-size: var(--text-sm); }
+.piloto-producao-apoio { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: calc(var(--space-2) * -1); }
+.piloto-producao-par-texto .piloto-producao-sinal { margin-left: 8px; }
