@@ -669,3 +669,42 @@ responsável padrão) → `ATRIBUIR_SETOR`, automação APPROVAL, nível B; `inb
 FINANCEIRO, atribuição `roteamento` sem ator, eventos ROUTING_DECIDED, ROUTED e STATUS_CHANGED). Sem resposta, sem envio.
 Métricas desta ativação: 1 mensagem recebida, 1 thread, 1 decisão MEDIUM, 1 roteada automaticamente, 0 override,
 0 falhas de IA, 0 mensagens enviadas.
+
+### 16.9 Gate final do shadow mode (24/09/2026) — o que está no ar e onde a ativação externa parou
+- PR #19 mesclado na `main` (merge commit) depois de Quality Gate e Deploy Preview verdes; gates repetidos na `main`
+  pós-merge (tsc, lint, vitest, build, smoke A–Y, preflight 0001..0058). 0056, 0057 e 0058 estão no código e no schema
+  de produção (tabelas `inbox_*`, coluna `routing`, RPC `inbox_apply_routing`, 12 setores, 1 configuração).
+- Ambiente de produção (só presença): `EIFF_INBOX_ENABLED`, `EIFF_INBOX_ROUTER_ENABLED`, `EIFF_INBOX_LLM_ENABLED`,
+  `EIFF_INBOX_OUTBOUND_ENABLED`, `EIFF_INBOX_ORGANIZATION_ID` e `ANTHROPIC_API_KEY` presentes; **ausentes**
+  `SUPABASE_SERVICE_ROLE_KEY`, `META_WHATSAPP_ACCESS_TOKEN`, `META_WHATSAPP_PHONE_NUMBER_ID`, `META_WHATSAPP_WABA_ID`,
+  `META_WHATSAPP_VERIFY_TOKEN`, `META_WHATSAPP_APP_SECRET`, `EIFF_CENTRAL_PHONE_NUMBER_ID`, `EIFF_COMMERCIAL_PHONE_NUMBER_ID`.
+- Webhook público da Central, já no ar: `https://eiffcontrol.com.br/api/channel/meta/webhook` (Callback URL para o app
+  da Meta; o Verify Token é o mesmo valor colocado em `META_WHATSAPP_VERIFY_TOKEN`, nunca reproduzido aqui). Sem
+  configuração ele recusa com segurança: GET de verificação → 403 `verificacao_recusada`; POST sem assinatura → 401
+  `assinatura_invalida`. Nenhum endpoint alternativo existe.
+- **Ativação externa parada neste ponto** por falta dos segredos, que só o humano insere no painel do Netlify (escopo
+  Functions, contexto Production, redeploy depois): (1) `SUPABASE_SERVICE_ROLE_KEY`; (2) as cinco `META_WHATSAPP_*` e
+  os dois `EIFF_*_PHONE_NUMBER_ID`. Depois disso, sem mudança de código: verificar o GET da Meta, confirmar
+  INBOX ON / ROUTER ON / LLM OFF / OUTBOUND OFF / FACTORY OFF e rodar os dois testes com número da equipe (§16.7),
+  provar idempotência e continuidade de thread, validar a UI com login e registrar a baseline e um override controlado.
+- Fail-safe: as provas dos kill switches são automatizadas (`ativacao.test.ts`); em produção, sem a chave de serviço,
+  desligar/religar flags não produz observação nova, então não foi repetido.
+- Outbound: zero. Não existe caminho Inbox → Graph `/messages` (teste varre o módulo e o webhook); a Central não envia.
+
+### 16.10 Decisão arquitetural confirmada — número único de WhatsApp (30/09/2026)
+`contextoDoNumero` (`src/core/central/metaEventos.ts`) deriva o contexto do `phone_number_id` que recebeu a mensagem:
+igual a `EIFF_CENTRAL_PHONE_NUMBER_ID` → INTERNAL (testado primeiro); igual a `EIFF_COMMERCIAL_PHONE_NUMBER_ID` →
+EXTERNAL; nenhum → contexto indefinido e o Inbox descarta o evento. Decisão para o modelo de **um único número da EIFF**:
+- `EIFF_COMMERCIAL_PHONE_NUMBER_ID` = `META_WHATSAPP_PHONE_NUMBER_ID` (o mesmo id do número);
+- `EIFF_CENTRAL_PHONE_NUMBER_ID` **ausente**;
+- **nunca** o mesmo id nas duas variáveis (INTERNAL venceria e todo cliente entraria como colaborador).
+Efeito aceito no shadow mode: colaboradores que escreverem ao número único entram como EXTERNAL/desconhecido. Sem
+mudança de código; um "contexto padrão para número único" fica como evolução futura.
+
+Gate de infraestrutura de 30/09/2026: `SUPABASE_SERVICE_ROLE_KEY` PRESENT (secret) e as quatro flags nos valores do
+shadow mode; a prova de que a Function publicada autentica e executa `inbox_ingest` só é possível pelo webhook da Central,
+que sem `META_WHATSAPP_APP_SECRET`/`META_WHATSAPP_VERIFY_TOKEN` recusa antes de ingerir (GET 403, POST 401) — não existe
+outro caminho server-side, e criar um endpoint de diagnóstico seria mudança funcional. Essa prova acontece no primeiro
+evento assinado da Meta (log `inbox_ingest outcome:ok`). A prova pelo banco (RPC, thread reutilizada, router, idempotência,
+zero outbound) já foi feita com a segunda mensagem sintética, que o catálogo não reconheceu (`descarregar`/`chega` não são
+palavras do catálogo de logística: intenção indefinida, LOW, sugestão registrada, thread mantida em FINANCEIRO).
