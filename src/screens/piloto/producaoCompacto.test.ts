@@ -14,8 +14,9 @@ import { consumoAco } from '../../core/estoque';
 import { analisarObra } from '../../core/analise';
 import { sugestoesPara } from '../../core/sugestoes';
 import type { Dataset, OrdemProducao, PedidoCompra, Tarefa } from '../../core/types';
+import seed from '../../data/seed.json';
 import { DATA_BASE_TESTE, FIXTURE_GERADA_EM, MOTORISTA_TESTE, OBRA_A, OBRA_B, OBRA_C, PREFIXO_TESTE, ROTULO_TESTE, TODAS_AS_OBRAS, USUARIO_DIRETORIA, USUARIO_GESTOR_A, USUARIO_SEM_OBRA, VARIANTES, datasetTeste, entradaDaVariante, type VarianteFixture } from './producaoCompacto.fixtures';
-import { DIAS_PERIODO_PRODUTIVIDADE, ROTULO_ESCOPO_PARCIAL, ROTULO_KG_HH, ROTULO_PENDENCIA, ROTULO_SINCRONIZACAO, STATUS_ABERTA, TETO_ORDENS, TETO_PENDENCIAS, TETO_SITUACAO, TEXTO_SEM_LISTA, TEXTO_SEM_ORDENS, TIPOS_NEUTROS, TIPOS_PENDENCIA, VISOES, kg, montarProducao, pct, textoNecessidade, type EntradaProducao, type ModeloProducao, type Visao } from './producaoCompactoModel';
+import { DIAS_PERIODO_PRODUTIVIDADE, ROTULO_ESCOPO_PARCIAL, ROTULO_KG_HH, ROTULO_PENDENCIA, ROTULO_SINCRONIZACAO, STATUS_ABERTA, TETO_ORDENS, TETO_PENDENCIAS, TETO_SITUACAO, TEXTO_SEM_LISTA, TEXTO_SEM_ORDENS, TIPOS_NEUTROS, TIPOS_PENDENCIA, VISOES, entradaDoApp, kg, montarProducao, pct, textoNecessidade, type EntradaProducao, type EstadoDoApp, type ModeloProducao, type Visao } from './producaoCompactoModel';
 
 const AGORA = '2026-09-23T15:00:00.000Z';
 const FONTE = { rotulo: ROTULO_TESTE, modo: 'teste' as const, atualizadoEm: FIXTURE_GERADA_EM, id: 'fixture' };
@@ -493,13 +494,14 @@ describe('produtividade, concisao e visoes', () => {
 });
 
 describe('guardas estaticas: isolamento, efeitos externos, pilotos existentes intactos', () => {
-  const meus = ['producaoCompactoModel.ts', 'producaoCompacto.fixtures.ts', 'ProducaoCompacto.tsx', 'pilotoProducao.css', 'mainProducao.tsx'];
-  it('os arquivos do piloto de producao existem e nenhum nome colide, ignorando caixa', () => {
+  const meus = ['producaoCompactoModel.ts', 'producaoCompacto.fixtures.ts', 'ProducaoCompacto.tsx', 'pilotoProducao.css'];
+  it('os arquivos do piloto de producao existem e nenhum nome colide, ignorando caixa; UX-P08: a demo isolada saiu', () => {
     const todos = fs.readdirSync(pasta);
     for (const f of [...meus, 'producaoCompacto.test.ts']) expect(todos).toContain(f);
     const bases = todos.map((f) => f.replace(/\.(tsx|ts|css)$/, '').toLowerCase());
     expect(new Set(bases).size).toBe(bases.length);
-    expect(fs.existsSync(path.resolve('piloto-producao.html'))).toBe(true);
+    expect(todos).not.toContain('mainProducao.tsx');
+    expect(fs.existsSync(path.resolve('piloto-producao.html'))).toBe(false);
   });
   it('nunca importa store, supabase, offline, telemetria, permissoes, funcoes server-side nem os outros pilotos', () => {
     const proibidos = [/data\/store/, /data\/supabase/, /data\/offline/, /data\/telemetria/, /data\/statusRemoto/, /data\/rede/, /@supabase/, /netlify\//, /ui\/Tabela/, /permissoes/, /obrasVisiveis/, /financeiroCompacto/i, /obrasCompacto/i, /comprasCompacto/i, /pilotoObras/, /pilotoCompras/, /piloto\.css/];
@@ -508,8 +510,6 @@ describe('guardas estaticas: isolamento, efeitos externos, pilotos existentes in
   it('nenhum fetch, XHR, WebSocket, beacon, storage, IndexedDB, service worker, setInterval, subscription ou sincronizacao', () => {
     const proibidos = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /serviceWorker/, /localStorage/, /sessionStorage/, /indexedDB/, /navigator\.sendBeacon/, /setInterval/, /\bsubscribe\b/, /EventSource/, /sincronizar\(/];
     for (const f of meus) for (const p of proibidos) expect(fonte(f), `${f} usa ${p}`).not.toMatch(p);
-    const html = fs.readFileSync(path.resolve('piloto-producao.html'), 'utf8');
-    for (const p of proibidos) expect(html).not.toMatch(p);
   });
   it('o modelo so importa funcoes canonicas de leitura (lista fechada)', () => {
     const vm = fonte('producaoCompactoModel.ts');
@@ -527,11 +527,9 @@ describe('guardas estaticas: isolamento, efeitos externos, pilotos existentes in
     const imports = vm.match(/from '[^']+'/g) ?? [];
     expect(imports.every((i) => /from '\.\.\/\.\.\/core\/(engine|obras|materiais|producao|estoque|analise|sugestoes|types)'/.test(i))).toBe(true);
   });
-  it('a tela e a entrada so leem e navegam: nenhuma action, gravacao ou botao de apontar, romaneio, excluir, liberar, concluir ou editar', () => {
-    for (const f of ['ProducaoCompacto.tsx', 'mainProducao.tsx']) {
-      const s = fonte(f);
-      for (const p of [/\bactions\./, /persistir/, /salvar[A-Z]/, /registrar[A-Z]/, /apontarEstacao/, /useStore/, /inicializar\(/, /navegar\(/, /\bApontar\b/, /Novo romaneio/, /\bExcluir\b/, /\bLiberar\b/, /\bConcluir\b/, /\bEditar\b/, /\bSalvar\b/, /Avançar etapa/, /\bEmitir\b/]) expect(s, `${f} usa ${p}`).not.toMatch(p);
-    }
+  it('a tela so le e navega: nenhuma action, gravacao ou botao de apontar, romaneio, excluir, liberar, concluir ou editar', () => {
+    const s = fonte('ProducaoCompacto.tsx');
+    for (const p of [/\bactions\./, /persistir/, /salvar[A-Z]/, /registrar[A-Z]/, /apontarEstacao/, /useStore/, /inicializar\(/, /navegar\(/, /\bApontar\b/, /Novo romaneio/, /\bExcluir\b/, /\bLiberar\b/, /\bConcluir\b/, /\bEditar\b/, /\bSalvar\b/, /Avançar etapa/, /\bEmitir\b/]) expect(s, `ProducaoCompacto.tsx usa ${p}`).not.toMatch(p);
   });
   it('estilos do piloto de producao ficam sob .piloto-producao (nenhum seletor global nem de outro piloto)', () => {
     const css = fonte('pilotoProducao.css').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -539,21 +537,142 @@ describe('guardas estaticas: isolamento, efeitos externos, pilotos existentes in
     for (const sel of seletores) for (const parte of sel.split(',')) expect(parte.trim(), `seletor fora do prefixo: ${parte}`).toMatch(/^(\.piloto-producao|\[data-theme="light"\] \.piloto-producao)/);
     expect(css).not.toMatch(/piloto-fin|piloto-obra|piloto-compra/);
   });
-  it('a fixture fica fora da tela, do modelo e dos estilos; so a demo isolada (dev) e os testes a usam; o build nao empacota a demo', () => {
-    for (const f of ['ProducaoCompacto.tsx', 'producaoCompactoModel.ts', 'pilotoProducao.css']) expect(fonte(f)).not.toMatch(/producaoCompacto\.fixtures|datasetTeste|ROTULO_TESTE/);
+  it('UX-P08: a fixture fica fora do runtime — tela, modelo e estilos nao a importam nem citam o rotulo de teste; so este teste a usa', () => {
+    for (const f of ['ProducaoCompacto.tsx', 'producaoCompactoModel.ts', 'pilotoProducao.css']) expect(fonte(f)).not.toMatch(/producaoCompacto\.fixtures|datasetTeste|ROTULO_TESTE|DADOS DE TESTE/);
     const quemImporta = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? quemImporta(path.join(dir, e.name)) : /\.(ts|tsx)$/.test(e.name) && /producaoCompacto\.fixtures/.test(fs.readFileSync(path.join(dir, e.name), 'utf8')) ? [path.join(dir, e.name)] : []));
-    expect(quemImporta(path.resolve('src')).map((f) => path.basename(f)).sort()).toEqual(['mainProducao.tsx', 'producaoCompacto.test.ts']);
+    expect(quemImporta(path.resolve('src')).map((f) => path.basename(f))).toEqual(['producaoCompacto.test.ts']);
     expect(fonte('producaoCompacto.fixtures.ts')).toMatch(/PILOTO · DADOS DE TESTE/);
     expect(fs.readFileSync(path.resolve('index.html'), 'utf8')).not.toMatch(/piloto-producao|mainProducao/);
     expect(fs.readFileSync(path.resolve('vite.config.ts'), 'utf8')).not.toMatch(/piloto/);
   });
-  it('nada fora da pasta referencia o piloto de producao: App, Paleta, Tour, store, permissoes, tipos, core e os outros pilotos seguem intocados', () => {
-    for (const f of ['src/App.tsx', 'src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/data/store.ts', 'src/core/permissoes.ts', 'src/core/types.ts', 'src/core/producao.ts', 'src/core/obras.ts', 'src/core/engine.ts', 'src/styles.css']) expect(fs.readFileSync(path.resolve(f), 'utf8'), f).not.toMatch(/ProducaoCompacto|producaoCompacto|piloto-producao|pilotoProducao|mainProducao/);
+  it('fora da pasta so o App (UX-P08) referencia o piloto de producao: Paleta, Tour, store, permissoes, tipos, core e os outros pilotos seguem intocados', () => {
+    for (const f of ['src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/data/store.ts', 'src/core/permissoes.ts', 'src/core/types.ts', 'src/core/producao.ts', 'src/core/obras.ts', 'src/core/engine.ts', 'src/styles.css']) expect(fs.readFileSync(path.resolve(f), 'utf8'), f).not.toMatch(/ProducaoCompacto|producaoCompacto|piloto-producao|pilotoProducao|mainProducao|piloto\/producao/);
     // os arquivos dos outros pilotos vem da propria pasta (sem citar os nomes deles aqui: a guarda da UX-P06 procura quem
-    // menciona a fixture de compras pelo nome do arquivo)
+    // menciona a fixture de compras pelo nome do arquivo). O teste do Financeiro guarda o App.tsx inteiro (lista exata das
+    // integracoes dos quatro pilotos), entao cita as linhas do producao compacto — mas nunca importa nada dele.
     const outros = fs.readdirSync(pasta).filter((f) => /\.(ts|tsx|css)$/.test(f) && !/producao/i.test(f));
     expect(outros.length).toBeGreaterThanOrEqual(15);
-    for (const f of outros) expect(fonte(f), f).not.toMatch(/ProducaoCompacto|producaoCompacto|piloto-producao|pilotoProducao|mainProducao/);
+    const guardaFinanceiro = outros.find((f) => /^financeiro.*\.test\.ts$/i.test(f))!;
+    expect(guardaFinanceiro).toBeDefined();
+    for (const f of outros.filter((x) => x !== guardaFinanceiro)) expect(fonte(f), f).not.toMatch(/ProducaoCompacto|producaoCompacto|piloto-producao|pilotoProducao|mainProducao|piloto\/producao/);
+    expect(fonte(guardaFinanceiro)).not.toMatch(/from '\.\/(ProducaoCompacto|producaoCompacto[^']*)'/);
+  });
+});
+
+describe('UX-P08: integracao ao App (adaptador, rota e guardas)', () => {
+  const app = fs.readFileSync(path.resolve('src/App.tsx'), 'utf8');
+  const caso = app.slice(app.indexOf("case 'piloto':"), app.indexOf('break;', app.indexOf("case 'piloto':")));
+  const base = (extra: Partial<EstadoDoApp> = {}): EstadoDoApp => ({ ds: datasetTeste('padrao'), usuario: USUARIO_DIRETORIA, codigosObraVisiveis: TODAS_AS_OBRAS, modo: 'remoto', carregando: false, erroInicial: undefined, sync: { status: 'ok', em: '2026-09-23T14:00:00.000Z' }, agora: AGORA, ...extra });
+  const semFonte = (m: ModeloProducao) => { const p = pronto(m); return { ...p, fonte: undefined, frescor: undefined }; };
+
+  it('1. o Dataset real (seed do app) entra no adaptador sem adaptacao; em modo local, sem producao no seed, a tela fica vazia e nada e inventado', () => {
+    const ds = seed as unknown as Dataset;
+    const e = entradaDoApp({ ...base(), ds, usuario: ds.usuarios[0], codigosObraVisiveis: ds.obras.map((o) => o.codigo), modo: 'local', sync: { status: 'local' } });
+    expect(e.estado).toBe('pronto');
+    if (e.estado === 'pronto') { expect(e.ds).toBe(ds); expect(e.fonte).toEqual({ rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } }); }
+    expect([ds.ordens ?? [], ds.conjuntos ?? [], ds.apontamentosEstacao ?? [], ds.romaneios ?? []].map((xs) => xs.length)).toEqual([0, 0, 0, 0]);
+    const m = montarProducao(e);
+    expect(m.estado === 'vazio' && [m.semObras, m.motivo]).toEqual([false, 'Nenhuma ordem, lista de materiais, apontamento de estação ou romaneio nas obras visíveis.']);
+    expect(JSON.stringify(m)).not.toMatch(/DADOS DE TESTE|PILOTO ·/);
+  });
+  it('2. a fixture nao entra no runtime: o App nao a importa e a demo isolada saiu', () => {
+    expect(app).not.toMatch(/producaoCompacto\.fixtures|datasetTeste|DADOS DE TESTE|piloto-producao|mainProducao/);
+    expect(fs.existsSync(path.resolve('src/screens/piloto/mainProducao.tsx'))).toBe(false);
+    expect(fs.existsSync(path.resolve('piloto-producao.html'))).toBe(false);
+  });
+  it('3. codigosObraVisiveis vem da camada oficial: o App chama obrasVisiveis do store e o modelo nunca decide sozinho', () => {
+    expect(caso).toMatch(/p1 === 'producao'/);
+    expect(caso).toMatch(/entradaProducaoDoApp\(\{ ds, usuario, codigosObraVisiveis: obrasVisiveis\(usuario, ds\.obras\)\.map\(\(o\) => o\.codigo\), modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)/);
+    expect(app).toMatch(/import \{ actions, inicializar, obrasVisiveis, pode, useStore \} from '\.\/data\/store';/);
+    const vm = semComentarios(fonte('producaoCompactoModel.ts'));
+    expect(vm).not.toMatch(/usuario\.obras|obrasVisiveis|data\/store|permissoes/);
+  });
+  it('4-8. carteira completa, uma obra, varias obras, nenhuma e codigo desconhecido: o adaptador so repassa o conjunto, e o resultado e o mesmo da entrada direta', () => {
+    const casos: [string[], string][] = [[TODAS_AS_OBRAS, 'pronto'], [[OBRA_A], 'pronto'], [[OBRA_A, OBRA_B], 'pronto'], [[], 'sem-visibilidade'], [['OB-DESCONHECIDA'], 'sem-visibilidade']];
+    for (const [visiveis, esperado] of casos) {
+      const ds = datasetTeste('padrao');
+      const e = entradaDoApp(base({ ds, codigosObraVisiveis: visiveis }));
+      expect(e.estado === 'pronto' && e.codigosObraVisiveis).toBe(visiveis);
+      const m = montarProducao(e);
+      expect(m.estado).toBe(esperado);
+      if (m.estado === 'pronto') expect(semFonte(m)).toEqual(semFonte(montarProducao({ ...entrada('padrao', 'diretoria', ds, visiveis), usuario: USUARIO_DIRETORIA })));
+    }
+  });
+  it('9-12. pelo adaptador: subconjunto sem vazamento, agregacao so pelo agregador canonico, sem soma manual, ALT-07/09 so com a carteira completa', () => {
+    const ds = datasetTeste('padrao');
+    const so = pronto(montarProducao(entradaDoApp(base({ ds, codigosObraVisiveis: [OBRA_A] }))));
+    expect(JSON.stringify(so)).not.toMatch(/OB-PP-B|OB-PP-C|Mezanino|Cobertura|OM-B1|CJ-PP-B|ROM-900[34]/);
+    const parcial = pronto(montarProducao(entradaDoApp(base({ ds, codigosObraVisiveis: [OBRA_A, OBRA_B], visao: 'operacao' }))));
+    const p = resumoPeso(ds.conjuntos.filter((c) => [OBRA_A, OBRA_B].includes(c.codigoObra)));
+    expect([parcial.tiles['peso-em-fabrica'].numeros[0].valor, parcial.tiles['peso-em-canteiro'].numeros[0].valor]).toEqual([p.emFabrica, p.emCanteiro]);
+    expect(parcial.escopo.texto).toBe(`${ROTULO_ESCOPO_PARCIAL} · 2 de 3`);
+    expect(JSON.stringify(parcial)).not.toMatch(/carteira inteira|todas as obras/i);
+    expect(semTextos(fonte('producaoCompactoModel.ts'))).not.toMatch(/\.reduce\(|\+=|[\w\])]\s\+\s[\w(]/);
+    const globais = ['check-alt-07', 'check-alt-09', 'sugestao-ordens-sem-data'];
+    expect(pronto(montarProducao(entradaDoApp(base({ ds })))).pendencias.todas.filter((x) => globais.includes(x.tipo))).toHaveLength(3);
+    for (const vis of [[OBRA_A], [OBRA_A, OBRA_B]]) expect(pronto(montarProducao(entradaDoApp(base({ ds, codigosObraVisiveis: vis })))).pendencias.todas.some((x) => globais.includes(x.tipo))).toBe(false);
+  });
+  it('13-20. semantica da P07 preservada pelo adaptador: fabricacao != montagem, marcos distintos, sem data != atrasada, produtividade fora dos tiles, sem score, sem severidade nova, sem bloqueio, sem compras', () => {
+    const m = pronto(montarProducao(entradaDoApp(base({ visao: 'operacao' }))));
+    for (const id of ['ordens-atrasadas', 'ordens-andamento'] as const) expect(m.tiles[id].numeros.map((x) => x.rotulo)).toEqual(['Fabricação', 'Montagem']);
+    expect(new Set([m.tiles['peso-em-fabrica'].partes[0].valor, m.tiles['peso-em-fabrica'].partes[1].valor, m.tiles['peso-em-canteiro'].partes[1].valor]).size).toBe(3);
+    const semData = m.ordens.todas.find((l) => l.id === 'OM-PP-A2')!;
+    expect([semData.dataNecessidade, semData.atrasada]).toEqual([undefined, false]);
+    expect(JSON.stringify(Object.values(m.tiles))).not.toMatch(/HH|produtiv/i);
+    for (const t of Object.values(m.tiles)) { expect('tom' in t).toBe(false); expect('sinal' in t).toBe(false); }
+    for (const x of m.pendencias.todas) if (TIPOS_NEUTROS.includes(x.tipo)) expect(x.sinal).toBeUndefined();
+    const txt = JSON.stringify(m);
+    expect(txt).not.toMatch(/score|semáforo|bloquead|romaneio atrasado|baixa produtividade|inefici|\bpedidos?\b|\bcompras?\b/i);
+  });
+  it('Diretoria e Operacao pelo adaptador preservam os mesmos numeros', () => {
+    const d = pronto(montarProducao(entradaDoApp(base({ visao: 'diretoria' }))));
+    const o = pronto(montarProducao(entradaDoApp(base({ visao: 'operacao' }))));
+    expect({ ...d, visao: undefined, situacao: undefined }).toEqual({ ...o, visao: undefined, situacao: undefined });
+  });
+  it('carregando e erroInicial viram os estados correspondentes; sync espelhado 1:1 e nunca vira "desatualizado"', () => {
+    expect(entradaDoApp(base({ carregando: true }))).toMatchObject({ estado: 'carregando', fonte: { modo: 'remoto', rotulo: 'Supabase' } });
+    expect(entradaDoApp(base({ erroInicial: 'sem rede' }))).toMatchObject({ estado: 'erro', mensagem: 'sem rede' });
+    const pares: [EstadoDoApp['sync']['status'], string][] = [['ok', 'sincronizado'], ['enviando', 'enviando'], ['pendente', 'pendente'], ['erro', 'erro']];
+    const frescorBase = pronto(montarProducao(entradaDoApp(base()))).frescor;
+    for (const [status, estado] of pares) {
+      const e = entradaDoApp(base({ sync: { status, em: '2026-09-23T14:00:00.000Z', msg: 'x' } }));
+      expect(e.fonte.sincronizacao?.estado).toBe(estado);
+      expect(ROTULO_SINCRONIZACAO[e.fonte.sincronizacao!.estado]).toBeDefined();
+      const m = pronto(montarProducao(e));
+      expect(m.frescor).toEqual(frescorBase);
+      expect(JSON.stringify(m)).not.toMatch(/desatualizad/i);
+    }
+  });
+  it('o adaptador nao muta o estado recebido', () => {
+    const e = base();
+    const antes = JSON.stringify(e);
+    congelar(e);
+    montarProducao(entradaDoApp(e));
+    expect(JSON.stringify(e)).toBe(antes);
+  });
+  it('21-23. o modelo e a tela nao importam store nem Supabase e nao tem efeito externo (ver as guardas estaticas acima)', () => {
+    for (const f of ['producaoCompactoModel.ts', 'ProducaoCompacto.tsx']) for (const p of [/data\/store/, /data\/supabase/, /@supabase/, /\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /sendBeacon/, /localStorage/, /sessionStorage/, /indexedDB/, /serviceWorker/]) expect(fonte(f), `${f} usa ${p}`).not.toMatch(p);
+  });
+  it('24-33. App.tsx: rota #/piloto/producao aditiva; Financeiro, Obras e Compras intactos; rota invalida preservada; Inbox e Mission Control intactos; sem sidebar, paleta ou tour', () => {
+    expect(caso).toMatch(/p1 === 'financeiro' \? <FinanceiroCompacto entrada=\{entradaDoApp\(\{ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)\} visaoInicial=\{rota\.query\.get\('visao'\) === 'operacional' \? 'operacional' : 'executivo'\} \/>/);
+    expect(caso).toMatch(/: p1 === 'obras' \? <ObrasCompacto entrada=\{entradaObrasDoApp\(\{ ds, usuario, codigosObraVisiveis: obrasVisiveis\(usuario, ds\.obras\)\.map\(\(o\) => o\.codigo\), modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)\} visaoInicial=\{rota\.query\.get\('visao'\) === 'operacao' \? 'operacao' : 'diretoria'\} \/>/);
+    expect(caso).toMatch(/: p1 === 'compras' \? <ComprasCompacto entrada=\{entradaComprasDoApp\(\{ ds, usuario, codigosObraVisiveis: obrasVisiveis\(usuario, ds\.obras\)\.map\(\(o\) => o\.codigo\), modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)\} visaoInicial=\{rota\.query\.get\('visao'\) === 'operacao' \? 'operacao' : 'diretoria'\} \/>/);
+    expect(caso).toMatch(/: p1 === 'producao' \? <ProducaoCompacto entrada=\{entradaProducaoDoApp\(/);
+    expect(caso.indexOf("p1 === 'compras'")).toBeLessThan(caso.indexOf("p1 === 'producao'"));
+    expect(caso.trimEnd()).toMatch(/: <div className="empty">Página não encontrada\.<\/div>;$/);
+    expect(app).toMatch(/const ProducaoCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/ProducaoCompacto'\)\);/);
+    expect(app).toMatch(/import \{ entradaDoApp as entradaProducaoDoApp \} from '\.\/screens\/piloto\/producaoCompactoModel';/);
+    const linhas = app.split('\n').filter((l) => /ProducaoCompacto|producaoCompactoModel/.test(l) && !/^\s*\/\//.test(l));
+    expect(linhas).toHaveLength(3); // import do adaptador, lazy e a linha do case
+    // a tela atual de Producao continua intacta (o piloto nao a substitui)
+    expect(app).toMatch(/case 'producao': tela = <Producao query=\{rota\.query\} key=\{rota\.query\.toString\(\)\} \/>; break;/);
+    expect(app).toMatch(/const Inbox = lazy\(\(\) => import\('\.\/screens\/Inbox'\)\);/);
+    expect(app).toMatch(/case 'atendimento': tela = pode\(usuario, 'inbox'\)/);
+    expect(app).toMatch(/const MissionControl = lazy\(\(\) => import\('\.\/screens\/MissionControl'\)\);/);
+    expect(app).toMatch(/case 'mission-control': tela = pode\(usuario, 'ver_mission_control'\)/);
+    const paleta = fs.readFileSync(path.resolve('src/ui/Paleta.tsx'), 'utf8');
+    expect(paleta).not.toMatch(/piloto/);
+    expect(app).not.toMatch(/ROTAS_NAV[^\n]*piloto|piloto[^\n]*ROTAS_NAV/);
   });
 });
 

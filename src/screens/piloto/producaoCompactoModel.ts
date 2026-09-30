@@ -1,4 +1,4 @@
-// UX-P07 — Produção compacto: view-model puro do piloto (somente leitura, isolado, sem integração ao App).
+// UX-P07/UX-P08 — Produção compacto: view-model puro do piloto (somente leitura). Integrado ao App pela UX-P08.
 //
 // Mesma filosofia dos pilotos de Financeiro, Obras e Compras: SITUACAO (poucos numeros canonicos) → lista curta (obras
 // na Diretoria, ordens abertas na Operacao) → PENDENCIAS (fatos da producao) → COMPOSICAO em gaveta, so quando pedida →
@@ -25,7 +25,7 @@
 // material, disponivel nem ligacao producao → compra no core, e o piloto nao os cria.
 //
 // VISIBILIDADE: o modelo recebe `codigosObraVisiveis` e limita a apresentacao a esse conjunto. Ele nao decide quem ve o
-// que: numa integracao futura o conjunto vira da regra oficial do App.
+// que: no App integrado o conjunto vem da regra oficial do store, calculada pelo App e passada por `entradaDoApp`.
 import { addDays, calcLancamentos, executarChecks, fmtBr, obra360, type Obra360 } from '../../core/engine';
 import { resumoProducao, type OrdemCalc, type ResumoProducao } from '../../core/obras';
 import { resumoPeso, type ResumoPeso } from '../../core/materiais';
@@ -35,7 +35,7 @@ import { analisarObra, type Ponto } from '../../core/analise';
 import { sugestoesPara } from '../../core/sugestoes';
 import type { Dataset, Obra, TipoOrdem, Usuario } from '../../core/types';
 
-export const VERSAO_PILOTO = 'UX-P07';
+export const VERSAO_PILOTO = 'UX-P08.1';
 export const TETO_SITUACAO: Record<Visao, number> = { diretoria: 3, operacao: 4 };
 export const TETO_PENDENCIAS = 6;
 export const TETO_ORDENS = 8;
@@ -77,6 +77,39 @@ export const ROTULO_PENDENCIA: Record<TipoPendencia, string> = {
 export interface Sincronizacao { estado: 'sincronizado' | 'enviando' | 'pendente' | 'erro' | 'local'; em?: string; desde?: string; msg?: string }
 export const ROTULO_SINCRONIZACAO: Record<Sincronizacao['estado'], string> = { sincronizado: 'Supabase · sincronizado', enviando: 'Supabase · sincronizando…', pendente: 'offline · alterações guardadas neste aparelho', erro: 'não sincronizado', local: 'modo local · seed' };
 export interface FonteDados { rotulo: string; modo: 'teste' | 'local' | 'remoto'; atualizadoEm?: string; id?: string; sincronizacao?: Sincronizacao }
+
+/**
+ * O que o App ja tem em maos depois de `useStore()`, mais o conjunto de obras visiveis que ELE calcula pela regra oficial
+ * do store e passa explicitamente. O piloto nunca importa o store nem decide visibilidade.
+ */
+export interface EstadoDoApp {
+  ds: Dataset;
+  usuario: Usuario;
+  codigosObraVisiveis: string[];
+  modo: 'local' | 'remoto';
+  carregando: boolean;
+  erroInicial?: string;
+  sync: { status: 'ok' | 'enviando' | 'erro' | 'local' | 'pendente'; em?: string; desde?: string; msg?: string };
+  agora: string;
+  visao?: Visao;
+}
+
+const ESTADO_SYNC: Record<EstadoDoApp['sync']['status'], Sincronizacao['estado']> = { ok: 'sincronizado', enviando: 'enviando', pendente: 'pendente', erro: 'erro', local: 'local' };
+
+/**
+ * UX-P08 — adaptador puro e somente leitura: Dataset, usuario, sync e obras visiveis que o App ja carregou viram a
+ * EntradaProducao. Sem fetch, sem store, sem regra: so mapeamento 1:1 (sync espelhado, nunca virando "desatualizado").
+ * Em modo local a fonte e o seed e e dita como tal.
+ */
+export function entradaDoApp(e: EstadoDoApp): EntradaProducao {
+  const fonte: FonteDados =
+    e.modo === 'remoto'
+      ? { rotulo: 'Supabase', modo: 'remoto', atualizadoEm: e.sync.em, sincronizacao: { estado: ESTADO_SYNC[e.sync.status], em: e.sync.em, desde: e.sync.desde, msg: e.sync.msg } }
+      : { rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } };
+  if (e.carregando) return { estado: 'carregando', fonte };
+  if (e.erroInicial) return { estado: 'erro', fonte, mensagem: e.erroInicial };
+  return { estado: 'pronto', fonte, ds: e.ds, usuario: e.usuario, codigosObraVisiveis: e.codigosObraVisiveis, agora: e.agora, visao: e.visao };
+}
 
 export type EntradaProducao =
   | { estado: 'carregando'; fonte: FonteDados }

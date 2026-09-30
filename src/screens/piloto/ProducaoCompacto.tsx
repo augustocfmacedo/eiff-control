@@ -1,7 +1,7 @@
-// UX-P07 — Produção compacto: tela do piloto (somente leitura, sem store, sem integração ao App).
+// UX-P07/UX-P08 — Produção compacto: tela do piloto (somente leitura, sem store), integrada em #/piloto/producao.
 //
-// Recebe uma `EntradaProducao` ja resolvida (fixture na demonstracao isolada e nos testes; numa integracao futura o App
-// fornecera Dataset, usuario, sync e o conjunto de obras visiveis ja filtrado pela regra oficial) e apresenta o modelo
+// Recebe uma `EntradaProducao` ja resolvida pelo App (`entradaDoApp` sobre Dataset, usuario, sync e o conjunto de obras
+// visiveis que o App calcula pela regra oficial; a fixture existe so nos testes) e apresenta o modelo
 // puro de `montarProducao`. A tela nao decide nada de producao nem de visibilidade: so apresenta. Blocos: cabecalho com
 // microfrescor e sincronizacao (separados) → SITUACAO (3 ou 4 tiles conforme a visao, sem cor de severidade;
 // fabricacao e montagem em numeros separados) → OBRAS (Diretoria) ou ORDENS ABERTAS (Operacao) → PENDENCIAS (fatos
@@ -18,9 +18,8 @@ import './pilotoProducao.css';
 const dataHoraCurta = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 type ModeloComFrescor = Extract<ModeloProducao, { estado: 'pronto' | 'vazio' | 'sem-visibilidade' }>;
 
-/** Faixa curta por modo da fonte: teste (fixture) ou local (seed). Em modo remoto nao renderiza nada. */
+/** Modo local: o seed nao e a operacao real, e a tela diz isso; em modo remoto nao renderiza nada. */
 function Faixa({ fonte }: { fonte: ModeloProducao['fonte'] }) {
-  if (fonte.modo === 'teste') return <div className="piloto-producao-faixa" role="note" title="Nenhum número desta tela representa a situação real da empresa."><Icon name="aviso" size={13} /><b>PILOTO · DADOS DE TESTE</b><span>dados fictícios{fonte.id ? ` · ${fonte.id}` : ''}</span></div>;
   if (fonte.modo === 'local') return <div className="piloto-producao-faixa" role="note"><Icon name="aviso" size={13} /><b>Modo local</b><span>dados do seed · não são a operação real</span></div>;
   return null;
 }
