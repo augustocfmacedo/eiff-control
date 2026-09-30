@@ -348,6 +348,7 @@ describe('MC-LIVE-3 — cadeia, eventos e gate', () => {
     expect(txt).not.toContain('factory-task:v1');
     expect(txt).not.toContain('baseSha');
     expect(txt).not.toMatch(/authorization|token-fake|api\.github\.com/i);
-    expect(ler('src/core/central/statusServidor.ts')).toMatch(/events: projetarEventos\(leitura\)/);
+    // MC-LIVE-3B: sem porta da Factory os eventos continuam sendo exatamente os da projeção do GitHub
+    expect(ler('src/core/central/statusServidor.ts')).toMatch(/: projetarEventos\(leitura\);/);
   });
 });

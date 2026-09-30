@@ -927,6 +927,7 @@ tr.arrastando td { opacity: 0.55; }
 .mcq-cadeia-valor, .mcq-cadeia li a { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .mcq-cadeia-ausente { color: var(--muted); font-style: italic; }
 .mcq-cadeia-nota { grid-column: 2; color: var(--muted); line-height: 1.35; }
+.mcq-operacional { margin: 0 0 var(--space-2); font-variant-numeric: tabular-nums; }
 .mcq-eventos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--text-xs); }
 .mcq-eventos li { display: flex; flex-direction: column; gap: 1px; padding-left: 8px; border-left: 2px solid var(--ok); }
 .mcq-eventos time { color: var(--muted); font-variant-numeric: tabular-nums; }
