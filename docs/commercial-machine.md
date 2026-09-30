@@ -6,6 +6,8 @@ CM2-F). CM3 a CM5 não iniciados; a próxima grande frente é o **Lead Engine 1.
 Branches: `feature/commercial-machine-v1` (CM1, congelada em `a9ef237`) e `feature/commercial-machine-cm2` (CM2) ·
 baseline original: `main @ ab642be` · plano e histórico: `COMMERCIAL_MACHINE_V1_PLAN.md` · documento canônico do CM2:
 `docs/commercial-machine-cm2.md`.
+Camada analítica sobre a Máquina Comercial (diagnóstico e direção, sem prioridade própria): **Commercial Director**,
+`docs/commercial-director-1.0.md` (CD-0: arquitetura e baseline).
 
 Este documento é a visão arquitetural geral: as seções 1 a 10 descrevem o CM1 e continuam valendo como estão; a §11
 registra o CM2 entregue e aponta para o documento canônico.
