@@ -1109,3 +1109,45 @@ BLOQUEADA vira aviso secundário (`dependenciasBloqueadas`, um nível, estado in
 
 **Dívida registrada.** "Última movimentação por módulo" não entrou: não há fonte confiável por módulo (a linha do tempo
 da Governança é da EIFF Central). Com leitura viva, o "alterado há" das tarefas cobre parte disso.
+
+### 17.13 MC-CONSTRUCTION-V2B — Mapa vivo executivo (30/09/2026)
+
+**Por quê.** O Mapa vivo desenhava o grafo técnico: 20 nós de granularidades diferentes (camadas da EIFF Central,
+pipeline da fábrica, dois módulos), 29 arestas e só ~64% visível em 1440. Não respondia "quais módulos compõem o EIFF e
+como se relacionam".
+
+**Uma ferramenta, duas camadas.** "Módulos" (padrão) e "Arquitetura técnica" no mesmo cartão. A primeira mostra os 20
+módulos do catálogo em faixas por domínio, com o estado e a fração da MESMA projeção da Visão geral
+(`nosExecutivos` → `resumoExecutivo`), "espera você" quando há pendência humana declarada, e cabe inteira em 1440×900
+sem rolar de lado (viewBox escalado). A segunda é o grafo técnico de `mapaVivo.ts` intacto (nós, gates, fontes, observa,
+evidência). O clique num módulo mostra o contexto (estado, avanço, próximo passo, esperando você, depende de, é
+dependência de, bloqueios, impacto) e oferece "Abrir módulo" — o MESMO drill-down da Visão geral (`PainelModulo`
+exportado, sem segunda cópia) — e "Ver detalhe técnico", que abre a arquitetura já com o nó correspondente selecionado.
+
+**Relações sem invenção** (`src/core/central/mapaExecutivo.ts`, puro). Base: as 19 dependências declaradas no catálogo
+(`dependeDe`). Acima delas, só arestas técnicas de fluxo/dependência cujos dois extremos pertencem a módulos diferentes
+por `moduloDoNoTecnico`: correspondência declarada (`MODULO_DO_NO`) ou TODOS os gates do nó dentro dos gates de um único
+módulo. As camadas da Central pertencem à EIFF Central por gates; Auditoria (gates mistos) e nós sem gate (Commercial
+Queue, pipeline da fábrica) não pertencem a módulo nenhum. Resultado: um único fluxo principal colapsado, EIFF Central →
+Inbox (webhook → Inbox), sobre uma dependência já declarada. Observa e evidência ficam só na arquitetura técnica.
+
+**Impacto de bloqueio.** Arestas que saem de um módulo BLOQUEADO são desenhadas como impacto; `impactoDe` lista quem
+depende direta e indiretamente, só por dependências declaradas; nenhum estado muda. Filtros mínimos só destacam
+(Todos · Em construção · Bloqueados e impacto) — nada some.
+
+**Layout.** Colunas pela profundidade de dependência (quem habilita à esquerda), faixas pelos domínios; módulo sem
+nenhuma relação vai para a coluna mais vazia da faixa. 5 colunas, 8 linhas, 1164 × 598 unidades. Abaixo de 1024 px a
+camada "Módulos" vira lista relacional por domínio (itens expansíveis com próximo passo, dependências nos dois sentidos,
+esperando você e "Abrir módulo"), com alvos de 44 px.
+
+**Roteamento das arestas (correção de aceite).** A primeira versão desenhava cada dependência como curva direta, e a
+revisão de aceite achou 5 delas passando por trás de cartões alheios (Obras → Estoque, Obras → Equipe, Financeiro →
+Compras, Plataforma → EIFF Central, Plataforma → Inbox), o que sugeria relações inexistentes — por exemplo "Mission
+Control → EIFF Central". O traçado saiu da tela e virou função pura (`rotasExecutivas`): roteamento ortogonal por
+corredores — sai por uma porta própria na metade de cima da borda direita da origem, corre pelo corredor entre colunas,
+cruza as colunas do meio por uma via livre entre linhas ou entre faixas, e entra por uma porta própria na metade de baixo
+da borda esquerda do destino. Arestas que coexistem num corredor ou numa via ganham trilhas separadas por
+`DISTANCIA_MINIMA_TRILHAS`. Prova geométrica (`segmentoCruzaRetangulo`, `cartoesAtravessados`): 19/19 arestas sem
+tocar interior de cartão, nenhum trecho sobreposto, nenhuma porta compartilhada; o mesmo teste aplicado à curva antiga
+reprova exatamente as 5 (e mostra que Plataforma → Inbox também cortava a Dev Factory). Dependências, estados e grafo
+técnico não mudaram.

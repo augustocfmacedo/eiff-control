@@ -1155,3 +1155,73 @@ tr.arrastando td { opacity: 0.55; }
   .mcc-espera-mod, .mcc-pill-btn { display: inline-flex; align-items: center; }
   .mcc-concluidos > summary, .mcc-tecnico > summary { display: flex; align-items: center; }
 }
+
+/* MC-CONSTRUCTION-V2B — Mapa vivo executivo (mcv-*). A camada "Módulos" cabe na largura (viewBox escalado); em tela
+   estreita a mesma informação vira lista relacional. Estado sempre com texto; cor nunca é o único sinal. */
+.mcv-vistas { display: inline-flex; gap: 4px; }
+.mcv-sub { margin-bottom: 6px; }
+.mcv-barra { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 8px; color: var(--muted); }
+.mcv-barra .spacer { flex: 1 1 auto; }
+.mcv-leg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.mcv-leg i.est { width: 12px; height: 12px; border-radius: 3px; border: 2px solid var(--border-strong); background: var(--surface); }
+.mcv-leg i.est.ok { border-color: var(--ok); }
+.mcv-leg i.est.warn { border-color: var(--warn); }
+.mcv-leg i.est.bad { border-color: var(--bad); }
+.mcv-leg i.lin { width: 24px; height: 0; border-top: 1.6px solid var(--text); opacity: 0.7; }
+.mcv-leg i.lin.fluxo { border-top: 2.6px solid var(--brand); opacity: 1; }
+.mcv-leg i.lin.impacto { border-top: 1.8px dashed var(--bad); opacity: 1; }
+.mcv-filtros { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.mcv-grafico { width: 100%; }
+.mcv-svg { display: block; width: 100%; height: auto; font-family: inherit; }
+.mcv-faixa rect { fill: var(--surface-1); stroke: var(--border); }
+.mcv-faixa text { fill: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
+.mcv-aresta { fill: none; stroke: var(--text); stroke-width: 1.3; opacity: 0.42; stroke-linejoin: round; stroke-linecap: round; }
+.mcv-aresta.fluxo { stroke: var(--brand); stroke-width: 2.6; opacity: 0.9; }
+.mcv-aresta.impacto { stroke: var(--bad); stroke-dasharray: 6 4; stroke-width: 1.8; opacity: 0.95; }
+.mcv-aresta.ativa { opacity: 1; stroke-width: 2.4; }
+.mcv-aresta.dim { opacity: 0.08; }
+#mcv-seta path { fill: var(--text); }
+#mcv-seta-bad path { fill: var(--bad); }
+.mcv-no { cursor: pointer; }
+.mcv-no rect { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1.4; }
+.mcv-no.ok rect { stroke: var(--ok); }
+.mcv-no.warn rect { stroke: var(--warn); }
+.mcv-no.bad rect { stroke: var(--bad); stroke-width: 2.2; }
+.mcv-no.info rect { stroke: var(--info); stroke-dasharray: 4 3; }
+.mcv-no.sel rect { stroke: var(--brand); stroke-width: 3; }
+.mcv-no:focus { outline: none; }
+.mcv-no:focus rect { stroke: var(--brand); }
+.mcv-no.dim { opacity: 0.3; }
+.mcv-titulo { fill: var(--text); font-size: 12.5px; font-weight: 700; }
+.mcv-estado { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mcv-no.bad .mcv-estado { fill: var(--bad); }
+.mcv-voce { fill: var(--warn); font-size: 10.5px; font-weight: 700; }
+.mcv-contexto { margin-top: var(--space-3); padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--brand); border-radius: var(--radius); background: var(--surface-2); }
+.mcv-contexto .mcc-topo { margin-bottom: 6px; }
+.mcv-rel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 6px 0; }
+.mcv-dica { margin-top: 8px; }
+.mcv-lista { display: none; }
+.mcv-lista-dominio { margin-bottom: var(--space-3); }
+.mcv-item { border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-1); margin-bottom: 6px; min-width: 0; }
+.mcv-item.ok { border-left-color: var(--ok); }
+.mcv-item.warn { border-left-color: var(--warn); }
+.mcv-item.bad { border-left-color: var(--bad); }
+.mcv-item.dim { opacity: 0.45; }
+.mcv-item > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 10px; min-height: 44px; }
+.mcv-item > summary::-webkit-details-marker { display: none; }
+.mcv-item-titulo { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.mcv-item-frac { font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--muted); white-space: nowrap; }
+.mcv-item-corpo { display: grid; gap: 4px; padding: 6px 12px 10px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.mcv-item-corpo .btn { justify-self: start; margin-top: 4px; }
+/* abaixo de 1024 px o grafo escalado ficaria miúdo: a camada "Módulos" vira lista relacional */
+@media (max-width: 1023px) {
+  .mcv-grafico { display: none; }
+  .mcv-lista { display: block; }
+  .mcv-barra .mcv-leg { display: none; }
+  .mcv-dica { display: none; }
+}
+@media (max-width: 760px) { .mcv-rel { grid-template-columns: minmax(0, 1fr); } }
+@media (pointer: coarse), (max-width: 768px) {
+  .mcv .btn, .mcv-item-corpo .btn, .mcv .mcc-pill-btn { min-height: 44px; }
+  .mcv .mcc-pill-btn { display: inline-flex; align-items: center; }
+}
