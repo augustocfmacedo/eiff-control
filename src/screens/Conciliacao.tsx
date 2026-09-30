@@ -52,7 +52,7 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
   const seguros = pares.filter((p) => p.s.score >= 90);
   const conciliarPares = (lista: typeof pares) => {
     let ok = 0; const erros: string[] = []; const usados = new Set<string>();
-    for (const p of lista) { if (usados.has(p.s.lancamento.id)) continue; try { actions.conciliar(p.t.id, [p.s.lancamento.id]); ok++; usados.add(p.s.lancamento.id); } catch (e) { erros.push(`${p.t.id}: ${(e as Error).message}`); } }
+    for (const p of lista) { if (usados.has(p.s.lancamento.id)) continue; try { actions.conciliar(p.t.id, [p.s.lancamento.id]); ok++; usados.add(p.s.lancamento.id); } catch (e) { erros.push(`${p.t.idExterno ?? p.t.id}: ${(e as Error).message}`); } }
     toast(`${ok} par(es) conciliado(s)${erros.length ? `; ${erros.length} com erro: ${erros[0]}` : ''}.`);
   };
   // arrastar transacao pendente e soltar no lancamento: dentro da tolerancia concilia; fora, abre a selecao para justificar
@@ -93,7 +93,7 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
             {seguros.length > 0 && <button className="btn primary sm" onClick={() => { if (window.confirm(`Conciliar ${seguros.length} par(es) com valor exato e data compatível?`)) conciliarPares(seguros); }}>Conciliar {seguros.length} par(es) seguro(s)</button>}
           </div>
           <table style={{ marginTop: 8 }}><thead><tr><th>Transação</th><th>Histórico</th><th className="num">Movimento</th><th>Lançamento</th><th>Score</th><th></th></tr></thead><tbody>
-            {pares.map((p) => <tr key={p.t.id}><td>{p.t.id}<div className="muted small">{p.t.data.split('-').reverse().join('/')}</div></td><td className="small">{p.t.historico}</td><td className="num"><Money v={p.t.movimento} sign /></td><td><Link to={`/lancamentos/${p.s.lancamento.id}`}>{p.s.lancamento.id}</Link><div className="muted small">{p.s.lancamento.descricao}</div></td><td><Badge tone={p.s.score >= 90 ? 'ok' : 'warn'}>{p.s.score}</Badge><div className="muted small">{p.s.criterios.join(', ')}</div></td><td><button className="btn sm" onClick={() => conciliarPares([p])}>Conciliar</button></td></tr>)}
+            {pares.map((p) => <tr key={p.t.id}><td>{p.t.idExterno ?? p.t.id}<div className="muted small">{p.t.data.split('-').reverse().join('/')}</div></td><td className="small">{p.t.historico}</td><td className="num"><Money v={p.t.movimento} sign /></td><td><Link to={`/lancamentos/${p.s.lancamento.id}`}>{p.s.lancamento.id}</Link><div className="muted small">{p.s.lancamento.descricao}</div></td><td><Badge tone={p.s.score >= 90 ? 'ok' : 'warn'}>{p.s.score}</Badge><div className="muted small">{p.s.criterios.join(', ')}</div></td><td><button className="btn sm" onClick={() => conciliarPares([p])}>Conciliar</button></td></tr>)}
           </tbody></table>
         </div>
       )}
@@ -124,7 +124,7 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
             </div>
           ) : !t ? <Empty>Selecione uma transação para ver sugestões, ou arraste uma pendente até o lançamento.</Empty> : (
             <>
-              <h2>{t.id} · {t.data.split('-').reverse().join('/')} · <Money v={t.movimento} sign /></h2>
+              <h2>{t.idExterno ?? t.id} · {t.data.split('-').reverse().join('/')} · <Money v={t.movimento} sign /></h2>
               <p className="small muted">{t.historico} {t.documento && `· ${t.documento}`} · {t.conta} {t.justificativa && <> · justificativa: {t.justificativa}</>}</p>
               <h3>Sugestões (score e critérios)</h3>
               {sug.length === 0 ? <div className="muted small">Nenhum lançamento compatível. Cadastre o título ou trate como divergência.</div> : (
