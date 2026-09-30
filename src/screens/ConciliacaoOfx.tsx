@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { BANCOS, decodificarOfx, parseOfx, sugerirCategoria, type OfxExtrato } from '../core/ofx';
+import { contaDosIdentificadores } from '../core/extratos';
 import type { TransacaoBancaria } from '../core/types';
 import { actions, obrasVisiveis, useStore } from '../data/store';
 import { Field, Input, Modal, Money, Select, money, tentar } from '../ui/components';
@@ -9,7 +10,7 @@ const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 /** Importacao de extrato OFX: arquivo ou texto colado, pre-visualizacao e deduplicacao por FITID. */
 export function ImportarOfxModal({ onClose, onOk, onErro }: { onClose: () => void; onOk: (m: string) => void; onErro: (m: string) => void }) {
   const { ds } = useStore();
-  const [conta, setConta] = useState(ds.contas.find((c) => c.ativa)?.instituicao ?? '');
+  const [conta, setConta] = useState(''); // sem padrão: escolher a conta é decisão de quem importa
   const [ext, setExt] = useState<OfxExtrato | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [texto, setTexto] = useState('');
@@ -32,7 +33,12 @@ export function ImportarOfxModal({ onClose, onOk, onErro }: { onClose: () => voi
     if (!f) return;
     f.arrayBuffer().then((b) => carregar(decodificarOfx(b), f.name)).catch((x) => setErro((x as Error).message));
   };
-  const existentes = useMemo(() => new Set(ds.transacoes.filter((t) => t.idExterno && t.conta === conta).map((t) => t.idExterno!)), [ds.transacoes, conta]);
+  const existentes = useMemo(() => new Set(ds.transacoes.filter((t) => t.idExterno && t.conta === conta && !t.descartadaEm).map((t) => t.idExterno!)), [ds.transacoes, conta]);
+  // o mesmo identificador do banco em outra conta significa que este extrato é de lá
+  const outraConta = useMemo(
+    () => (ext && conta ? contaDosIdentificadores(ext.transacoes.map((t) => t.fitid), ds.transacoes, conta) : undefined),
+    [ext, conta, ds.transacoes],
+  );
   const novas = ext ? ext.transacoes.filter((t) => !existentes.has(t.fitid)) : [];
   const creditos = novas.filter((t) => t.valor > 0).reduce((a, t) => a + t.valor, 0);
   const debitos = novas.filter((t) => t.valor < 0).reduce((a, t) => a - t.valor, 0);
@@ -55,6 +61,12 @@ export function ImportarOfxModal({ onClose, onOk, onErro }: { onClose: () => voi
         <Field label="Conta financeira de destino" req><Select value={conta} onChange={setConta} options={ds.contas.filter((c) => c.ativa).map((c) => c.instituicao)} /></Field>
       </div>
       {erro && <div className="alert bad" style={{ marginTop: 10 }}>{erro}</div>}
+      {outraConta && (
+        <div className="alert bad" style={{ marginTop: 10 }}>
+          <b>Confira a conta.</b> {outraConta.encontrados} movimento(s) deste arquivo já existem em <b>{outraConta.conta}</b>, com o mesmo identificador do banco. Importar em {conta} duplica o extrato e desencontra o caixa das duas contas.
+          <div style={{ marginTop: 6 }}><button className="btn sm" onClick={() => setConta(outraConta.conta)}>Usar {outraConta.conta}</button></div>
+        </div>
+      )}
       {ext && (
         <div style={{ marginTop: 12 }}>
           <dl className="kv">

@@ -56,11 +56,12 @@ export function lotesDeImportacao(transacoes: TransacaoBancaria[], contas: Conta
     const creditos = itens.reduce((a, t) => a + t.credito, 0);
     const debitos = itens.reduce((a, t) => a + t.debito, 0);
     // se os identificadores deste lote também existem em outra conta, o extrato provavelmente é de lá
+    const ativos = itens.filter((t) => !t.descartadaEm);
     const outras = new Map<string, number>();
-    for (const t of itens) if (t.idExterno) for (const [c, ids] of identificadoresPorConta) {
+    for (const t of ativos) if (t.idExterno) for (const [c, ids] of identificadoresPorConta) {
       if (c !== conta && ids.has(t.idExterno)) outras.set(c, (outras.get(c) ?? 0) + 1);
     }
-    const provavel = [...outras.entries()].sort((a, b) => b[1] - a[1])[0];
+    const provavel = ativos.length ? [...outras.entries()].sort((a, b) => b[1] - a[1])[0] : undefined;
     lotes.push({
       chave, conta, importadoEm: itens.find((t) => t.importadoEm)?.importadoEm,
       quantidade: itens.length, de: datas[0], ate: datas[datas.length - 1],
@@ -71,7 +72,7 @@ export function lotesDeImportacao(transacoes: TransacaoBancaria[], contas: Conta
       descartadas: itens.filter((t) => t.descartadaEm).length,
       movidas: itens.filter((t) => t.contaOrigem).length,
       origem: itens[0].origem,
-      contaProvavel: provavel && provavel[1] >= Math.ceil(itens.length / 2) ? provavel[0] : undefined,
+      contaProvavel: provavel && provavel[1] >= Math.ceil(ativos.length / 2) ? provavel[0] : undefined,
     });
   }
   const ordem = new Map(contas.map((c, i) => [c.instituicao, i] as const));

@@ -2817,6 +2817,7 @@ export const actions = {
     const externos = new Set(ds.transacoes.filter((t) => t.idExterno).map((t) => `${t.conta}|${t.idExterno}`));
     const novas: TransacaoBancaria[] = [];
     let duplicadas = 0; let antesDoCorte = 0;
+    const quando = agora(); // identifica o lote: e por ele que a tela agrupa a importacao
     const ids = ds.transacoes.map((t) => t.id);
     const corte = ds.params.corteExtrato;
     for (const l of linhas) {
@@ -2828,7 +2829,7 @@ export const actions = {
       if (chaveExt) externos.add(chaveExt);
       existentes.add(chave);
       const id = seq('EXT', [...ids, ...novas.map((n) => n.id)]);
-      novas.push({ id, registro: 'Real', conta, data: l.data, historico: l.historico, documento: l.documento, debito: l.debito, credito: l.credito, lancamentoIds: [], origem: l.idExterno ? 'ofx' : 'importacao', idExterno: l.idExterno });
+      novas.push({ id, registro: 'Real', conta, data: l.data, historico: l.historico, documento: l.documento, debito: l.debito, credito: l.credito, lancamentoIds: [], origem: l.idExterno ? 'ofx' : 'importacao', idExterno: l.idExterno, importadoEm: quando });
     }
     ds = registrar({ ...ds, transacoes: [...ds.transacoes, ...novas] }, 'importar_extrato', 'transacoes', conta, undefined, { importadas: novas.length, duplicadas, antesDoCorte });
     commit(ds);

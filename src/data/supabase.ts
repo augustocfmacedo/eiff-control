@@ -524,7 +524,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const t of mudou(antes.transacoes, depois.transacoes, 'id')) {
     let tid = r.trans.get(t.id);
     if (!tid) {
-      const { data, error } = await sb.from('bank_transaction').insert({ organization_id: r.orgId, bank_account_id: r.contas.get(t.conta), record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito }).select('id');
+      const { data, error } = await sb.from('bank_transaction').insert({ organization_id: r.orgId, bank_account_id: r.contas.get(t.conta), record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito, imported_at: t.importadoEm ?? new Date().toISOString() }).select('id');
       falha('importar transação', error);
       tid = data?.[0]?.id;
       if (tid) r.trans.set(t.id, tid);
