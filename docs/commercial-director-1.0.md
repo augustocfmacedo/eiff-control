@@ -2,10 +2,11 @@
 
 Estado em 30/09/2026:
 
-- **CD-0 em revisão** (este documento): arquitetura, fronteiras, matriz de autoridade, inventário de dados e baseline de
-  produção. **Nenhum código, rota, tela, API, migration ou chamada de LLM foi criado.**
-- CD-1 a CD-10 não iniciados.
-- Branch: `feature/commercial-director-cd0`, criada de `origin/main @ a002011`.
+- **CD-0 CLOSED**: arquitetura, fronteiras, matriz de autoridade, inventário e baseline (PR #26, `main @ 51322a5`).
+- **CD-1 em implementação** na branch `feature/commercial-director-cd1-snapshot` (de `origin/main @ a8183bc`):
+  snapshot comercial canônico, puro e somente leitura (§17). Sem rota, tela, API, migration ou LLM.
+- CD-2 a CD-10 não iniciados.
+- Decisões **D-1, D-2 e D-6 fechadas** em 30/09/2026 (§16.2); D-3, D-4 e D-5 abertas.
 
 Documentos vizinhos: Máquina Comercial em `docs/commercial-machine.md` e `docs/commercial-machine-cm2.md` (plano e
 histórico em `COMMERCIAL_MACHINE_V1_PLAN.md`), decisão de UX em `docs/commercial-ux-1.0-decisao.md`, Lead Engine em
@@ -517,24 +518,28 @@ Cada salto de nível exige autorização explícita. O nível 3 em diante depend
 
 ### 16.1 Onde o Diretor aparece (UX)
 
-Rota proposta: **`#/radar/diretor`**, no grupo Comercial, rótulo "Radar · Diretor Comercial", permissão `radar`.
+Rota decidida (D-1): **`#/radar/diretor`**, no grupo Comercial, rótulo "Radar · Diretor Comercial", permissão `radar`.
 `/diretor` já pertence ao Diretor Financeiro. Ao criar a rota (CD-6): alinhar `ROTAS_NAV` e a paleta, classificar a
 superfície no catálogo do Mission Control (`src/core/central/construcao.ts` tem guarda de superfície) e acrescentar
 passos em `POR_ROTA` do Tour.
 
-A decisão de UX 1.0 já prevê o Command Center virando "Inteligência" (`docs/commercial-ux-1.0-decisao.md` §11). O brief
-do Diretor pode ser essa Inteligência ou uma tela ao lado dela; isso é a decisão D-1 abaixo.
+A tela só entra no CD-6. A "Inteligência" do Command Center (`docs/commercial-ux-1.0-decisao.md` §11) continua sendo
+outra coisa: o Diretor tem casa própria.
 
 ### 16.2 Decisões em aberto
 
-- **D-1 · Casa do Diretor**: rota própria `#/radar/diretor` ou evolução da "Inteligência" do Command Center.
-- **D-2 · Relação com o CM4** (Measurement & Learning): as medidas do CD-1 viram as definições únicas que o CM4 usa
-  para calibrar hipóteses, ou o CM4 define e o Diretor consome. Não pode haver duas definições da mesma taxa.
+- **D-1 · Casa do Diretor — FECHADA (30/09/2026)**: tela própria `#/radar/diretor`, grupo Comercial, rótulo
+  "Radar · Diretor Comercial". Nunca `/diretor` (Diretor Financeiro). Rota e tela só no CD-6.
+- **D-2 · Relação com o CM4 — FECHADA (30/09/2026)**: as medidas DESCRITIVAS do CD-1 são a definição canônica. O CM4
+  consome as mesmas definições, pode criar métricas próprias de experimento, aprendizado e calibração, e nunca redefine a
+  mesma medida com outra fórmula. Uma métrica comercial = uma definição canônica. O contrato da medida vive no módulo
+  neutro `src/core/radar/commercialMetrics.ts`.
 - **D-3 · Meta comercial**: quem define, com que granularidade (período, segmento, valor ou contagem) e onde fica.
 - **D-4 · Amostra mínima**: o corte abaixo do qual nenhuma taxa é publicada.
 - **D-5 · Dono de conta**: o Radar não tem responsável por conta; sem ele não há leitura por vendedor.
-- **D-6 · Legado**: aposentar `resumoRadar`/`filaHoje` do Command Center (dívida #7) antes do CD-6, para não haver dois
-  números de pipeline na tela.
+- **D-6 · Legado — FECHADA (30/09/2026)**: `resumoRadar` e `filaHoje` estão DEPRECADOS como autoridades comerciais; o
+  Diretor não os usa (teste prende). A remoção física é frente separada e acontece antes do CD-6. A Commercial Queue
+  continua a autoridade operacional.
 
 ### 16.3 Riscos
 
@@ -549,3 +554,43 @@ do Diretor pode ser essa Inteligência ou uma tela ao lado dela; isso é a decis
 - **Recorte do Inbox confundido com o todo.** Mitigação: o bloco declara o recorte visível pelo RLS.
 - **Doc consumido por guardas.** O catálogo do Mission Control lê trechos literais de docs de estado. Mudanças de
   estado deste documento devem conferir `src/core/central/construcao.test.ts`.
+
+## 17. CD-1 — snapshot comercial canônico
+
+`snapshotComercialCD(radar, hoje, opcoes)` em `src/core/radar/commercialDirector.ts`, versão `VERSAO_REGRAS_CD` = `CD-1.0`.
+Responde "o que sabemos objetivamente agora"; não diagnostica nem recomenda. Os nomes finais substituem a proposta da
+§5.1 onde diferem; os conceitos são os mesmos.
+
+**Medida** (`MedidaComercial`, módulo neutro `commercialMetrics.ts`): `id`, `descricao` (o que é contado),
+`estado` (`DISPONIVEL` · `DADO_INSUFICIENTE` · `NAO_APLICAVEL`), `valor` só quando disponível, `base` (universo ou
+denominador), `unidade`, `autoridade` e `motivoInsuficiencia`. Zero nunca significa "não sei". `taxa()` só publica
+com denominador positivo e amostra mínima alcançada; como a amostra mínima (D-4) ainda não foi decidida
+(`AMOSTRA_MINIMA_TAXA = undefined`), **nenhuma taxa é publicada no CD-1**.
+
+**Entradas**: o `RadarDataset`, `hoje` explícito (validado como na fila) e, opcionais, o Inbox carregado, o instante
+`agoraIso` para SLA e o limite de referências. Nenhum relógio, rede ou persistência.
+
+**Blocos e autoridades reutilizadas** (cada número chama a função da autoridade):
+
+| Bloco | O que mede | Autoridade |
+|---|---|---|
+| Commercial Queue | total, por categoria, fora da fila por motivo, primeiras referências na ordem da fila | `construirCommercialQueue` |
+| Base | empresas, ativas, na fila, fora, por classe do Radar | fila + Radar |
+| Decisores | contato ativo · decisor marcado · contato elegível · contato recomendado · nível de cobertura · canal acionável (fila) · pronta para CONTATO (plano) — conceitos separados | `contatoElegivel`, `coberturaEmpresa`, fila, `planosDaFilaCM` |
+| Atividade | registradas, notas (NOTE não é toque), toques por tipo, 7/30 dias, reuniões (MEETING), resultados, respostas positivas, contas tocadas e nunca tocadas, tarefas abertas, tarefas vencidas (razão `TAREFA_VENCIDA` da fila), comunicações por estado, planos por modo, cadências por estado | `historicoDe`, fila, `planosDaFilaCM`, `cadenciasDaFilaCM`, catálogo de respostas |
+| Funil | oportunidades, ativas, por estágio, valor estimado das ativas com valor, ativas sem valor, sem próxima ação, paradas e paradas críticas (razões da fila), registros de estágio, ganhas, perdidas, taxas (insuficientes) | Radar, `semProximaAcao`, fila |
+| Prospecção | fontes CNO ativas, descobertos, pendentes, em revisão, rejeitados, promovidos, fila de revisão por sinal e por janela de descoberta, suprimidos; associar × criar = `DADO_INSUFICIENTE` (não gravado) | `metricasPiloto`, `filaDeRevisao`, `contadoresRevisao` |
+| Qualidade | duplicatas pendentes, supressões por tipo, contatos inelegíveis, sinais não verificados, travas da fila, razões de dado faltante da fila | Radar, `contatoElegivel`, fila |
+| Inbox | threads visíveis, por contexto e status, externas por intenção classificada, sem classificação, com primeira resposta, SLA vencido (só com `agoraIso`), contatos vinculados ao Radar, threads por conta (só com vínculo explícito) | `estadoSla`; nunca corpo de mensagem |
+
+**Não entra**: valor ponderado do pipeline (a única ponderação canônica hoje é por conta, dentro da fila, para
+desempate — somá-la não é pipeline), setor canônico (a classificação lê o payload bruto), taxas (D-4), e qualquer
+métrica por vendedor (D-5).
+
+**Provas** (`commercialDirector.test.ts`): determinismo; permutação das coleções não muda o resultado; dataset e Inbox
+congelados não são alterados; nenhuma chave de score/peso/ranking; referências = `fila.itens` na mesma ordem (o único
+`sort` do módulo ordena chaves de intenção); legado (`resumoRadar`, `filaHoje`, `recomendarAcao`,
+`relatorioCobertura`) ausente e `./pipeline` importado só para `semProximaAcao`; lista fechada de imports, sem
+Vibe, API, Supabase, store, envio ou relógio; mudar notas, observações, payload, descrições e texto de mensagem não muda
+o snapshot; taxa sem amostra = `DADO_INSUFICIENTE`; oportunidade vazia = 0 disponível e Inbox ausente = insuficiente;
+paridade com fila, plano, cadência, cobertura, elegibilidade, histórico e Lead Engine.
