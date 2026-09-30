@@ -2,7 +2,8 @@
 // tarefa -> estagio -> score/snapshot -> duplicata -> supressao.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { RegraDeNegocioError, actions, getState } from './store';
-import { filaHoje, oportunidadesSemProximaAcao, resumoRadar } from '../core/radar';
+import { construirCommercialQueue, decisorDe, oportunidadesSemProximaAcao, recomendarAcao } from '../core/radar';
+import { snapshotComercialCD } from '../core/radar/commercialDirector';
 
 const radar = () => getState().ds.radar;
 
@@ -41,7 +42,10 @@ describe('EIFF Radar (store)', () => {
     actions.resolverDuplicataRadar(d.id, 'mesclar');
     expect(radar().empresas.find((e) => e.id === nova.id)!.mescladaEm).toBe(d.candidataId);
     expect(radar().duplicatas.find((x) => x.id === d.id)!.status).toBe('mesclada');
-    expect(filaHoje(radar(), getState().ds.params.dataBase).some((i) => i.empresa.id === nova.id)).toBe(false);
+    // D-6: filaHoje removida; a Commercial Queue declara a empresa mesclada fora da fila, com o motivo
+    const fila = construirCommercialQueue(radar(), getState().ds.params.dataBase);
+    expect(fila.itens.some((i) => i.empresaId === nova.id)).toBe(false);
+    expect(fila.foraDaFila).toContainEqual({ empresaId: nova.id, motivo: 'EMPRESA_MESCLADA' });
   });
 
   it('cadastro manual recusa CNPJ repetido e sinaliza nome parecido', () => {
@@ -88,18 +92,18 @@ describe('EIFF Radar (store)', () => {
     expect(e2.intentScore).toBeGreaterThan(intentAntes);
     expect(e2.ultimoContatoEm).toBeTruthy();
     expect(radar().tarefas.some((t) => t.descricao === 'Enviar orçamento' && t.oportunidadeId === opp.id)).toBe(true);
-    const item = filaHoje(radar(), getState().ds.params.dataBase).find((i) => i.empresa.id === acme.id)!;
-    expect(item.recomendacao.acao).toBe('Enviar apresentação'); // proxima acao da oportunidade tem precedencia
+    // D-6: filaHoje removida; a recomendação do item legado era recomendarAcao(empresa, radar, hoje)
+    expect(recomendarAcao(e2, radar(), getState().ds.params.dataBase).acao).toBe('Enviar apresentação'); // proxima acao da oportunidade tem precedencia
     // contato invalido: supressao de telefone; depois nao pode ser contatado por do_not_contact
     const maria = radar().contatos.find((c) => c.nome === 'Maria')!;
     actions.registrarAtividadeRadar(actions.novaAtividadeRadar(maria.empresaId, { contatoId: maria.id, canal: 'PHONE', resultado: 'INVALID_CONTACT' }));
     expect(radar().supressoes.find((s) => s.contatoId === maria.id)!.tipo).toBe('invalid_phone');
     actions.adicionarSupressaoRadar({ contatoId: maria.id, tipo: 'do_not_contact', motivo: 'pediu para não ligar' });
     expect(() => actions.registrarAtividadeRadar(actions.novaAtividadeRadar(maria.empresaId, { contatoId: maria.id, canal: 'WHATSAPP' }))).toThrow(/não contatar/);
-    expect(filaHoje(radar(), getState().ds.params.dataBase).find((i) => i.empresa.id === maria.empresaId)!.decisor).toBeUndefined();
+    expect(decisorDe(maria.empresaId, radar())).toBeUndefined(); // D-6: o decisor do item legado era decisorDe
   });
 
-  it('concluir a unica tarefa de uma oportunidade ativa exige a proxima; resumo do command center', () => {
+  it('concluir a unica tarefa de uma oportunidade ativa exige a proxima; medidas canônicas do funil', () => {
     const acme = radar().empresas.find((e) => e.cnpj === '11222333000181')!;
     const opp = radar().oportunidades.find((o) => o.empresaId === acme.id)!;
     actions.mudarEstagioRadar(opp.id, 'PRICING', { proximaAcao: 'Enviar orçamento', proximaAcaoEm: '2026-08-01' }); // proxima acao ja passou
@@ -107,9 +111,12 @@ describe('EIFF Radar (store)', () => {
     expect(() => actions.concluirTarefaRadar(t.id)).toThrow(/próxima ação/);
     actions.concluirTarefaRadar(t.id, { tipo: 'FOLLOW_UP', venceEm: '2026-09-15', descricao: 'Cobrar retorno do orçamento' });
     expect(radar().tarefas.filter((x) => x.oportunidadeId === opp.id && x.status === 'Aberta')).toHaveLength(1);
-    const r = resumoRadar(radar(), getState().ds.params.dataBase);
-    expect(r.oportunidadesAtivas).toBe(1); expect(r.pipeline).toBe(800000); expect(r.respostas30d).toBeGreaterThanOrEqual(2); expect(r.oportunidadesSemAcao).toBe(0);
-    expect(r.pipelinePonderado).toBeCloseTo(800000 * 0.65, 6);
+    // D-6: resumoRadar removido. Oportunidades ativas e valor em aberto vêm do snapshot canônico (contas ativas; a
+    // conta aqui é ativa). Sem proxima acao é a própria função de regra. Removidas sem sucessor: respostas30d
+    // (janela de 30 dias do legado) e pipelinePonderado (valor × probabilidade).
+    const s = snapshotComercialCD(radar(), getState().ds.params.dataBase);
+    expect(s.funil.ativas.valor).toBe(1); expect(s.funil.valorEstimadoAtivas.valor).toBe(800000);
+    expect(oportunidadesSemProximaAcao(radar())).toHaveLength(0);
   });
 
   it('configuracao: regra desativada muda o score ao recalcular; permissao de configuracao', () => {

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CENARIOS_COMBINADOS, CENARIOS_FONTE, CENARIOS_JANELA, simularCenario, type ResultadoCenario } from '../src/core/radar/calibracao';
 import { normalizarNome } from '../src/core/radar/normalizar';
-import { filaHoje } from '../src/core/radar/pipeline';
+
 import { radarVazio, type Fonte, type RadarDataset } from '../src/core/radar/types';
 import { linhaApp, type ChaveRadar } from '../src/data/radar.supabase';
 
@@ -42,13 +42,12 @@ console.log(`Radar de produção (leitura): ${r.empresas.length} empresas · ${r
 console.log(`Regras de sinal (peso / janela de decaimento): ${r.regrasScore.filter((g) => g.condicao.tipo === 'sinal').map((g) => `${g.tipoSinal} ${g.peso}/${g.decaimentoDias ?? '∞'}`).join(' · ')}`);
 console.log(`Cortes: fit.ideal ${r.pesosDecisionFit.find((p) => p.chave === 'fit.ideal')?.valor} · fit.adequado ${r.pesosDecisionFit.find((p) => p.chave === 'fit.adequado')?.valor ?? '40 (padrão do código)'}`);
 const linha = (x: ResultadoCenario) => `${x.cenario.padEnd(40)} conf ${x.confiancaInformada}→${x.confiancaEfetiva}  eff ${String(x.effectiveScore).padStart(5)}  decay ${x.fatorDecay} (${x.janelaAplicada ?? '∞'} d)  timing ${String(x.timing).padStart(5)}  intent ${x.intent}  priority ${String(x.priorityScore).padStart(5)} ${x.priorityClass}  matriz ${x.matriz} (${x.conta})  CRM ${x.crmAtual} → sim ${x.crmSimulado}  analista ${x.analista ?? '—'}  ${x.conflito}`;
-const fila = filaHoje(r, hoje);
+// D-6: a posição na fila do dia legada saiu do cabeçalho; a fila é a Commercial Queue e se confere na Hoje.
 for (const nome of nomes) {
   const alvo = normalizarNome(nome) ?? nome.toLowerCase();
   const e = r.empresas.find((x) => normalizarNome(x.razaoSocial) === alvo) ?? r.empresas.find((x) => (normalizarNome(x.razaoSocial) ?? '').startsWith(alvo));
   if (!e) { console.log(`\n== ${nome}: não encontrada`); continue; }
-  const pos = fila.findIndex((i) => i.empresa.id === e.id);
-  console.log(`\n== ${e.razaoSocial} (${e.id}) · fila Hoje ${pos + 1} de ${fila.length}`);
+  console.log(`\n== ${e.razaoSocial} (${e.id})`);
   for (const [titulo, cenarios] of [['1) credibilidade da fonte (decaimento atual)', CENARIOS_FONTE], ['2) janela de decaimento (fonte atual)', CENARIOS_JANELA], ['6) cenários combinados', CENARIOS_COMBINADOS]] as const) {
     console.log(`  ${titulo}`);
     for (const c of cenarios) { const x = simularCenario(r, e.id, hoje, c); if (x) console.log('   ' + linha(x)); }

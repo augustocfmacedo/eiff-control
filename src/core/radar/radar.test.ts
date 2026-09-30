@@ -4,7 +4,8 @@ import { lerCsv, mapearColunas, normalizarContatosCsv, normalizarEmpresasCsv, CA
 import { ingerirRegistro, upsertEmpresa, type Ids } from './ingestao';
 import { cnpjValido, encontrarEmpresa, normalizarCidade, normalizarCnpj, normalizarDominio, normalizarNome, similaridade } from './normalizar';
 import { CONFIG_SCORE_PADRAO, FONTES_PADRAO, REGRAS_PADRAO, RESPOSTAS_PADRAO } from './padroes';
-import { filaHoje, oportunidadesSemProximaAcao, recalcularEmpresa, recomendarAcao, resumoRadar } from './pipeline';
+import { lerEmpresa, oportunidadesSemProximaAcao, recalcularEmpresa, recomendarAcao } from './pipeline';
+import { snapshotComercialCD } from './commercialDirector';
 import { calcularScore, classificar, fatorDecaimento, motivoPrioridade } from './score';
 import { radarVazio, type Empresa, type RadarDataset } from './types';
 
@@ -102,11 +103,14 @@ describe('pipeline', () => {
     expect(e2.proximaAcaoEm).toBe('2026-09-05');
     expect(e2.fitScore).toBe(15); // FIT balanceado: só a geografia (GO) tem dado; setor sem evidência, faixas ausentes
     expect(recomendarAcao(e2, r, HOJE)).toMatchObject({ acao: 'Ligar para o decisor', tipoTarefa: 'CALL' });
-    const fila = filaHoje({ ...r, empresas: [e2] }, HOJE);
-    expect(fila[0].vencida).toBe(true);
-    expect(fila[0].oportunidade?.id).toBe('O1');
-    const res = resumoRadar({ ...r, empresas: [e2] }, HOJE);
-    expect(res.followUpsVencidos).toBe(1); expect(res.pipeline).toBe(500000); expect(res.pipelinePonderado).toBe(150000);
+    // D-6: filaHoje removida; a leitura da empresa (vencida, oportunidade) é a mesma função que o item legado usava
+    const item = lerEmpresa(e2, { ...r, empresas: [e2] }, HOJE);
+    expect(item.vencida).toBe(true);
+    expect(item.oportunidade?.id).toBe('O1');
+    // D-6: resumoRadar removido. O valor em aberto passa a ser a medida canônica do CD-1, restrita a contas ativas
+    // (e2 é ativa, então o número coincide). Removidas sem sucessor: pipelinePonderado (valor × probabilidade) e
+    // followUpsVencidos (contava itens da fila legada; a medida canônica conta tarefas vencidas na Commercial Queue).
+    expect(snapshotComercialCD({ ...r, empresas: [e2] }, HOJE).funil.valorEstimadoAtivas).toMatchObject({ estado: 'DISPONIVEL', valor: 500000 });
     // sem contatos: recomenda pesquisar decisor
     const semTarefa: RadarDataset = { ...r, tarefas: [], oportunidades: [] };
     expect(recomendarAcao(e2, semTarefa, HOJE).tipoTarefa).toBe('RESEARCH');
