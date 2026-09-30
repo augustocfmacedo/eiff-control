@@ -20,6 +20,12 @@ export function ImportacoesCard({ onErro, onOk }: { onErro: (m: string) => void;
     <div className="card" style={{ marginBottom: 16 }}>
       <h2>Importações do extrato <Badge tone="muted">{lotes.length}</Badge></h2>
       <p className="small muted">Cada linha é um arquivo que entrou. Importou na conta errada? <b>Troque a conta aqui na linha</b> — as transações vão junto, e as que já existirem na conta certa são descartadas em vez de duplicar. Nada é apagado.</p>
+      {podeConciliar && (
+        <div className="actions" style={{ marginBottom: 8 }}>
+          <span style={{ flex: 1 }} />
+          <LimparExtrato onErro={onErro} onOk={onOk} />
+        </div>
+      )}
       {suspeitos > 0 && (
         <div className="alert warn small" style={{ marginBottom: 8 }}>
           {suspeitos === 1 ? 'Uma importação parece estar' : `${suspeitos} importações parecem estar`} na conta errada: os movimentos têm o mesmo identificador do banco de linhas que já existem em outra conta.
@@ -34,6 +40,38 @@ export function ImportacoesCard({ onErro, onOk }: { onErro: (m: string) => void;
         </table>
       </div>
     </div>
+  );
+}
+
+/** Recomeçar do zero: descarta o extrato importado (de uma conta ou de todas) e desfaz as conciliações dele. */
+function LimparExtrato({ onErro, onOk }: { onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { ds } = useStore();
+  const [conta, setConta] = useState('');
+  const ativas = ds.transacoes.filter((t) => !t.descartadaEm && (!conta || t.conta === conta));
+  const conciliadas = ativas.filter((t) => t.lancamentoIds.length > 0).length;
+  const limpar = () => {
+    const onde = conta || 'TODAS as contas';
+    const aviso = [
+      `Descartar ${ativas.length} transação(ões) de ${onde}?`,
+      conciliadas ? `${conciliadas} está(ão) conciliada(s): a conciliação será desfeita e os lançamentos voltam para a fila.` : '',
+      'Nada é apagado — as linhas ficam no sistema como descartadas e você pode reimportar o extrato do zero.',
+    ].filter(Boolean).join('\n\n');
+    if (!window.confirm(aviso)) return;
+    tentar(
+      () => {
+        const r = actions.limparExtrato(conta || undefined, `Limpeza do extrato importado (${onde}) para reimportar do zero.`);
+        onOk(`${r.descartadas} transação(ões) descartada(s)${r.conciliacoesDesfeitas ? `, ${r.conciliacoesDesfeitas} conciliação(ões) desfeita(s)` : ''}. Pode importar os arquivos de novo.`);
+      },
+      onErro,
+    );
+  };
+  return (
+    <>
+      <Select value={conta} onChange={setConta} options={ds.contas.map((c) => ({ value: c.instituicao, label: c.instituicao }))} allowEmpty="todas as contas" aria-label="Conta a limpar" />
+      <button className="btn sm no-print" onClick={limpar} disabled={!ativas.length} title="Descarta o extrato importado para você mandar tudo de novo">
+        Limpar extrato importado ({ativas.length})
+      </button>
+    </>
   );
 }
 
