@@ -70,6 +70,14 @@ export const ESPELHO_COMMENT_KINDS = [
 ] as const;
 export type ComentarioFactory = (typeof ESPELHO_COMMENT_KINDS)[number];
 
+/**
+ * Divergencia CONHECIDA entre linhas da fabrica (auditada na MC-LIVE-3B, 30/09/2026): estes dois kinds existem na
+ * linha W2-04A (6c9e14c, branch `w1/run-once`) e AINDA NAO na `main` da fabrica (5a309fa, GOV-01/GOV-02). O espelho
+ * os mantem porque ler um kind a mais nunca desinterpreta nada. O drift aceita exatamente esta diferenca — espelho =
+ * contrato, ou espelho = contrato + estes dois — e reprova qualquer outra.
+ */
+export const COMMENT_KINDS_FORA_DA_MAIN_FACTORY = ['LEASE_LOST_INFRA', 'ATTEMPT_TIMEOUT'] as const;
+
 /** ESPELHO de ACTORS. */
 export const ESPELHO_ACTORS = ['architect', 'dispatcher', 'supervisor', 'integrator', 'human'] as const;
 
@@ -284,6 +292,20 @@ export interface MissionControlWorkItem {
   frescor: Frescor;
   /** numeros operacionais da fonte, quando existirem (turno do worker, tentativa, custo) */
   medidas?: Readonly<Record<string, number>>;
+  /**
+   * MC-LIVE-3B: o worker que a FACTORY declara para esta task (`WorkerStatus`), e so quando `worker.taskId` e o
+   * proprio taskId do job e `worker.attempt` e a tentativa do job. Nunca por titulo, repositorio, papel, horario ou
+   * nome parecido. Ausente = nao provado (a projecao do GitHub nunca preenche).
+   */
+  worker?: WorkerDoItem;
+}
+
+/** O worker confirmado de um item: so fatos que o `WorkerStatus` da fabrica entrega. */
+export interface WorkerDoItem {
+  workerId: string;
+  tentativa: number;
+  iniciadoEm: string;
+  fase: WorkerFactory['phase'];
 }
 
 export const MC_TIPOS_EVENTO = [
@@ -460,7 +482,9 @@ const responsavel = (tipo: McAtor, id?: string): ResponsavelWorkItem => ({ tipo,
  * nunca um id novo. Tudo que o GitHub sabe sobre a mesma task (branch, commit, PR, CI) entra DEPOIS por
  * `consolidarWorkItems`, no mesmo cartao.
  */
-export function normalizarJobFactory(job: JobFactory, ctx: ContextoNormalizacao, worker?: WorkerFactory): MissionControlWorkItem {
+export function normalizarJobFactory(job: JobFactory, ctx: ContextoNormalizacao, candidato?: WorkerFactory): MissionControlWorkItem {
+  // MC-LIVE-3B: worker de OUTRA task ou de outra tentativa nunca cola — mesmo que alguem o passe aqui por engano
+  const worker = candidato && candidato.taskId === job.taskId && candidato.attempt === job.attempt ? candidato : undefined;
   const ator = job.state === 'ARCH_APPROVED' && job.risk === 'RED' ? 'HUMAN' : ATOR_POR_ESTADO_FACTORY[job.state];
   const medidas: Record<string, number> = { tentativa: job.attempt, prioridade: job.priority, custoUsd: job.costUsd };
   if (worker) {
@@ -493,6 +517,7 @@ export function normalizarJobFactory(job: JobFactory, ctx: ContextoNormalizacao,
     },
     frescor: avaliarFrescor(ctx),
     medidas,
+    worker: worker ? { workerId: worker.workerId, tentativa: worker.attempt, iniciadoEm: worker.startedAt, fase: worker.phase } : undefined,
   };
 }
 
@@ -687,8 +712,24 @@ export function normalizarPullRequest(e: EntradaPullRequest, ctx: ContextoNormal
 
 // --------------------------------------------------------------------------------- consolidacao
 
-/** Precedencia de fonte quando dois itens falam da MESMA correlacao. Quem tem estado operacional manda. */
+/** Precedencia de FONTE (de quem e o item) quando dois itens falam da MESMA correlacao. */
 const PRECEDENCIA: Readonly<Record<McFonte, number>> = { FACTORY: 4, ARCHITECTURE: 3, GITHUB: 2, COMMERCIAL: 2, GATE: 1 };
+
+/**
+ * Autoridade do ESTADO OPERACIONAL do cartao (MC-LIVE-3B). A API da Factory e a autoridade do job (estado, worker,
+ * tentativa, custo) e vence qualquer projecao; abaixo dela vale a precedencia de fonte. Nunca a ordem do array:
+ * empate desempata pelo `id`, que e deterministico.
+ */
+export const precedenciaOperacional = (i: Pick<MissionControlWorkItem, 'source' | 'procedencia'>): number =>
+  i.procedencia === 'FACTORY_API' ? 5 : PRECEDENCIA[i.source];
+
+/**
+ * Artefatos cuja AUTORIDADE e o GitHub: quando algum item do grupo foi lido pelas APIs do GitHub
+ * (`GITHUB_PROJECTION`), o valor dele vence o que a Factory declara para o mesmo campo. `commit` entra aqui porque o
+ * GitHub le a ponta do PR; sem PR observado, o `headSha` da Factory preenche o commit — e a branch continua vazia:
+ * branch nunca e deduzida de taskId + tentativa.
+ */
+export const LINKS_AUTORIDADE_GITHUB = ['issue', 'branch', 'pullRequest', 'commit'] as const;
 
 const juntarLinks = (a?: LinksWorkItem, b?: LinksWorkItem): LinksWorkItem | undefined => {
   if (!a && !b) return undefined;
@@ -701,16 +742,59 @@ const juntarOrigens = (a?: OrigemCorrelacao[], b?: OrigemCorrelacao[]): OrigemCo
   return todas.size ? ORIGENS_CORRELACAO.filter((o) => todas.has(o)) : undefined;
 };
 
-/**
- * A mesma entidade nunca vira dois cartoes.
- *   - id repetido: fica o mais recente.
- *   - correlacao repetida em fontes diferentes: fica o item da fonte de maior precedencia, ENRIQUECIDO
- *     com os links e as evidencias da outra (o GitHub complementa a Factory, nao compete com ela).
- * A ordem de saida e a ordem de entrada do item que sobreviveu — a funcao nao ordena nada.
- */
 /** Data de comparacao: sem `updatedAt` na fonte, o item e o mais ANTIGO possivel — nunca "agora". */
 const quando = (i: MissionControlWorkItem): number => (i.updatedAt ? Date.parse(i.updatedAt) : -Infinity);
 
+/** Ordem de autoridade dentro de um grupo: precedencia operacional, depois o id. Nada depende da posicao no array. */
+const porAutoridade = (a: MissionControlWorkItem, b: MissionControlWorkItem): number =>
+  precedenciaOperacional(b) - precedenciaOperacional(a) || a.id.localeCompare(b.id);
+
+/** Entre artefatos do GitHub do mesmo campo (ex.: dois PRs de tentativas diferentes), o mais recente, depois o id. */
+const porRecencia = (a: MissionControlWorkItem, b: MissionControlWorkItem): number =>
+  quando(b) - quando(a) || a.id.localeCompare(b.id);
+
+/** Funde um grupo de itens da MESMA correlacao. Resultado identico para qualquer ordem dos membros. */
+function fundirGrupo(membros: readonly MissionControlWorkItem[]): MissionControlWorkItem {
+  if (membros.length === 1) return membros[0];
+  const ordenados = [...membros].sort(porAutoridade);
+  const vence = ordenados[0];
+
+  // links: cada campo vem do membro de maior autoridade que o tem...
+  const links: LinksWorkItem = {};
+  for (const m of ordenados) {
+    for (const [k, v] of Object.entries(m.links ?? {}) as [keyof LinksWorkItem, string | undefined][]) {
+      if (v !== undefined && links[k] === undefined) links[k] = v;
+    }
+  }
+  // ...exceto os artefatos do GitHub, que vem de quem os leu no GitHub
+  const doGitHub = ordenados.filter((m) => m.procedencia === 'GITHUB_PROJECTION').sort(porRecencia);
+  for (const campo of LINKS_AUTORIDADE_GITHUB) {
+    const v = doGitHub.find((m) => m.links?.[campo] !== undefined)?.links?.[campo];
+    if (v !== undefined) links[campo] = v;
+  }
+
+  const evidencias = ordenados.flatMap((m) => m.evidencias ?? []);
+  const gateIds = [...new Set(ordenados.flatMap((m) => m.gateIds ?? []))];
+  const correlacaoPor = ordenados.reduce<OrigemCorrelacao[] | undefined>((acc, m) => juntarOrigens(acc, m.correlacaoPor), undefined);
+  return {
+    ...vence,
+    links: Object.keys(links).length ? links : undefined,
+    evidencias: evidencias.length ? evidencias : undefined,
+    gateIds: gateIds.length ? gateIds : undefined,
+    correlacaoPor,
+  };
+}
+
+/**
+ * A mesma entidade nunca vira dois cartoes.
+ *   - id repetido: fica o mais recente.
+ *   - correlacao repetida: o grupo inteiro e fundido de uma vez (`fundirGrupo`). O estado operacional vem de quem tem
+ *     autoridade sobre ele (`precedenciaOperacional`: a API da Factory vence a projecao do GitHub); os artefatos do
+ *     GitHub (issue, branch, PR, commit) vem do GitHub (`LINKS_AUTORIDADE_GITHUB`); evidencias, gates e origens da
+ *     correlacao se somam.
+ * A ordem de saida e a da primeira aparicao de cada grupo — a funcao nao ordena nada — e o CONTEUDO de cada cartao
+ * nao depende da ordem de entrada.
+ */
 export function consolidarWorkItems(itens: readonly MissionControlWorkItem[]): MissionControlWorkItem[] {
   const porId = new Map<string, MissionControlWorkItem>();
   const ordem: string[] = [];
@@ -720,29 +804,15 @@ export function consolidarWorkItems(itens: readonly MissionControlWorkItem[]): M
     porId.set(it.id, quando(it) >= quando(anterior) ? { ...it, links: juntarLinks(it.links, anterior.links) } : anterior);
   }
 
-  const porCorrelacao = new Map<string, string>();
+  const grupos = new Map<string, MissionControlWorkItem[]>();
   const saida: string[] = [];
-  const resultado = new Map<string, MissionControlWorkItem>();
   for (const id of ordem) {
     const it = porId.get(id)!;
-    const c = it.correlationId;
-    if (!c) { resultado.set(id, it); saida.push(id); continue; }
-    const donoId = porCorrelacao.get(c);
-    if (donoId === undefined) { porCorrelacao.set(c, id); resultado.set(id, it); saida.push(id); continue; }
-    const dono = resultado.get(donoId)!;
-    const vence = PRECEDENCIA[it.source] > PRECEDENCIA[dono.source] ? it : dono;
-    const perde = vence === it ? dono : it;
-    const fundido: MissionControlWorkItem = {
-      ...vence,
-      links: juntarLinks(vence.links, perde.links),
-      evidencias: [...(vence.evidencias ?? []), ...(perde.evidencias ?? [])].length ? [...(vence.evidencias ?? []), ...(perde.evidencias ?? [])] : undefined,
-      gateIds: [...new Set([...(vence.gateIds ?? []), ...(perde.gateIds ?? [])])].length ? [...new Set([...(vence.gateIds ?? []), ...(perde.gateIds ?? [])])] : undefined,
-      correlacaoPor: juntarOrigens(vence.correlacaoPor, perde.correlacaoPor),
-    };
-    resultado.set(donoId, fundido);
-    porCorrelacao.set(c, donoId);
+    const chave = it.correlationId ? `c:${it.correlationId}` : `i:${id}`;
+    const g = grupos.get(chave);
+    if (g) g.push(it); else { grupos.set(chave, [it]); saida.push(chave); }
   }
-  return saida.map((id) => resultado.get(id)!);
+  return saida.map((chave) => fundirGrupo(grupos.get(chave)!));
 }
 
 // ------------------------------------------------------------------------------------ degradacao

@@ -16,7 +16,7 @@ import {
   ARESTAS, NOS, ciclosDoMapa, dependenciasDe, gatesDesconhecidosNoMapa, noPorId, TIPOS_ARESTA,
 } from './mapaVivo';
 import {
-  ATOR_POR_ESTADO_FACTORY, CONTRATO_FACTORY, COR_MC_SINAL, ESPELHO_ACTORS, ESPELHO_COMMENT_KINDS,
+  ATOR_POR_ESTADO_FACTORY, COMMENT_KINDS_FORA_DA_MAIN_FACTORY, CONTRATO_FACTORY, COR_MC_SINAL, ESPELHO_ACTORS, ESPELHO_COMMENT_KINDS,
   ESPELHO_FACTORY_STATES, ESPELHO_JOB_STATES, ESPELHO_LANES, ESPELHO_WORKER_ROLES, MC_ATORES, MC_FONTES,
   MC_SINAIS, MC_STATUS, MC_TIPOS_EVENTO, ORDEM_MC_STATUS, ROTULO_MC_ATOR, ROTULO_MC_SINAL,
   ROTULO_MC_STATUS, STATUS_POR_CATEGORIA_CM, STATUS_POR_ESTADO_FACTORY, avaliarFrescor, consolidarEventos,
@@ -72,9 +72,11 @@ describe('pureza da fronteira', () => {
     // citar o modulo num comentario e apontar autoridade; IMPORTAR seria criar fonte paralela
     expect(fonte).not.toMatch(/^import[\s\S]*?from '[^']*commercial/im);
     expect(fonte).not.toMatch(/from '\.\.\/radar\//);
-    // a unica ordenacao permitida aqui e a de eventos (por data); item de fila nunca e reordenado
+    // ordenacoes permitidas: a de eventos (por data) e, desde a MC-LIVE-3B, a de AUTORIDADE dentro de um grupo da
+    // mesma correlacao (`fundirGrupo`: quem manda no estado e quem manda no artefato). Nenhuma delas reordena a
+    // saida: item de fila nunca e reordenado (o teste 'ordem de saida' em factoryAdapter.test.ts prova isso).
     const sorts = fonte.match(/\.sort\(/g) ?? [];
-    expect(sorts.length).toBeLessThanOrEqual(2);
+    expect(sorts.length).toBeLessThanOrEqual(4);
   });
 });
 
@@ -99,13 +101,19 @@ describe('contract drift com o eiff-dev-factory', () => {
   it('os catalogos espelhados batem com o contrato da fabrica', () => {
     // O clone da fabrica nao existe no CI do eiff-control (checkout de um repositorio so). Sem ele, o
     // que vale e a conferencia local antes de integrar — registrada em docs/mission-control-live.md.
+    // MC-LIVE-3B: se o caminho foi INFORMADO e o arquivo nao existe, isso e erro de conferencia, nao "sem clone".
+    if (process.env[CONTRATO_FACTORY.envRepoLocal]) expect(disponivel, arquivo).toBe(true);
     if (!disponivel) { expect(ESPELHO_JOB_STATES.length).toBe(15); return; }
     const texto = fs.readFileSync(arquivo, 'utf8');
     expect(catalogo(texto, 'JOB_STATES')).toEqual([...ESPELHO_JOB_STATES]);
     expect(catalogo(texto, 'LANES')).toEqual([...ESPELHO_LANES]);
     expect(catalogo(texto, 'WORKER_ROLES')).toEqual([...ESPELHO_WORKER_ROLES]);
     expect(catalogo(texto, 'FACTORY_STATES')).toEqual([...ESPELHO_FACTORY_STATES]);
-    expect(catalogo(texto, 'COMMENT_KINDS')).toEqual([...ESPELHO_COMMENT_KINDS]);
+    // divergencia CONHECIDA entre as linhas da fabrica (COMMENT_KINDS_FORA_DA_MAIN_FACTORY): o espelho e o contrato,
+    // ou o contrato mais exatamente aqueles dois — qualquer outra diferenca reprova
+    const kinds = catalogo(texto, 'COMMENT_KINDS');
+    const semLinhaW2 = ESPELHO_COMMENT_KINDS.filter((k) => !(COMMENT_KINDS_FORA_DA_MAIN_FACTORY as readonly string[]).includes(k));
+    expect([JSON.stringify([...ESPELHO_COMMENT_KINDS]), JSON.stringify(semLinhaW2)]).toContain(JSON.stringify(kinds));
     expect(catalogo(texto, 'ACTORS')).toEqual([...ESPELHO_ACTORS]);
   });
 });

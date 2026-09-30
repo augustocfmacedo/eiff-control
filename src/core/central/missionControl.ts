@@ -397,6 +397,8 @@ export const GATES: Gate[] = [
     dependeDe: ['DEVELOPMENT_STATUS_ENDPOINT'],
     evidencias: [
       { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'ESPELHO_JOB_STATES', nota: 'espelho e catálogo escritos; falta a fonte viva (packages/api é a W5 da fábrica)' },
+      { tipo: 'modulo', referencia: 'src/core/central/factoryAdapter.ts', simbolo: 'validarStatusFactory', nota: 'MC-LIVE-3B: adapter puro, matriz de capacidades, porta FactoryReadPort e drift dos campos da API prontos; falta o transporte real da W5 e um smoke com fonte real' },
+      { tipo: 'teste', referencia: 'src/core/central/factoryAdapter.test.ts' },
       { tipo: 'documento', referencia: 'docs/mission-control-live.md', simbolo: 'FACTORY_ADAPTER_READONLY' },
     ],
   }),
@@ -411,6 +413,7 @@ export const GATES: Gate[] = [
       { tipo: 'teste', referencia: 'src/core/central/workItem.test.ts' },
       { tipo: 'modulo', referencia: 'src/core/central/correlacao.ts', simbolo: 'diagnosticarCorrelacao', nota: 'MC-LIVE-3A: cadeia e eventos confirmados sobre a projeção do GitHub; worker, CI da tarefa e merge não existem nesta fonte e dependem de FACTORY_ADAPTER_READONLY' },
       { tipo: 'teste', referencia: 'src/core/central/correlacao.test.ts' },
+      { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'precedenciaOperacional', nota: 'MC-LIVE-3B: Factory + GitHub pelo taskId num cartão só, precedência explícita (estado da Factory, artefatos do GitHub) e worker da própria task; provado só com fixture — falta fonte real' },
     ],
   }),
   g({
