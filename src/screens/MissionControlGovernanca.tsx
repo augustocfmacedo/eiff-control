@@ -11,6 +11,7 @@ import {
   prontidaoDoMarco, prontidaoDoWorkstream, resumoMissionControl,
   type Gate, type Prontidao, type SituacaoGate,
 } from '../core/central/missionControl';
+import { rotuloProntidaoGates } from '../core/central/construcao';
 import { Badge, Empty, KpiHero, KpiStrip, ProgressRow, type Tone } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { Tabela } from '../ui/Tabela';
@@ -47,10 +48,10 @@ export default function Governanca() {
         <b>Agora:</b> {r.faltaPara} {r.bloqueiosReais.length > 0 && <>· <b>{r.bloqueiosReais.length}</b> bloqueio(s) real(is) em aberto.</>} {r.bloqueiosPorDesenho.length > 0 && <>· <b>{r.bloqueiosPorDesenho.length}</b> fechado(s) de propósito (nada é enviado, nada é gravado).</>}
       </div>
 
-      {/* ------------------------------------------------------------------ System Readiness */}
+      {/* ---------- prontidão por gates: cobre só os módulos donos das frentes (EIFF Central e Mission Control), nunca o EIFF inteiro */}
       <div className="hero-grid">
         <KpiHero
-          label="Prontidão do sistema"
+          label={rotuloProntidaoGates()}
           value={`${r.sistema.fechados}/${r.sistema.exigidos}`}
           sufixo="gates com evidência"
           tone={toneDaProntidao(r.sistema)}

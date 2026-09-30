@@ -26,7 +26,9 @@ export const ROTULO_DOMINIO_CONSTRUCAO: Readonly<Record<DominioConstrucao, strin
   GESTAO: 'Gestão da EIFF',
   COMERCIAL: 'Máquina Comercial',
   CENTRAL: 'EIFF Central',
-  DESENVOLVIMENTO: 'Construção e fábrica',
+  // V2A: "Construção e fábrica" se lia como obra e fábrica de estrutura metálica, o negócio da EIFF. Só o rótulo mudou;
+  // o id DESENVOLVIMENTO e os contratos continuam iguais.
+  DESENVOLVIMENTO: 'Desenvolvimento e plataforma',
 };
 
 /** Vocabulário fechado de estado. A UI só conhece estes cinco; nenhum outro texto de estado nasce fora daqui. */
@@ -67,6 +69,57 @@ export const STATUS_ATIVOS: readonly McStatus[] = ['EXECUTANDO', 'EM_VALIDACAO',
 /** O que a tela diz quando a fonte não informa a que módulo a tarefa pertence. Existe um lugar só para a frase. */
 export const SEM_MODULO = 'Módulo não informado';
 
+/**
+ * TIPO DA PENDÊNCIA de um componente que ainda não está concluído — vocabulário FECHADO, declarado no catálogo por
+ * pessoa, nunca inferido de texto (MC-CONSTRUCTION-V2A):
+ *   TRABALHO     — falta construir (código, integração, prova)
+ *   DECISAO      — falta uma decisão humana declarada na fonte (Diretoria, autorização explícita)
+ *   CONFIGURACAO — falta uma configuração ou credencial que só uma pessoa pode fazer (painel, conta externa)
+ *   EVIDENCIA    — o que falta é medir ou provar antes de decidir (ex.: baseline de um piloto)
+ * Só DECISAO e CONFIGURACAO viram "Esperando você".
+ */
+export const TIPOS_PENDENCIA = ['TRABALHO', 'DECISAO', 'CONFIGURACAO', 'EVIDENCIA'] as const;
+export type TipoPendencia = (typeof TIPOS_PENDENCIA)[number];
+
+export const ROTULO_PENDENCIA: Readonly<Record<TipoPendencia, string>> = {
+  TRABALHO: 'a construir', DECISAO: 'aguarda decisão', CONFIGURACAO: 'aguarda configuração', EVIDENCIA: 'aguarda medição',
+};
+
+/** Os tipos que dependem de uma pessoa agir — a única origem de "Esperando você". */
+export const PENDENCIAS_HUMANAS: readonly TipoPendencia[] = ['DECISAO', 'CONFIGURACAO'];
+
+/** Pendência declarada de um componente. `acao` é a frase executiva do que a pessoa precisa fazer (obrigatória quando humana). */
+export interface PendenciaDeclarada { tipo: TipoPendencia; acao?: string }
+
+/**
+ * Gates abertos ou bloqueados cuja conclusão depende de uma PESSOA, declarados explicitamente — o gate continua sendo a
+ * autoridade do estado. Quando o gate fecha, a pendência some sozinha (a projeção só lê gates não fechados). Fonte de
+ * cada declaração: o próprio texto do gate em missionControl.ts ("é decisão da Diretoria, não do código"; "variáveis só
+ * no painel do Netlify") e o CLAUDE.md ("Faltam (decisão do usuário): … as variáveis da Meta").
+ */
+export const PENDENCIAS_DE_GATE: Readonly<Record<string, PendenciaDeclarada>> = {
+  MIGRATIONS_APLICADAS: { tipo: 'DECISAO', acao: 'Decidir a aplicação do banco da Central em produção' },
+  META_NUMERO_PRODUCAO: { tipo: 'CONFIGURACAO', acao: 'Configurar e verificar o número real do WhatsApp na Meta' },
+};
+
+/** Frase curta de apresentação da Central. Um lugar só; o teste confere que não tem jargão técnico. */
+export const SUBTITULO_CENTRAL = 'Acompanhe o que já está pronto, o que está sendo construído e o que precisa de decisão para avançar.';
+
+/**
+ * Termos que NÃO aparecem na camada executiva (Visão geral e primeiro nível do drill-down). Continuam existindo no
+ * detalhe técnico, na Governança e no catálogo — a hierarquia mudou, a informação não foi apagada. Só o teste usa.
+ */
+export const TERMOS_FORA_DA_CAMADA_EXECUTIVA: readonly RegExp[] = [
+  /\bgates?\b/i, /snapshot/i, /procedência/i, /PGlite/, /\bRLS\b/, /\bE2E\b/, /S–X/, /fail-closed/i, /fingerprint/i, /intake/i,
+  /PENDING/, /packages\/api/, /factory-task:v1/, /\/api\/development-status/, /montarPortasInbox/, /rotearNoServidor/,
+  /COMMIT_REF/, /GitHub projection of Factory/,
+];
+
+/** Sem leitura válida da fonte viva, a tela mostra isto no lugar de qualquer contagem. Zero é dado; isto não é. */
+export const SEM_LEITURA = '—';
+/** A regra única de disponibilidade para contagens vivas: sem leitura válida, nunca 0. */
+export const contagemViva = (leituraValida: boolean, n: number): number | typeof SEM_LEITURA => (leituraValida ? n : SEM_LEITURA);
+
 // --------------------------------------------------------------------------------------------------- modelo
 
 /**
@@ -79,7 +132,15 @@ export interface EvidenciaConstrucao extends Evidencia { secao?: string }
 
 export interface ComponenteConstrucao {
   id: string;
+  /** título técnico: continua existindo e aparece no detalhe técnico do drill-down */
   titulo: string;
+  /** título para a camada executiva, quando o técnico carrega jargão (V2A). Ausente = o próprio título serve. */
+  tituloExecutivo?: string;
+  /**
+   * Tipo da pendência enquanto o componente não está concluído. Obrigatório em componente PLANEJADO (teste): o catálogo
+   * diz explicitamente se falta construir, decidir, configurar ou medir — nada é deduzido do título.
+   */
+  pendencia?: PendenciaDeclarada;
   /** gates do catálogo que dão o estado por prontidão (o gate continua sendo a autoridade) */
   gates?: string[];
   /** evidência concreta de que o componente existe — o teste abre o arquivo e procura o símbolo */
@@ -108,8 +169,10 @@ export interface ComponenteConstrucao {
 export interface ModuloConstrucao {
   id: string;
   titulo: string;
-  /** uma frase: o que este módulo faz pela EIFF */
+  /** uma frase: o que este módulo faz pela EIFF (versão técnica, preservada no detalhe) */
   descricao: string;
+  /** a mesma frase sem jargão, para a camada executiva (V2A). Ausente = a descrição serve. */
+  resumo?: string;
   dominio: DominioConstrucao;
   /** rota principal do produto onde o módulo aparece; ausente quando o módulo não tem tela (ex.: fábrica observada) */
   rota?: string;
@@ -176,7 +239,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'ALCADAS', titulo: 'Alçadas e central de aprovações', evidencias: [mod('src/screens/Aprovacoes.tsx'), mod('src/core/engine.ts', 'etapasExigidas')] },
       { id: 'DRE', titulo: 'DRE gerencial por competência', evidencias: [mod('src/core/engine.ts', 'export function dre'), mod('src/screens/Dre.tsx')] },
       { id: 'CHECKS', titulo: 'Checks e fechamento de período', evidencias: [mod('src/screens/Checks.tsx')] },
-      { id: 'ALCADAS_REAIS', titulo: 'Alçadas reais da Diretoria (DEC-03)', pendenciaDeclarada: [doc('CLAUDE.md', 'alçadas reais (DEC-03)', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'ALCADAS_REAIS', titulo: 'Alçadas reais da Diretoria (DEC-03)', pendencia: { tipo: 'DECISAO', acao: 'Definir as alçadas reais de aprovação (hoje os valores são provisórios)' }, pendenciaDeclarada: [doc('CLAUDE.md', 'alçadas reais (DEC-03)', SECOES_ATUAIS.estadoProjeto)] },
     ],
   }),
   m({
@@ -189,7 +252,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'CONCILIACAO', titulo: 'Conciliação e importação OFX', evidencias: [mod('src/data/store.ts', 'conciliar'), mod('src/core/ofx.ts', 'parseOfx'), mod('src/screens/Conciliacao.tsx')] },
       { id: 'CENARIOS', titulo: 'Cenários interativos de caixa', evidencias: [mod('src/core/cenarioCaixa.ts', 'aplicarCenario')] },
       { id: 'DIVIDAS', titulo: 'Dívidas', evidencias: [mod('src/screens/Dividas.tsx')] },
-      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', pendenciaDeclarada: [doc('CLAUDE.md', 'reserva mínima (DEC-09)', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', pendencia: { tipo: 'DECISAO', acao: 'Aprovar o valor da reserva mínima de caixa' }, pendenciaDeclarada: [doc('CLAUDE.md', 'reserva mínima (DEC-09)', SECOES_ATUAIS.estadoProjeto)] },
     ],
   }),
   m({
@@ -308,9 +371,10 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     id: 'COMUNICACAO', titulo: 'Comunicação e canais', dominio: 'COMERCIAL', rota: '/radar/hoje', dependeDe: ['RADAR'],
     rotas: [],
     descricao: 'Fatos, objetivo, playbook, geração com fact gate e entrega por canal — com o envio real fechado.',
+    resumo: 'Fatos, objetivo, playbook, geração com verificação dos fatos e entrega por canal — com o envio real fechado.',
     componentes: [
       { id: 'CONTENT_SPEC', titulo: 'Content spec e playbooks', evidencias: [mod('src/core/radar/comunicacao.ts', 'montarContentSpec')] },
-      { id: 'FACT_GATE', titulo: 'Fact gate pós-geração', evidencias: [mod('src/core/radar/comunicacaoGeracao.ts', 'validarGeracao')] },
+      { id: 'FACT_GATE', titulo: 'Fact gate pós-geração', tituloExecutivo: 'Verificação dos fatos depois da geração', evidencias: [mod('src/core/radar/comunicacaoGeracao.ts', 'validarGeracao')] },
       { id: 'LLM', titulo: 'Provedor LLM no servidor (Server Truth)', evidencias: [mod('src/core/radar/comunicacaoServidor.ts'), fn('netlify/functions/comunicacao.ts')] },
       { id: 'ENTREGABILIDADE', titulo: 'Canais e entregabilidade', evidencias: [mod('src/core/radar/canais.ts', 'avaliarEntregabilidade'), mod('src/screens/radar/Entrega.tsx')] },
       { id: 'OCTADESK', titulo: 'Octadesk: leitura e canário fechado', evidencias: [mod('src/core/radar/canaisServidor.ts'), fn('netlify/functions/channel-octadesk.ts'), doc('docs/octadesk.md')] },
@@ -330,28 +394,33 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     id: 'LEAD_ENGINE', titulo: 'Lead Engine', dominio: 'COMERCIAL', rota: '/radar', dependeDe: ['RADAR'],
     rotas: [],
     descricao: 'Entrada governada de candidatos: intake idempotente, evidência imutável, revisão humana e a fonte CNO.',
+    resumo: 'Entrada governada de candidatos: recebimento sem duplicidade, evidência imutável, revisão humana e a fonte CNO.',
     componentes: [
-      { id: 'INTAKE', titulo: 'Intake canônico e fingerprint', natureza: 'CODIGO', evidencias: [mod('src/core/radar/leadEngineIntake.ts', 'classificarIntake'), mig('supabase/migrations/0055_lead_engine_intake.sql')] },
+      { id: 'INTAKE', titulo: 'Intake canônico e fingerprint', tituloExecutivo: 'Recebimento de candidatos sem duplicidade', natureza: 'CODIGO', evidencias: [mod('src/core/radar/leadEngineIntake.ts', 'classificarIntake'), mig('supabase/migrations/0055_lead_engine_intake.sql')] },
       { id: 'REVISAO', titulo: 'Fila de revisão e promoção humana', natureza: 'CODIGO', evidencias: [mod('src/core/radar/leadEngineReview.ts', 'filaDeRevisao'), mod('src/screens/radar/LeadEngineCandidatos.tsx')] },
       { id: 'CNO', titulo: 'Fonte CNO (Dados Abertos)', natureza: 'CODIGO', evidencias: [mod('src/core/radar/cnoDadosAbertos.ts', 'HOST_OFICIAL_CNO')] },
-      { id: 'PILOTO_CNO', titulo: 'Piloto CNO em produção (candidatos PENDING aguardando decisão humana)', natureza: 'PRODUCAO', evidencias: [mod('src/core/radar/cnoPilot.ts', 'CNO_PILOT_POLICY_V1'), doc('docs/lead-engine-1.0.md', '**ingestão piloto executada em 23/09/2026**', SECOES_ATUAIS.leadEngineEstado), doc('CLAUDE.md', '**Lead Engine em produção desde 23/09/2026**', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'PILOTO_CNO', titulo: 'Piloto CNO em produção (candidatos PENDING aguardando decisão humana)', tituloExecutivo: 'Piloto CNO em produção (candidatos aguardando revisão humana)', natureza: 'PRODUCAO', evidencias: [mod('src/core/radar/cnoPilot.ts', 'CNO_PILOT_POLICY_V1'), doc('docs/lead-engine-1.0.md', '**ingestão piloto executada em 23/09/2026**', SECOES_ATUAIS.leadEngineEstado), doc('CLAUDE.md', '**Lead Engine em produção desde 23/09/2026**', SECOES_ATUAIS.estadoProjeto)] },
       // LE3-D.1 (PR #15, 7674125): a aba Candidatos passou a mostrar obra, sinal e data oficial do CNO, com filtros de
       // revisão, métricas do piloto e handoff para decisores — fechado no preâmbulo "Estado em …" do documento.
       { id: 'REVISAO_COMERCIAL', titulo: 'Revisão comercial dos candidatos: obra, sinal, filtros, métricas do piloto e handoff para decisores', natureza: 'INTEGRACAO', evidencias: [mod('src/core/radar/leadEngineRevisao.ts', 'filtrarRevisao'), mod('src/core/radar/leadEngineRevisao.ts', 'metricasPiloto'), mod('src/core/radar/cnoDadosAbertos.ts', 'contextoCnoDoPayload'), mod('src/screens/radar/LeadEngineCandidatos.tsx', 'handoffDecisores'), mod('src/core/radar/leadEngineRevisao.test.ts'), doc('docs/lead-engine-1.0.md', '**LE3-D.1 fechado**', SECOES_ATUAIS.leadEngineEstado)] },
       // LE3-E: o DESENHO existe em código (monitor de snapshot, retenção que nunca apaga, porta do agendamento sem escrita
       // própria) — é código, não operação. O preâmbulo diz "desenhado, não ativado"; §40 é o registro do gate (histórico).
-      { id: 'DESCOBERTA_DESENHO', titulo: 'Descoberta contínua desenhada: monitor de snapshot, retenção e executor (protótipo, não ativado)', natureza: 'CODIGO', evidencias: [mod('src/core/radar/cnoMonitor.ts', 'decidirMonitor'), mod('src/core/radar/cnoMonitor.ts', 'planoExecucaoAgendada'), mod('src/core/radar/cnoMonitor.ts', 'registrosARemoverAoSairDaJanela'), mod('src/core/radar/cnoMonitor.test.ts'), doc('docs/lead-engine-1.0.md', '**LE3-E desenhado, não ativado**', SECOES_ATUAIS.leadEngineEstado)] },
+      { id: 'DESCOBERTA_DESENHO', titulo: 'Descoberta contínua desenhada: monitor de snapshot, retenção e executor (protótipo, não ativado)', tituloExecutivo: 'Descoberta contínua desenhada: monitor da fonte, retenção e executor (protótipo, não ativado)', natureza: 'CODIGO', evidencias: [mod('src/core/radar/cnoMonitor.ts', 'decidirMonitor'), mod('src/core/radar/cnoMonitor.ts', 'planoExecucaoAgendada'), mod('src/core/radar/cnoMonitor.ts', 'registrosARemoverAoSairDaJanela'), mod('src/core/radar/cnoMonitor.test.ts'), doc('docs/lead-engine-1.0.md', '**LE3-E desenhado, não ativado**', SECOES_ATUAIS.leadEngineEstado)] },
       {
         id: 'BACKFILL_90D', titulo: 'Descoberta contínua: backfill da janela de 90 dias gravado', natureza: 'OPERACAO',
+        // gravar em produção exige a autorização explícita do runner (`--executar --confirmar`): é decisão, não código.
+        pendencia: { tipo: 'DECISAO', acao: 'Autorizar a gravação do backfill da janela de 90 dias em produção' },
         // ensaiado read-only (§40.1), nada gravado: a pendência é o que o preâmbulo afirma hoje.
         pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '65 novos, nada gravado', SECOES_ATUAIS.leadEngineEstado)],
       },
       {
         id: 'MONITOR_ATIVO', titulo: 'Descoberta contínua: monitor diário agendado e ligado', natureza: 'OPERACAO',
+        // §40.4: o agendamento "fica desligado até decisão explícita".
+        pendencia: { tipo: 'DECISAO', acao: 'Decidir ligar o monitor diário da fonte CNO' },
         // scheduler desligado por decisão (§40.4 "Nenhum cron foi ativado"); LE-3 só fecha quando isto estiver ativo.
         pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '**LE3-E desenhado, não ativado**', SECOES_ATUAIS.leadEngineEstado), doc('docs/lead-engine-1.0.md', 'LE-3 não está concluído enquanto o LE3-E não estiver ativo', SECOES_ATUAIS.leadEngineEstado)],
       },
-      { id: 'FONTES_FUTURAS', titulo: 'Novas fontes: PNCP e CNPJ/RFB (blocos seguintes do roadmap)', natureza: 'CODIGO', pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '**LE-4 a LE-8 não iniciados.**', SECOES_ATUAIS.leadEngineEstado)] },
+      { id: 'FONTES_FUTURAS', titulo: 'Novas fontes: PNCP e CNPJ/RFB (blocos seguintes do roadmap)', natureza: 'CODIGO', pendencia: { tipo: 'TRABALHO' }, pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '**LE-4 a LE-8 não iniciados.**', SECOES_ATUAIS.leadEngineEstado)] },
     ],
   }),
 
@@ -379,38 +448,45 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', rota: '/atendimento', rotas: ['/atendimento'],
     dependeDe: ['CENTRAL_WHATSAPP', 'PLATAFORMA'],
     descricao: 'Central de comunicação, atendimento e decisão: a thread é a unidade; ingestão pela EIFF Central, Octopus Router (roteamento explícito e auditável, IA só como refino no servidor) e fronteiras fail-closed.',
+    resumo: 'Central de comunicação, atendimento e decisão: a conversa é a unidade; recebe pela EIFF Central, roteia por regras explícitas (IA só como refino no servidor) e recusa por padrão o que não foi liberado.',
     componentes: [
       { id: 'DOMINIO', titulo: 'Domínio: threads, contatos, estados e roteamento', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/tipos.ts', 'ContatoInbox'), mod('src/core/inbox/estados.ts', 'validarTransicao'), mod('src/core/inbox/roteamento.ts', 'rotear')] },
       { id: 'TELAS', titulo: 'Tela de atendimento e configuração', natureza: 'CODIGO', evidencias: [mod('src/screens/Inbox.tsx'), mod('src/screens/InboxConfig.tsx')] },
-      { id: 'PERSISTENCIA', titulo: 'Persistência escrita: 0056, RLS por setor e RPCs', natureza: 'CODIGO', evidencias: [mig('supabase/migrations/0056_inbox.sql', 'inbox_ingest'), mig('supabase/migrations/0056_inbox.sql', 'inbox_assign_thread'), mod('src/data/inbox.supabase.ts', 'carregarInbox')] },
-      { id: 'INGESTAO', titulo: 'Ingestão pela EIFF Central (webhook → inbox_ingest)', natureza: 'INTEGRACAO', evidencias: [mod('src/core/inbox/ingestaoServidor.ts', 'ingerirEventosCentral'), mod('src/core/inbox/fronteiras.ts', 'deEventoCentral'), fn('netlify/functions/channel-meta-webhook.ts', 'ingerirEventosCentral')] },
-      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA'), mod('src/core/inbox/ativacao.ts', 'outbound: false')] },
-      { id: 'PROVAS', titulo: 'Provas: smoke PGlite e testes de fronteira', natureza: 'CODIGO', evidencias: [scr('scripts/pg-smoke-inbox.mjs'), mod('src/core/inbox/ingestaoServidor.test.ts'), doc('docs/eiff-inbox.md')] },
-      { id: 'OCTOPUS_PIPELINE', titulo: 'Octopus Router: pipeline de roteamento e política de automação', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.ts', 'decidirRoteamento'), mod('src/core/inbox/automacao.ts', 'decidirAutomacao')] },
-      { id: 'OCTOPUS_PROVAS', titulo: 'Octopus Router: testes e smoke do banco (provas S–X)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.test.ts'), mod('src/core/inbox/roteamentoServidor.test.ts'), scr('scripts/pg-smoke-inbox.mjs', 'inbox_apply_routing')] },
-      { id: 'OCTOPUS_INTEGRADO', titulo: 'Octopus Router: integrado (webhook → montarPortasInbox → rotearNoServidor, 0057, store e tela)', natureza: 'INTEGRACAO', evidencias: [fn('netlify/functions/channel-meta-webhook.ts', 'montarPortasInbox'), mod('src/core/inbox/ativacao.ts', 'rotearNoServidor'), mig('supabase/migrations/0057_inbox_octopus_router.sql', 'inbox_apply_routing'), mod('src/data/store.ts', 'inboxConfirmarRoteamento')] },
+      { id: 'PERSISTENCIA', titulo: 'Persistência escrita: 0056, RLS por setor e RPCs', tituloExecutivo: 'Gravação no banco com acesso por setor', natureza: 'CODIGO', evidencias: [mig('supabase/migrations/0056_inbox.sql', 'inbox_ingest'), mig('supabase/migrations/0056_inbox.sql', 'inbox_assign_thread'), mod('src/data/inbox.supabase.ts', 'carregarInbox')] },
+      { id: 'INGESTAO', titulo: 'Ingestão pela EIFF Central (webhook → inbox_ingest)', tituloExecutivo: 'Recebimento de mensagens pela EIFF Central', natureza: 'INTEGRACAO', evidencias: [mod('src/core/inbox/ingestaoServidor.ts', 'ingerirEventosCentral'), mod('src/core/inbox/fronteiras.ts', 'deEventoCentral'), fn('netlify/functions/channel-meta-webhook.ts', 'ingerirEventosCentral')] },
+      { id: 'FRONTEIRAS', titulo: 'Fronteiras fail-closed: canal MANUAL, sem inteligência, Factory reservada', tituloExecutivo: 'Limites de segurança: nada é enviado, IA desligada por padrão, fábrica reservada', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/fronteiras.ts', 'PROVEDOR_MANUAL'), mod('src/core/inbox/fronteiras.ts', 'SEM_INTELIGENCIA'), mod('src/core/inbox/fronteiras.ts', 'EXECUCAO_FACTORY_RESERVADA'), mod('src/core/inbox/ativacao.ts', 'outbound: false')] },
+      { id: 'PROVAS', titulo: 'Provas: smoke PGlite e testes de fronteira', tituloExecutivo: 'Provas automáticas do banco e dos limites', natureza: 'CODIGO', evidencias: [scr('scripts/pg-smoke-inbox.mjs'), mod('src/core/inbox/ingestaoServidor.test.ts'), doc('docs/eiff-inbox.md')] },
+      { id: 'OCTOPUS_PIPELINE', titulo: 'Octopus Router: pipeline de roteamento e política de automação', tituloExecutivo: 'Roteamento: regras e política de automação', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.ts', 'decidirRoteamento'), mod('src/core/inbox/automacao.ts', 'decidirAutomacao')] },
+      { id: 'OCTOPUS_PROVAS', titulo: 'Octopus Router: testes e smoke do banco (provas S–X)', tituloExecutivo: 'Roteamento: testes e provas do banco', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/roteador.test.ts'), mod('src/core/inbox/roteamentoServidor.test.ts'), scr('scripts/pg-smoke-inbox.mjs', 'inbox_apply_routing')] },
+      { id: 'OCTOPUS_INTEGRADO', titulo: 'Octopus Router: integrado (webhook → montarPortasInbox → rotearNoServidor, 0057, store e tela)', tituloExecutivo: 'Roteamento integrado ao recebimento, à tela e ao banco', natureza: 'INTEGRACAO', evidencias: [fn('netlify/functions/channel-meta-webhook.ts', 'montarPortasInbox'), mod('src/core/inbox/ativacao.ts', 'rotearNoServidor'), mig('supabase/migrations/0057_inbox_octopus_router.sql', 'inbox_apply_routing'), mod('src/data/store.ts', 'inboxConfirmarRoteamento')] },
       { id: 'IA_SERVIDOR', titulo: 'Refino por IA no servidor (opcional pela chave)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/inteligenciaLlm.ts', 'provedorAnthropic')] },
       { id: 'EDITOR_REGRAS', titulo: 'Editores de regras de roteamento e automação', natureza: 'CODIGO', evidencias: [mod('src/screens/InboxConfig.tsx', 'RegraRoteamento'), mod('src/screens/InboxConfig.tsx', 'RegraAutomacao'), mod('src/data/store.ts', 'validarConfiguracaoOctopus')] },
-      { id: 'ATIVACAO', titulo: 'Controles de ativação: kill switches server-side (inbox, router, IA, outbound)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/ativacao.ts', 'lerFlagsInbox'), mod('src/core/inbox/ativacao.ts', 'montarPortasInbox'), mod('src/core/inbox/ativacao.test.ts')] },
-      { id: 'OBSERVABILIDADE', titulo: 'Observabilidade do Shadow Mode: últimas decisões e baseline (confirmação × override)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/observabilidade.ts', 'ultimasDecisoes'), mod('src/core/inbox/observabilidade.ts', 'metricasShadow'), mod('src/screens/InboxConfig.tsx', "label: 'Shadow mode'")] },
-      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0056** (12 tabelas', SECOES_ATUAIS.inboxAplicacao), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
-      { id: 'OCTOPUS_PRODUCAO', titulo: 'Migration 0057 aplicada em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0057** (`inbox_thread.routing`', SECOES_ATUAIS.inboxAplicacao), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
-      { id: 'DEFAULTS_0058', titulo: 'Defaults versionados em produção: 0058 com 12 setores e configuração padrão', natureza: 'PRODUCAO', evidencias: [mig('supabase/migrations/0058_inbox_defaults.sql', '12 setores padrão'), scr('scripts/pg-smoke-inbox.mjs', "ok('Y'"), doc('docs/eiff-inbox.md', '24/09/2026 (12 setores, 1 configuração)', SECOES_ATUAIS.inboxDefaults), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
-      { id: 'SHADOW_MODE', titulo: 'Shadow Mode em produção: E2E controlado, idempotência e router determinístico aplicando (dado de teste, sem ação externa)', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '### 15.2 Estágio operacional: SHADOW MODE', SECOES_ATUAIS.inboxShadow), doc('docs/eiff-inbox.md', '**Idempotência**: o mesmo', SECOES_ATUAIS.inboxProvas), doc('docs/eiff-inbox.md', '`EIFF_INBOX_ENABLED=true`, `EIFF_INBOX_ROUTER_ENABLED=true`,', SECOES_ATUAIS.inboxFlags), doc('docs/eiff-inbox.md', '`consultar_pagamento`, regra explícita ROT-02 → **FINANCEIRO**', SECOES_ATUAIS.inboxRoteamentoProducao), doc('docs/eiff-inbox.md', '0 falhas de IA, 0 mensagens enviadas', SECOES_ATUAIS.inboxRoteamentoProducao)] },
-      { id: 'RLS_PRODUCAO', titulo: 'RLS e autoridade provadas em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**RLS/autoridade** (transação com rollback)', SECOES_ATUAIS.inboxProvas)] },
+      { id: 'ATIVACAO', titulo: 'Controles de ativação: kill switches server-side (inbox, router, IA, outbound)', tituloExecutivo: 'Chaves de ativação no servidor (recebimento, roteamento, IA, envio)', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/ativacao.ts', 'lerFlagsInbox'), mod('src/core/inbox/ativacao.ts', 'montarPortasInbox'), mod('src/core/inbox/ativacao.test.ts')] },
+      { id: 'OBSERVABILIDADE', titulo: 'Observabilidade do Shadow Mode: últimas decisões e baseline (confirmação × override)', tituloExecutivo: 'Acompanhamento do Shadow Mode: últimas decisões e taxa de confirmação', natureza: 'CODIGO', evidencias: [mod('src/core/inbox/observabilidade.ts', 'ultimasDecisoes'), mod('src/core/inbox/observabilidade.ts', 'metricasShadow'), mod('src/screens/InboxConfig.tsx', "label: 'Shadow mode'")] },
+      { id: 'MIGRATION_APLICADA', titulo: 'Migration 0056 aplicada em produção', tituloExecutivo: 'Banco do Inbox aplicado em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0056** (12 tabelas', SECOES_ATUAIS.inboxAplicacao), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'OCTOPUS_PRODUCAO', titulo: 'Migration 0057 aplicada em produção', tituloExecutivo: 'Banco do roteamento aplicado em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**0057** (`inbox_thread.routing`', SECOES_ATUAIS.inboxAplicacao), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'DEFAULTS_0058', titulo: 'Defaults versionados em produção: 0058 com 12 setores e configuração padrão', tituloExecutivo: 'Configuração padrão em produção: 12 setores', natureza: 'PRODUCAO', evidencias: [mig('supabase/migrations/0058_inbox_defaults.sql', '12 setores padrão'), scr('scripts/pg-smoke-inbox.mjs', "ok('Y'"), doc('docs/eiff-inbox.md', '24/09/2026 (12 setores, 1 configuração)', SECOES_ATUAIS.inboxDefaults), doc('CLAUDE.md', '**0056, 0057 e 0058 (defaults: 12 setores por organização', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'SHADOW_MODE', titulo: 'Shadow Mode em produção: E2E controlado, idempotência e router determinístico aplicando (dado de teste, sem ação externa)', tituloExecutivo: 'Shadow Mode em produção: teste ponta a ponta com dado de teste, sem duplicidade, roteamento aplicando e nenhuma ação externa', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '### 15.2 Estágio operacional: SHADOW MODE', SECOES_ATUAIS.inboxShadow), doc('docs/eiff-inbox.md', '**Idempotência**: o mesmo', SECOES_ATUAIS.inboxProvas), doc('docs/eiff-inbox.md', '`EIFF_INBOX_ENABLED=true`, `EIFF_INBOX_ROUTER_ENABLED=true`,', SECOES_ATUAIS.inboxFlags), doc('docs/eiff-inbox.md', '`consultar_pagamento`, regra explícita ROT-02 → **FINANCEIRO**', SECOES_ATUAIS.inboxRoteamentoProducao), doc('docs/eiff-inbox.md', '0 falhas de IA, 0 mensagens enviadas', SECOES_ATUAIS.inboxRoteamentoProducao)] },
+      { id: 'RLS_PRODUCAO', titulo: 'RLS e autoridade provadas em produção', tituloExecutivo: 'Controle de acesso e autoridade provados em produção', natureza: 'PRODUCAO', evidencias: [doc('docs/eiff-inbox.md', '**RLS/autoridade** (transação com rollback)', SECOES_ATUAIS.inboxProvas)] },
       {
         id: 'TRAFEGO_REAL', titulo: 'Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)', natureza: 'OPERACAO',
+        // CLAUDE.md, "Estado e decisões": "Faltam (decisão do usuário): … a chave de serviço e as variáveis da Meta".
+        pendencia: { tipo: 'CONFIGURACAO', acao: 'Cadastrar no Netlify a chave de serviço do Supabase e as variáveis da Meta' },
         // autoridade atual: §16.5 e §16.3 — faltam a chave de serviço do Supabase e as variáveis da Meta (com os phone number
         // IDs e o registro do webhook). Setores NÃO são mais pré-requisito: a 0058 os criou (§16.1). O §15.2 é histórico.
         pendenciaDeclarada: [doc('docs/eiff-inbox.md', '(2) as sete variáveis da Meta acima e o registro da URL', SECOES_ATUAIS.inboxCredencial), doc('docs/eiff-inbox.md', '(nenhuma outra função a tem;', SECOES_ATUAIS.inboxAmbiente)],
       },
       {
         id: 'IA_OPERACIONAL', titulo: 'Refino por IA ligado no roteamento em produção (depois da baseline do Shadow Mode)', natureza: 'OPERACAO',
+        tituloExecutivo: 'Ligar a IA no roteamento em produção, depois de medir o Shadow Mode',
+        // §16.6: a IA só liga depois de comparar a baseline do Shadow Mode — o que falta hoje é medir.
+        pendencia: { tipo: 'EVIDENCIA' },
         // implementação existe (IA_SERVIDOR); em produção está DESLIGADA por decisão: EIFF_INBOX_LLM_ENABLED=false (§16.2).
         pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'ANTHROPIC OFF · OUTBOUND OFF · FACTORY OFF', SECOES_ATUAIS.inboxFlags)],
       },
       {
         id: 'ESCALACAO_SLA', titulo: 'Escalação por SLA como execução automática', natureza: 'CODIGO',
+        pendencia: { tipo: 'TRABALHO' },
         pendenciaDeclarada: [doc('docs/eiff-inbox.md', 'scheduler de escalação', SECOES_ATUAIS.inboxPendencias)],
         // hoje SLA_ESCALATED existe só no catálogo de eventos e nas migrations; §14.7 diz que "continua decisão".
         // Emitir o evento a partir do código de aplicação é o sinal explícito de que a execução nasceu.
@@ -429,9 +505,10 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     rotas: ['/mission-control'],
     workstreams: ['OBSERVABILIDADE'],
     descricao: 'A Central de Construção: observa GitHub, Factory e o catálogo de gates, e projeta — nunca escreve.',
+    resumo: 'A Central de Construção: observa o GitHub, a fábrica de software e os critérios de prontidão, e projeta — nunca escreve.',
     componentes: [
-      { id: 'GATES', titulo: 'Prontidão por gates com evidência', gates: ['OBSERVABILIDADE'] },
-      { id: 'ENDPOINT', titulo: 'Status ao vivo (/api/development-status)', gates: ['DEVELOPMENT_STATUS_ENDPOINT'] },
+      { id: 'GATES', titulo: 'Prontidão por gates com evidência', tituloExecutivo: 'Prontidão por critérios com evidência', gates: ['OBSERVABILIDADE'] },
+      { id: 'ENDPOINT', titulo: 'Status ao vivo (/api/development-status)', tituloExecutivo: 'Status do desenvolvimento ao vivo', gates: ['DEVELOPMENT_STATUS_ENDPOINT'] },
       { id: 'GITHUB', titulo: 'Adapter do GitHub somente leitura', gates: ['GITHUB_ADAPTER_READONLY'] },
       { id: 'CONSTRUCAO', titulo: 'Central de Construção (módulos e panorama)', evidencias: [mod('src/core/central/construcao.ts', 'MODULOS_CONSTRUCAO'), mod('src/screens/MissionControlVisao.tsx')] },
       { id: 'CORRELACAO', titulo: 'Correlação ponta a ponta', gates: ['WORK_ITEM_CORRELACAO'] },
@@ -448,18 +525,19 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
     descricao: 'A fábrica de software vive no repositório eiff-dev-factory; aqui ela é apenas observada pelas issues de job.',
     componentes: [
       { id: 'ESPELHO', titulo: 'Espelho do contrato da fábrica com detector de drift', evidencias: [mod('src/core/central/workItem.ts', 'ESPELHO_JOB_STATES')] },
-      { id: 'IDENTIDADE', titulo: 'Identidade canônica do job (factory-task:v1)', evidencias: [mod('src/core/central/githubAdapter.ts', 'lerIdentidadeCanonica')] },
-      { id: 'API', titulo: 'Leitura pelo estado operacional (packages/api)', gates: ['FACTORY_ADAPTER_READONLY'] },
+      { id: 'IDENTIDADE', titulo: 'Identidade canônica do job (factory-task:v1)', tituloExecutivo: 'Identidade única de cada tarefa da fábrica', evidencias: [mod('src/core/central/githubAdapter.ts', 'lerIdentidadeCanonica')] },
+      { id: 'API', titulo: 'Leitura pelo estado operacional (packages/api)', tituloExecutivo: 'Leitura do estado operacional da fábrica', gates: ['FACTORY_ADAPTER_READONLY'] },
     ],
   }),
   m({
     id: 'PLATAFORMA', titulo: 'Plataforma, cadastros e auditoria', dominio: 'DESENVOLVIMENTO', rota: '/cadastros', rotas: ['/cadastros', '/auditoria'],
     descricao: 'Supabase com RLS, cadastros e parâmetros, auditoria, funções Netlify, Quality Gate no CI e publicação com auto-publish travado.',
+    resumo: 'Banco com acesso controlado por linha, cadastros e parâmetros, auditoria, funções no servidor, verificação automática a cada mudança e publicação travada.',
     componentes: [
       { id: 'CADASTROS', titulo: 'Cadastros e parâmetros', evidencias: [mod('src/screens/Cadastros.tsx')] },
       { id: 'AUDITORIA', titulo: 'Auditoria e telemetria de uso', evidencias: [mod('src/screens/Auditoria.tsx')] },
       { id: 'SUPABASE', titulo: 'Supabase e persistência por diferenças', evidencias: [mod('src/data/supabase.ts', 'persistirRemoto'), doc('docs/implantacao-supabase.md')] },
-      { id: 'CI', titulo: 'Quality Gate (CI)', evidencias: [scr('.github/workflows/quality-gate.yml')] },
+      { id: 'CI', titulo: 'Quality Gate (CI)', tituloExecutivo: 'Verificação automática de qualidade a cada mudança', evidencias: [scr('.github/workflows/quality-gate.yml')] },
       { id: 'PUBLICACAO', titulo: 'Publicação Netlify', evidencias: [scr('netlify.toml'), doc('docs/publicacao-automatica.md')] },
       { id: 'ARQUITETURA', titulo: 'Arquitetura e regras documentadas', evidencias: [doc('docs/arquitetura-e-regras.md')] },
     ],
@@ -547,6 +625,14 @@ export interface ComponenteProjetado {
   /** de onde veio o estado: gate, evidência ou só plano */
   origem: 'GATE' | 'EVIDENCIA' | 'PLANO';
   natureza?: NaturezaEvidencia;
+  /** título da camada executiva (o `titulo` técnico continua ao lado, para o detalhe) */
+  tituloExecutivo: string;
+  /**
+   * O que falta, quando não está concluído: o tipo declarado no catálogo (plano) ou, para componente por gate, DECISAO /
+   * CONFIGURACAO quando um gate faltante está em PENDENCIAS_DE_GATE e TRABALHO nos demais. Concluído e fechado de
+   * propósito não têm pendência.
+   */
+  tipoPendencia?: TipoPendencia;
 }
 
 const bloqueioReal = (g: Gate) => g.situacao === 'bloqueado' && g.porDesenho !== true;
@@ -555,6 +641,7 @@ const bloqueioReal = (g: Gate) => g.situacao === 'bloqueado' && g.porDesenho !==
 export function projetarComponente(c: ComponenteConstrucao): ComponenteProjetado {
   const gates = (c.gates ?? []).map((id) => gatePorId(id)).filter((g): g is Gate => !!g);
   const evidencias = c.evidencias ?? [];
+  const tituloExecutivo = c.tituloExecutivo ?? c.titulo;
   if (gates.length > 0) {
     const p = prontidao(gates.map((g) => g.id));
     const estado: EstadoConstrucao = p.faltando.some(bloqueioReal)
@@ -563,10 +650,13 @@ export function projetarComponente(c: ComponenteConstrucao): ComponenteProjetado
         : p.fechados > 0 ? 'EM_CONSTRUCAO'
           : p.faltando.every((g) => g.situacao === 'bloqueado') ? 'BLOQUEADO' : 'PLANEJADO';
     const porDesenho = estado === 'BLOQUEADO' && !p.faltando.some(bloqueioReal);
-    return { id: c.id, titulo: c.titulo, estado, porDesenho, prontidao: p, gates, evidencias, origem: 'GATE', natureza: c.natureza };
+    // pendência humana SÓ por declaração explícita do gate; o restante do que falta num gate é trabalho
+    const humana = p.faltando.map((g) => PENDENCIAS_DE_GATE[g.id]).find((x) => x && PENDENCIAS_HUMANAS.includes(x.tipo));
+    const tipoPendencia: TipoPendencia | undefined = estado === 'CONCLUIDO' || porDesenho ? undefined : humana?.tipo ?? 'TRABALHO';
+    return { id: c.id, titulo: c.titulo, tituloExecutivo, estado, porDesenho, prontidao: p, gates, evidencias, origem: 'GATE', natureza: c.natureza, tipoPendencia };
   }
-  if (evidencias.length > 0) return { id: c.id, titulo: c.titulo, estado: 'CONCLUIDO', porDesenho: false, gates, evidencias, origem: 'EVIDENCIA', natureza: c.natureza };
-  return { id: c.id, titulo: c.titulo, estado: 'PLANEJADO', porDesenho: false, gates, evidencias, origem: 'PLANO', natureza: c.natureza };
+  if (evidencias.length > 0) return { id: c.id, titulo: c.titulo, tituloExecutivo, estado: 'CONCLUIDO', porDesenho: false, gates, evidencias, origem: 'EVIDENCIA', natureza: c.natureza };
+  return { id: c.id, titulo: c.titulo, tituloExecutivo, estado: 'PLANEJADO', porDesenho: false, gates, evidencias, origem: 'PLANO', natureza: c.natureza, tipoPendencia: c.pendencia?.tipo ?? 'TRABALHO' };
 }
 
 // ------------------------------------------------------------------------------------- task → módulo
@@ -609,6 +699,8 @@ export interface ModuloProjetado {
   bloqueios: BloqueioModulo[];
   /** derivado: o primeiro componente não concluído, na ordem declarada; null quando tudo está concluído */
   proximoPasso: string | null;
+  /** o MESMO próximo passo na camada executiva: título executivo do mesmo componente (o técnico fica no detalhe) */
+  proximoExecutivo: string | null;
   dependeDe: string[];
   dependentes: string[];
   /** por onde o que está no cartão chegou: catálogo (SNAPSHOT) e, se houver tarefa viva, a procedência dela */
@@ -638,18 +730,20 @@ export function projetarModulo(mo: ModuloConstrucao, itens: readonly MissionCont
     c.gates.filter((g) => g.situacao === 'bloqueado').map((g) => ({ titulo: g.titulo, motivo: g.bloqueio ?? '', porDesenho: g.porDesenho === true })));
   for (const t of tarefas) if (t.bloqueio) bloqueios.push({ titulo: t.correlationId ?? t.sourceId, motivo: t.bloqueio.motivo, porDesenho: t.bloqueio.porDesenho });
   const pendente = componentes.find((c) => c.estado !== 'CONCLUIDO' && !(c.estado === 'BLOQUEADO' && c.porDesenho));
-  const proximoPasso = pendente
-    ? (pendente.estado === 'BLOQUEADO' ? `desbloquear: ${pendente.titulo}` : pendente.prontidao && pendente.prontidao.faltando.length
-      ? `${pendente.titulo} — ${pendente.prontidao.faltando.find((g) => !g.porDesenho)?.titulo ?? pendente.prontidao.faltando[0].titulo}`
-      : pendente.titulo)
+  const passo = (titulo: string): string | null => pendente
+    ? (pendente.estado === 'BLOQUEADO' ? `desbloquear: ${titulo}` : pendente.prontidao && pendente.prontidao.faltando.length
+      ? `${titulo} — ${pendente.prontidao.faltando.find((g) => !g.porDesenho)?.titulo ?? pendente.prontidao.faltando[0].titulo}`
+      : titulo)
     : null;
+  const proximoPasso = passo(pendente?.titulo ?? '');
+  const proximoExecutivo = passo(pendente?.tituloExecutivo ?? '');
   const procedencias: Procedencia[] = (['REPOSITORIO', ...new Set(tarefas.map((t) => t.procedencia))] as Procedencia[]).filter((p, i, a) => a.indexOf(p) === i);
   return {
     modulo: mo,
     estado: estadoDoModulo(componentes, tarefasAtivas),
     componentes, concluidos, total,
     fracao: total === 0 ? 0 : concluidos / total,
-    tarefas, tarefasAtivas, observados, bloqueios, proximoPasso,
+    tarefas, tarefasAtivas, observados, bloqueios, proximoPasso, proximoExecutivo,
     dependeDe: mo.dependeDe ?? [],
     dependentes: modulos.filter((x) => x.dependeDe?.includes(mo.id)).map((x) => x.id),
     procedencias,
@@ -749,6 +843,143 @@ export function atencaoConstrucao(p: PanoramaConstrucao, fontes: FontesAtencao):
     if (t.semModulo) out.push({ tipo: 'SEM_MODULO', n: t.semModulo, texto: `${t.semModulo} tarefa(s) sem módulo informado pela fonte.` });
   }
   return out;
+}
+
+// ----------------------------------------------------------------------------- camada executiva (V2A)
+//
+// A Visão geral responde em dez segundos: o que está pronto, o que está sendo construído, o que está parado e o que
+// depende de uma pessoa. Tudo abaixo é LEITURA da mesma projeção (projetarModulo/panoramaConstrucao) — nenhuma regra
+// de estado nova, nenhum texto interpretado. Ordem de apresentação não é estado.
+
+/** Algo que depende de uma pessoa agir. Nasce SÓ de declaração explícita (componente.pendencia ou PENDENCIAS_DE_GATE). */
+export interface PendenciaHumana {
+  moduloId: string;
+  moduloTitulo: string;
+  componenteId: string;
+  /** título executivo do componente */
+  componente: string;
+  tipo: TipoPendencia;
+  /** a frase do que precisa ser feito, como foi declarada */
+  acao: string;
+  origem: 'COMPONENTE' | 'GATE';
+  gateId?: string;
+}
+
+/** As pendências humanas de um módulo, na ordem dos componentes. Nunca lê título, descrição nem motivo de bloqueio. */
+export function pendenciasHumanasDoModulo(p: ModuloProjetado): PendenciaHumana[] {
+  const declarado = new Map(p.modulo.componentes.map((c) => [c.id, c.pendencia]));
+  const out: PendenciaHumana[] = [];
+  const base = (c: ComponenteProjetado) => ({ moduloId: p.modulo.id, moduloTitulo: p.modulo.titulo, componenteId: c.id, componente: c.tituloExecutivo });
+  for (const c of p.componentes) {
+    if (c.estado === 'CONCLUIDO' || c.porDesenho) continue;
+    if (c.origem === 'PLANO') {
+      const d = declarado.get(c.id);
+      if (d && d.acao && PENDENCIAS_HUMANAS.includes(d.tipo)) out.push({ ...base(c), tipo: d.tipo, acao: d.acao, origem: 'COMPONENTE' });
+    } else if (c.origem === 'GATE' && c.prontidao) {
+      for (const g of c.prontidao.faltando) {
+        const d = PENDENCIAS_DE_GATE[g.id];
+        if (d && d.acao && PENDENCIAS_HUMANAS.includes(d.tipo)) out.push({ ...base(c), tipo: d.tipo, acao: d.acao, origem: 'GATE', gateId: g.id });
+      }
+    }
+  }
+  return out;
+}
+
+/** Ordem de APRESENTAÇÃO da Visão geral. Não muda estado; dentro da mesma classe, a ordem do catálogo. */
+export const ORDEM_EXECUTIVA: readonly EstadoConstrucao[] = ['BLOQUEADO', 'EM_CONSTRUCAO', 'PLANEJADO', 'CONCLUIDO', 'SEM_EVIDENCIA'];
+
+export function ordemExecutiva<T extends { estado: EstadoConstrucao }>(itens: readonly T[]): T[] {
+  return itens.map((x, i) => ({ x, i }))
+    .sort((a, b) => ORDEM_EXECUTIVA.indexOf(a.x.estado) - ORDEM_EXECUTIVA.indexOf(b.x.estado) || a.i - b.i)
+    .map((y) => y.x);
+}
+
+/** "Esperando você": todas as pendências humanas, na ordem executiva dos módulos. */
+export const esperandoVoce = (panorama: PanoramaConstrucao): PendenciaHumana[] => ordemExecutiva(panorama.modulos).flatMap(pendenciasHumanasDoModulo);
+
+/**
+ * Dependências DIRETAS declaradas (`dependeDe`) que estão BLOQUEADAS. É aviso secundário: o estado do módulo não muda
+ * e não há propagação transitiva — só o que o catálogo declara, um nível.
+ */
+export const dependenciasBloqueadas = (panorama: PanoramaConstrucao, moduloId: string): ModuloProjetado[] => {
+  const p = panorama.modulos.find((x) => x.modulo.id === moduloId);
+  return (p?.dependeDe ?? []).map((d) => panorama.modulos.find((x) => x.modulo.id === d)).filter((x): x is ModuloProjetado => !!x && x.estado === 'BLOQUEADO');
+};
+
+/** Fração com a unidade dita, para a camada executiva: "18 de 21". */
+export const fracaoExecutiva = (concluidos: number, total: number): string => `${concluidos} de ${total}`;
+
+/** O que o cartão, a linha de "Em construção agora" e o nó do mapa mostram de um módulo — uma projeção só. */
+export interface ResumoExecutivo {
+  moduloId: string;
+  titulo: string;
+  estado: EstadoConstrucao;
+  rotuloEstado: string;
+  concluidos: number;
+  total: number;
+  fracao: number;
+  /** "18 de 21" */
+  fracaoTexto: string;
+  proximo: string | null;
+  pendenciasHumanas: PendenciaHumana[];
+  /** títulos das dependências diretas bloqueadas */
+  dependenciasBloqueadas: string[];
+  /** tarefas ativas quando há leitura válida; SEM_LEITURA quando não há — nunca 0 inventado */
+  tarefasAtivas: number | typeof SEM_LEITURA;
+}
+
+export function resumoExecutivo(p: ModuloProjetado, panorama: PanoramaConstrucao): ResumoExecutivo {
+  return {
+    moduloId: p.modulo.id,
+    titulo: p.modulo.titulo,
+    estado: p.estado,
+    rotuloEstado: ROTULO_ESTADO_CONSTRUCAO[p.estado],
+    concluidos: p.concluidos,
+    total: p.total,
+    fracao: p.fracao,
+    fracaoTexto: fracaoExecutiva(p.concluidos, p.total),
+    proximo: p.proximoExecutivo,
+    pendenciasHumanas: pendenciasHumanasDoModulo(p),
+    dependenciasBloqueadas: dependenciasBloqueadas(panorama, p.modulo.id).map((d) => d.modulo.titulo),
+    tarefasAtivas: contagemViva(panorama.tarefas !== null, p.tarefasAtivas),
+  };
+}
+
+/**
+ * "Em construção agora": os módulos BLOQUEADOS e EM CONSTRUÇÃO. Primeiro os bloqueados, depois os em construção que
+ * esperam uma pessoa, depois os demais — sempre estável na ordem do catálogo.
+ */
+export function emConstrucaoAgora(panorama: PanoramaConstrucao): ResumoExecutivo[] {
+  const rank = (r: ResumoExecutivo) => (r.estado === 'BLOQUEADO' ? 0 : r.pendenciasHumanas.length ? 1 : 2);
+  return panorama.modulos
+    .filter((p) => p.estado === 'BLOQUEADO' || p.estado === 'EM_CONSTRUCAO')
+    .map((p, i) => ({ r: resumoExecutivo(p, panorama), i }))
+    .sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i)
+    .map((x) => x.r);
+}
+
+/**
+ * Nós do Mapa vivo que SÃO um módulo do catálogo — correspondência declarada, nunca por nome parecido. Nesses nós a
+ * primeira camada mostra o estado executivo do módulo (a mesma projeção do panorama); gates e fonte técnica ficam no
+ * detalhe. Os demais nós (camadas da Central, pipeline da fábrica) continuam com o estado técnico até a V2B.
+ */
+export const MODULO_DO_NO: Readonly<Record<string, string>> = { INBOX: 'INBOX', MISSION_CONTROL: 'MISSION_CONTROL', RADAR: 'RADAR' };
+
+export function resumoDoNo(noId: string, itens: readonly MissionControlWorkItem[] | null, modulos: readonly ModuloConstrucao[] = MODULOS_CONSTRUCAO): ResumoExecutivo | null {
+  const id = MODULO_DO_NO[noId];
+  if (!id) return null;
+  const panorama = panoramaConstrucao(itens, modulos);
+  const p = panorama.modulos.find((x) => x.modulo.id === id);
+  return p ? resumoExecutivo(p, panorama) : null;
+}
+
+/**
+ * Nome exato do que a "prontidão por gates" da Governança cobre: os módulos donos das frentes (WORKSTREAMS) cujos gates
+ * ela conta. Derivado do catálogo — não concorre com "módulos concluídos", que é a conta do EIFF inteiro.
+ */
+export function rotuloProntidaoGates(modulos: readonly ModuloConstrucao[] = MODULOS_CONSTRUCAO): string {
+  const donos = modulos.filter((mo) => mo.workstreams?.length).map((mo) => mo.titulo);
+  return `Prontidão por gates · ${donos.join(' e ')}`;
 }
 
 /** Texto da fração, num lugar só. A porcentagem, quando aparece, é sempre arredondamento desta conta. */

@@ -1070,3 +1070,42 @@ chave de serviço do Supabase. O catálogo vai inteiro para o bundle do navegado
 local da 1E revelou. As âncoras passaram a frases da mesma seção atual sem o nome (§16.5 "(2) as sete variáveis da Meta
 acima e o registro da URL"; §16.3 "(nenhuma outra função a tem;"), e o bloco 20 prende a regra no código-fonte da
 Central, com ou sem `dist`. Nenhum valor de segredo esteve envolvido — só o nome da variável.
+
+### 17.12 MC-CONSTRUCTION-V2A — Visão geral executiva e consistência de módulo (30/09/2026)
+
+**Por quê.** A revisão de produto (MC-CONSTRUCTION UX REVIEW) concluiu que, ao abrir o Mission Control, não dava para
+saber em poucos segundos o que estava sendo construído nem o que dependia de uma pessoa: o panorama começava abaixo da
+dobra, cada cartão listava todos os componentes em linguagem de engenharia e o mesmo módulo tinha estados diferentes
+em abas diferentes (Inbox 18/21 no panorama, "desenho" no mapa).
+
+**Primeira dobra (1440×900, sem rolar).** Cabeçalho de uma frase (`SUBTITULO_CENTRAL`); uma única mensagem quando a
+leitura viva falha; faixa numérica (módulos, concluídos, em construção, bloqueados, planejados, esperando você);
+**Em construção agora** — os módulos BLOQUEADOS e EM CONSTRUÇÃO, bloqueados primeiro, depois os que esperam uma pessoa,
+com fração, barra, próximo passo e avisos curtos — e **Esperando você** ao lado. As tarefas vivas vêm logo abaixo
+(contagens "—" sem leitura) e depois o panorama: cartões só para o que não está concluído, em ordem executiva, e os 13
+concluídos como linhas compactas por domínio ("9 de 11 módulos concluídos"). A Visão geral caiu de 3.780 para cerca de
+2.000 px.
+
+**Pendência humana explícita.** `TIPOS_PENDENCIA` (TRABALHO, DECISAO, CONFIGURACAO, EVIDENCIA) é vocabulário fechado,
+declarado no catálogo: todo componente planejado declara o tipo, e DECISAO/CONFIGURACAO exigem a frase `acao`. Para
+gates, `PENDENCIAS_DE_GATE` declara os dois casos que dependem de pessoa (aplicação das migrations da Central — "é decisão
+da Diretoria, não do código" — e o número real da Meta); quando o gate fecha, a pendência some. Nada é inferido de
+título, descrição ou motivo de bloqueio (teste lê o corpo da função). A IA do Inbox ficou EVIDENCIA (espera a medição do
+Shadow Mode), não "você".
+
+**Camada executiva × detalhe técnico.** `tituloExecutivo` (componente) e `resumo` (módulo) só onde o título técnico
+carrega jargão; o técnico continua no catálogo e aparece inteiro em "Detalhe técnico" no drill-down, junto com a
+descrição técnica, o próximo passo técnico, a conta de gates, a procedência e o motivo de cada bloqueio. O drill-down
+abre pelo que falta: próximo passo → esperando você → falta fazer (com o tipo) → bloqueios → em andamento (só se houver)
+→ concluídos (recolhidos acima de 6). `TERMOS_FORA_DA_CAMADA_EXECUTIVA` é o teste.
+
+**Coerência.** O Mapa vivo usa `resumoDoNo` para os nós que SÃO módulos (`MODULO_DO_NO`: Inbox, Mission Control,
+Radar — declarado, nunca por nome): mesmo estado e mesma fração do panorama; gates viram detalhe. Nenhum nó ou aresta
+mudou (20/29); a revisão da granularidade é da V2B. A Governança chama a conta de gates de `rotuloProntidaoGates()` —
+"Prontidão por gates · EIFF Central (WhatsApp) e Mission Control" —, o que ela de fato cobre. A Execução usa a mesma
+regra `contagemViva`: sem leitura, "—", nunca 0; a mensagem de falha aparece uma vez por aba. Dependência direta
+BLOQUEADA vira aviso secundário (`dependenciasBloqueadas`, um nível, estado inalterado). "Construção e fábrica" virou
+"Desenvolvimento e plataforma" (só rótulo).
+
+**Dívida registrada.** "Última movimentação por módulo" não entrou: não há fonte confiável por módulo (a linha do tempo
+da Governança é da EIFF Central). Com leitura viva, o "alterado há" das tarefas cobre parte disso.

@@ -9,6 +9,7 @@ import {
   type NoMapa, type TipoAresta,
 } from '../core/central/mapaVivo';
 import { gatePorId, prontidao, type Prontidao } from '../core/central/missionControl';
+import { TONE_ESTADO_CONSTRUCAO, resumoDoNo, type ResumoExecutivo } from '../core/central/construcao';
 import { ROTULO_MC_STATUS, type MissionControlWorkItem } from '../core/central/workItem';
 import type { RepositorioStatus } from '../core/central/githubAdapter';
 import { ROTULO_CI } from '../core/central/githubAdapter';
@@ -19,8 +20,15 @@ const ROTULO_ARESTA: Record<TipoAresta, string> = { fluxo: 'fluxo (entrega para)
 const temBloqueioReal = (p: Prontidao) => p.faltando.some((x) => x.situacao === 'bloqueado' && !x.porDesenho);
 const toneDaProntidao = (p: Prontidao): Tone => (p.pronto ? 'ok' : temBloqueioReal(p) ? 'bad' : 'warn');
 
-/** Estado exibido no nó: gates → prontidão (snapshot); fonte viva → contagem de itens (live); senão desenho. */
-function estadoDoNo(no: NoMapa, itens: MissionControlWorkItem[] | null) {
+/**
+ * Estado exibido no nó. V2A: nó que É um módulo do catálogo (MODULO_DO_NO) mostra o estado executivo da MESMA projeção
+ * do panorama (resumoDoNo) — nunca uma segunda regra; gates e fonte técnica descem para o detalhe. Os demais nós seguem
+ * como antes: gates → prontidão (snapshot); fonte viva → contagem de itens (live); senão desenho.
+ */
+function estadoDoNo(no: NoMapa, itens: MissionControlWorkItem[] | null, modulo: ResumoExecutivo | null) {
+  if (modulo) {
+    return { classe: TONE_ESTADO_CONSTRUCAO[modulo.estado] as Tone, texto: `${modulo.rotuloEstado} · ${modulo.concluidos}/${modulo.total}`, titulo: modulo.proximo ? `Próximo: ${modulo.proximo}` : 'Todos os componentes concluídos', origem: 'módulo' as const };
+  }
   if (no.gates.length) {
     const p = prontidao(no.gates);
     return { classe: toneDaProntidao(p), texto: `${p.fechados}/${p.exigidos} gates`, titulo: p.conta, origem: 'snapshot' as const };
@@ -41,6 +49,8 @@ export default function MapaVivo({ itens, repositorios }: { itens: MissionContro
   const pos = useMemo(() => new Map(layout.nos.map((n) => [n.id, n])), [layout]);
   const { largNo, altNo } = layout;
   const no = selecionado ? noPorId(selecionado) : undefined;
+  // uma projeção por nó que é módulo, da mesma fonte do panorama
+  const modulos = useMemo(() => new Map(NOS.map((n) => [n.id, resumoDoNo(n.id, itens)])), [itens]);
 
   const caminho = (de: string, para: string): string => {
     const a = pos.get(de)!; const b = pos.get(para)!;
@@ -61,6 +71,7 @@ export default function MapaVivo({ itens, repositorios }: { itens: MissionContro
       </div>
       <div className="mcm-legenda small">
         {TIPOS_ARESTA.map((t) => <span key={t} className={`mcm-leg ${t}`}><i /> {ROTULO_ARESTA[t]}</span>)}
+        <span className="mcm-leg"><Badge tone="warn">estado</Badge> módulo do catálogo (o mesmo da Visão geral)</span>
         <span className="mcm-leg"><Badge tone="muted">gates</Badge> snapshot</span>
         <span className="mcm-leg"><Badge tone="ok">itens</Badge> live</span>
       </div>
@@ -82,7 +93,7 @@ export default function MapaVivo({ itens, repositorios }: { itens: MissionContro
           ))}
           {NOS.map((n) => {
             const p = pos.get(n.id)!;
-            const e = estadoDoNo(n, itens);
+            const e = estadoDoNo(n, itens, modulos.get(n.id) ?? null);
             return (
               <g key={n.id} className={`mcm-no ${e.classe}${selecionado === n.id ? ' sel' : ''}`} transform={`translate(${p.x} ${p.y})`} tabIndex={0} role="button" aria-label={`${n.titulo}: ${e.texto}`}
                 onClick={() => setSelecionado(n.id)} onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setSelecionado(n.id); } }}>
@@ -98,7 +109,8 @@ export default function MapaVivo({ itens, repositorios }: { itens: MissionContro
       </div>
 
       {no && (() => {
-        const e = estadoDoNo(no, itens);
+        const mod = modulos.get(no.id) ?? null;
+        const e = estadoDoNo(no, itens, mod);
         const vivos = itens ? itensDoNo(no.id, itens) : [];
         const ci = no.id === 'CI' ? repositorios?.filter((r) => r.disponivel) : undefined;
         return (
@@ -111,6 +123,10 @@ export default function MapaVivo({ itens, repositorios }: { itens: MissionContro
               <button className="btn sm no-print" onClick={() => setSelecionado(null)}>Fechar</button>
             </div>
             <p className="small">{no.papel}</p>
+            {mod && (
+              <p className="small"><b>{mod.fracaoTexto}</b> componentes concluídos{mod.proximo ? <> · <span className="muted">Próximo:</span> {mod.proximo}</> : null}</p>
+            )}
+            {mod && no.gates.length > 0 && <div className="mc-conta">Detalhe técnico · gates</div>}
             {no.gates.length > 0 && (
               <div className="mc-lista-gates">{no.gates.map((id) => { const g = gatePorId(id); return g ? <span key={id} className={`mc-pill ${g.situacao === 'fechado' ? 'ok' : g.situacao === 'bloqueado' ? (g.porDesenho ? 'info' : 'bad') : ''}`} title={g.prova}>{g.titulo}</span> : null; })}</div>
             )}

@@ -14,7 +14,8 @@ import {
 } from '../core/central/quadroOperacional';
 import { ROTULO_MC_STATUS, type McStatus, type MissionControlWorkItem } from '../core/central/workItem';
 import { LIMITE_STALE_GITHUB_S, avaliarStatusVivo, type SituacaoVivo } from '../core/central/statusVivo';
-import { TEXTO_CODIGO_CLIENTE, type EstadoStatusRemoto } from '../data/statusRemoto';
+import { type EstadoStatusRemoto } from '../data/statusRemoto';
+import { contagemViva } from '../core/central/construcao';
 import { Badge, Empty, type Tone } from '../ui/components';
 import { Icon } from '../ui/icons';
 
@@ -120,6 +121,9 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
   });
 
   const mudar = (p: Partial<FiltroQuadro>) => setFiltro((f) => ({ ...f, ...p }));
+  // V2A: a MESMA regra da Visão geral — sem leitura válida, contagem viva é "—", nunca 0 (zero é dado)
+  const leituraValida = !!dados;
+  const viva = (n: number) => contagemViva(leituraValida, n);
 
   return (
     <div className="card mcq" data-tour="mc-quadro">
@@ -144,13 +148,13 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
             aria-pressed={filtro.status === s}
             onClick={() => mudar({ status: filtro.status === s ? undefined : s })}
           >
-            <span className="mcq-contador-n">{quadro.contagens[s]}</span>
+            <span className="mcq-contador-n">{viva(quadro.contagens[s])}</span>
             <span className="mcq-contador-r">{ROTULO_MC_STATUS[s]}</span>
           </button>
         ))}
       </div>
 
-      {erro && <div className="alert warn"><b>{TEXTO_CODIGO_CLIENTE[erro]}</b> {dados ? 'O quadro abaixo é o último estado conhecido.' : 'Ainda não há estado conhecido para mostrar.'}</div>}
+      {erro && dados && <p className="small muted">O quadro abaixo é o último estado conhecido.</p>}
       {(quadro.stale > 0 || quadro.fonteIndisponivel > 0) && (
         <p className="small muted">{quadro.fonteIndisponivel > 0 && `${quadro.fonteIndisponivel} item(ns) de fonte que não respondeu. `}{quadro.stale > 0 && `${quadro.stale} item(ns) com leitura vencida.`}</p>
       )}
@@ -175,7 +179,7 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
           value={filtro.busca ?? ''}
           onChange={(ev) => mudar({ busca: ev.target.value })}
         />
-        <span className="small muted">{quadro.visiveis} de {quadro.totalSemFiltro}</span>
+        <span className="small muted">{viva(quadro.visiveis)} de {viva(quadro.totalSemFiltro)}</span>
         {(filtro.escopo !== 'TODOS' || filtro.status || filtro.busca || filtro.workstreamId) && (
           <button className="btn sm" onClick={() => setFiltro(FILTRO_VAZIO)}>Limpar filtros</button>
         )}
@@ -184,7 +188,9 @@ export default function QuadroOperacional({ estado }: { estado: EstadoStatusRemo
       {!itens.length
         ? (primeiraLeitura
           ? <p className="small muted">Lendo o estado da produção…</p>
-          : <Empty icone="checks" titulo="Nenhum item de trabalho">A leitura chegou, mas nenhuma issue, PR ou gate foi projetado como item de trabalho.</Empty>)
+          : leituraValida
+            ? <Empty icone="checks" titulo="Nenhum item de trabalho">A leitura chegou, mas nenhuma issue, PR ou gate foi projetado como item de trabalho.</Empty>
+            : <p className="small muted">Sem leitura: nenhum item pode ser mostrado.</p>)
         : (
           <div className="mcq-colunas">
             {COLUNAS_QUADRO.map((s) => {

@@ -8,6 +8,7 @@
 // cria polling, fetch ou relógio próprio. Nada aqui escreve em fonte alguma.
 import React, { useState } from 'react';
 import { AVISO_FACTORY_PROJECAO } from '../core/central/statusServidor';
+import { SUBTITULO_CENTRAL } from '../core/central/construcao';
 import { LIMITE_STALE_GITHUB_S, avaliarStatusVivo, humanizarIdade, type SituacaoVivo } from '../core/central/statusVivo';
 import { ROTULO_CI, TEXTO_FALHA_FONTE, type RepositorioStatus } from '../core/central/githubAdapter';
 import { TEXTO_CODIGO_CLIENTE, useStatusRemoto, type EstadoStatusRemoto } from '../data/statusRemoto';
@@ -128,15 +129,15 @@ export default function MissionControl() {
       <PrintHead titulo="Mission Control · Central de Construção do EIFF" subtitulo="Módulos, tarefas em andamento e prontidão derivada de evidência" />
       <PageHead
         title="Mission Control"
-        subtitle={<>Central de Construção do EIFF: o que compõe o sistema, o que já foi construído, o que está sendo construído agora e o que exige atenção. O catálogo de módulos e gates é <b>snapshot</b> do repositório; as tarefas e os repositórios são <b>projeção viva</b> do GitHub — a tela diz qual é qual e nunca escreve em fonte alguma.</>}
+        subtitle={SUBTITULO_CENTRAL}
       >
         <div className="actions no-print">
-          <Badge tone="muted" title="O catálogo de módulos e gates é derivado do código no momento do build (gate MISSION_CONTROL_LIVE aberto). As tarefas e os repositórios vêm da leitura viva do GitHub pelo endpoint interno.">Snapshot do desenvolvimento + projeção viva</Badge>
-          <button className="btn" onClick={() => window.print()}><Icon name="livro" size={15} /> Imprimir</button>
+          <Badge tone="muted" title="Snapshot do desenvolvimento + projeção viva. Os módulos vêm do catálogo compilado no build (gate MISSION_CONTROL_LIVE aberto). As tarefas e os repositórios vêm da leitura viva do GitHub pelo endpoint interno (projeção viva). A tela nunca escreve em fonte alguma.">Catálogo + leitura ao vivo</Badge>
+          <button className="btn mcc-imprimir" onClick={() => window.print()}><Icon name="livro" size={15} /> Imprimir</button>
         </div>
       </PageHead>
 
-      <Tabs value={aba} onChange={setAba} items={[...ABAS_MISSION_CONTROL]} />
+      <div className="mcc-abas"><Tabs value={aba} onChange={setAba} items={[...ABAS_MISSION_CONTROL]} /></div>
 
       {aba === 'visao' && <VisaoGeral estado={estado} onIrPara={setAba} />}
       {aba === 'execucao' && (

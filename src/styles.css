@@ -1003,9 +1003,6 @@ tr.arrastando td { opacity: 0.55; }
 .mcc-card.SEM_EVIDENCIA { border-top-color: var(--info); }
 .mcc-card-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mcc-card-cab b { flex: 1 1 auto; min-width: 0; }
-.mcc-comp { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: var(--text-xs); color: var(--muted); }
-.mcc-comp li { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.mcc-comp li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcc-ponto { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--border-strong); background: transparent; }
 .mcc-ponto.CONCLUIDO { background: var(--ok); border-color: var(--ok); }
 .mcc-ponto.EM_CONSTRUCAO { background: linear-gradient(90deg, var(--brand) 50%, transparent 50%); border-color: var(--brand); }
@@ -1083,3 +1080,78 @@ tr.arrastando td { opacity: 0.55; }
   .mcc-tarefa-titulo { flex-basis: 100%; }
 }
 @media print { .mcc-painel, .mcc-painel-bg { display: none !important; } .mcc-card, .mcc-tarefa { break-inside: avoid; } }
+
+/* MC-CONSTRUCTION-V2A — Visão geral executiva. A primeira dobra responde: quanto está pronto, o que está sendo
+   construído (e o próximo passo) e o que espera uma pessoa. Só layout; toda informação vem de construcao.ts. */
+.mcc-fonte { margin-bottom: var(--space-3); }
+.mcc-exec { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--space-3); align-items: start; }
+.mcc-exec { margin-top: var(--space-3); }
+.mcc-exec > .card { margin: 0; min-width: 0; }
+.mcc-exec + .card { margin-top: var(--space-3); }
+.mcc-linhas { display: grid; gap: 6px; }
+.mcc-linha { display: grid; gap: 3px; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 7px 10px;
+  border: 1px solid var(--border); border-left: 3px solid var(--brand); border-radius: var(--radius-sm); background: var(--surface-1); min-width: 0; }
+.mcc-linha:hover, .mcc-linha:focus-visible { background: var(--surface-2); border-color: var(--border-strong); }
+.mcc-linha.BLOQUEADO { border-left-color: var(--bad); }
+.mcc-linha-cab { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mcc-linha-cab b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcc-linha-frac { font-variant-numeric: tabular-nums; font-size: var(--text-sm); white-space: nowrap; }
+.mcc-barra { flex: 0 0 72px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.mcc-barra i { display: block; height: 100%; background: var(--warn); }
+.mcc-barra i.ok { background: var(--ok); }
+.mcc-barra i.bad { background: var(--bad); }
+.mcc-linha-pe { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mcc-linha-prox { flex: 1 1 auto; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mcc-avisos { display: flex; gap: 6px 12px; flex-wrap: wrap; }
+.mcc-avisos.curto { flex: 0 0 auto; flex-wrap: nowrap; }
+.mcc-avisos.curto .mcc-aviso { white-space: nowrap; }
+.mcc-aviso { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--muted); }
+.mcc-aviso.humano { color: var(--warn); font-weight: 600; }
+.mcc-espera { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mcc-espera li { display: grid; gap: 2px; padding: 6px 10px; border: 1px solid var(--border);
+  border-left: 3px solid var(--warn); border-radius: var(--radius-sm); background: var(--surface-1); font-size: var(--text-sm); min-width: 0; }
+.mcc-espera-mod { font: inherit; font-weight: 700; color: var(--text); background: none; border: 0; padding: 0; cursor: pointer; }
+.mcc-espera-mod:hover { color: var(--brand); }
+.mcc-espera-cab { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mcc-espera-cab .mc-pill { margin-left: auto; }
+.mcc-espera-acao { min-width: 0; overflow-wrap: anywhere; }
+.mcc-contas { display: flex; gap: 8px 16px; flex-wrap: wrap; margin-bottom: var(--space-2); font-size: var(--text-sm); color: var(--muted); }
+.mcc-conta-viva b { color: var(--text); font-variant-numeric: tabular-nums; margin-right: 2px; }
+.mcc-conta-viva.BLOQUEADO b { color: var(--bad); }
+.mcc-conta-viva.AGUARDANDO_HUMANO b { color: var(--warn); }
+.mcc-card .mcc-proximo { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mcc-sub-concluidos { margin-top: var(--space-4); }
+.mcc-dominio-cab { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+.mcc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
+.mcc-tile { display: flex; align-items: center; gap: 8px; min-width: 0; font: inherit; color: inherit; text-align: left; cursor: pointer;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); }
+.mcc-tile:hover, .mcc-tile:focus-visible { border-color: var(--ok); }
+.mcc-tile-titulo { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.mcc-tile-frac { font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mcc-proximo-painel { margin: 10px 0 4px; padding: 8px 10px; border-left: 3px solid var(--brand); background: var(--surface-2); border-radius: var(--radius-sm); }
+.mcc-concluidos > summary, .mcc-tecnico > summary { cursor: pointer; list-style: none; }
+.mcc-concluidos > summary::-webkit-details-marker, .mcc-tecnico > summary::-webkit-details-marker { display: none; }
+.mcc-concluidos > summary h3 { display: inline; }
+.mcc-concluidos > summary::after { content: ' ▸'; color: var(--muted); }
+.mcc-concluidos[open] > summary::after { content: ' ▾'; }
+.mcc-tecnico { margin-top: var(--space-4); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.mcc-tecnico > summary { font-size: var(--text-sm); color: var(--muted); font-weight: 600; }
+.mcc-tecnico[open] > summary { margin-bottom: 6px; }
+
+@media (max-width: 1100px) { .mcc-exec { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .mcc-numeros .strip > div { flex: 1 1 30%; padding: 8px 10px; } .mcc-numeros .strip .label { white-space: normal; } }
+@media (max-width: 760px) {
+  .mcc-linha-prox { white-space: normal; }
+  .mcc-linha-pe { flex-wrap: wrap; }
+  .mcc-barra { flex-basis: 48px; }
+  .mcc-tiles { grid-template-columns: 1fr; }
+}
+/* abas usáveis no celular: uma linha rolável em vez de quebrar em duas */
+@media (max-width: 760px) { .mcc-abas .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .mcc-abas .tabs button { white-space: nowrap; } }
+/* alvos de toque ≥ 44 px em telas de toque (e em larguras de tablet/celular) — só dentro da Central */
+@media (pointer: coarse), (max-width: 768px) {
+  .mcc-abas .tabs button, .mcc-imprimir, .mcc-abrir, .mcc-linha, .mcc-tile, .mcc-espera-mod, .mcc-pill-btn,
+  .mcc-painel-cab .btn, .mcc-vivas .btn, .mcc-panorama .btn, .mcc-tarefa > summary, .mcc-concluidos > summary, .mcc-tecnico > summary { min-height: 44px; }
+  .mcc-espera-mod, .mcc-pill-btn { display: inline-flex; align-items: center; }
+  .mcc-concluidos > summary, .mcc-tecnico > summary { display: flex; align-items: center; }
+}

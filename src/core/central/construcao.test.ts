@@ -13,6 +13,9 @@ import {
   classificarSuperficie, gatesDoModulo, moduloDaTarefa, moduloPorId, panoramaConstrucao, pctConstrucao, projetarComponente, projetarModulo,
   superficiesSemClassificacao, componentesPlanejados, mensagemDriftComponente, mensagemPendenciaSumiu, NATUREZAS_EVIDENCIA,
   SECOES_ATUAIS, type EvidenciaConstrucao,
+  TIPOS_PENDENCIA, PENDENCIAS_HUMANAS, PENDENCIAS_DE_GATE, TERMOS_FORA_DA_CAMADA_EXECUTIVA, SUBTITULO_CENTRAL, SEM_LEITURA, MODULO_DO_NO, ORDEM_EXECUTIVA,
+  contagemViva, emConstrucaoAgora, esperandoVoce, ordemExecutiva, pendenciasHumanasDoModulo, resumoDoNo, resumoExecutivo, rotuloProntidaoGates, dependenciasBloqueadas,
+  ROTULO_DOMINIO_CONSTRUCAO, type ModuloConstrucao,
   type ComponenteConstrucao, type ComponentePlanejado,
 } from './construcao';
 import { GATES, WORKSTREAMS, gatePorId, type Evidencia } from './missionControl';
@@ -990,5 +993,230 @@ describe('20 · o catálogo vai para o navegador: nenhum nome de segredo nem RPC
     for (const f of [DOMINIO_PURO, 'src/core/central/mapaVivo.ts', ...TELAS]) {
       expect(conteudo(f), f).not.toMatch(/SERVICE_ROLE|EIFF_INBOX_ORGANIZATION_ID|rpc\/inbox_ingest/);
     }
+  });
+});
+
+
+// =====================================================================================================
+// MC-CONSTRUCTION-V2A — Visão geral executiva e consistência de módulo. A revisão de produto mostrou que a primeira
+// dobra não respondia "o que está sendo construído e o que espera uma pessoa". A camada executiva é LEITURA da mesma
+// projeção; a pendência humana é DECLARADA (vocabulário fechado), nunca deduzida de texto.
+// =====================================================================================================
+
+describe('21 · V2A: camada executiva da Central', () => {
+  const panorama = panoramaConstrucao(null);
+  const VISAO = conteudo('src/screens/MissionControlVisao.tsx');
+  const MAPA = conteudo('src/screens/MissionControlMapa.tsx');
+  const QUADRO = conteudo('src/screens/MissionControlQuadro.tsx');
+  const GOV = conteudo('src/screens/MissionControlGovernanca.tsx');
+  const PRINCIPAL = conteudo('src/screens/MissionControl.tsx');
+  /** corpo de uma função do arquivo, até a próxima função de topo */
+  const corpoDe = (src: string, nome: string): string => {
+    const i = src.indexOf(`function ${nome}(`);
+    expect(i, nome).toBeGreaterThanOrEqual(0);
+    const fim = [src.indexOf('\nfunction ', i + 1), src.indexOf('\nexport ', i + 1)].filter((x) => x > 0);
+    return src.slice(i, fim.length ? Math.min(...fim) : undefined);
+  };
+  const semJargao = (texto: string, onde: string) => {
+    for (const t of TERMOS_FORA_DA_CAMADA_EXECUTIVA) expect(t.test(texto), `${onde}: "${texto}" contém ${t}`).toBe(false);
+  };
+
+  it('1 · cartões, linhas e blocos da home não renderizam a lista de componentes (ela é do drill-down)', () => {
+    for (const nome of ['CartaoModulo', 'LinhaConstrucao', 'TileConcluido', 'Avisos', 'ListaEspera']) {
+      expect(corpoDe(VISAO, nome), nome).not.toMatch(/\.componentes\b|componentes\.(map|filter)/);
+    }
+    expect(VISAO).not.toContain('mcc-comp');
+    // quem lista componentes é só o painel do módulo
+    expect(corpoDe(VISAO, 'PainelModulo')).toMatch(/mo\.componentes/);
+  });
+
+  it('2 · bloqueados e em construção vêm antes de concluídos; dentro da classe, a ordem do catálogo', () => {
+    const ordem = ordemExecutiva(panorama.modulos);
+    const idx = ordem.map((p) => ORDEM_EXECUTIVA.indexOf(p.estado));
+    expect(idx).toEqual([...idx].sort((a, b) => a - b));
+    const catalogo = MODULOS_CONSTRUCAO.map((m) => m.id);
+    for (const e of ORDEM_EXECUTIVA) {
+      const ids = ordem.filter((p) => p.estado === e).map((p) => p.modulo.id);
+      expect(ids).toEqual([...ids].sort((a, b) => catalogo.indexOf(a) - catalogo.indexOf(b)));
+    }
+    // "Em construção agora": só BLOQUEADO/EM_CONSTRUCAO; bloqueados → com espera humana → demais
+    const agora = emConstrucaoAgora(panorama);
+    expect(agora.map((r) => r.moduloId).sort()).toEqual(panorama.modulos.filter((p) => p.estado === 'BLOQUEADO' || p.estado === 'EM_CONSTRUCAO').map((p) => p.modulo.id).sort());
+    const rank = agora.map((r) => (r.estado === 'BLOQUEADO' ? 0 : r.pendenciasHumanas.length ? 1 : 2));
+    expect(rank).toEqual([...rank].sort((a, b) => a - b));
+    expect(agora[0].estado).toBe('BLOQUEADO');
+    // ordem é apresentação: o estado de nenhum módulo muda
+    for (const p of ordem) expect(p.estado).toBe(projetarModulo(p.modulo, []).estado);
+  });
+
+  it('3 · o próximo passo aparece no resumo do módulo e é o MESMO componente do próximo passo técnico', () => {
+    for (const p of panorama.modulos) {
+      const r = resumoExecutivo(p, panorama);
+      expect(r.proximo).toBe(p.proximoExecutivo);
+      expect(r.proximo === null).toBe(p.proximoPasso === null);
+      if (p.componentes.every((c) => c.tituloExecutivo === c.titulo)) expect(r.proximo).toBe(p.proximoPasso);
+    }
+    const r = (id: string) => resumoExecutivo(panorama.modulos.find((p) => p.modulo.id === id)!, panorama);
+    expect(r('INBOX').proximo).toBe('Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)');
+    expect(r('LEAD_ENGINE').proximo).toBe('Descoberta contínua: backfill da janela de 90 dias gravado');
+    expect(r('FACTORY').proximo).not.toMatch(/packages\/api/);
+    expect(corpoDe(VISAO, 'LinhaConstrucao')).toMatch(/r\.proximo/);
+    expect(corpoDe(VISAO, 'CartaoModulo')).toMatch(/r\.proximo/);
+  });
+
+  it('4 · pendência humana é explícita (vocabulário fechado), nunca inferida de texto', () => {
+    // todo plano declara o tipo; humana exige a frase do que fazer
+    for (const { moduloId, componente } of componentesPlanejados()) {
+      expect(componente.pendencia, `${moduloId}/${componente.id} sem tipo de pendência`).toBeTruthy();
+      expect(TIPOS_PENDENCIA).toContain(componente.pendencia!.tipo);
+    }
+    for (const mo of MODULOS_CONSTRUCAO) for (const c of mo.componentes) {
+      if (c.pendencia && PENDENCIAS_HUMANAS.includes(c.pendencia.tipo)) expect(c.pendencia.acao, `${mo.id}/${c.id}`).toBeTruthy();
+    }
+    // gates declarados existem e ainda não fecharam (gate fechado = declaração velha, limpar)
+    for (const [id, d] of Object.entries(PENDENCIAS_DE_GATE)) {
+      expect(gatePorId(id), id).toBeTruthy();
+      expect(gatePorId(id)!.situacao, id).not.toBe('fechado');
+      expect(d.acao, id).toBeTruthy();
+    }
+    // cada item de "Esperando você" corresponde exatamente a uma declaração
+    const espera = esperandoVoce(panorama);
+    expect(espera.length).toBeGreaterThan(0);
+    for (const p of espera) {
+      expect(PENDENCIAS_HUMANAS).toContain(p.tipo);
+      if (p.origem === 'GATE') expect(PENDENCIAS_DE_GATE[p.gateId!]).toEqual({ tipo: p.tipo, acao: p.acao });
+      else expect(moduloPorId(p.moduloId)!.componentes.find((c) => c.id === p.componenteId)!.pendencia).toEqual({ tipo: p.tipo, acao: p.acao });
+    }
+    // casos do estado atual: credencial do Inbox é configuração; IA do Inbox espera medição (não é "você")
+    expect(espera.some((p) => p.moduloId === 'INBOX' && p.componenteId === 'TRAFEGO_REAL' && p.tipo === 'CONFIGURACAO')).toBe(true);
+    expect(espera.some((p) => p.componenteId === 'IA_OPERACIONAL')).toBe(false);
+    expect(espera.some((p) => p.gateId === 'MIGRATIONS_APLICADAS' && p.tipo === 'DECISAO')).toBe(true);
+    // texto que "parece" decisão/configuração não vira pendência humana sem declaração
+    const falso: ModuloConstrucao = { id: 'X', titulo: 'Configurar credencial e decidir', descricao: 'Aguardando decisão da Diretoria e configuração no painel', dominio: 'GESTAO', componentes: [
+      { id: 'A', titulo: 'Decisão da Diretoria sobre a credencial', semSinalPorque: 'teste' },
+      { id: 'B', titulo: 'Pronto', evidencias: [{ tipo: 'modulo', referencia: 'x.ts' }], pendencia: { tipo: 'DECISAO', acao: 'decidir' } },
+    ] };
+    expect(pendenciasHumanasDoModulo(projetarModulo(falso, [], [falso]))).toEqual([]);
+    // a função não lê título, descrição nem motivo de bloqueio para decidir
+    const src = conteudo(DOMINIO_PURO);
+    const corpo = src.slice(src.indexOf('export function pendenciasHumanasDoModulo'), src.indexOf('export const ORDEM_EXECUTIVA'));
+    // o título só é COPIADO para exibição; nenhuma operação sobre título, descrição ou motivo de bloqueio decide nada
+    expect(corpo).not.toMatch(/\.test\(|\.match\(|RegExp|\.descricao|\.bloqueio|\.motivo|\.titulo\.|tituloExecutivo\.|includes\(\w*\.?titulo/);
+  });
+
+  it('5 · fonte indisponível não produz contagem 0 — nem na Visão geral nem na Execução', () => {
+    expect(contagemViva(false, 0)).toBe(SEM_LEITURA);
+    expect(contagemViva(false, 7)).toBe(SEM_LEITURA);
+    expect(contagemViva(true, 0)).toBe(0);
+    expect(panorama.tarefas).toBeNull();
+    for (const p of panorama.modulos) expect(resumoExecutivo(p, panorama).tarefasAtivas).toBe(SEM_LEITURA);
+    // a Execução usa a MESMA regra (sem segunda lógica) e não imprime a contagem crua
+    expect(QUADRO).toMatch(/contagemViva\(/);
+    expect(QUADRO).not.toMatch(/\{quadro\.contagens\[s\]\}/);
+    expect(QUADRO).toMatch(/\{viva\(quadro\.contagens\[s\]\)\}/);
+    expect(VISAO).toMatch(/contagemViva\(/);
+    // uma mensagem global; nada de "tarefas: sem leitura" repetido em cada cartão
+    expect(VISAO).not.toContain('tarefas: sem leitura');
+    expect(VISAO.match(/mcc-fonte/g)?.length).toBe(1);
+  });
+
+  it('6 · o Mapa usa o estado executivo do MESMO ModuloProjetado quando o nó é um módulo', () => {
+    for (const [no, mod] of Object.entries(MODULO_DO_NO)) {
+      expect(NOS.some((n) => n.id === no), no).toBe(true);
+      expect(moduloPorId(mod), mod).toBeTruthy();
+      const p = panorama.modulos.find((x) => x.modulo.id === mod)!;
+      expect(resumoDoNo(no, null)).toEqual(resumoExecutivo(p, panorama));
+    }
+    // com leitura viva: a tarefa da frente OBSERVABILIDADE conta no nó e no panorama do mesmo jeito
+    const itens = [item({ id: 'v1', status: 'EXECUTANDO', workstreamId: 'OBSERVABILIDADE' })];
+    const vivo = panoramaConstrucao(itens);
+    const mc = vivo.modulos.find((x) => x.modulo.id === 'MISSION_CONTROL')!;
+    expect(resumoDoNo('MISSION_CONTROL', itens)).toEqual(resumoExecutivo(mc, vivo));
+    expect(resumoDoNo('MISSION_CONTROL', itens)!.tarefasAtivas).toBe(1);
+    // nó que não é módulo continua técnico; a correspondência é declarada, nunca por nome
+    expect(resumoDoNo('WEBHOOK', null)).toBeNull();
+    expect(MAPA).toMatch(/resumoDoNo\(/);
+    expect(MAPA).not.toMatch(/titulo\s*===|\.titulo\.includes/);
+    // o Inbox deixou de ser "desenho" no mapa: é o estado do panorama
+    const inbox = resumoDoNo('INBOX', null)!;
+    expect(inbox.estado).toBe(panorama.modulos.find((x) => x.modulo.id === 'INBOX')!.estado);
+    expect(inbox.fracaoTexto).toBe(`${inbox.concluidos} de ${inbox.total}`);
+  });
+
+  it('7 · a Governança não chama um subconjunto de gates de "Prontidão do sistema"', () => {
+    expect(GOV).not.toContain('Prontidão do sistema');
+    expect(GOV).toMatch(/label=\{rotuloProntidaoGates\(\)\}/);
+    const donos = MODULOS_CONSTRUCAO.filter((m) => m.workstreams?.length);
+    expect(donos.map((m) => m.id).sort()).toEqual(['CENTRAL_WHATSAPP', 'MISSION_CONTROL']);
+    expect(donos.flatMap((m) => m.workstreams!).sort()).toEqual(WORKSTREAMS.map((w) => w.id).sort());
+    const cobertos = new Set(WORKSTREAMS.flatMap((w) => w.gates));
+    expect(GATES.filter((g) => !cobertos.has(g.id))).toEqual([]);
+    for (const m of donos) expect(rotuloProntidaoGates()).toContain(m.titulo);
+  });
+
+  it('8 · termos técnicos saem da camada executiva e continuam inteiros no detalhe técnico', () => {
+    semJargao(SUBTITULO_CENTRAL, 'subtítulo');
+    expect(PRINCIPAL).toMatch(/subtitle=\{SUBTITULO_CENTRAL\}/);
+    for (const v of Object.values(ROTULO_DOMINIO_CONSTRUCAO)) semJargao(v, 'domínio');
+    for (const p of panorama.modulos) {
+      semJargao(p.modulo.resumo ?? p.modulo.descricao, `${p.modulo.id}/resumo`);
+      if (p.proximoExecutivo) semJargao(p.proximoExecutivo, `${p.modulo.id}/próximo`);
+      for (const c of p.componentes) semJargao(c.tituloExecutivo, `${p.modulo.id}/${c.id}`);
+    }
+    for (const e of esperandoVoce(panorama)) semJargao(e.acao, `${e.moduloId}/ação`);
+    // nada foi apagado: o título técnico e a descrição técnica seguem no catálogo e são desenhados no "Detalhe técnico"
+    const tecnico = (id: string, c: string) => moduloPorId(id)!.componentes.find((x) => x.id === c)!.titulo;
+    expect(tecnico('INBOX', 'OCTOPUS_INTEGRADO')).toContain('montarPortasInbox');
+    expect(tecnico('INBOX', 'PROVAS')).toContain('PGlite');
+    expect(tecnico('INBOX', 'RLS_PRODUCAO')).toContain('RLS');
+    expect(tecnico('FACTORY', 'API')).toContain('packages/api');
+    expect(tecnico('FACTORY', 'IDENTIDADE')).toContain('factory-task:v1');
+    expect(tecnico('MISSION_CONTROL', 'ENDPOINT')).toContain('/api/development-status');
+    expect(tecnico('LEAD_ENGINE', 'INTAKE')).toMatch(/Intake canônico e fingerprint/);
+    expect(moduloPorId('INBOX')!.descricao).toContain('fail-closed');
+    const painel = corpoDe(VISAO, 'PainelModulo');
+    const detalhe = painel.slice(painel.indexOf('Detalhe técnico'));
+    expect(detalhe).toMatch(/\{c\.titulo\}/);
+    expect(detalhe).toMatch(/mo\.modulo\.descricao/);
+    expect(detalhe).toMatch(/mo\.proximoPasso/);
+    expect(detalhe).toMatch(/b\.motivo/);
+    expect(detalhe).toMatch(/plano declarado, sem evidência/);
+    // o primeiro nível do painel só usa o título executivo
+    expect(painel.slice(0, painel.indexOf('Detalhe técnico'))).not.toMatch(/\{c\.titulo\}/);
+  });
+
+  it('9 · task → módulo continua contratual: nenhum nome, título ou branch dá módulo', () => {
+    for (const t of [
+      item({ id: 'h1', title: 'EIFF Inbox 18/21 — tráfego externo real' }),
+      item({ id: 'h2', title: 'Lead Engine: backfill da janela de 90 dias', links: { branch: 'feature/lead-engine-3e' } }),
+      item({ id: 'h3', title: 'Mission Control V2A', links: { branch: 'feature/mc-construction-1-final' } }),
+    ]) expect(moduloDaTarefa(t)).toBeUndefined();
+    expect(VISAO).not.toMatch(/\.title\.(includes|match|startsWith)|title\s*===/);
+  });
+
+  it('10 · continua existindo um único useStatusRemoto', () => {
+    const total = TELAS.reduce((n, f) => n + (conteudo(f).match(/useStatusRemoto\(/g)?.length ?? 0), 0);
+    expect(total).toBe(1);
+    expect(PRINCIPAL.match(/useStatusRemoto\(/g)?.length).toBe(1);
+  });
+
+  it('dependência bloqueada é aviso secundário: direta, declarada, e não muda o estado do módulo', () => {
+    const inbox = panorama.modulos.find((x) => x.modulo.id === 'INBOX')!;
+    expect(inbox.dependeDe).toContain('CENTRAL_WHATSAPP');
+    expect(dependenciasBloqueadas(panorama, 'INBOX').map((d) => d.modulo.id)).toEqual(
+      inbox.dependeDe.filter((d) => panorama.modulos.find((x) => x.modulo.id === d)!.estado === 'BLOQUEADO'));
+    expect(inbox.estado).toBe('EM_CONSTRUCAO');
+    expect(resumoExecutivo(inbox, panorama).dependenciasBloqueadas).toContain('EIFF Central (WhatsApp)');
+    // nenhuma propagação transitiva: quem não depende DIRETAMENTE de um bloqueado não recebe aviso
+    for (const p of panorama.modulos) {
+      const diretos = p.dependeDe.filter((d) => panorama.modulos.find((x) => x.modulo.id === d)?.estado === 'BLOQUEADO');
+      expect(dependenciasBloqueadas(panorama, p.modulo.id).length).toBe(diretos.length);
+    }
+  });
+
+  it('o domínio de software mudou só de rótulo ("Desenvolvimento e plataforma"); ids e contratos iguais', () => {
+    expect(ROTULO_DOMINIO_CONSTRUCAO.DESENVOLVIMENTO).toBe('Desenvolvimento e plataforma');
+    expect(DOMINIOS_CONSTRUCAO).toContain('DESENVOLVIMENTO');
+    expect(moduloPorId('MISSION_CONTROL')!.dominio).toBe('DESENVOLVIMENTO');
   });
 });
