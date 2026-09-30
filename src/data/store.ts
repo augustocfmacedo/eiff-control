@@ -46,6 +46,7 @@ import type {
   Usuario,
 } from '../core/types';
 import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
+import { planejarMovimentacao } from '../core/extratos';
 import { ORIGEM_DF, resumoParecer, type PrevisaoDF } from '../core/cfo';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
@@ -2832,6 +2833,86 @@ export const actions = {
     ds = registrar({ ...ds, transacoes: [...ds.transacoes, ...novas] }, 'importar_extrato', 'transacoes', conta, undefined, { importadas: novas.length, duplicadas, antesDoCorte });
     commit(ds);
     return { importadas: novas.length, duplicadas, antesDoCorte };
+  },
+
+  /**
+   * Revincula transacoes do extrato a outra conta (extrato importado na conta errada).
+   * O movimento bancario nunca e apagado: a linha muda de conta e guarda de onde veio; quando a MESMA
+   * linha do banco ja existe na conta de destino, a copia e descartada logicamente (sai do caixa e da
+   * conciliacao) e, se a gemea estiver livre, assume os vinculos de conciliacao.
+   * Lancamento conciliado acompanha a conta do dinheiro quando todas as suas transacoes vao para o mesmo destino.
+   */
+  moverTransacoes(ids: string[], contaDestino: string, motivo: string) {
+    let ds = state.ds;
+    exigir('conciliar');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Diga por que as transações estão mudando de conta (fica na auditoria).');
+    const destino = ds.contas.find((c) => c.instituicao === contaDestino);
+    if (!destino) throw new RegraDeNegocioError('Conta de destino não encontrada.');
+    if (!destino.ativa) throw new RegraDeNegocioError('Conta de destino está inativa.');
+    const plano = planejarMovimentacao(ds.transacoes, ids, contaDestino);
+    if (plano.mover + plano.descartar === 0) throw new RegraDeNegocioError('Nada a fazer: as transações escolhidas já estão nesta conta ou já foram descartadas.');
+    const quando = agora();
+    const porId = new Map(plano.itens.map((i) => [i.transacao.id, i] as const));
+    const assumir = new Map<string, string[]>(); // gemea -> lancamentos que ela passa a conciliar
+    for (const i of plano.itens) if (i.transfereConciliacao && i.gemeaId) assumir.set(i.gemeaId, i.transacao.lancamentoIds);
+
+    const transacoes = ds.transacoes.map((t) => {
+      const assumidos = assumir.get(t.id);
+      if (assumidos) return { ...t, lancamentoIds: assumidos };
+      const i = porId.get(t.id);
+      if (!i) return t;
+      if (i.acao === 'mover') return { ...t, conta: contaDestino, contaOrigem: t.contaOrigem ?? t.conta, movidaEm: quando };
+      if (i.acao === 'descartar_duplicata') return { ...t, descartadaEm: quando, descartadaPor: state.usuario.id, motivoDescarte: `${motivo} · ${i.motivo}`, lancamentoIds: i.transfereConciliacao ? [] : t.lancamentoIds };
+      return t;
+    });
+
+    // lancamentos conciliados acompanham a conta quando todas as suas transacoes ativas vao para o destino
+    const movidos: string[] = [];
+    const lancamentosAfetados = new Set<string>();
+    for (const i of plano.itens) if (i.acao === 'mover') for (const id of i.transacao.lancamentoIds) lancamentosAfetados.add(id);
+    const lancamentos = ds.lancamentos.map((l) => {
+      if (!lancamentosAfetados.has(l.id) || l.contaFinanceira === contaDestino) return l;
+      const suas = transacoes.filter((t) => !t.descartadaEm && t.lancamentoIds.includes(l.id));
+      if (!suas.length || suas.some((t) => t.conta !== contaDestino)) return l;
+      movidos.push(l.id);
+      return { ...l, contaFinanceira: contaDestino, atualizadoEm: quando, atualizadoPor: state.usuario.nome, versao: l.versao + 1 };
+    });
+    const liquidacoes = ds.liquidacoes.map((q) => (movidos.includes(q.lancamentoId) ? { ...q, conta: contaDestino } : q));
+
+    const resumo = { destino: contaDestino, movidas: plano.mover, descartadas: plano.descartar, conciliacoesTransferidas: plano.conciliacoesTransferidas, lancamentosRealocados: movidos.length };
+    ds = registrar({ ...ds, transacoes, lancamentos, liquidacoes }, 'mover_transacoes', 'transacoes', contaDestino, { ids }, resumo, motivo);
+    commit(ds);
+    return { ...resumo, conciliacoesPerdidas: plano.conciliacoesPerdidas };
+  },
+
+  /** Descarta logicamente uma transacao importada indevidamente (a linha e a auditoria ficam no banco). */
+  descartarTransacao(id: string, motivo: string) {
+    let ds = state.ds;
+    exigir('conciliar');
+    const t = ds.transacoes.find((x) => x.id === id);
+    if (!t) throw new RegraDeNegocioError('Transação não encontrada.');
+    if (t.descartadaEm) throw new RegraDeNegocioError('Transação já descartada.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo do descarte é obrigatório.');
+    if (t.lancamentoIds.length) throw new RegraDeNegocioError('Transação conciliada: desfaça a conciliação antes de descartar.');
+    const novo = { ...t, descartadaEm: agora(), descartadaPor: state.usuario.id, motivoDescarte: motivo.trim() };
+    ds = registrar({ ...ds, transacoes: ds.transacoes.map((x) => (x.id === id ? novo : x)) }, 'descartar_transacao', 'transacao', id, t, novo, motivo);
+    commit(ds);
+    return novo;
+  },
+
+  /** Desfaz o descarte: a transação volta ao caixa e à fila de conciliação. */
+  restaurarTransacao(id: string) {
+    let ds = state.ds;
+    exigir('conciliar');
+    const t = ds.transacoes.find((x) => x.id === id);
+    if (!t) throw new RegraDeNegocioError('Transação não encontrada.');
+    if (!t.descartadaEm) throw new RegraDeNegocioError('Transação não está descartada.');
+    const gemea = t.idExterno && ds.transacoes.find((x) => x.id !== t.id && x.idExterno === t.idExterno && x.conta === t.conta && !x.descartadaEm);
+    if (gemea) throw new RegraDeNegocioError('Já existe a mesma linha do banco ativa nesta conta: restaurar criaria duplicata.');
+    const novo = { ...t, descartadaEm: undefined, descartadaPor: undefined, motivoDescarte: undefined };
+    ds = registrar({ ...ds, transacoes: ds.transacoes.map((x) => (x.id === id ? novo : x)) }, 'restaurar_transacao', 'transacao', id, t, novo);
+    commit(ds);
+    return novo;
   },
 
   /** BAN-004: concilia 1:1, 1:N; divergencia acima da tolerancia exige justificativa. */

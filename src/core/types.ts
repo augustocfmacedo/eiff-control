@@ -294,7 +294,13 @@ export interface TransacaoBancaria {
   lancamentoIds: string[];
   justificativa?: string;
   origem: string;
-  idExterno?: string;
+  idExterno?: string; // FITID do banco: identidade da linha no extrato
+  importadoEm?: string; // quando a linha entrou no sistema (agrupa o lote de importacao)
+  descartadaEm?: string; // descarte logico: importada na conta errada e ja existente na conta certa
+  descartadaPor?: string;
+  motivoDescarte?: string;
+  movidaEm?: string; // revinculada a outra conta
+  contaOrigem?: string; // conta em que havia sido importada antes da revinculacao
 }
 
 export type StatusDivida = 'Ativa' | 'Quitada' | 'Renegociada';
