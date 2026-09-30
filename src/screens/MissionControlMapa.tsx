@@ -18,7 +18,7 @@ import {
   moduloPorId, panoramaConstrucao, resumoDoNo, type ResumoExecutivo,
 } from '../core/central/construcao';
 import {
-  CLASSE_ESTADO_MAPA, FILTROS_MAPA, ROTULO_FILTRO_MAPA, arestasExecutivas, destaqueDoFiltro, impactoDe, layoutExecutivo, nosExecutivos,
+  CLASSE_ESTADO_MAPA, FILTROS_MAPA, ROTULO_FILTRO_MAPA, arestasExecutivas, destaqueDoFiltro, impactoDe, layoutExecutivo, nosExecutivos, rotasExecutivas,
   type FiltroMapa,
 } from '../core/central/mapaExecutivo';
 import { ROTULO_MC_STATUS, type MissionControlWorkItem } from '../core/central/workItem';
@@ -225,19 +225,17 @@ export default function MapaVivo({ itens, repositorios }: { itens: MissionContro
   const [aberto, setAberto] = useState<string | null>(null);
   const destaque = useMemo(() => destaqueDoFiltro(panorama, filtro), [panorama, filtro]);
   const bloqueados = useMemo(() => new Set(panorama.modulos.filter((p) => p.estado === 'BLOQUEADO').map((p) => p.modulo.id)), [panorama]);
-  const pos = useMemo(() => new Map(layout.nos.map((n) => [n.id, n])), [layout]);
   const { largNo, altNo } = layout;
   const leituraValida = panorama.tarefas !== null;
   const agora = new Date().toISOString();
   const moduloAberto = aberto ? panorama.modulos.find((p) => p.modulo.id === aberto) : undefined;
   const sel = selecionado ? nos.get(selecionado)?.resumo : undefined;
 
+  // o traçado vem do domínio (rotas ortogonais por corredores, provadas por teste geométrico: nenhuma atravessa cartão)
+  const rotas = useMemo(() => new Map(rotasExecutivas(layout, arestas).map((r) => [`${r.de}>${r.para}`, r])), [layout, arestas]);
   const caminho = (de: string, para: string): string => {
-    const a = pos.get(de)!; const b = pos.get(para)!;
-    const x1 = a.x + largNo; const y1 = a.y + altNo / 2;
-    const x2 = b.x; const y2 = b.y + altNo / 2;
-    const dx = Math.max(20, (x2 - x1) / 2);
-    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    const r = rotas.get(`${de}>${para}`);
+    return r ? `M ${r.pontos.map((p) => `${p.x} ${p.y}`).join(' L ')}` : '';
   };
   const verTecnico = (noId: string | null) => { setNoTecnicoInicial(noId); setVista('tecnico'); };
 

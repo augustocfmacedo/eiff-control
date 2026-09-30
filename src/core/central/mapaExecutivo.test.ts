@@ -7,7 +7,8 @@ import {
   resumoExecutivo,
 } from './construcao';
 import {
-  arestasExecutivas, destaqueDoFiltro, impactoDe, layoutExecutivo, moduloDoNoTecnico, nosExecutivos, profundidadeDosModulos,
+  arestasExecutivas, cartoesAtravessados, destaqueDoFiltro, impactoDe, layoutExecutivo, moduloDoNoTecnico, nosExecutivos, profundidadeDosModulos,
+  DISTANCIA_MINIMA_TRILHAS, retanguloDoNo, rotasExecutivas, type Ponto,
 } from './mapaExecutivo';
 import { ARESTAS, NOS, layoutDoMapa } from './mapaVivo';
 import type { MissionControlWorkItem } from './workItem';
@@ -172,5 +173,79 @@ describe('V2B · mapa vivo executivo', () => {
     const prof = profundidadeDosModulos();
     for (const m of MODULOS_CONSTRUCAO) for (const d of m.dependeDe ?? []) expect(prof.get(m.id)!).toBeGreaterThan(prof.get(d)!);
     expect(layoutExecutivo()).toEqual(l);
+  });
+});
+
+// V2B · roteamento das arestas: a revisão de aceite achou 5 arestas desenhadas por trás de cartões alheios, sugerindo
+// relações inexistentes (ex.: Plataforma → Inbox parecendo passar por Mission Control e pela EIFF Central). A prova é
+// geométrica: nenhum segmento de nenhuma aresta toca o interior de cartão algum — só encosta na borda da origem e do
+// destino.
+describe('V2B · roteamento das arestas executivas', () => {
+  const layout = layoutExecutivo();
+  const rotas = rotasExecutivas(layout);
+
+  it('19 rotas, uma por aresta executiva, da borda direita da origem à borda esquerda do destino', () => {
+    const arestas = arestasExecutivas();
+    expect(rotas.length).toBe(19);
+    expect(rotas.map((r) => `${r.de}>${r.para}`)).toEqual(arestas.map((a) => `${a.de}>${a.para}`));
+    for (const r of rotas) {
+      const o = retanguloDoNo(layout, r.de); const d = retanguloDoNo(layout, r.para);
+      const ini = r.pontos[0]; const fim = r.pontos[r.pontos.length - 1];
+      expect(ini.x, `${r.de}>${r.para} saída`).toBeCloseTo(o.x + o.w, 6);
+      expect(ini.y).toBeGreaterThan(o.y); expect(ini.y).toBeLessThan(o.y + o.h);
+      expect(fim.x, `${r.de}>${r.para} chegada`).toBeCloseTo(d.x, 6);
+      expect(fim.y).toBeGreaterThan(d.y); expect(fim.y).toBeLessThan(d.y + d.h);
+    }
+  });
+
+  it('nenhuma aresta atravessa o interior de cartão algum (19/19)', () => {
+    const cruzam = rotas.map((r) => ({ aresta: `${r.de}>${r.para}`, cartoes: cartoesAtravessados(r, layout) })).filter((x) => x.cartoes.length);
+    expect(cruzam).toEqual([]);
+  });
+
+  it('a verificação geométrica pega o defeito: a curva direta antiga atravessava exatamente os 5 cartões da revisão', () => {
+    const pos = new Map(layout.nos.map((n) => [n.id, n]));
+    const curva = (de: string, para: string) => {
+      const o = pos.get(de)!; const d = pos.get(para)!;
+      const x1 = o.x + layout.largNo, y1 = o.y + layout.altNo / 2, x2 = d.x, y2 = d.y + layout.altNo / 2;
+      const dx = Math.max(20, (x2 - x1) / 2);
+      const c = (t: number) => { const u = 1 - t; return { x: u * u * u * x1 + 3 * u * u * t * (x1 + dx) + 3 * u * t * t * (x2 - dx) + t * t * t * x2, y: u * u * u * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y2 }; };
+      return { de, para, pontos: Array.from({ length: 81 }, (_, i) => c(i / 80)) };
+    };
+    const antigas = arestasExecutivas().map((a) => ({ aresta: `${a.de}>${a.para}`, cartoes: cartoesAtravessados(curva(a.de, a.para), layout).sort() })).filter((x) => x.cartoes.length);
+    expect(antigas).toEqual([
+      { aresta: 'OBRAS>ESTOQUE', cartoes: ['EQUIPE_CAMPO', 'ORCAMENTOS'] },
+      { aresta: 'OBRAS>EQUIPE_CAMPO', cartoes: ['FABRICA', 'ORCAMENTOS'] },
+      { aresta: 'FINANCEIRO>COMPRAS', cartoes: ['ORCAMENTOS', 'TESOURARIA'] },
+      { aresta: 'PLATAFORMA>CENTRAL_WHATSAPP', cartoes: ['MISSION_CONTROL'] },
+      // a revisão, por amostragem no navegador, viu 2 cartões nesta; a geometria exata acha também a Dev Factory
+      { aresta: 'PLATAFORMA>INBOX', cartoes: ['CENTRAL_WHATSAPP', 'FACTORY', 'MISSION_CONTROL'] },
+    ]);
+  });
+
+  it('segmentos ortogonais, sem duas arestas sobrepostas no mesmo trecho e sem porta compartilhada', () => {
+    type Seg = { a: Ponto; b: Ponto; id: string };
+    const segs: Seg[] = rotas.flatMap((r) => r.pontos.slice(1).map((b, i) => ({ a: r.pontos[i], b, id: `${r.de}>${r.para}` })));
+    for (const s of segs) expect(s.a.x === s.b.x || s.a.y === s.b.y, `${s.id} diagonal`).toBe(true);
+    const sobrepoe = (s: Seg, t: Seg) => {
+      if (s.id === t.id) return false;
+      // paralelos que coexistem precisam de distância mínima; mais perto que isso as linhas se fundem na tela
+      const perto = DISTANCIA_MINIMA_TRILHAS - 0.01;
+      if (s.a.x === s.b.x && t.a.x === t.b.x && Math.abs(s.a.x - t.a.x) < perto) return Math.min(Math.max(s.a.y, s.b.y), Math.max(t.a.y, t.b.y)) - Math.max(Math.min(s.a.y, s.b.y), Math.min(t.a.y, t.b.y)) > 0.5;
+      if (s.a.y === s.b.y && t.a.y === t.b.y && Math.abs(s.a.y - t.a.y) < perto) return Math.min(Math.max(s.a.x, s.b.x), Math.max(t.a.x, t.b.x)) - Math.max(Math.min(s.a.x, s.b.x), Math.min(t.a.x, t.b.x)) > 0.5;
+      return false;
+    };
+    const pares: string[] = [];
+    for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) if (sobrepoe(segs[i], segs[j])) pares.push(`${segs[i].id} × ${segs[j].id}`);
+    expect(pares).toEqual([]);
+    const portas = rotas.flatMap((r) => [`${r.de}:saida:${r.pontos[0].y}`, `${r.para}:entrada:${r.pontos[r.pontos.length - 1].y}`]);
+    expect(new Set(portas).size).toBe(portas.length);
+  });
+
+  it('a tela desenha as rotas do domínio (sem curva própria) e o grafo técnico segue 20 nós / 29 arestas', () => {
+    const src = conteudo(MAPA);
+    expect(src).toMatch(/rotasExecutivas\(/);
+    expect(NOS.length).toBe(20);
+    expect(ARESTAS.length).toBe(29);
   });
 });

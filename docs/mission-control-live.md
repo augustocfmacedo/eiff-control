@@ -1139,3 +1139,15 @@ depende direta e indiretamente, só por dependências declaradas; nenhum estado 
 nenhuma relação vai para a coluna mais vazia da faixa. 5 colunas, 8 linhas, 1164 × 598 unidades. Abaixo de 1024 px a
 camada "Módulos" vira lista relacional por domínio (itens expansíveis com próximo passo, dependências nos dois sentidos,
 esperando você e "Abrir módulo"), com alvos de 44 px.
+
+**Roteamento das arestas (correção de aceite).** A primeira versão desenhava cada dependência como curva direta, e a
+revisão de aceite achou 5 delas passando por trás de cartões alheios (Obras → Estoque, Obras → Equipe, Financeiro →
+Compras, Plataforma → EIFF Central, Plataforma → Inbox), o que sugeria relações inexistentes — por exemplo "Mission
+Control → EIFF Central". O traçado saiu da tela e virou função pura (`rotasExecutivas`): roteamento ortogonal por
+corredores — sai por uma porta própria na metade de cima da borda direita da origem, corre pelo corredor entre colunas,
+cruza as colunas do meio por uma via livre entre linhas ou entre faixas, e entra por uma porta própria na metade de baixo
+da borda esquerda do destino. Arestas que coexistem num corredor ou numa via ganham trilhas separadas por
+`DISTANCIA_MINIMA_TRILHAS`. Prova geométrica (`segmentoCruzaRetangulo`, `cartoesAtravessados`): 19/19 arestas sem
+tocar interior de cartão, nenhum trecho sobreposto, nenhuma porta compartilhada; o mesmo teste aplicado à curva antiga
+reprova exatamente as 5 (e mostra que Plataforma → Inbox também cortava a Dev Factory). Dependências, estados e grafo
+técnico não mudaram.
