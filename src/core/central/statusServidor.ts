@@ -18,10 +18,11 @@ import {
   MAX_CHAMADAS_POR_CICLO, REPOSITORIOS_OBSERVADOS, lerGitHub,
   type CacheCondicional, type CodigoFalhaFonte, type LeituraGitHub, type LimiteGitHub, type RepositorioStatus,
 } from './githubAdapter';
+import { projetarEventos } from './correlacao';
 import { LIMITE_STALE_GITHUB_S, type BuildPublicado } from './statusVivo';
 import {
   contarPorStatus, consolidarWorkItems, normalizarIssueFactory, normalizarPullRequest,
-  type ContextoNormalizacao, type McStatus, type MissionControlWorkItem,
+  type ContextoNormalizacao, type McStatus, type MissionControlEvent, type MissionControlWorkItem,
 } from './workItem';
 
 // -------------------------------------------------------------------------------- contrato da resposta
@@ -47,6 +48,12 @@ export interface DevelopmentStatusResposta {
   fontes: { github: EstadoFonteResposta };
   repositorios: RepositorioStatus[];
   workItems: MissionControlWorkItem[];
+  /**
+   * MC-LIVE-3: eventos CONFIRMADOS, so com data real da fonte (criacao da issue, abertura do PR, fechamento da
+   * issue DONE). Saem da MESMA leitura dos work items — nenhuma chamada a mais. Nunca carregam corpo de issue,
+   * comentario, cabecalho ou payload cru; evento sem identidade segura vem sem `correlationId`.
+   */
+  events: MissionControlEvent[];
   contagens: Readonly<Record<McStatus, number>>;
   /** a fabrica AQUI e projecao do GitHub — e a resposta diz isso, nao a tela */
   factory: {
@@ -238,6 +245,7 @@ export async function tratarDevelopmentStatus(req: RequisicaoStatus, d: DepsStat
     },
     repositorios: leitura.repositorios,
     workItems,
+    events: projetarEventos(leitura),
     contagens: contarPorStatus(workItems),
     factory: {
       procedencia: 'GITHUB_PROJECTION',

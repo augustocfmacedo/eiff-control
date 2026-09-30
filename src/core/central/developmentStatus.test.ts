@@ -14,7 +14,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_CHAMADAS_POR_CICLO, RECUSAS_IDENTIDADE, REPOSITORIOS_OBSERVADOS, classificarRespostaGitHub, ehRepositorioObservado,
-  estadoDaLabel, extrairTaskId, lerGitHub, lerIdentidadeCanonica, semCache, situacaoDoCi, taskIdDaBranchDoJob,
+  estadoDaLabel, lerGitHub, lerIdentidadeCanonica, semCache, situacaoDoCi, taskIdDaBranchDoJob,
   type CacheCondicional, type EntradaCache,
 } from './githubAdapter';
 import { avaliarStatusVivo, compararBuild, humanizarIdade, LIMITE_STALE_GITHUB_S, ORIGEM_SHA_BUILD } from './statusVivo';
@@ -303,11 +303,13 @@ describe('normalização de CI e labels', () => {
     expect(laneDasLabels(['factory:risk:RED'])).toBe('RED');
     expect(laneDasLabels(['factory:task'])).toBeNull();
   });
-  it('taskId sai do formato canônico da fábrica, nunca de palpite', () => {
-    expect(extrairTaskId('[EC-0142] Exportar CSV')).toBe('EC-0142');
-    expect(extrairTaskId('factory/DF-0418-a2')).toBe('DF-0418');
-    expect(extrairTaskId('Ajuste sem identificador')).toBeNull();
-    expect(extrairTaskId(null)).toBeNull();
+  it('taskId sai do formato canônico da fábrica, nunca de palpite (MC-LIVE-3: título não é identidade)', async () => {
+    expect(taskIdDaBranchDoJob('factory/DF-0418-a2')).toBe('DF-0418');
+    expect(taskIdDaBranchDoJob('[EC-0142] Exportar CSV')).toBeNull();
+    // PR humano com [EC-0142] no título e branch fora do padrão: o adapter não extrai nada do título
+    const pulls = PULLS_CONTROL.map((p) => (p.number === 23 ? { ...p, title: '[EC-0142] Exportar CSV' } : p));
+    const r = corpo(await tratarDevelopmentStatus(req(), deps({ rotas: { ...ROTAS_SAUDAVEIS, [`${CAMINHOS.CONTROL}/pulls`]: { status: 200, corpo: pulls } } })));
+    expect(r.repositorios.find((x) => x.papel === 'produto')!.pullRequests.find((p) => p.numero === 23)!.taskId).toBeNull();
   });
 });
 
@@ -926,7 +928,7 @@ describe('identidade canônica — recusas (nunca palpite)', () => {
     expect(c[0].source).toBe('GITHUB');
   });
 
-  it('PR: a branch canônica é a identidade; título é último recurso e nunca vence a branch', async () => {
+  it('PR: a branch canônica é a ÚNICA identidade; título nunca vence a branch', async () => {
     expect(taskIdDaBranchDoJob('factory/EC-0042-a1')).toBe('EC-0042');
     expect(taskIdDaBranchDoJob('factory/EC-0042-a0')).toBeNull();   // attempt ≥ 1 (lerBranchDoJob)
     expect(taskIdDaBranchDoJob('factory/EC-0042')).toBeNull();

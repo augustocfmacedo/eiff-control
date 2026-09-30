@@ -909,6 +909,32 @@ tr.arrastando td { opacity: 0.55; }
 .mcq-rodape { display: flex; gap: 10px; flex-wrap: wrap; padding-top: 5px; border-top: 1px solid var(--border); }
 .mcq-rodape-nota { margin-top: var(--space-3); }
 
+/* MC-LIVE-3 — tarefa aberta: cadeia e eventos confirmados */
+.mcq-cartao { cursor: pointer; }
+.mcq-cartao[data-aberto] { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand); }
+.mcq-abrir { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.mcq-abrir:hover .mcq-id, .mcq-abrir:focus-visible .mcq-id { color: var(--brand); text-decoration: underline; }
+.mcq-detalhe { background: var(--surface-2); border: 1px solid var(--brand); border-radius: 8px; padding: 12px 14px; margin-bottom: var(--space-3); }
+.mcq-detalhe-topo { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.mcq-detalhe-topo .spacer { flex: 1 1 auto; }
+.mcq-detalhe-titulo { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.mcq-detalhe h3 { margin: var(--space-2) 0 6px; font-size: var(--text-sm); }
+.mcq-detalhe-grade { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+.mcq-cadeia { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); }
+.mcq-cadeia li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 8px; padding: 4px 0 4px 8px; border-left: 2px solid var(--border); }
+.mcq-cadeia li[data-estado="CONFIRMADO"] { border-left-color: var(--ok); }
+.mcq-cadeia-elo { color: var(--muted); }
+.mcq-cadeia-valor, .mcq-cadeia li a { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.mcq-cadeia-ausente { color: var(--muted); font-style: italic; }
+.mcq-cadeia-nota { grid-column: 2; color: var(--muted); line-height: 1.35; }
+.mcq-eventos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--text-xs); }
+.mcq-eventos li { display: flex; flex-direction: column; gap: 1px; padding-left: 8px; border-left: 2px solid var(--ok); }
+.mcq-eventos time { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) {
+  .mcq-detalhe-grade { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 900px) {
   .mcq-coluna { flex-basis: 240px; min-width: 240px; }
 }
