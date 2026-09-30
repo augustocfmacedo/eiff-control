@@ -71,6 +71,15 @@ function DetalheTarefa({ i, eventos, agora, onFechar }: { i: MissionControlWorkI
         <button type="button" className="btn sm" onClick={onFechar}>Fechar</button>
       </header>
       <p className="small muted">{ROTULO_CHAVE_CORRELACAO[d.chave]} · {d.confirmados} de {d.cadeia.length} elos confirmados</p>
+      {/* MC-LIVE-3B: só aparece com a API da Factory (procedência FACTORY_API); a projeção do GitHub nunca preenche */}
+      {d.operacional && (
+        <p className="small mcq-operacional">
+          Estado na Factory: <b>{d.operacional.estado}</b>
+          {d.operacional.tentativa !== undefined && <> · tentativa {d.operacional.tentativa}</>}
+          {d.operacional.turno !== undefined && d.operacional.maxTurnos !== undefined && <> · turno {d.operacional.turno}/{d.operacional.maxTurnos}</>}
+          {d.operacional.custoUsd !== undefined && <> · custo US$ {d.operacional.custoUsd.toFixed(2)}</>}
+        </p>
+      )}
 
       <div className="mcq-detalhe-grade">
         <div>

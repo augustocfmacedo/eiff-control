@@ -144,9 +144,10 @@ function valorDoElo(item: MissionControlWorkItem, elo: EloCadeia): { valor?: str
       const t = taskIdSeguro(item);
       return t ? { valor: t, nota: `Pelo ${(item.correlacaoPor ?? []).filter((o) => ORIGENS_DE_TASK.includes(o)).map((o) => ROTULO_ORIGEM[o]).join(' e ')}.` } : {};
     }
-    // o worker so e confirmado quando a Factory entrega o WorkerStatus (turno medido junto com o id)
-    case 'WORKER': return item.procedencia === 'FACTORY_API' && item.responsavel?.id && item.medidas?.turno !== undefined
-      ? { valor: item.responsavel.id } : {};
+    // MC-LIVE-3B: o worker so e confirmado pelo WorkerStatus da Factory ligado a PROPRIA task e tentativa
+    // (`normalizarJobFactory` recusa qualquer outro); nunca por responsavel, titulo, papel ou horario
+    case 'WORKER': return item.worker
+      ? { valor: item.worker.workerId, nota: `Pelo WorkerStatus da Factory: tentativa ${item.worker.tentativa}, fase ${item.worker.fase}.` } : {};
     case 'BRANCH': return l.branch ? { valor: l.branch } : {};
     case 'COMMIT': return l.commit ? { valor: l.commit.slice(0, 7), nota: 'Commit na ponta do pull request.' } : {};
     case 'PR': return l.pullRequest ? { valor: l.pullRequest, href: l.pullRequest } : {};
@@ -275,6 +276,24 @@ export function eventosDoItem(item: MissionControlWorkItem, eventos: readonly Mi
 
 // ------------------------------------------------------------------------------------ diagnostico
 
+/**
+ * Dados operacionais PERMITIDOS da Factory para o detalhe da tarefa. So existe quando o item vem da API da fabrica
+ * (`procedencia = FACTORY_API`); a projecao do GitHub nunca preenche — heartbeat, turno e custo nao existem la.
+ */
+export interface OperacionalFactory {
+  estado: string;
+  tentativa?: number;
+  custoUsd?: number;
+  turno?: number;
+  maxTurnos?: number;
+}
+
+export function operacionalDoItem(item: MissionControlWorkItem): OperacionalFactory | undefined {
+  if (item.procedencia !== 'FACTORY_API') return undefined;
+  const m = item.medidas ?? {};
+  return { estado: item.statusOrigem, tentativa: m.tentativa, custoUsd: m.custoUsd, turno: m.turno, maxTurnos: m.maxTurnos };
+}
+
 export interface DiagnosticoCorrelacao {
   itemId: string;
   chave: ChaveCorrelacao;
@@ -286,6 +305,8 @@ export interface DiagnosticoCorrelacao {
   confirmados: number;
   /** eventos confirmados do item, em ordem cronologica */
   eventos: MissionControlEvent[];
+  /** so com a API da Factory; hoje, sem transporte real, sempre ausente */
+  operacional?: OperacionalFactory;
 }
 
 /**
@@ -304,6 +325,7 @@ export function diagnosticarCorrelacao(item: MissionControlWorkItem, eventos: re
     cadeia,
     confirmados: cadeia.filter((e) => e.estado === 'CONFIRMADO').length,
     eventos: doItem,
+    operacional: operacionalDoItem(item),
   };
 }
 

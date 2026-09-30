@@ -19,9 +19,13 @@ import {
   type CacheCondicional, type CodigoFalhaFonte, type LeituraGitHub, type LimiteGitHub, type RepositorioStatus,
 } from './githubAdapter';
 import { projetarEventos } from './correlacao';
+import {
+  LIMITE_STALE_FACTORY_S, avaliarFonteFactory, projetarStatusFactory, validarStatusFactory,
+  type EstadoFonteFactory, type FactoryReadPort, type LeituraFactory,
+} from './factoryAdapter';
 import { LIMITE_STALE_GITHUB_S, type BuildPublicado } from './statusVivo';
 import {
-  contarPorStatus, consolidarWorkItems, normalizarIssueFactory, normalizarPullRequest,
+  consolidarEventos, contarPorStatus, consolidarWorkItems, normalizarIssueFactory, normalizarPullRequest,
   type ContextoNormalizacao, type McStatus, type MissionControlEvent, type MissionControlWorkItem,
 } from './workItem';
 
@@ -45,7 +49,11 @@ export interface DevelopmentStatusResposta {
   observadoEm: string;
   /** o que esta publicado; `sha: null` quando o ambiente nao informa (lacuna declarada) */
   build: BuildPublicado;
-  fontes: { github: EstadoFonteResposta };
+  /**
+   * `factory` só existe quando uma porta da Factory foi injetada (MC-LIVE-3B). Hoje nenhuma é: a W5 não existe e a
+   * função Netlify não passa porta — a resposta de produção é exatamente a de antes, sem esta chave.
+   */
+  fontes: { github: EstadoFonteResposta; factory?: EstadoFonteFactory };
   repositorios: RepositorioStatus[];
   workItems: MissionControlWorkItem[];
   /**
@@ -103,6 +111,20 @@ export interface DepsStatus {
   githubTimeoutMs?: number;
   cache?: CacheCondicional;
   build: BuildPublicado;
+  /**
+   * MC-LIVE-3B: leitura OPCIONAL da API read-only da Factory (W5). Ausente = comportamento atual, byte a byte.
+   * Nenhuma implementação existe nesta rodada (sem transporte, URL, autenticação ou segredo) — é o encaixe.
+   */
+  factory?: FactoryReadPort;
+}
+
+/** Uma leitura da porta: exceção vira SOURCE_UNAVAILABLE, corpo fora do contrato vira INVALID_PAYLOAD/CONTRACT_DRIFT. */
+export async function lerFonteFactory(porta: FactoryReadPort, agora: () => string): Promise<LeituraFactory> {
+  const observadoEm = agora();
+  let corpo: unknown;
+  try { corpo = await porta.lerStatus(); } catch { return { ok: false, observadoEm, codigo: 'SOURCE_UNAVAILABLE' }; }
+  const v = validarStatusFactory(corpo);
+  return v.ok ? { ok: true, observadoEm, status: v.status } : { ok: false, observadoEm, codigo: v.codigo, motivos: v.motivos };
 }
 
 const resp = (status: number, corpo: unknown): Resposta => ({ status, corpo });
@@ -225,7 +247,16 @@ export async function tratarDevelopmentStatus(req: RequisicaoStatus, d: DepsStat
     observadoEm: leitura.observadoEm, agora, limiteStaleSegundos: LIMITE_STALE_GITHUB_S,
     fonteIndisponivel: !algumDisponivel,
   };
-  const workItems = projetarWorkItems(leitura, ctx);
+  const doGitHub = projetarWorkItems(leitura, ctx);
+
+  // MC-LIVE-3B: Factory opcional. Sem porta nada muda; com porta, o mesmo taskId vira UM cartão (Factory manda no
+  // estado, GitHub nos artefatos) e só a Factory LIDA COM SUCESSO entra — falha não vira "zero jobs".
+  const leituraFactory = d.factory ? await lerFonteFactory(d.factory, d.agora) : null;
+  const projFactory = leituraFactory?.ok
+    ? projetarStatusFactory(leituraFactory.status, { observadoEm: leituraFactory.observadoEm, agora, limiteStaleSegundos: LIMITE_STALE_FACTORY_S })
+    : null;
+  const workItems = projFactory ? consolidarWorkItems([...doGitHub, ...projFactory.itens]) : doGitHub;
+  const events = projFactory ? consolidarEventos([...projetarEventos(leitura), ...projFactory.eventos]) : projetarEventos(leitura);
   const daFabrica = workItems.filter(ehDaFabrica);
 
   return resp(200, {
@@ -242,10 +273,11 @@ export async function tratarDevelopmentStatus(req: RequisicaoStatus, d: DepsStat
         chamadas: leitura.chamadas,
         maxChamadasPorCiclo: MAX_CHAMADAS_POR_CICLO,
       },
+      ...(d.factory ? { factory: avaliarFonteFactory(leituraFactory, agora) } : {}),
     },
     repositorios: leitura.repositorios,
     workItems,
-    events: projetarEventos(leitura),
+    events,
     contagens: contarPorStatus(workItems),
     factory: {
       procedencia: 'GITHUB_PROJECTION',

@@ -577,7 +577,7 @@ não um clone do Miro.
 | **MC-LIVE-1** | `/api/development-status` + GitHub vivo, bloco "Desenvolvimento ao vivo", LIVE × SNAPSHOT × STALE × UNAVAILABLE | **certificada (22/09/2026)** — smoke real no Deploy Preview do PR #6 (§ 16) |
 | **MC-LIVE-2A** | quadro operacional V0 (8 colunas, filtros, busca, contadores, read-only) sobre o mesmo polling | **concluída (22/09/2026)** |
 | **MC-LIVE-2B** | correções do smoke real: procedência por `source` + `procedencia`, CI não inferido do estado cru | **concluída (22/09/2026)** |
-| MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | depende da W5 da fábrica |
+| MC-LIVE-2 | adapter da Factory + fallback por labels (`FACTORY_ADAPTER_READONLY`) | **3B: adapter, porta, matriz e drift prontos (30/09/2026, § 19)**; transporte real depende da W5 da fábrica |
 | MC-LIVE-3 | correlação e eventos (`WORK_ITEM_CORRELACAO`) | **3A parcial (30/09/2026, § 18)**: cadeia e eventos confirmados sobre a projeção do GitHub; o gate segue aberto até `FACTORY_ADAPTER_READONLY` |
 | MC-LIVE-4 | Mapa Vivo (`MAPA_VIVO`) | **primeira UI entregue na MC-CONSTRUCTION-1 (23/09/2026, § 17)**; o gate segue aberto até a correlação (`WORK_ITEM_CORRELACAO`) dar estado real a todo nó |
 | MC-LIVE-5 | quadro de execução + realtime (`EXECUCAO_LIVE`, `MC_REALTIME`) — única migration prevista | — |
@@ -1242,3 +1242,87 @@ closed_at, ausências nomeadas, worker só pela Factory e gate ainda aberto.
 Para fechar a MC-LIVE-3 (e o gate), falta fonte que prove worker, CI da tarefa, merge e gate: o adapter da Factory
 (`FACTORY_ADAPTER_READONLY`) e/ou a leitura dos comentários estruturados da fábrica (`CLAIMED`, `CI_RESULT`,
 `INTEGRATED`), que hoje exigiria chamada por issue. Nada disso entra sem nova ordem.
+
+## 19. MC-LIVE-3B — Factory consumption readiness (30/09/2026)
+
+Preparação do EIFF Control para consumir a futura API read-only da EIFF Dev Factory (W5). **A Factory não está
+integrada**: nada lê a fábrica em produção, e `/api/development-status` responde exatamente como antes. Os gates
+`FACTORY_ADAPTER_READONLY` e `WORK_ITEM_CORRELACAO` **continuam abertos**.
+
+### 19.1 O que existe na fábrica (auditado na `main` 5a309fa, somente leitura)
+
+| Item | Situação |
+| --- | --- |
+| `packages/contracts/src/api.ts` | **presente** — `FactoryStatusResponseSchema`, `TaskSummarySchema`, `WorkerStatusSchema`, `FactoryStateSchema`, `ThroughputSchema`, `CostSchema` (todos `z.strictObject`) |
+| `packages/contracts/src/estados.ts`, `JOB_CONTRACT.md`, `docs/IMPLEMENTATION_PLAN.md` | presentes |
+| `packages/api` | **ausente** |
+| `docs/API_READONLY.md` | **ausente** |
+| endpoint `/api/factory/status` rodando | **ausente** — a rota só aparece em documentação (ARCHITECTURE, DEPLOYMENT, SECURITY) |
+
+**Autoridade do contrato (decisão do proprietário, 30/09/2026): a `main` do eiff-dev-factory é a ÚNICA autoridade
+canônica dos contratos espelhados pelo Mission Control** (`CONTRATO_FACTORY.ramoCanonico = 'main'`). Branches
+paralelas da fábrica, incluindo `w1/run-once`, não antecipam o contrato do EIFF Control.
+
+`api.ts` é idêntico na `main` (5a309fa) e na linha `w1/run-once` (f03fb50). **Divergência encontrada em `estados.ts`**:
+a `main` não tem `LEASE_LOST_INFRA` nem `ATTEMPT_TIMEOUT` em `COMMENT_KINDS` — eles existem só na linha W2-04A
+(6c9e14c, fora da `main`). Pela regra de autoridade, os dois **saíram do espelho** até chegarem à `main` da fábrica, e o
+drift voltou à regra única: **espelho == contrato da `main`**, sem exceção nem allowlist (kind a mais, kind a menos,
+enum adicional ou ausente reprovam). O detector antigo não viu a divergência porque lia o working tree local, que
+estava na linha `w1`.
+
+### 19.2 Capacidades do contrato (`CAPACIDADES_CONTRATO_FACTORY`)
+
+| Elo | Nível | Campos | Por quê |
+| --- | --- | --- | --- |
+| Issue | provado | `TaskSummary.issueUrl` | obrigatório em toda task |
+| taskId | provado | `TaskSummary.taskId`, `WorkerStatus.taskId` | formato canônico validado |
+| Worker | parcial | `WorkerStatus.workerId/taskId/attempt/startedAt` | só o worker em execução no momento da leitura |
+| Branch | ausente | — | não há campo; deduzir de taskId + tentativa seria inferência |
+| Commit | parcial | `TaskSummary.headSha` | só a ponta atual, nulo antes do PR |
+| PR | parcial | `TaskSummary.prUrl` | só o link, sem estado nem data; nunca identidade |
+| CI | ausente | — | `ci.running`/`ci.failed24h` são contadores globais |
+| Merge | ausente | — | INTEGRATED é estado atual, não fato datado |
+| Gate | ausente | — | `humanGates` são tasks aguardando humano, não gates do catálogo |
+
+`CAMPOS_AUDITADOS` registra, para cada campo pedido, o uso permitido e o proibido.
+
+### 19.3 Adapter, porta e fonte
+
+- `src/core/central/factoryAdapter.ts` é puro e síncrono (sem fetch, env, URL, token, React ou Supabase):
+  `validarStatusFactory` (fail-closed: campo a mais = `CONTRACT_DRIFT`, fora do contrato = `INVALID_PAYLOAD`, os
+  motivos só trazem caminhos), `projetarStatusFactory` (TaskSummary → cartão; a mesma task em várias listas vira uma,
+  escolhida pelos dados), `workerDaTask` (mesmo taskId **e** mesma tentativa; ambíguo = nenhum) e
+  `eventosDaFactory` (só `WORKER_STARTED`, com taskId canônico + workerId + startedAt).
+- `FactoryReadPort { lerStatus() }` é o encaixe da W5. **Ninguém o implementa**: sem transporte HTTP, sem URL, sem
+  autenticação e sem segredo novo.
+- `statusServidor.ts` aceita `factory?: FactoryReadPort`. Sem porta (produção hoje), a resposta não ganha nenhuma chave
+  e itens/eventos são os mesmos; a função Netlify não injeta porta. Com porta: `lerFonteFactory` (exceção =
+  `SOURCE_UNAVAILABLE`), `fontes.factory` com `NOT_CONFIGURED · UNAVAILABLE · STALE · LIVE`
+  (`avaliarFonteFactory`; STALE pelo `generatedAt`), e falha nunca vira "zero jobs" (`tarefas: null`).
+
+### 19.4 Correlação e precedência
+
+- Identidade de consolidação: **só o taskId canônico**. Factory EC-0042 + GitHub EC-0042 = um cartão.
+- `consolidarWorkItems` passou a fundir o grupo inteiro de uma vez (`fundirGrupo`): o conteúdo não depende da ordem
+  do array (teste com entradas invertidas) e a ordem de saída continua a da primeira aparição.
+- `precedenciaOperacional`: a API da Factory vence a projeção do GitHub no **estado** (estado, worker, tentativa,
+  custo); empate pelo id. `LINKS_AUTORIDADE_GITHUB`: issue, branch, PR e commit vêm de quem os leu no GitHub; sem
+  PR observado, o `headSha` da Factory preenche o commit e a branch fica vazia.
+- `MissionControlWorkItem.worker` só existe com o WorkerStatus da própria task e tentativa; a cadeia confirma o
+  worker só por ele. O detalhe da tarefa mostra "Estado na Factory" (estado, tentativa, turno, custo) apenas para
+  itens da API — hoje, nunca.
+
+### 19.5 Provas
+
+`src/core/central/factoryAdapter.test.ts` (29): os 20 obrigatórios da ordem, a matriz, o drift dos campos da API e a
+ordem de saída. Drift conferido localmente contra os contratos extraídos da `main` 5a309fa (**passa**) e de
+`w1/run-once` f03fb50 (**falha por drift em `COMMENT_KINDS`, como deve** — teste negativo, o Control não foi ajustado
+para as duas linhas passarem), contra um caminho inexistente (falha) e contra um `api.ts` com um campo a mais (falha). No CI do Control não há clone da
+fábrica: lá valem o parser testado com schema sintético e a recusa em runtime (`CONTRACT_DRIFT`).
+
+### 19.6 Ponto de conexão futuro e o que falta
+
+Quando a W5 existir: implementar a porta no servidor (transporte, URL e credencial decididos pela fábrica e pelo
+proprietário), injetá-la em `netlify/functions/development-status.ts` e rodar um smoke com fonte real. Só então:
+`FACTORY_ADAPTER_READONLY` pode fechar (falta **transporte real W5 + smoke com fonte real**), e `WORK_ITEM_CORRELACAO`
+ainda depende de uma tarefa canônica real e de fonte para CI da tarefa, merge e gate, que o contrato atual não tem.
