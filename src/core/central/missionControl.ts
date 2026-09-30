@@ -409,6 +409,8 @@ export const GATES: Gate[] = [
     evidencias: [
       { tipo: 'modulo', referencia: 'src/core/central/workItem.ts', simbolo: 'consolidarWorkItems', nota: 'contrato e normalização prontos; falta a correlação sobre fonte real' },
       { tipo: 'teste', referencia: 'src/core/central/workItem.test.ts' },
+      { tipo: 'modulo', referencia: 'src/core/central/correlacao.ts', simbolo: 'diagnosticarCorrelacao', nota: 'MC-LIVE-3A: cadeia e eventos confirmados sobre a projeção do GitHub; worker, CI da tarefa e merge não existem nesta fonte e dependem de FACTORY_ADAPTER_READONLY' },
+      { tipo: 'teste', referencia: 'src/core/central/correlacao.test.ts' },
     ],
   }),
   g({
