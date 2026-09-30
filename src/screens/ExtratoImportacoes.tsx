@@ -1,113 +1,140 @@
-// Histórico das importações de extrato e revinculação de um lote à conta certa.
-// Toda regra vem de src/core/extratos.ts e das ações do store; aqui só se mostra e se confirma.
+// Histórico das importações de extrato: cada linha é um arquivo que entrou, com dia e hora.
+// Importou na conta errada? Troque a conta na própria linha. Toda regra vem de src/core/extratos.ts
+// e das ações do store; aqui só se mostra, troca e confirma quando há algo a avisar.
 import React, { useMemo, useState } from 'react';
 import { lotesDeImportacao, planejarMovimentacao, type LoteImportacao } from '../core/extratos';
 import { actions, pode, useStore } from '../data/store';
-import { Badge, Empty, Field, Modal, Money, Select, money, tentar } from '../ui/components';
+import { Badge, Money, Select, money, tentar } from '../ui/components';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
-const dh = (s?: string) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)} ${s.slice(11, 16)}` : '—');
+const dh = (s?: string) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)} às ${s.slice(11, 16)}` : 'importação antiga');
 
 export function ImportacoesCard({ onErro, onOk }: { onErro: (m: string) => void; onOk: (m: string) => void }) {
   const { ds, usuario } = useStore();
-  const [revincular, setRevincular] = useState<LoteImportacao | null>(null);
   const podeConciliar = pode(usuario, 'conciliar');
   const lotes = useMemo(() => lotesDeImportacao(ds.transacoes, ds.contas), [ds.transacoes, ds.contas]);
-  const suspeitos = lotes.filter((l) => l.contaProvavel);
-
   if (!lotes.length) return null;
+  const suspeitos = lotes.filter((l) => l.contaProvavel).length;
+
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <h2>Importações do extrato <Badge tone="muted">{lotes.length}</Badge></h2>
-      <p className="small muted">Cada linha é o que entrou de uma vez numa conta. Importou na conta errada? Revincule: as linhas vão para a conta certa e as que já existirem lá são descartadas, sem apagar nada.</p>
-      {suspeitos.length > 0 && (
+      <p className="small muted">Cada linha é um arquivo que entrou. Importou na conta errada? <b>Troque a conta aqui na linha</b> — as transações vão junto, e as que já existirem na conta certa são descartadas em vez de duplicar. Nada é apagado.</p>
+      {podeConciliar && (
+        <div className="actions" style={{ marginBottom: 8 }}>
+          <span style={{ flex: 1 }} />
+          <LimparExtrato onErro={onErro} onOk={onOk} />
+        </div>
+      )}
+      {suspeitos > 0 && (
         <div className="alert warn small" style={{ marginBottom: 8 }}>
-          {suspeitos.length === 1 ? 'Uma importação parece' : `${suspeitos.length} importações parecem`} ter entrado na conta errada: as linhas têm o mesmo identificador de movimentos que já existem em outra conta.
+          {suspeitos === 1 ? 'Uma importação parece estar' : `${suspeitos} importações parecem estar`} na conta errada: os movimentos têm o mesmo identificador do banco de linhas que já existem em outra conta.
         </div>
       )}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Importado em</th><th>Conta</th><th>Período</th><th className="num">Linhas</th><th className="num">Movimento</th><th>Situação</th><th /></tr></thead>
+          <thead><tr><th>Importado em</th><th>Período do extrato</th><th className="num">Linhas</th><th className="num">Movimento</th><th>Conta</th><th>Situação</th></tr></thead>
           <tbody>
-            {lotes.map((l) => (
-              <tr key={l.chave} className={l.contaProvavel ? 'atencao' : undefined}>
-                <td>{dh(l.importadoEm)}<div className="muted small">{l.origem}</div></td>
-                <td>{l.conta}{l.contaProvavel && <div className="small neg">parece ser de {l.contaProvavel}</div>}</td>
-                <td className="small">{d(l.de)} a {d(l.ate)}</td>
-                <td className="num">{l.quantidade}</td>
-                <td className="num"><Money v={l.movimento} sign /><div className="muted small">C {money(l.creditos, true)} · D {money(l.debitos, true)}</div></td>
-                <td className="small">
-                  {l.conciliadas > 0 && <div>{l.conciliadas} conciliada(s)</div>}
-                  {l.descartadas > 0 && <div className="muted">{l.descartadas} descartada(s)</div>}
-                  {l.movidas > 0 && <div className="muted">{l.movidas} revinculada(s)</div>}
-                  {!l.conciliadas && !l.descartadas && !l.movidas && <span className="muted">—</span>}
-                </td>
-                <td className="actions">{podeConciliar && l.quantidade > l.descartadas && <button className={`btn sm no-print ${l.contaProvavel ? 'primary' : ''}`} onClick={() => setRevincular(l)}>Revincular</button>}</td>
-              </tr>
-            ))}
+            {lotes.map((l) => <LinhaLote key={l.chave} lote={l} podeConciliar={podeConciliar} onErro={onErro} onOk={onOk} />)}
           </tbody>
         </table>
       </div>
-      {revincular && <RevincularModal lote={revincular} onClose={() => setRevincular(null)} onErro={onErro} onOk={onOk} />}
     </div>
   );
 }
 
-function RevincularModal({ lote, onClose, onErro, onOk }: { lote: LoteImportacao; onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void }) {
+/** Recomeçar do zero: descarta o extrato importado (de uma conta ou de todas) e desfaz as conciliações dele. */
+function LimparExtrato({ onErro, onOk }: { onErro: (m: string) => void; onOk: (m: string) => void }) {
   const { ds } = useStore();
-  const destinos = ds.contas.filter((c) => c.ativa && c.instituicao !== lote.conta);
-  const [destino, setDestino] = useState(lote.contaProvavel && destinos.some((c) => c.instituicao === lote.contaProvavel) ? lote.contaProvavel : '');
-  const [motivo, setMotivo] = useState(lote.contaProvavel ? `Extrato de ${lote.contaProvavel} importado por engano em ${lote.conta}.` : '');
+  const [conta, setConta] = useState('');
+  const ativas = ds.transacoes.filter((t) => !t.descartadaEm && (!conta || t.conta === conta));
+  const conciliadas = ativas.filter((t) => t.lancamentoIds.length > 0).length;
+  const limpar = () => {
+    const onde = conta || 'TODAS as contas';
+    const aviso = [
+      `Descartar ${ativas.length} transação(ões) de ${onde}?`,
+      conciliadas ? `${conciliadas} está(ão) conciliada(s): a conciliação será desfeita e os lançamentos voltam para a fila.` : '',
+      'Nada é apagado — as linhas ficam no sistema como descartadas e você pode reimportar o extrato do zero.',
+    ].filter(Boolean).join('\n\n');
+    if (!window.confirm(aviso)) return;
+    tentar(
+      () => {
+        const r = actions.limparExtrato(conta || undefined, `Limpeza do extrato importado (${onde}) para reimportar do zero.`);
+        onOk(`${r.descartadas} transação(ões) descartada(s)${r.conciliacoesDesfeitas ? `, ${r.conciliacoesDesfeitas} conciliação(ões) desfeita(s)` : ''}. Pode importar os arquivos de novo.`);
+      },
+      onErro,
+    );
+  };
+  return (
+    <>
+      <Select value={conta} onChange={setConta} options={ds.contas.map((c) => ({ value: c.instituicao, label: c.instituicao }))} allowEmpty="todas as contas" aria-label="Conta a limpar" />
+      <button className="btn sm no-print" onClick={limpar} disabled={!ativas.length} title="Descarta o extrato importado para você mandar tudo de novo">
+        Limpar extrato importado ({ativas.length})
+      </button>
+    </>
+  );
+}
 
-  const doLote = useMemo(
+function LinhaLote({ lote, podeConciliar, onErro, onOk }: { lote: LoteImportacao; podeConciliar: boolean; onErro: (m: string) => void; onOk: (m: string) => void }) {
+  const { ds } = useStore();
+  const [trocando, setTrocando] = useState(false);
+  const ativas = useMemo(
     () => ds.transacoes.filter((t) => `${t.conta}|${(t.importadoEm ?? '').slice(0, 16) || t.origem}` === lote.chave && !t.descartadaEm),
     [ds.transacoes, lote.chave],
   );
-  const plano = useMemo(() => (destino ? planejarMovimentacao(ds.transacoes, doLote.map((t) => t.id), destino) : null), [ds.transacoes, doLote, destino]);
 
-  const confirmar = () => tentar(
-    () => {
-      const r = actions.moverTransacoes(doLote.map((t) => t.id), destino, motivo);
-      const partes = [`${r.movidas} revinculada(s) para ${destino}`];
-      if (r.descartadas) partes.push(`${r.descartadas} descartada(s) por já existirem lá`);
-      if (r.conciliacoesTransferidas) partes.push(`${r.conciliacoesTransferidas} conciliação(ões) transferida(s)`);
-      if (r.lancamentosRealocados) partes.push(`${r.lancamentosRealocados} lançamento(s) passaram para a conta nova`);
-      if (r.conciliacoesPerdidas) partes.push(`atenção: ${r.conciliacoesPerdidas} conciliação(ões) precisam ser refeitas`);
-      onOk(`${partes.join(' · ')}.`);
-    },
-    onErro,
-    onClose,
-  );
+  const trocar = (destino: string) => {
+    if (!destino || destino === lote.conta) return;
+    const plano = planejarMovimentacao(ds.transacoes, ativas.map((t) => t.id), destino);
+    // só interrompe quando há algo que o usuário precisa saber antes: duplicata ou conciliação em jogo
+    if (plano.descartar > 0 || plano.conciliacoesPerdidas > 0) {
+      const partes = [`Mover ${plano.mover} linha(s) para ${destino}.`];
+      if (plano.descartar) partes.push(`${plano.descartar} já existe(m) lá e será(ão) descartada(s) — sem apagar nada.`);
+      if (plano.conciliacoesTransferidas) partes.push(`${plano.conciliacoesTransferidas} conciliação(ões) passa(m) para a linha original.`);
+      if (plano.conciliacoesPerdidas) partes.push(`Atenção: ${plano.conciliacoesPerdidas} conciliação(ões) precisará(ão) ser refeita(s).`);
+      if (!window.confirm(`${partes.join('\n')}\n\nConfirmar?`)) return;
+    }
+    setTrocando(true);
+    tentar(
+      () => {
+        const r = actions.moverTransacoes(ativas.map((t) => t.id), destino, `Extrato importado em ${lote.conta} e corrigido para ${destino}.`);
+        const partes = [`${r.movidas} linha(s) agora em ${destino}`];
+        if (r.descartadas) partes.push(`${r.descartadas} descartada(s) por já existirem lá`);
+        if (r.lancamentosRealocados) partes.push(`${r.lancamentosRealocados} lançamento(s) passaram para a conta nova`);
+        if (r.conciliacoesPerdidas) partes.push(`${r.conciliacoesPerdidas} conciliação(ões) a refazer`);
+        onOk(`${partes.join(' · ')}.`);
+      },
+      onErro,
+      () => setTrocando(false),
+    );
+    setTrocando(false);
+  };
 
+  const contas = ds.contas.filter((c) => c.ativa || c.instituicao === lote.conta);
+  const tratado = ativas.length === 0;
   return (
-    <Modal title={`Revincular importação de ${lote.conta}`} onClose={onClose}>
-      <p className="small muted">{lote.quantidade} linha(s) de {d(lote.de)} a {d(lote.ate)}, importadas em {dh(lote.importadoEm)}. O movimento bancário não é apagado: ele muda de conta, e a linha que já existir na conta de destino é descartada.</p>
-      <div className="form">
-        <Field label="Conta correta" req>
-          <Select value={destino} onChange={setDestino} options={destinos.map((c) => ({ value: c.instituicao, label: `${c.instituicao} · ${c.conta}` }))} allowEmpty="Escolha a conta" />
-        </Field>
-        <Field label="Motivo" req full hint="fica na auditoria">
-          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="ex.: extrato do Inter importado na conta do BB" />
-        </Field>
-      </div>
-      {plano && (
-        <div style={{ marginTop: 12 }}>
-          <div className="grid cols-3">
-            <div className="kpi"><div className="label">Vão para {destino}</div><div className="value">{plano.mover}</div><div className="hint">efeito no caixa {money(plano.movimentoQueEntra, true)}</div></div>
-            <div className="kpi"><div className="label">Descartadas (já existem lá)</div><div className="value">{plano.descartar}</div><div className="hint">{plano.conciliacoesTransferidas} conciliação(ões) passam para a linha original</div></div>
-            <div className="kpi"><div className="label">Sai de {lote.conta}</div><div className="value">{money(plano.movimentoQueSai, true)}</div><div className="hint">{plano.semEfeito > 0 ? `${plano.semEfeito} sem efeito` : 'saldo da conta corrigido'}</div></div>
-          </div>
-          {plano.conciliacoesPerdidas > 0 && (
-            <div className="alert warn small" style={{ marginTop: 8 }}>{plano.conciliacoesPerdidas} transação(ões) conciliada(s) são duplicata de linhas que já estão conciliadas na conta de destino: a conciliação fica como está e você decide o que fazer com o lançamento.</div>
-          )}
-          {plano.mover + plano.descartar === 0 && <div className="alert info small" style={{ marginTop: 8 }}>Nada a fazer com esta escolha.</div>}
-        </div>
-      )}
-      <div className="foot">
-        <button className="btn" onClick={onClose}>Cancelar</button>
-        <button className="btn primary" onClick={confirmar} disabled={!destino || !motivo.trim() || !plano || plano.mover + plano.descartar === 0}>Revincular</button>
-      </div>
-    </Modal>
+    <tr className={lote.contaProvavel ? 'atencao' : undefined}>
+      <td>{dh(lote.importadoEm)}<div className="muted small">{lote.origem === 'ofx' ? 'arquivo OFX' : lote.origem}</div></td>
+      <td className="small">{d(lote.de)} a {d(lote.ate)}</td>
+      <td className="num">{lote.quantidade}</td>
+      <td className="num"><Money v={lote.movimento} sign /><div className="muted small">C {money(lote.creditos, true)} · D {money(lote.debitos, true)}</div></td>
+      <td style={{ minWidth: 170 }}>
+        {podeConciliar && !tratado ? (
+          <>
+            <Select value={lote.conta} onChange={trocar} options={contas.map((c) => ({ value: c.instituicao, label: c.instituicao }))} disabled={trocando} aria-label={`Conta da importação de ${dh(lote.importadoEm)}`} />
+            {lote.contaProvavel && <div className="small neg">deveria ser {lote.contaProvavel}</div>}
+          </>
+        ) : (
+          <>{lote.conta}{lote.contaProvavel && <div className="small neg">parece ser de {lote.contaProvavel}</div>}</>
+        )}
+      </td>
+      <td className="small">
+        {lote.conciliadas > 0 && <div>{lote.conciliadas} conciliada(s)</div>}
+        {lote.descartadas > 0 && <div className="muted">{lote.descartadas} descartada(s)</div>}
+        {lote.movidas > 0 && <div className="muted">veio de outra conta</div>}
+        {!lote.conciliadas && !lote.descartadas && !lote.movidas && <span className="muted">—</span>}
+      </td>
+    </tr>
   );
 }
 
@@ -120,7 +147,7 @@ export function DescartadasCard({ onErro, onOk }: { onErro: (m: string) => void;
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <h2>Descartadas <Badge tone="muted">{descartadas.length}</Badge></h2>
-      <p className="small muted">Linhas importadas em duplicidade. Não entram no caixa, no fluxo nem na conciliação; nada foi apagado.</p>
+      <p className="small muted">Linhas que entraram em duplicidade. Não contam no caixa, no fluxo nem na conciliação; nada foi apagado.</p>
       <div className="table-wrap">
         <table>
           <thead><tr><th>Data</th><th>Conta</th><th>Histórico</th><th className="num">Movimento</th><th>Motivo</th><th /></tr></thead>
@@ -140,5 +167,3 @@ export function DescartadasCard({ onErro, onOk }: { onErro: (m: string) => void;
     </div>
   );
 }
-
-export { Empty };

@@ -2813,8 +2813,10 @@ export const actions = {
   importarTransacoes(conta: string, linhas: Omit<TransacaoBancaria, 'id' | 'registro' | 'conta' | 'lancamentoIds' | 'origem'>[]) {
     let ds = state.ds;
     exigir('conciliar');
-    const existentes = new Set(ds.transacoes.map((t) => `${t.conta}|${t.data}|${t.debito}|${t.credito}|${t.historico}`));
-    const externos = new Set(ds.transacoes.filter((t) => t.idExterno).map((t) => `${t.conta}|${t.idExterno}`));
+    // descartada nao conta na deduplicacao: quem limpou o extrato quer poder reimportar do zero
+    const vivas = ds.transacoes.filter((t) => !t.descartadaEm);
+    const existentes = new Set(vivas.map((t) => `${t.conta}|${t.data}|${t.debito}|${t.credito}|${t.historico}`));
+    const externos = new Set(vivas.filter((t) => t.idExterno).map((t) => `${t.conta}|${t.idExterno}`));
     const novas: TransacaoBancaria[] = [];
     let duplicadas = 0; let antesDoCorte = 0;
     const quando = agora(); // identifica o lote: e por ele que a tela agrupa a importacao
@@ -2884,6 +2886,33 @@ export const actions = {
     ds = registrar({ ...ds, transacoes, lancamentos, liquidacoes }, 'mover_transacoes', 'transacoes', contaDestino, { ids }, resumo, motivo);
     commit(ds);
     return { ...resumo, conciliacoesPerdidas: plano.conciliacoesPerdidas };
+  },
+
+  /**
+   * Limpa o extrato importado (de uma conta ou de todas): descarta as transacoes, desfaz as conciliacoes
+   * que dependiam delas e devolve os lancamentos para a fila. Nada e apagado - as linhas ficam no banco
+   * com o motivo, e podem ser restauradas uma a uma. Depois disso o mesmo extrato pode ser reimportado:
+   * a deduplicacao ignora descartadas.
+   */
+  limparExtrato(conta: string | undefined, motivo: string) {
+    let ds = state.ds;
+    exigir('conciliar');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Diga por que o extrato está sendo limpo (fica na auditoria).');
+    if (conta && !ds.contas.some((c) => c.instituicao === conta)) throw new RegraDeNegocioError('Conta não encontrada.');
+    const alvo = ds.transacoes.filter((t) => !t.descartadaEm && (!conta || t.conta === conta));
+    if (!alvo.length) throw new RegraDeNegocioError('Não há extrato importado para limpar.');
+    const ids = new Set(alvo.map((t) => t.id));
+    const desconciliados = new Set<string>();
+    for (const t of alvo) for (const id of t.lancamentoIds) desconciliados.add(id);
+    const quando = agora();
+    const transacoes = ds.transacoes.map((t) => (ids.has(t.id)
+      ? { ...t, descartadaEm: quando, descartadaPor: state.usuario.id, motivoDescarte: motivo.trim(), lancamentoIds: [], justificativa: undefined }
+      : t));
+    const lancamentos = ds.lancamentos.map((l) => (desconciliados.has(l.id) && l.conciliado ? { ...l, conciliado: false } : l));
+    const resumo = { conta: conta ?? 'todas as contas', descartadas: alvo.length, conciliacoesDesfeitas: desconciliados.size };
+    ds = registrar({ ...ds, transacoes, lancamentos }, 'limpar_extrato', 'transacoes', conta ?? 'todas', { transacoes: alvo.length }, resumo, motivo);
+    commit(ds);
+    return resumo;
   },
 
   /** Descarta logicamente uma transacao importada indevidamente (a linha e a auditoria ficam no banco). */

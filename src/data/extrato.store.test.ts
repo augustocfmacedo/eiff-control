@@ -110,3 +110,57 @@ describe('revincular extrato à conta certa', () => {
     expect(() => actions.restaurarTransacao(x1)).toThrow(/não está descartada/i);
   });
 });
+
+describe('limpar o extrato e reimportar do zero', () => {
+  beforeEach(() => {
+    actions.trocarUsuario('u-admin');
+    actions.restaurarPlanilha();
+    for (const [id, instituicao] of [['CTA-ERR', ERRADA], ['CTA-OK', CERTA]] as const) {
+      actions.salvarConta({ id, registro: 'Real', instituicao, conta: '0001-0', tipo: 'Conta corrente', saldoInicial: 0, saldoInicialData: '2026-09-01', reservaVinculada: 0, ativa: true });
+    }
+  });
+
+  it('limpa uma conta, desfaz as conciliações dela e deixa reimportar o mesmo extrato', () => {
+    importar(ERRADA, 'FIT-A', -100);
+    importar(ERRADA, 'FIT-B', -200);
+    importar(CERTA, 'FIT-C', -300);
+    const lanc = ds().lancamentos.find((l) => l.status !== 'Cancelado' && !l.excluidoEm)!;
+    actions.conciliar(acharPorFitid('FIT-A').id, [lanc.id], 'divergência do teste');
+    expect(saldo(ERRADA)).toBeCloseTo(-300, 2);
+
+    const r = actions.limparExtrato(ERRADA, 'extrato importado errado; vou mandar tudo de novo');
+    expect(r).toMatchObject({ descartadas: 2, conciliacoesDesfeitas: 1 });
+    expect(saldo(ERRADA)).toBeCloseTo(0, 2);
+    expect(saldo(CERTA)).toBeCloseTo(-300, 2); // a outra conta não é tocada
+    expect(ds().lancamentos.find((l) => l.id === lanc.id)!.conciliado).toBe(false);
+    expect(ds().transacoes.filter((t) => t.descartadaEm).every((t) => t.lancamentoIds.length === 0)).toBe(true);
+
+    // o mesmo extrato entra de novo, na conta certa, sem ser barrado pela deduplicação
+    const volta = importar(CERTA, 'FIT-A', -100);
+    expect(volta.importadas).toBe(1);
+    expect(saldo(CERTA)).toBeCloseTo(-400, 2);
+  });
+
+  it('limpa todas as contas quando não se diz qual, e exige motivo', () => {
+    importar(ERRADA, 'FIT-X', -50);
+    importar(CERTA, 'FIT-Y', -70);
+    expect(() => actions.limparExtrato(undefined, '  ')).toThrow(/por que/i);
+    const r = actions.limparExtrato(undefined, 'recomeçar a importação do zero');
+    expect(r.descartadas).toBe(2);
+    expect(saldo(ERRADA)).toBeCloseTo(0, 2);
+    expect(saldo(CERTA)).toBeCloseTo(0, 2);
+    expect(() => actions.limparExtrato(undefined, 'de novo')).toThrow(/não há extrato/i);
+  });
+
+  it('não apaga nada: as linhas seguem no dataset e podem ser restauradas', () => {
+    importar(ERRADA, 'FIT-Z', -25);
+    const antes = ds().transacoes.length;
+    actions.limparExtrato(ERRADA, 'limpeza geral');
+    expect(ds().transacoes.length).toBe(antes);
+    const z = acharPorFitid('FIT-Z');
+    expect(z.descartadaEm).toBeTruthy();
+    expect(z.motivoDescarte).toBe('limpeza geral');
+    actions.restaurarTransacao(z.id);
+    expect(saldo(ERRADA)).toBeCloseTo(-25, 2);
+  });
+});
