@@ -29,7 +29,7 @@ import { STATUS_THREAD, type InboxDataset } from '../inbox/tipos';
 import { estadoSla } from '../inbox/roteamento';
 
 /** Versão das definições do snapshot. Mudar uma definição ou um recorte sobe a versão. */
-export const VERSAO_REGRAS_CD = 'CD-1.0';
+export const VERSAO_REGRAS_CD = 'CD-1.1'; // CD-1.1: amostra mínima das taxas = 30 (decisão CD-D4)
 
 const CLASSES_RADAR = ['A+', 'A', 'B', 'C', 'D'] as const satisfies readonly ClassePrioridade[];
 const TIPOS_SUPRESSAO = ['do_not_contact', 'email_bounced', 'invalid_phone', 'opt_out'] as const satisfies readonly TipoSupressao[];

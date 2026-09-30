@@ -3,10 +3,12 @@
 Estado em 30/09/2026:
 
 - **CD-0 CLOSED**: arquitetura, fronteiras, matriz de autoridade, inventário e baseline (PR #26, `main @ 51322a5`).
-- **CD-1 em implementação** na branch `feature/commercial-director-cd1-snapshot` (de `origin/main @ a8183bc`):
-  snapshot comercial canônico, puro e somente leitura (§17). Sem rota, tela, API, migration ou LLM.
+- **CD-1 CLOSED** (PR #29, `main @ ce1e5ff`): snapshot comercial canônico, puro e somente leitura (§17). Sem rota,
+  tela, API, migration ou LLM. **CD-1.1** (amostra mínima das taxas = 30, decisão CD-D4) na branch
+  `feature/commercial-director-cd-d4` (§19).
 - CD-2 a CD-10 não iniciados.
-- Decisões **D-1, D-2 e D-6 fechadas** em 30/09/2026 (§16.2); D-3, D-4 e D-5 abertas.
+- Decisões **D-1, D-2 e D-6 fechadas** em 30/09/2026 (§16.2); **CD-D3, CD-D4 e CD-D5 fechadas** em 30/09/2026 (§19).
+  Só a CD-D4 está implementada; CD-D5 e depois CD-D3 são frentes separadas.
 
 Documentos vizinhos: Máquina Comercial em `docs/commercial-machine.md` e `docs/commercial-machine-cm2.md` (plano e
 histórico em `COMMERCIAL_MACHINE_V1_PLAN.md`), decisão de UX em `docs/commercial-ux-1.0-decisao.md`, Lead Engine em
@@ -203,7 +205,7 @@ type MedidaCD<T = number> =
 type FonteCD = 'RADAR' | 'CM1_A' | 'CM1_B' | 'CM2_B' | 'CM2_C' | 'COBERTURA' | 'LEAD_ENGINE' | 'INBOX';
 
 interface CommercialDirectorSnapshot {
-  versaoRegras: string;            // 'CD-1.0'; mudar corte ou definição sobe a versão
+  versaoRegras: string;            // 'CD-1.1' desde a CD-D4; mudar corte ou definição sobe a versão
   hoje: string;                    // AAAA-MM-DD explícito; nunca o relógio da máquina
   geradoDe: { versaoFila: string; versaoPlano: string; versaoCadencia: string };
   base: CommercialBaseHealth;
@@ -526,7 +528,7 @@ passos em `POR_ROTA` do Tour.
 A tela só entra no CD-6. A "Inteligência" do Command Center (`docs/commercial-ux-1.0-decisao.md` §11) continua sendo
 outra coisa: o Diretor tem casa própria.
 
-### 16.2 Decisões em aberto
+### 16.2 Decisões (todas fechadas em 30/09/2026)
 
 - **D-1 · Casa do Diretor — FECHADA (30/09/2026)**: tela própria `#/radar/diretor`, grupo Comercial, rótulo
   "Radar · Diretor Comercial". Nunca `/diretor` (Diretor Financeiro). Rota e tela só no CD-6.
@@ -534,9 +536,14 @@ outra coisa: o Diretor tem casa própria.
   consome as mesmas definições, pode criar métricas próprias de experimento, aprendizado e calibração, e nunca redefine a
   mesma medida com outra fórmula. Uma métrica comercial = uma definição canônica. O contrato da medida vive no módulo
   neutro `src/core/radar/commercialMetrics.ts`.
-- **D-3 · Meta comercial**: quem define, com que granularidade (período, segmento, valor ou contagem) e onde fica.
-- **D-4 · Amostra mínima**: o corte abaixo do qual nenhuma taxa é publicada.
-- **D-5 · Dono de conta**: o Radar não tem responsável por conta; sem ele não há leitura por vendedor.
+- **CD-D3 · Meta comercial — FECHADA (30/09/2026)**: receita ganha em BRL, mensal, versionada (§19.1). Antes
+  chamada D-3 aqui.
+- **CD-D4 · Amostra mínima — FECHADA (30/09/2026)**: 30 observações no denominador (§19.2). Antes chamada D-4 aqui.
+- **CD-D5 · Dono da conta — FECHADA (30/09/2026)**: zero ou um dono comercial canônico por conta (§19.3). Antes
+  chamada D-5 aqui.
+
+A nomenclatura CD-D3/CD-D4/CD-D5 é deste documento. As decisões D-3/D-4 do Lead Engine (`docs/lead-engine-1.0.md`)
+são outras e não mudam.
 - **D-6 · Legado — FECHADA (30/09/2026)**: `resumoRadar` e `filaHoje` estão DEPRECADOS como autoridades comerciais; o
   Diretor não os usa (teste prende). A remoção física é frente separada e acontece antes do CD-6. A Commercial Queue
   continua a autoridade operacional. **Remoção física feita em 30/09/2026** (§18).
@@ -557,15 +564,16 @@ outra coisa: o Diretor tem casa própria.
 
 ## 17. CD-1 — snapshot comercial canônico
 
-`snapshotComercialCD(radar, hoje, opcoes)` em `src/core/radar/commercialDirector.ts`, versão `VERSAO_REGRAS_CD` = `CD-1.0`.
+`snapshotComercialCD(radar, hoje, opcoes)` em `src/core/radar/commercialDirector.ts`, versão `VERSAO_REGRAS_CD` = `CD-1.0`
+(`CD-1.1` desde a CD-D4, §19.2).
 Responde "o que sabemos objetivamente agora"; não diagnostica nem recomenda. Os nomes finais substituem a proposta da
 §5.1 onde diferem; os conceitos são os mesmos.
 
 **Medida** (`MedidaComercial`, módulo neutro `commercialMetrics.ts`): `id`, `descricao` (o que é contado),
 `estado` (`DISPONIVEL` · `DADO_INSUFICIENTE` · `NAO_APLICAVEL`), `valor` só quando disponível, `base` (universo ou
 denominador), `unidade`, `autoridade` e `motivoInsuficiencia`. Zero nunca significa "não sei". `taxa()` só publica
-com denominador positivo e amostra mínima alcançada; como a amostra mínima (D-4) ainda não foi decidida
-(`AMOSTRA_MINIMA_TAXA = undefined`), **nenhuma taxa é publicada no CD-1**.
+com denominador positivo e amostra mínima alcançada. No CD-1.0 a amostra mínima não estava decidida
+(`AMOSTRA_MINIMA_TAXA = undefined`) e nenhuma taxa era publicada; desde o CD-1.1 ela é 30 (CD-D4, §19.2).
 
 **Entradas**: o `RadarDataset`, `hoje` explícito (validado como na fila) e, opcionais, o Inbox carregado, o instante
 `agoraIso` para SLA e o limite de referências. Nenhum relógio, rede ou persistência.
@@ -584,8 +592,9 @@ com denominador positivo e amostra mínima alcançada; como a amostra mínima (D
 | Inbox | threads visíveis, por contexto e status, externas por intenção classificada, sem classificação, com primeira resposta, SLA vencido (só com `agoraIso`), contatos vinculados ao Radar, threads por conta (só com vínculo explícito) | `estadoSla`; nunca corpo de mensagem |
 
 **Não entra**: valor ponderado do pipeline (a única ponderação canônica hoje é por conta, dentro da fila, para
-desempate — somá-la não é pipeline), setor canônico (a classificação lê o payload bruto), taxas (D-4), e qualquer
-métrica por vendedor (D-5).
+desempate — somá-la não é pipeline), setor canônico (a classificação lê o payload bruto), taxas com menos de 30
+observações (CD-D4), meta e realizado (CD-D3, ainda não implementada) e qualquer métrica por dono (CD-D5, ainda não
+implementada).
 
 **Provas** (`commercialDirector.test.ts`): determinismo; permutação das coleções não muda o resultado; dataset e Inbox
 congelados não são alterados; nenhuma chave de score/peso/ranking; referências = `fila.itens` na mesma ordem (o único
@@ -646,3 +655,51 @@ da Hoje; a posição se confere na Hoje. A próxima ação do "antes/depois" de 
 `lerEmpresa`, `recomendarAcao`, `decisorDe`, `construirCommercialQueue` e `snapshotComercialCD`. Afirmações removidas
 por não terem sucessor: ordenação da fila por `priorityScore`, `pipelinePonderado`, as janelas de 30/90 dias do resumo
 (`respostas30d`), `followUpsVencidos`, `comDecisor`, `comCanal` e `precisamPesquisa`.
+
+## 19. Decisões CD-D3, CD-D4 e CD-D5 (fechadas em 30/09/2026)
+
+Nomenclatura própria do Commercial Director. As decisões D-3/D-4 do Lead Engine são outras e não mudam. Ordem de
+implementação: CD-D4 primeiro (§19.2), depois CD-D5 e só então CD-D3, cada uma em frente e PR próprios. As migrations
+da CD-D5 e da CD-D3 não se combinam.
+
+### 19.1 CD-D3 — Meta comercial (fechada; não implementada)
+
+- Meta primária = **receita ganha**, em **BRL**, período padrão **mensal**, fuso canônico **`America/Sao_Paulo`**.
+- Definida à mão por usuário autorizado (permissão `radar_config`, usuário ativo da mesma organização), persistida e
+  **versionada**: toda alteração cria nova versão e nenhuma versão existente é sobrescrita.
+- V1 não tem metas por vendedor, vertical ou região. Sem meta válida → `DADO_INSUFICIENTE`. O CD-4 consome o gap.
+- **Realizado**: oportunidades ganhas pelo instante de fechamento convertido para `America/Sao_Paulo`. O estado atual
+  da conta não altera o realizado histórico: conta depois inativada, mesclada ou fora da Commercial Queue não elimina
+  um ganho já contabilizado.
+- **Ganho sem valor**: oportunidade ganha sem `valorEstimado` continua sendo ganho e entra na quantidade de ganhos, mas
+  não entra no valor realizado; aparece na medida separada `GANHOS_SEM_VALOR`. Enquanto houver ganho sem valor no
+  período, o gap monetário exato fica `DADO_INSUFICIENTE`. Valor faltante nunca é estimado.
+
+### 19.2 CD-D4 — Amostra mínima (fechada; implementada no CD-1.1)
+
+- `AMOSTRA_MINIMA_TAXA = 30` em `src/core/radar/commercialMetrics.ts`.
+- Denominador 0 → `DADO_INSUFICIENTE` ("sem amostra"); denominador < 30 → `DADO_INSUFICIENTE` ("amostra abaixo da
+  mínima (n < 30)"); denominador ≥ 30 → taxa disponível. A semântica de `taxa()` não mudou: só a constante saiu de
+  `undefined` para 30.
+- 30 é **regra de governança do produto** (quando uma taxa pode ser mostrada), **não** afirmação de precisão
+  estatística. Toda interface ou relatório que mostrar uma taxa (a tela do Diretor, no CD-6, é a primeira) deve dizer
+  que ela foi liberada pelo corte de governança de 30 observações e mostrar a base.
+- `VERSAO_REGRAS_CD` subiu de `CD-1.0` para `CD-1.1`, porque as taxas `funil.taxaGanhoSobreFechadas` e
+  `funil.taxaContaTocadaParaOportunidade` passam a sair `DISPONIVEL` quando o denominador chega a 30. Nenhuma outra
+  medida muda. Com os dados de produção de 30/09/2026 (0 oportunidades) nada muda na prática.
+- Provas (`commercialDirector.test.ts`, testes 14 e 14b): denominadores 0, 29, 30, 31 e 100 pela primitiva com o corte
+  padrão, e 29, 30 e 40 oportunidades fechadas pelo snapshot; 0% com amostra é disponível, nunca confundido com falta
+  de amostra.
+
+### 19.3 CD-D5 — Dono da conta (fechada; não implementada)
+
+- Cada conta comercial tem **zero ou um** dono comercial canônico, que precisa ser usuário **ativo** da **mesma
+  organização**. Sem dono = `SEM_DONO`.
+- O dono **não substitui** o responsável da oportunidade (`responsavelId`), o responsável da tarefa nem o responsável
+  que a Commercial Queue deriva por item (`responsavelId` + `origemResponsavel` do CM1-A). A fila **não** usa o dono
+  para ordenar.
+- Conta sem dono não entra em métricas de desempenho individual e é diagnosticável pelo Diretor.
+- Mudança de dono é auditável. Definir ou alterar dono exige a permissão `radar`, com validação de usuário ativo e
+  mesma organização.
+- **Mescla**: o dono da conta absorvida não é herdado automaticamente. A conta canônica mantém o próprio dono (com dono,
+  mantém; sem dono, fica `SEM_DONO`). A decisão de dono depois de uma mescla é humana.
