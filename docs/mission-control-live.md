@@ -1259,11 +1259,16 @@ integrada**: nada lê a fábrica em produção, e `/api/development-status` resp
 | `docs/API_READONLY.md` | **ausente** |
 | endpoint `/api/factory/status` rodando | **ausente** — a rota só aparece em documentação (ARCHITECTURE, DEPLOYMENT, SECURITY) |
 
+**Autoridade do contrato (decisão do proprietário, 30/09/2026): a `main` do eiff-dev-factory é a ÚNICA autoridade
+canônica dos contratos espelhados pelo Mission Control** (`CONTRATO_FACTORY.ramoCanonico = 'main'`). Branches
+paralelas da fábrica, incluindo `w1/run-once`, não antecipam o contrato do EIFF Control.
+
 `api.ts` é idêntico na `main` (5a309fa) e na linha `w1/run-once` (f03fb50). **Divergência encontrada em `estados.ts`**:
 a `main` não tem `LEASE_LOST_INFRA` nem `ATTEMPT_TIMEOUT` em `COMMENT_KINDS` — eles existem só na linha W2-04A
-(6c9e14c, fora da `main`). O espelho do Control segue com os dois (ler um kind a mais não desinterpreta nada), a
-diferença ficou declarada em `COMMENT_KINDS_FORA_DA_MAIN_FACTORY`, e o drift aceita exatamente ela e nenhuma outra.
-O detector antigo não viu isso porque lia o working tree local, que estava na linha `w1`.
+(6c9e14c, fora da `main`). Pela regra de autoridade, os dois **saíram do espelho** até chegarem à `main` da fábrica, e o
+drift voltou à regra única: **espelho == contrato da `main`**, sem exceção nem allowlist (kind a mais, kind a menos,
+enum adicional ou ausente reprovam). O detector antigo não viu a divergência porque lia o working tree local, que
+estava na linha `w1`.
 
 ### 19.2 Capacidades do contrato (`CAPACIDADES_CONTRATO_FACTORY`)
 
@@ -1310,8 +1315,9 @@ O detector antigo não viu isso porque lia o working tree local, que estava na l
 ### 19.5 Provas
 
 `src/core/central/factoryAdapter.test.ts` (29): os 20 obrigatórios da ordem, a matriz, o drift dos campos da API e a
-ordem de saída. Drift conferido localmente contra os contratos extraídos da `main` e de `w1` (os dois passam), contra
-um caminho inexistente (falha) e contra um `api.ts` com um campo a mais (falha). No CI do Control não há clone da
+ordem de saída. Drift conferido localmente contra os contratos extraídos da `main` 5a309fa (**passa**) e de
+`w1/run-once` f03fb50 (**falha por drift em `COMMENT_KINDS`, como deve** — teste negativo, o Control não foi ajustado
+para as duas linhas passarem), contra um caminho inexistente (falha) e contra um `api.ts` com um campo a mais (falha). No CI do Control não há clone da
 fábrica: lá valem o parser testado com schema sintético e a recusa em runtime (`CONTRACT_DRIFT`).
 
 ### 19.6 Ponto de conexão futuro e o que falta

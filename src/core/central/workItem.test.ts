@@ -16,7 +16,7 @@ import {
   ARESTAS, NOS, ciclosDoMapa, dependenciasDe, gatesDesconhecidosNoMapa, noPorId, TIPOS_ARESTA,
 } from './mapaVivo';
 import {
-  ATOR_POR_ESTADO_FACTORY, COMMENT_KINDS_FORA_DA_MAIN_FACTORY, CONTRATO_FACTORY, COR_MC_SINAL, ESPELHO_ACTORS, ESPELHO_COMMENT_KINDS,
+  ATOR_POR_ESTADO_FACTORY, CONTRATO_FACTORY, COR_MC_SINAL, ESPELHO_ACTORS, ESPELHO_COMMENT_KINDS,
   ESPELHO_FACTORY_STATES, ESPELHO_JOB_STATES, ESPELHO_LANES, ESPELHO_WORKER_ROLES, MC_ATORES, MC_FONTES,
   MC_SINAIS, MC_STATUS, MC_TIPOS_EVENTO, ORDEM_MC_STATUS, ROTULO_MC_ATOR, ROTULO_MC_SINAL,
   ROTULO_MC_STATUS, STATUS_POR_CATEGORIA_CM, STATUS_POR_ESTADO_FACTORY, avaliarFrescor, consolidarEventos,
@@ -93,9 +93,14 @@ describe('contract drift com o eiff-dev-factory', () => {
     return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   };
 
-  it('o espelho aponta para a autoridade certa', () => {
+  it('o espelho aponta para a autoridade certa: a main da fabrica, e so ela', () => {
     expect(CONTRATO_FACTORY.repositorio).toBe('augustocfmacedo/eiff-dev-factory');
+    expect(CONTRATO_FACTORY.ramoCanonico).toBe('main');
     expect(CONTRATO_FACTORY.estados).toBe('packages/contracts/src/estados.ts');
+    // nenhuma allowlist de divergencia: kinds so da branch paralela nao estao no espelho
+    expect(ESPELHO_COMMENT_KINDS).not.toContain('LEASE_LOST_INFRA');
+    expect(ESPELHO_COMMENT_KINDS).not.toContain('ATTEMPT_TIMEOUT');
+    expect(fs.readFileSync('src/core/central/workItem.ts', 'utf8')).not.toMatch(/FORA_DA_MAIN|excecao de drift|allowlist de divergencia/i);
   });
 
   it('os catalogos espelhados batem com o contrato da fabrica', () => {
@@ -109,11 +114,8 @@ describe('contract drift com o eiff-dev-factory', () => {
     expect(catalogo(texto, 'LANES')).toEqual([...ESPELHO_LANES]);
     expect(catalogo(texto, 'WORKER_ROLES')).toEqual([...ESPELHO_WORKER_ROLES]);
     expect(catalogo(texto, 'FACTORY_STATES')).toEqual([...ESPELHO_FACTORY_STATES]);
-    // divergencia CONHECIDA entre as linhas da fabrica (COMMENT_KINDS_FORA_DA_MAIN_FACTORY): o espelho e o contrato,
-    // ou o contrato mais exatamente aqueles dois — qualquer outra diferenca reprova
-    const kinds = catalogo(texto, 'COMMENT_KINDS');
-    const semLinhaW2 = ESPELHO_COMMENT_KINDS.filter((k) => !(COMMENT_KINDS_FORA_DA_MAIN_FACTORY as readonly string[]).includes(k));
-    expect([JSON.stringify([...ESPELHO_COMMENT_KINDS]), JSON.stringify(semLinhaW2)]).toContain(JSON.stringify(kinds));
+    // regra unica (MC-LIVE-3B, autoridade = main da fabrica): espelho == contrato. Kind a mais ou a menos reprova.
+    expect(catalogo(texto, 'COMMENT_KINDS')).toEqual([...ESPELHO_COMMENT_KINDS]);
     expect(catalogo(texto, 'ACTORS')).toEqual([...ESPELHO_ACTORS]);
   });
 });

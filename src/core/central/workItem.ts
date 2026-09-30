@@ -28,9 +28,14 @@ import type { Evidencia, Gate } from './missionControl';
 
 // ---------------------------------------------------------------------- espelho do contrato da fabrica
 
-/** Onde vive a AUTORIDADE dos catalogos espelhados abaixo (repositorio eiff-dev-factory). */
+/**
+ * Onde vive a AUTORIDADE dos catalogos espelhados abaixo (repositorio eiff-dev-factory). Desde a MC-LIVE-3B a
+ * autoridade e a `main` da fabrica e so ela: o drift exige espelho == contrato da `main`, sem excecao.
+ */
 export const CONTRATO_FACTORY = {
   repositorio: 'augustocfmacedo/eiff-dev-factory',
+  /** o unico ramo canonico dos contratos espelhados; branch paralela nunca antecipa contrato */
+  ramoCanonico: 'main',
   estados: 'packages/contracts/src/estados.ts',
   api: 'packages/contracts/src/api.ts',
   /** variavel de ambiente que aponta para o clone local, usada so pelo teste de drift */
@@ -58,25 +63,17 @@ export type PapelWorkerFactory = (typeof ESPELHO_WORKER_ROLES)[number];
 export const ESPELHO_FACTORY_STATES = ['RUNNING', 'PAUSED', 'DEGRADED', 'EMERGENCY_STOP'] as const;
 export type EstadoFabrica = (typeof ESPELHO_FACTORY_STATES)[number];
 
-/** ESPELHO de COMMENT_KINDS — os eventos que a fabrica escreve na issue. */
+/**
+ * ESPELHO de COMMENT_KINDS — os eventos que a fabrica escreve na issue. Autoridade: a `main` da fabrica, e so ela
+ * (`CONTRATO_FACTORY.ramoCanonico`). Kind que existe apenas numa branch paralela da fabrica NAO entra aqui ate chegar
+ * a `main`: branch paralela nao antecipa contrato do EIFF Control.
+ */
 export const ESPELHO_COMMENT_KINDS = [
   'SPEC_WRITTEN', 'ARCH_APPROVE_SPEC', 'ARCH_RETURN_SPEC', 'ADMITTED', 'CLAIMED', 'LEASE_EXPIRED',
-  // W2-04A da fabrica (6c9e14c): LEASE_EXPIRED virou legado; a perda de infraestrutura (nao consome tentativa) e o
-  // estouro de tempo (consome tentativa) passaram a ser comentarios distintos. O Mission Control NAO infere resultado
-  // deles: ambos seguem como TASK_PROGRESS com o fato bruto preservado em tipoOrigem.
-  'LEASE_LOST_INFRA', 'ATTEMPT_TIMEOUT',
   'WORKER_REPORT', 'CI_RESULT', 'ARCH_REVIEW', 'ARCH_DECISION_DISCARDED', 'HUMAN_DECISION', 'INTEGRATED',
   'BLOCKED', 'REPLANNED', 'DONE', 'MODEL_ESCALATION', 'RECONCILED',
 ] as const;
 export type ComentarioFactory = (typeof ESPELHO_COMMENT_KINDS)[number];
-
-/**
- * Divergencia CONHECIDA entre linhas da fabrica (auditada na MC-LIVE-3B, 30/09/2026): estes dois kinds existem na
- * linha W2-04A (6c9e14c, branch `w1/run-once`) e AINDA NAO na `main` da fabrica (5a309fa, GOV-01/GOV-02). O espelho
- * os mantem porque ler um kind a mais nunca desinterpreta nada. O drift aceita exatamente esta diferenca — espelho =
- * contrato, ou espelho = contrato + estes dois — e reprova qualquer outra.
- */
-export const COMMENT_KINDS_FORA_DA_MAIN_FACTORY = ['LEASE_LOST_INFRA', 'ATTEMPT_TIMEOUT'] as const;
 
 /** ESPELHO de ACTORS. */
 export const ESPELHO_ACTORS = ['architect', 'dispatcher', 'supervisor', 'integrator', 'human'] as const;
