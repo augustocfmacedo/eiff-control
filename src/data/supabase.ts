@@ -310,7 +310,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     liquidacoes: liqs.map((q) => ({ id: q.id, lancamentoId: r.lancsInv.get(q.entry_id) ?? '', data: q.settled_on, valor: Number(q.amount), conta: r.contasInv.get(q.bank_account_id) ?? '', documento: q.document_number ?? undefined, criadoPor: nome(q.created_by), criadoEm: q.created_at })),
     transacoes: trans.map((t) => {
       const links = recPorTrans.get(t.id) ?? [];
-      return { id: t.external_id ?? t.id, registro: t.record_kind, data: t.transaction_date, conta: r.contasInv.get(t.bank_account_id) ?? '', historico: t.description ?? '', documento: t.document_number ?? '', debito: Number(t.debit), credito: Number(t.credit), lancamentoIds: links.map((x) => r.lancsInv.get(x.entry_id) ?? '').filter(Boolean), justificativa: links.find((x) => x.justification)?.justification ?? undefined, origem: 'supabase', idExterno: t.external_id ?? undefined };
+      return { id: t.external_id ?? t.id, registro: t.record_kind, data: t.transaction_date, conta: r.contasInv.get(t.bank_account_id) ?? '', historico: t.description ?? '', documento: t.document_number ?? '', debito: Number(t.debit), credito: Number(t.credit), lancamentoIds: links.map((x) => r.lancsInv.get(x.entry_id) ?? '').filter(Boolean), justificativa: links.find((x) => x.justification)?.justification ?? undefined, origem: 'supabase', idExterno: t.external_id ?? undefined, importadoEm: t.imported_at ?? undefined, descartadaEm: t.discarded_at ?? undefined, descartadaPor: t.discarded_by ?? undefined, motivoDescarte: t.discard_reason ?? undefined, movidaEm: t.moved_at ?? undefined, contaOrigem: t.moved_from_account_id ? r.contasInv.get(t.moved_from_account_id) : undefined };
     }),
     dividas: dividas.map((d) => ({ id: d.code, registro: d.record_kind, credor: d.creditor_name ?? '', instrumento: d.instrument, contratacao: d.contracted_at ?? undefined, principal: Number(d.principal), saldoDevedor: Number(d.outstanding_balance), taxaAa: Number(d.annual_rate ?? 0), parcelaMensal: Number(d.monthly_installment ?? 0), proximoVencimento: d.next_due_date ?? undefined, parcelasRestantes: Number(d.remaining_installments ?? 0), garantia: d.guarantee ?? '', status: d.status, observacoes: d.notes ?? '' })),
     aprovacoes: aprovs.map((a) => ({
@@ -524,12 +524,20 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const t of mudou(antes.transacoes, depois.transacoes, 'id')) {
     let tid = r.trans.get(t.id);
     if (!tid) {
-      const { data, error } = await sb.from('bank_transaction').insert({ organization_id: r.orgId, bank_account_id: r.contas.get(t.conta), record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito }).select('id');
+      const { data, error } = await sb.from('bank_transaction').insert({ organization_id: r.orgId, bank_account_id: r.contas.get(t.conta), record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito, imported_at: t.importadoEm ?? new Date().toISOString() }).select('id');
       falha('importar transação', error);
       tid = data?.[0]?.id;
       if (tid) r.trans.set(t.id, tid);
     }
     const prev = transAntes.get(t.id);
+    if (tid && prev && (prev.conta !== t.conta || prev.descartadaEm !== t.descartadaEm)) {
+      // movimento bancario e fato: so a conta e o descarte mudam (o trigger no banco recusa o resto)
+      const patch: Row = {};
+      if (prev.conta !== t.conta) { patch.bank_account_id = r.contas.get(t.conta); patch.moved_from_account_id = r.contas.get(t.contaOrigem ?? prev.conta); patch.moved_at = t.movidaEm ?? new Date().toISOString(); patch.moved_by = atorId; }
+      if (prev.descartadaEm !== t.descartadaEm) { patch.discarded_at = t.descartadaEm ?? null; patch.discarded_by = t.descartadaEm ? atorId : null; patch.discard_reason = t.descartadaEm ? t.motivoDescarte ?? null : null; }
+      const { error } = await sb.from('bank_transaction').update(patch).eq('id', tid);
+      falha('atualizar transação do extrato', error);
+    }
     if (tid && (!prev || JSON.stringify(prev.lancamentoIds) !== JSON.stringify(t.lancamentoIds) || prev.justificativa !== t.justificativa)) {
       const { error: e1 } = await sb.from('reconciliation').delete().eq('bank_transaction_id', tid);
       falha('limpar vínculos', e1);

@@ -68,7 +68,8 @@ export const fmtBr = (s?: string): string => (s ? `${s.slice(8, 10)}/${s.slice(5
 // Inclusao no modelo (coluna "Incluir Modelo")
 // ---------------------------------------------------------------------------
 /** Transacao do extrato conta se o registro e incluido e a data nao e anterior ao corte do extrato (params.corteExtrato). */
-export const incluirTransacao = (t: { registro: Registro; data: string }, params: Params): boolean => incluirRegistro(t.registro, params) && (!params.corteExtrato || t.data >= params.corteExtrato);
+export const incluirTransacao = (t: { registro: Registro; data: string; descartadaEm?: string }, params: Params): boolean =>
+  incluirRegistro(t.registro, params) && !t.descartadaEm && (!params.corteExtrato || t.data >= params.corteExtrato);
 export const incluirRegistro = (registro: Registro, params: Params): boolean =>
   registro === 'Real' || (registro === 'Exemplo' && params.incluirDemo);
 

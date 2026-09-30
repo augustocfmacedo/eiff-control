@@ -3,6 +3,7 @@ import { calcLancamentos, calcTransacoes, sugerirConciliacao } from '../core/eng
 import { actions, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Kpi, Link, Modal, Money, PageHead, Select, StatusBadge, money, tentar, useToast } from '../ui/components';
 import { ImportarOfxModal, LancarTransacaoModal } from './ConciliacaoOfx';
+import { DescartadasCard, ImportacoesCard } from './ExtratoImportacoes';
 
 function parseCsv(texto: string) {
   const linhas = texto.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -83,6 +84,8 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
           {ds.contas.map((c) => <tr key={c.id}><td>{c.id}</td><td>{c.instituicao}</td><td>{c.conta}</td><td><Badge tone="muted">manual</Badge> <span className="muted small">Pluggy/Open Finance somente leitura na fase 1</span></td><td className="num">{trans.filter((x) => x.conta === c.instituicao).length}</td><td className="muted small">{trans.filter((x) => x.conta === c.instituicao).map((x) => x.data).sort().pop()?.split('-').reverse().join('/') ?? '—'}</td></tr>)}
         </tbody></table>
       </div>
+      <ImportacoesCard onErro={toast} onOk={toast} />
+      <DescartadasCard onErro={toast} onOk={toast} />
       {podeConciliar && pares.length > 0 && (
         <div className="card pares" style={{ marginBottom: 16 }}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
