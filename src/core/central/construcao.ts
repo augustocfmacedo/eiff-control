@@ -220,6 +220,8 @@ export const SECOES_ATUAIS = {
   estadoProjeto: '## Estado e decisões (atualizar ao mudar)',
   /** preâmbulo "Estado em …" do docs/lead-engine-1.0.md: é ele que o Lead Engine atualiza a cada gate */
   leadEngineEstado: '# EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida',
+  /** registro da execução do backfill de 90 dias em produção (§41.1): fato consumado, com os números do banco */
+  leadEngineBackfill: '### 41.1 Execução em produção — 24/09/2026',
 } as const;
 
 
@@ -407,11 +409,18 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       // própria) — é código, não operação. O preâmbulo diz "desenhado, não ativado"; §40 é o registro do gate (histórico).
       { id: 'DESCOBERTA_DESENHO', titulo: 'Descoberta contínua desenhada: monitor de snapshot, retenção e executor (protótipo, não ativado)', tituloExecutivo: 'Descoberta contínua desenhada: monitor da fonte, retenção e executor (protótipo, não ativado)', natureza: 'CODIGO', evidencias: [mod('src/core/radar/cnoMonitor.ts', 'decidirMonitor'), mod('src/core/radar/cnoMonitor.ts', 'planoExecucaoAgendada'), mod('src/core/radar/cnoMonitor.ts', 'registrosARemoverAoSairDaJanela'), mod('src/core/radar/cnoMonitor.test.ts'), doc('docs/lead-engine-1.0.md', '**LE3-E desenhado, não ativado**', SECOES_ATUAIS.leadEngineEstado)] },
       {
-        id: 'BACKFILL_90D', titulo: 'Descoberta contínua: backfill da janela de 90 dias gravado', natureza: 'OPERACAO',
-        // gravar em produção exige a autorização explícita do runner (`--executar --confirmar`): é decisão, não código.
-        pendencia: { tipo: 'DECISAO', acao: 'Autorizar a gravação do backfill da janela de 90 dias em produção' },
-        // ensaiado read-only (§40.1), nada gravado: a pendência é o que o preâmbulo afirma hoje.
-        pendenciaDeclarada: [doc('docs/lead-engine-1.0.md', '65 novos, nada gravado', SECOES_ATUAIS.leadEngineEstado)],
+        id: 'BACKFILL_90D', titulo: 'Descoberta contínua: backfill da janela de 90 dias gravado', natureza: 'PRODUCAO',
+        // executado em produção em 24/09/2026 com autorização explícita (§41.1). Prova = o registro da execução (65
+        // inserts, 115 candidatos, 115 NOOP na nova simulação, scheduler desligado) + o preâmbulo e o estado do projeto
+        // atuais. A §40.1 é o ensaio (histórico) e nunca serve de prova do estado de hoje.
+        evidencias: [
+          doc('docs/lead-engine-1.0.md', '65 inserts numa única transação', SECOES_ATUAIS.leadEngineBackfill),
+          doc('docs/lead-engine-1.0.md', '| candidatos CNO `PENDING` | 50 | 115 |', SECOES_ATUAIS.leadEngineBackfill),
+          doc('docs/lead-engine-1.0.md', '**Segunda simulação contra a produção: 115 IDEMPOTENT_NOOP**', SECOES_ATUAIS.leadEngineBackfill),
+          doc('docs/lead-engine-1.0.md', '**Scheduler continua desligado.**', SECOES_ATUAIS.leadEngineBackfill),
+          doc('docs/lead-engine-1.0.md', '**Backfill de 90 dias executado em produção em 24/09/2026**', SECOES_ATUAIS.leadEngineEstado),
+          doc('CLAUDE.md', '+ 65 do backfill de 90 dias (24/09) = **115**', SECOES_ATUAIS.estadoProjeto),
+        ],
       },
       {
         id: 'MONITOR_ATIVO', titulo: 'Descoberta contínua: monitor diário agendado e ligado', natureza: 'OPERACAO',
