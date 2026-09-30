@@ -1,0 +1,41 @@
+-- Correção do extrato do Inter (AMsteel) importado na conta do BB (Modo Modular) em 4 lotes
+-- (15/09 16:51, 15/09 16:52, 30/09 19:26 e 30/09 19:27). São 214 linhas com identificador do
+-- Inter dentro da CTA-001; 32 delas já existem na CTA-002 (mesma linha, mesmo FITID, mesmo valor).
+-- Mesma regra de src/core/extratos.ts: duplicata é descartada onde entrou; o resto muda de conta.
+-- Nada é apagado. Rodar depois da 0059.
+
+-- as linhas do Inter que foram parar na conta do BB
+create temporary table _intrusas on commit drop as
+select t.id, t.external_id, t.bank_account_id,
+       (select i.id from bank_transaction i
+          join bank_account bi on bi.id = i.bank_account_id and bi.code = 'CTA-002'
+         where i.external_id = t.external_id and i.discarded_at is null limit 1) as gemea_id
+from bank_transaction t
+join bank_account b on b.id = t.bank_account_id and b.code = 'CTA-001'
+where t.external_id ~ '^[0-9]{12,13}$' and t.discarded_at is null;
+
+-- 1) conciliações feitas sobre uma duplicata passam para a linha original do Inter, quando ela está livre
+update reconciliation r
+set bank_transaction_id = x.gemea_id
+from _intrusas x
+where r.bank_transaction_id = x.id and x.gemea_id is not null
+  and not exists (select 1 from reconciliation r2 where r2.bank_transaction_id = x.gemea_id);
+
+-- 2) duplicatas: descarte lógico na conta em que entraram (o unique por conta impediria movê-las)
+update bank_transaction t
+set discarded_at = now(),
+    discarded_by = (select p.id from profile p join organization o on o.id = p.organization_id
+                     where o.code = 'EIFF' and p.email = 'augusto@eiff.com.br'),
+    discard_reason = 'Extrato do Inter importado na conta do BB; esta linha já existe na conta do Inter.'
+from _intrusas x
+where t.id = x.id and x.gemea_id is not null;
+
+-- 3) as demais vão para a conta do Inter, guardando de onde vieram
+update bank_transaction t
+set bank_account_id = (select id from bank_account where code = 'CTA-002'),
+    moved_from_account_id = x.bank_account_id,
+    moved_at = now(),
+    moved_by = (select p.id from profile p join organization o on o.id = p.organization_id
+                 where o.code = 'EIFF' and p.email = 'augusto@eiff.com.br')
+from _intrusas x
+where t.id = x.id and x.gemea_id is null;
