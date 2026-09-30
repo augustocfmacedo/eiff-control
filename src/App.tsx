@@ -17,6 +17,7 @@ import { registrarAcao, registrarVisita } from './data/telemetria';
 import { aplicarDensidade, lerDensidade, type Densidade } from './ui/Tabela';
 import { entradaDoApp } from './screens/piloto/financeiroCompactoModel';
 import { entradaDoApp as entradaObrasDoApp } from './screens/piloto/obrasCompactoModel';
+import { entradaDoApp as entradaComprasDoApp } from './screens/piloto/comprasCompactoModel';
 // telas carregadas sob demanda (um chunk por tela): o primeiro carregamento traz so a casca, o painel e o que a rota pede
 const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
 const Auditoria = lazy(() => import('./screens/Auditoria'));
@@ -55,6 +56,8 @@ const PosicaoDiaria = lazy(() => import('./screens/Tesouraria').then((m) => ({ d
 const FinanceiroCompacto = lazy(() => import('./screens/piloto/FinanceiroCompacto'));
 // UX-P04: piloto experimental somente leitura em #/piloto/obras (mesmo padrao; obras visiveis pela regra oficial do store)
 const ObrasCompacto = lazy(() => import('./screens/piloto/ObrasCompacto'));
+// UX-P06: piloto experimental somente leitura em #/piloto/compras (mesmo padrao; obras visiveis pela regra oficial do store)
+const ComprasCompacto = lazy(() => import('./screens/piloto/ComprasCompacto'));
 
 export default function App() {
   const rota = useRota();
@@ -183,6 +186,7 @@ export default function App() {
     // UX-P02: o piloto recebe o Dataset/usuario/sync ja carregados (passagem explicita, somente leitura); nada e buscado por ele
     case 'piloto': tela = p1 === 'financeiro' ? <FinanceiroCompacto entrada={entradaDoApp({ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacional' ? 'operacional' : 'executivo'} />
       : p1 === 'obras' ? <ObrasCompacto entrada={entradaObrasDoApp({ ds, usuario, codigosObraVisiveis: obrasVisiveis(usuario, ds.obras).map((o) => o.codigo), modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacao' ? 'operacao' : 'diretoria'} />
+      : p1 === 'compras' ? <ComprasCompacto entrada={entradaComprasDoApp({ ds, usuario, codigosObraVisiveis: obrasVisiveis(usuario, ds.obras).map((o) => o.codigo), modo, carregando, erroInicial, sync, agora: new Date().toISOString() })} visaoInicial={rota.query.get('visao') === 'operacao' ? 'operacao' : 'diretoria'} />
       : <div className="empty">Página não encontrada.</div>; break;
     default: tela = <div className="empty">Página não encontrada.</div>;
   }
