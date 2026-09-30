@@ -5,7 +5,7 @@
 // saida REAL do motor; o que so existe no JSX fica preso por guardas estaticas sobre o fonte da pasta.
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { saldoBancarioHoje, defasagemExtrato } from '../../core/cfo';
 import { calcLancamentos, dashboard, posicaoBancaria, reservaVinculadaTotal, slaVencido } from '../../core/engine';
 import { pode } from '../../core/permissoes';
@@ -122,6 +122,11 @@ describe('paridade com o motor (nenhum numero e recalculado no piloto)', () => {
   }
 
   it('[padrao] os numeros que a demonstracao mostra sao exatamente estes (retrato do motor sobre a fixture)', () => {
+    // dashboard() mede o SLA das aprovacoes pelo relogio real; o retrato vale no instante do proprio teste (AGORA, dia da
+    // data-base da fixture). So o Date e falsificado, e o relogio real volta mesmo se uma asserção falhar.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(AGORA));
+    try {
     const ds = datasetTeste('padrao');
     const d = dashboard(ds);
     const m = pronto(montarPiloto(entrada('padrao', ds)));
@@ -138,6 +143,9 @@ describe('paridade com o motor (nenhum numero e recalculado no piloto)', () => {
     for (const id of ['extrato-defasado', 'pagamentos-vencidos', 'aprovacoes', 'caixa-reserva']) expect(ids).toContain(id);
     expect(ids).not.toContain('sla-aprovacoes');
     expect(m.atencao.todas.filter((a) => a.id === 'aprovacoes' || a.id === 'sla-aprovacoes')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('as fontes de atencao coincidem com os alertas do painel e do Diretor Financeiro (mesmos campos, mesmas condicoes)', () => {
