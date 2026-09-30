@@ -109,7 +109,8 @@ describe('pipeline', () => {
     expect(item.oportunidade?.id).toBe('O1');
     // D-6: resumoRadar removido. O valor em aberto passa a ser a medida canônica do CD-1, restrita a contas ativas
     // (e2 é ativa, então o número coincide). Removidas sem sucessor: pipelinePonderado (valor × probabilidade) e
-    // followUpsVencidos (contava itens da fila legada; a medida canônica conta tarefas vencidas na Commercial Queue).
+    // followUpsVencidos (no legado, todas as tarefas abertas com vencimento anterior a hoje, esteja a conta na fila
+    // comercial ou não; a medida canônica conta só as tarefas vencidas das contas presentes na Commercial Queue).
     expect(snapshotComercialCD({ ...r, empresas: [e2] }, HOJE).funil.valorEstimadoAtivas).toMatchObject({ estado: 'DISPONIVEL', valor: 500000 });
     // sem contatos: recomenda pesquisar decisor
     const semTarefa: RadarDataset = { ...r, tarefas: [], oportunidades: [] };

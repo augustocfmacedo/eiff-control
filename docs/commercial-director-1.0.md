@@ -625,7 +625,7 @@ Escopo ou definição diferentes, por isso com rótulo novo:
 | Pipeline (todas as contas) | Valor estimado, em contas ativas, com "N sem valor" | `funil.valorEstimadoAtivas`, `funil.ativasSemValor` |
 | Sem próxima ação (todas as oportunidades) | Sem próxima ação (contas ativas) | `funil.semProximaAcao` |
 | Funil por estágio, quantidade e valor | Oportunidades por estágio (contas ativas), só quantidade | `funil.porEstagio` |
-| Follow-ups vencidos (itens vencidos da fila legada) | Tarefas vencidas na fila comercial | `atividade.tarefasVencidasNaFila` |
+| Follow-ups vencidos (todas as tarefas abertas com vencimento anterior a hoje, esteja a conta na fila comercial ou não) | Tarefas vencidas na fila comercial (tarefas vencidas das contas presentes na Commercial Queue) | `atividade.tarefasVencidasNaFila` |
 | Atividades 7 d / 30 d (notas incluídas) | Toques comerciais 7 d / 30 d, notas não contam | `atividade.toquesRecentes` |
 
 Novos, sem antecessor: Paradas na fila e Paradas críticas (`funil.paradasNaFila`, `funil.paradasCriticasNaFila`).
