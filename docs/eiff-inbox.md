@@ -690,3 +690,21 @@ Métricas desta ativação: 1 mensagem recebida, 1 thread, 1 decisão MEDIUM, 1 
 - Fail-safe: as provas dos kill switches são automatizadas (`ativacao.test.ts`); em produção, sem a chave de serviço,
   desligar/religar flags não produz observação nova, então não foi repetido.
 - Outbound: zero. Não existe caminho Inbox → Graph `/messages` (teste varre o módulo e o webhook); a Central não envia.
+
+### 16.10 Decisão arquitetural confirmada — número único de WhatsApp (30/09/2026)
+`contextoDoNumero` (`src/core/central/metaEventos.ts`) deriva o contexto do `phone_number_id` que recebeu a mensagem:
+igual a `EIFF_CENTRAL_PHONE_NUMBER_ID` → INTERNAL (testado primeiro); igual a `EIFF_COMMERCIAL_PHONE_NUMBER_ID` →
+EXTERNAL; nenhum → contexto indefinido e o Inbox descarta o evento. Decisão para o modelo de **um único número da EIFF**:
+- `EIFF_COMMERCIAL_PHONE_NUMBER_ID` = `META_WHATSAPP_PHONE_NUMBER_ID` (o mesmo id do número);
+- `EIFF_CENTRAL_PHONE_NUMBER_ID` **ausente**;
+- **nunca** o mesmo id nas duas variáveis (INTERNAL venceria e todo cliente entraria como colaborador).
+Efeito aceito no shadow mode: colaboradores que escreverem ao número único entram como EXTERNAL/desconhecido. Sem
+mudança de código; um "contexto padrão para número único" fica como evolução futura.
+
+Gate de infraestrutura de 30/09/2026: `SUPABASE_SERVICE_ROLE_KEY` PRESENT (secret) e as quatro flags nos valores do
+shadow mode; a prova de que a Function publicada autentica e executa `inbox_ingest` só é possível pelo webhook da Central,
+que sem `META_WHATSAPP_APP_SECRET`/`META_WHATSAPP_VERIFY_TOKEN` recusa antes de ingerir (GET 403, POST 401) — não existe
+outro caminho server-side, e criar um endpoint de diagnóstico seria mudança funcional. Essa prova acontece no primeiro
+evento assinado da Meta (log `inbox_ingest outcome:ok`). A prova pelo banco (RPC, thread reutilizada, router, idempotência,
+zero outbound) já foi feita com a segunda mensagem sintética, que o catálogo não reconheceu (`descarregar`/`chega` não são
+palavras do catálogo de logística: intenção indefinida, LOW, sugestão registrada, thread mantida em FINANCEIRO).
