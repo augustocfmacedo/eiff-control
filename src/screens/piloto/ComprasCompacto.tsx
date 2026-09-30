@@ -1,7 +1,7 @@
-// UX-P05 — Compras compacto: tela do piloto (somente leitura, sem store).
+// UX-P05/UX-P06 — Compras compacto: tela do piloto (somente leitura, sem store), integrada em #/piloto/compras.
 //
-// Recebe uma `EntradaCompras` ja resolvida (fixture na demonstracao isolada e nos testes; numa integracao futura o App
-// fornecera Dataset, usuario, sync e o conjunto de obras visiveis ja filtrado pela regra oficial) e apresenta o modelo
+// Recebe uma `EntradaCompras` ja resolvida pelo App (`entradaDoApp` sobre Dataset, usuario, sync e o conjunto de obras
+// visiveis que o App calcula pela regra oficial; a fixture existe so nos testes) e apresenta o modelo
 // puro de `montarCompras`. A tela nao decide nada de compras nem de visibilidade: so apresenta. Blocos: cabecalho com
 // microfrescor e sincronizacao (separados) → SITUACAO (3 ou 4 tiles conforme a visao, sem cor de severidade) → OBRAS
 // (Diretoria) ou PEDIDOS EM ABERTO (Operacao) → PENDENCIAS (fatos neutros, sem classificacao) → COMPOSICAO em gaveta
@@ -17,9 +17,8 @@ import './pilotoCompras.css';
 const dataHoraCurta = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 type ModeloComFrescor = Extract<ModeloCompras, { estado: 'pronto' | 'vazio' | 'sem-visibilidade' }>;
 
-/** Faixa curta por modo da fonte: teste (fixture) ou local (seed). Em modo remoto nao renderiza nada. */
+/** Modo local: o seed nao e a operacao real, e a tela diz isso; em modo remoto nao renderiza nada. */
 function Faixa({ fonte }: { fonte: ModeloCompras['fonte'] }) {
-  if (fonte.modo === 'teste') return <div className="piloto-compra-faixa" role="note" title="Nenhum número desta tela representa a situação real da empresa."><Icon name="aviso" size={13} /><b>PILOTO · DADOS DE TESTE</b><span>dados fictícios{fonte.id ? ` · ${fonte.id}` : ''}</span></div>;
   if (fonte.modo === 'local') return <div className="piloto-compra-faixa" role="note"><Icon name="aviso" size={13} /><b>Modo local</b><span>dados do seed · não são a operação real</span></div>;
   return null;
 }

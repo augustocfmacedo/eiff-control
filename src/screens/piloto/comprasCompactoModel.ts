@@ -1,4 +1,4 @@
-// UX-P05 — Compras compacto: view-model puro do piloto (somente leitura).
+// UX-P05/UX-P06 — Compras compacto: view-model puro do piloto (somente leitura). Integrado ao App pela UX-P06.
 //
 // Mesma filosofia dos pilotos de Financeiro e Obras: SITUACAO (poucos numeros canonicos) → lista curta (pedidos em aberto
 // na Operacao, obras na Diretoria) → PENDENCIAS (fatos do fluxo de compras) → COMPOSICAO em gaveta, so quando pedida →
@@ -21,7 +21,7 @@
 // "precisa comprar" nem em "falta": so o saldo a receber de cada item (`ItemPedidoCalc.saldoReceber`).
 //
 // VISIBILIDADE: o modelo recebe `codigosObraVisiveis` e limita a apresentacao a esse conjunto. Ele nao decide quem ve o
-// que (isso e do App, pela regra oficial). Valores em R$ da carteira inteira so aparecem quando o conjunto visivel cobre
+// que: no App integrado o conjunto vem da regra oficial do store, calculada pelo App e passada por `entradaDoApp`. Valores em R$ da carteira inteira so aparecem quando o conjunto visivel cobre
 // todas as obras e todos os pedidos; com subconjunto, os valores ficam por obra e nunca sao somados aqui. O estoque e
 // global e so de aco: so aparece com a carteira completa.
 import { calcLancamentos, fmtBr, obra360, type LancamentoCalc } from '../../core/engine';
@@ -30,7 +30,7 @@ import { posicaoEstoque, type PosicaoEstoque } from '../../core/estoque';
 import { sugestoesPara, type Sugestao } from '../../core/sugestoes';
 import type { Aprovacao, Dataset, Obra, Usuario } from '../../core/types';
 
-export const VERSAO_PILOTO = 'UX-P05.1';
+export const VERSAO_PILOTO = 'UX-P06.1';
 export const TETO_SITUACAO: Record<Visao, number> = { diretoria: 3, operacao: 4 };
 export const TETO_PENDENCIAS = 6;
 export const TETO_PEDIDOS = 8;
@@ -66,6 +66,39 @@ export const ROTULO_PENDENCIA: Record<TipoPendencia, string> = {
 export interface Sincronizacao { estado: 'sincronizado' | 'enviando' | 'pendente' | 'erro' | 'local'; em?: string; desde?: string; msg?: string }
 export const ROTULO_SINCRONIZACAO: Record<Sincronizacao['estado'], string> = { sincronizado: 'Supabase · sincronizado', enviando: 'Supabase · sincronizando…', pendente: 'offline · alterações guardadas neste aparelho', erro: 'não sincronizado', local: 'modo local · seed' };
 export interface FonteDados { rotulo: string; modo: 'teste' | 'local' | 'remoto'; atualizadoEm?: string; id?: string; sincronizacao?: Sincronizacao }
+
+/**
+ * O que o App ja tem em maos depois de `useStore()`, mais o conjunto de obras visiveis que ELE calcula pela regra oficial
+ * do store e passa explicitamente. O piloto nunca importa o store nem decide visibilidade.
+ */
+export interface EstadoDoApp {
+  ds: Dataset;
+  usuario: Usuario;
+  codigosObraVisiveis: string[];
+  modo: 'local' | 'remoto';
+  carregando: boolean;
+  erroInicial?: string;
+  sync: { status: 'ok' | 'enviando' | 'erro' | 'local' | 'pendente'; em?: string; desde?: string; msg?: string };
+  agora: string;
+  visao?: Visao;
+}
+
+const ESTADO_SYNC: Record<EstadoDoApp['sync']['status'], Sincronizacao['estado']> = { ok: 'sincronizado', enviando: 'enviando', pendente: 'pendente', erro: 'erro', local: 'local' };
+
+/**
+ * UX-P06 — adaptador puro e somente leitura: Dataset, usuario, sync e obras visiveis que o App ja carregou viram a
+ * EntradaCompras. Sem fetch, sem store, sem regra: so mapeamento 1:1 (sync espelhado, nunca virando "desatualizado").
+ * Em modo local a fonte e o seed e e dita como tal.
+ */
+export function entradaDoApp(e: EstadoDoApp): EntradaCompras {
+  const fonte: FonteDados =
+    e.modo === 'remoto'
+      ? { rotulo: 'Supabase', modo: 'remoto', atualizadoEm: e.sync.em, sincronizacao: { estado: ESTADO_SYNC[e.sync.status], em: e.sync.em, desde: e.sync.desde, msg: e.sync.msg } }
+      : { rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } };
+  if (e.carregando) return { estado: 'carregando', fonte };
+  if (e.erroInicial) return { estado: 'erro', fonte, mensagem: e.erroInicial };
+  return { estado: 'pronto', fonte, ds: e.ds, usuario: e.usuario, codigosObraVisiveis: e.codigosObraVisiveis, agora: e.agora, visao: e.visao };
+}
 
 export type EntradaCompras =
   | { estado: 'carregando'; fonte: FonteDados }

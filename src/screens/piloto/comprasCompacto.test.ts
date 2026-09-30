@@ -1,4 +1,4 @@
-// UX-P05 — Compras compacto: provas do piloto isolado.
+// UX-P05/UX-P06 — Compras compacto: provas do piloto e da integracao ao App.
 //
 // O vitest roda em `environment: 'node'`, sem testing-library: o componente nao e renderizado. O que o piloto DECIDE
 // mora em `comprasCompactoModel.ts` (puro) e e provado contra a saida REAL do core sobre a fixture; o que so existe no
@@ -12,7 +12,8 @@ import { posicaoEstoque } from '../../core/estoque';
 import { sugestoesPara } from '../../core/sugestoes';
 import type { Dataset, PedidoCompra } from '../../core/types';
 import { AUTOR_DESCONHECIDO, DATA_BASE_TESTE, FIXTURE_GERADA_EM, OBRA_A, OBRA_B, OBRA_C, PREFIXO_TESTE, ROTULO_TESTE, TODAS_AS_OBRAS, USUARIO_COMPRAS_A, USUARIO_DIRETORIA, USUARIO_SEM_OBRA, VARIANTES, datasetTeste, entradaDaVariante, type VarianteFixture } from './comprasCompacto.fixtures';
-import { ROTULO_PENDENCIA, ROTULO_SINCRONIZACAO, STATUS_EM_ABERTO, TETO_PEDIDOS, TETO_PENDENCIAS, TETO_SITUACAO, TEXTO_CARTEIRA_PARCIAL, TEXTO_ESTOQUE_INDISPONIVEL, TIPOS_PENDENCIA, VISOES, montarCompras, textoEntrega, type EntradaCompras, type ModeloCompras, type Visao } from './comprasCompactoModel';
+import { ROTULO_PENDENCIA, ROTULO_SINCRONIZACAO, STATUS_EM_ABERTO, TETO_PEDIDOS, TETO_PENDENCIAS, TETO_SITUACAO, TEXTO_CARTEIRA_PARCIAL, TEXTO_ESTOQUE_INDISPONIVEL, TIPOS_PENDENCIA, VISOES, entradaDoApp, montarCompras, textoEntrega, type EntradaCompras, type EstadoDoApp, type ModeloCompras, type Visao } from './comprasCompactoModel';
+import seed from '../../data/seed.json';
 
 const AGORA = '2026-09-23T15:00:00.000Z';
 const FONTE = { rotulo: ROTULO_TESTE, modo: 'teste' as const, atualizadoEm: FIXTURE_GERADA_EM, id: 'fixture' };
@@ -357,7 +358,7 @@ describe('concisao e visoes', () => {
 
 describe('guardas estaticas: isolamento, imports proibidos, pilotos existentes intactos', () => {
   const pasta = path.resolve('src/screens/piloto');
-  const meus = ['comprasCompactoModel.ts', 'comprasCompacto.fixtures.ts', 'ComprasCompacto.tsx', 'pilotoCompras.css', 'mainCompras.tsx'];
+  const meus = ['comprasCompactoModel.ts', 'comprasCompacto.fixtures.ts', 'ComprasCompacto.tsx', 'pilotoCompras.css'];
   const fonte = (f: string) => fs.readFileSync(path.join(pasta, f), 'utf8');
 
   it('os arquivos do piloto de compras existem e nenhum nome colide, ignorando caixa', () => {
@@ -365,7 +366,9 @@ describe('guardas estaticas: isolamento, imports proibidos, pilotos existentes i
     for (const f of [...meus, 'comprasCompacto.test.ts']) expect(todos).toContain(f);
     const bases = todos.map((f) => f.replace(/\.(tsx|ts|css)$/, '').toLowerCase());
     expect(new Set(bases).size).toBe(bases.length);
-    expect(fs.existsSync(path.resolve('piloto-compras.html'))).toBe(true);
+    // UX-P06: a demo isolada da P05 saiu junto com a integracao
+    expect(todos).not.toContain('mainCompras.tsx');
+    expect(fs.existsSync(path.resolve('piloto-compras.html'))).toBe(false);
   });
   it('nunca importa store, supabase, offline, telemetria, permissoes, funcoes server-side nem os outros pilotos', () => {
     const proibidos = [/data\/store/, /data\/supabase/, /data\/offline/, /data\/telemetria/, /data\/statusRemoto/, /data\/rede/, /@supabase/, /netlify\//, /ui\/Tabela/, /permissoes/, /obrasVisiveis/, /financeiroCompacto/, /FinanceiroCompacto/, /obrasCompacto/, /ObrasCompacto/, /pilotoObras/, /piloto\.css/];
@@ -374,8 +377,6 @@ describe('guardas estaticas: isolamento, imports proibidos, pilotos existentes i
   it('nenhum fetch, XHR, WebSocket, beacon, storage, service worker, setInterval, subscription ou sincronizacao', () => {
     const proibidos = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /serviceWorker/, /localStorage/, /sessionStorage/, /indexedDB/, /navigator\.sendBeacon/, /setInterval/, /\bsubscribe\b/, /EventSource/, /sincronizar\(/];
     for (const f of [...meus]) for (const p of proibidos) expect(fonte(f), `${f} usa ${p}`).not.toMatch(p);
-    const html = fs.readFileSync(path.resolve('piloto-compras.html'), 'utf8');
-    for (const p of proibidos) expect(html).not.toMatch(p);
   });
   it('o modelo so importa funcoes canonicas de leitura (lista fechada)', () => {
     const vm = fonte('comprasCompactoModel.ts');
@@ -387,8 +388,8 @@ describe('guardas estaticas: isolamento, imports proibidos, pilotos existentes i
     const imports = vm.match(/from '[^']+'/g) ?? [];
     expect(imports.every((i) => /from '\.\.\/\.\.\/core\/(engine|compras|estoque|sugestoes|types)'/.test(i))).toBe(true);
   });
-  it('a tela e a entrada so leem e navegam: nenhuma action, gravacao ou botao de emitir/receber/cancelar/aprovar/editar/salvar', () => {
-    for (const f of ['ComprasCompacto.tsx', 'mainCompras.tsx']) {
+  it('a tela so le e navega: nenhuma action, gravacao ou botao de emitir/receber/cancelar/aprovar/editar/salvar', () => {
+    for (const f of ['ComprasCompacto.tsx']) {
       const s = fonte(f);
       for (const p of [/\bactions\./, /persistir/, /salvar[A-Z]/, /registrar[A-Z]/, /useStore/, /inicializar\(/, /navegar\(/, /\bEmitir\b/, /\bReceber\b/, /\bCancelar\b/, /\bAprovar\b/, /\bEditar\b/, /\bSalvar\b/, /\bNovo pedido\b/]) expect(s, `${f} usa ${p}`).not.toMatch(p);
     }
@@ -399,15 +400,126 @@ describe('guardas estaticas: isolamento, imports proibidos, pilotos existentes i
     for (const sel of seletores) for (const parte of sel.split(',')) expect(parte.trim(), `seletor fora do prefixo: ${parte}`).toMatch(/^(\.piloto-compra|\[data-theme="light"\] \.piloto-compra)/);
     expect(css).not.toMatch(/piloto-fin|piloto-obra/);
   });
-  it('a fixture fica fora da tela e do modelo; so a demo isolada (dev) e os testes a usam; o build nao empacota a demo', () => {
-    for (const f of ['ComprasCompacto.tsx', 'comprasCompactoModel.ts', 'pilotoCompras.css']) expect(fonte(f)).not.toMatch(/comprasCompacto\.fixtures|datasetTeste|ROTULO_TESTE/);
-    expect(fonte('mainCompras.tsx')).toMatch(/comprasCompacto\.fixtures/);
+  it('UX-P06: a fixture fica fora do runtime — tela, modelo e estilos nao a importam nem citam o rotulo de teste; so os testes a usam', () => {
+    for (const f of ['ComprasCompacto.tsx', 'comprasCompactoModel.ts', 'pilotoCompras.css']) expect(fonte(f)).not.toMatch(/comprasCompacto\.fixtures|datasetTeste|ROTULO_TESTE|DADOS DE TESTE/);
+    const quemImporta = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? quemImporta(path.join(dir, e.name)) : /\.(ts|tsx)$/.test(e.name) && /comprasCompacto\.fixtures/.test(fs.readFileSync(path.join(dir, e.name), 'utf8')) ? [path.join(dir, e.name)] : []));
+    expect(quemImporta(path.resolve('src')).map((f) => path.basename(f))).toEqual(['comprasCompacto.test.ts']);
+    expect(fonte('comprasCompacto.fixtures.ts')).toMatch(/PILOTO · DADOS DE TESTE/);
     const index = fs.readFileSync(path.resolve('index.html'), 'utf8');
     expect(index).not.toMatch(/piloto-compras|mainCompras/);
   });
-  it('nada fora da pasta referencia o piloto de compras: App, Paleta, Tour, store, permissoes e os outros pilotos seguem intocados', () => {
-    for (const f of ['src/App.tsx', 'src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/data/store.ts', 'src/core/permissoes.ts', 'src/core/types.ts', 'src/core/compras.ts', 'src/styles.css']) expect(fs.readFileSync(path.resolve(f), 'utf8'), f).not.toMatch(/ComprasCompacto|comprasCompacto|piloto-compra|pilotoCompras/);
-    for (const f of ['FinanceiroCompacto.tsx', 'financeiroCompactoModel.ts', 'financeiroCompacto.fixtures.ts', 'financeiroCompacto.test.ts', 'piloto.css', 'ObrasCompacto.tsx', 'obrasCompactoModel.ts', 'obrasCompacto.fixtures.ts', 'obrasCompacto.test.ts', 'pilotoObras.css']) expect(fonte(f), f).not.toMatch(/ComprasCompacto|comprasCompacto|piloto-compra|pilotoCompras/);
+  it('fora da pasta so o App (UX-P06) referencia o piloto de compras: Paleta, Tour, store, permissoes e os outros pilotos seguem intocados', () => {
+    for (const f of ['src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/data/store.ts', 'src/core/permissoes.ts', 'src/core/types.ts', 'src/core/compras.ts', 'src/styles.css']) expect(fs.readFileSync(path.resolve(f), 'utf8'), f).not.toMatch(/ComprasCompacto|comprasCompacto|piloto-compra|pilotoCompras/);
+    // o teste do financeiro guarda o App.tsx inteiro (lista exata das integracoes dos tres pilotos), entao cita as linhas do
+    // compras compacto — mas nunca importa nada dele
+    for (const f of ['FinanceiroCompacto.tsx', 'financeiroCompactoModel.ts', 'financeiroCompacto.fixtures.ts', 'piloto.css', 'ObrasCompacto.tsx', 'obrasCompactoModel.ts', 'obrasCompacto.fixtures.ts', 'obrasCompacto.test.ts', 'pilotoObras.css']) expect(fonte(f), f).not.toMatch(/ComprasCompacto|comprasCompacto|piloto-compra|pilotoCompras/);
+    expect(fonte('financeiroCompacto.test.ts')).not.toMatch(/from '\.\/(ComprasCompacto|comprasCompacto[^']*)'/);
+  });
+});
+
+describe('UX-P06: integracao ao App (adaptador, rota e guardas)', () => {
+  const app = fs.readFileSync(path.resolve('src/App.tsx'), 'utf8');
+  const caso = app.slice(app.indexOf("case 'piloto':"), app.indexOf('break;', app.indexOf("case 'piloto':")));
+  const base = (extra: Partial<EstadoDoApp> = {}): EstadoDoApp => ({ ds: datasetTeste('padrao'), usuario: USUARIO_DIRETORIA, codigosObraVisiveis: TODAS_AS_OBRAS, modo: 'remoto', carregando: false, erroInicial: undefined, sync: { status: 'ok', em: '2026-09-23T14:00:00.000Z' }, agora: AGORA, ...extra });
+  const semFonte = (m: ModeloCompras) => { const p = pronto(m); return { ...p, fonte: undefined, frescor: undefined }; };
+
+  it('1. o Dataset real (seed do app) entra no adaptador sem adaptacao; em modo local, sem pedido no seed, a tela fica vazia e nada e inventado', () => {
+    const ds = seed as unknown as Dataset;
+    const e = entradaDoApp({ ...base(), ds, usuario: ds.usuarios[0], codigosObraVisiveis: ds.obras.map((o) => o.codigo), modo: 'local', sync: { status: 'local' } });
+    expect(e.estado).toBe('pronto');
+    if (e.estado === 'pronto') { expect(e.ds).toBe(ds); expect(e.fonte).toEqual({ rotulo: 'Modo local · seed', modo: 'local', sincronizacao: { estado: 'local' } }); }
+    expect((ds.pedidos ?? []).length).toBe(0);
+    const m = montarCompras(e);
+    expect(m.estado === 'vazio' && [m.semObras, m.motivo]).toEqual([false, 'Nenhum pedido de compra nas obras visíveis.']);
+    expect(JSON.stringify(m)).not.toMatch(/DADOS DE TESTE|PILOTO ·/);
+  });
+  it('2. a fixture nao entra no runtime: o App nao a importa, a demo isolada saiu e so o teste a usa', () => {
+    expect(app).not.toMatch(/comprasCompacto\.fixtures|datasetTeste|DADOS DE TESTE|piloto-compra/);
+    expect(fs.existsSync(path.resolve('src/screens/piloto/mainCompras.tsx'))).toBe(false);
+    expect(fs.existsSync(path.resolve('piloto-compras.html'))).toBe(false);
+  });
+  it('3. codigosObraVisiveis vem da camada oficial: o App chama obrasVisiveis do store e o modelo nunca decide sozinho', () => {
+    expect(caso).toMatch(/p1 === 'compras'/);
+    expect(caso).toMatch(/entradaComprasDoApp\(\{ ds, usuario, codigosObraVisiveis: obrasVisiveis\(usuario, ds\.obras\)\.map\(\(o\) => o\.codigo\), modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)/);
+    expect(app).toMatch(/import \{ actions, inicializar, obrasVisiveis, pode, useStore \} from '\.\/data\/store';/);
+    const vm = fs.readFileSync(path.resolve('src/screens/piloto/comprasCompactoModel.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(vm).not.toMatch(/usuario\.obras|obrasVisiveis|data\/store|permissoes/);
+  });
+  it('4-7. carteira completa, subconjunto, nenhuma e codigo desconhecido: o adaptador so repassa o conjunto, e o resultado e o mesmo da entrada direta', () => {
+    const casos: [string[], string][] = [[TODAS_AS_OBRAS, 'pronto'], [[OBRA_A], 'pronto'], [[], 'sem-visibilidade'], [['OB-DESCONHECIDA'], 'sem-visibilidade']];
+    for (const [visiveis, esperado] of casos) {
+      const ds = datasetTeste('padrao');
+      const e = entradaDoApp(base({ ds, codigosObraVisiveis: visiveis }));
+      expect(e.estado === 'pronto' && e.codigosObraVisiveis).toBe(visiveis);
+      const m = montarCompras(e);
+      expect(m.estado).toBe(esperado);
+      if (m.estado === 'pronto') expect(semFonte(m)).toEqual(semFonte(montarCompras({ ...entrada('padrao', 'diretoria', ds, visiveis), usuario: USUARIO_DIRETORIA })));
+    }
+  });
+  it('8-10. pelo adaptador: carteira parcial sem soma entre obras, estoque oculto e kg so ao lado de item em kg', () => {
+    const parcial = pronto(montarCompras(entradaDoApp(base({ codigosObraVisiveis: [OBRA_A, OBRA_B], visao: 'operacao' }))));
+    for (const t of Object.values(parcial.tiles)) { expect(t.valor).toBeNull(); expect(t.texto).toBe(TEXTO_CARTEIRA_PARCIAL); }
+    expect(parcial.estoque).toEqual({ visivel: false, motivo: TEXTO_ESTOQUE_INDISPONIVEL });
+    const completo = pronto(montarCompras(entradaDoApp(base())));
+    const a2 = completo.composicoes['pedido:PC-A2'].linhas;
+    expect(a2[0].sub).toMatch(/estoque de aço \(global\)/);
+    expect(a2[1].sub).not.toMatch(/estoque|kg/);
+  });
+  it('11-17. semantica da P05 preservada pelo adaptador: emitido != comprometido, pedido != lancamento, recebido != pago, sem necessidade, sem score, sem severidade nova, ausente != zero', () => {
+    const m = pronto(montarCompras(entradaDoApp(base())));
+    const comp = m.composicoes[`obra-compras:${OBRA_A}`];
+    expect(comp.pares.map((p) => p.rotulo)).toEqual(['Pedidos emitidos', 'Recebido (material)', 'A receber', 'Faturamento direto', 'Custo comprometido']);
+    expect(m.tiles.emitidos.rotulo).toBe('Pedidos emitidos');
+    const txt = JSON.stringify(m);
+    expect(txt).not.toMatch(/\bpago\b|precisa comprar|faltante|bloquead|falta líquida|score|rejeitad|comprador|solicitante/i);
+    for (const t of Object.values(m.tiles)) expect('tom' in t).toBe(false);
+    for (const p of m.pendencias.todas) expect(p.tom === undefined || p.tipo === 'sugestao-direto').toBe(true);
+    const a4 = m.composicoes['pedido:PC-A4'].pares;
+    expect(a4.find((p) => p.rotulo === 'Entrega')!.texto).toBe('sem previsão de entrega');
+    expect(a4.find((p) => p.rotulo === 'Lançamento')!.texto).toBe('sem lançamento');
+  });
+  it('Diretoria e Operacao pelo adaptador preservam os mesmos numeros', () => {
+    const d = pronto(montarCompras(entradaDoApp(base({ visao: 'diretoria' }))));
+    const o = pronto(montarCompras(entradaDoApp(base({ visao: 'operacao' }))));
+    expect({ ...d, visao: undefined, situacao: undefined }).toEqual({ ...o, visao: undefined, situacao: undefined });
+  });
+  it('carregando e erroInicial viram os estados correspondentes; sync espelhado 1:1 e nunca vira "desatualizado"', () => {
+    expect(entradaDoApp(base({ carregando: true }))).toMatchObject({ estado: 'carregando', fonte: { modo: 'remoto', rotulo: 'Supabase' } });
+    expect(entradaDoApp(base({ erroInicial: 'sem rede' }))).toMatchObject({ estado: 'erro', mensagem: 'sem rede' });
+    const pares: [EstadoDoApp['sync']['status'], string][] = [['ok', 'sincronizado'], ['enviando', 'enviando'], ['pendente', 'pendente'], ['erro', 'erro']];
+    const frescorBase = pronto(montarCompras(entradaDoApp(base()))).frescor;
+    for (const [status, estado] of pares) {
+      const e = entradaDoApp(base({ sync: { status, em: '2026-09-23T14:00:00.000Z', msg: 'x' } }));
+      expect(e.fonte.sincronizacao?.estado).toBe(estado);
+      expect(ROTULO_SINCRONIZACAO[e.fonte.sincronizacao!.estado]).toBeDefined();
+      const m = pronto(montarCompras(e));
+      expect(m.frescor).toEqual(frescorBase);
+      expect(JSON.stringify(m)).not.toMatch(/desatualizad/i);
+    }
+  });
+  it('o adaptador nao muta o estado recebido', () => {
+    const e = base();
+    const antes = JSON.stringify(e);
+    congelar(e);
+    montarCompras(entradaDoApp(e));
+    expect(JSON.stringify(e)).toBe(antes);
+  });
+  it('23-27. App.tsx: rota #/piloto/compras aditiva; #/piloto/financeiro e #/piloto/obras intactas; rota invalida preservada; Inbox intacta; sem sidebar, paleta ou tour', () => {
+    expect(caso).toMatch(/p1 === 'financeiro' \? <FinanceiroCompacto entrada=\{entradaDoApp\(\{ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)\} visaoInicial=\{rota\.query\.get\('visao'\) === 'operacional' \? 'operacional' : 'executivo'\} \/>/);
+    expect(caso).toMatch(/: p1 === 'obras' \? <ObrasCompacto entrada=\{entradaObrasDoApp\(\{ ds, usuario, codigosObraVisiveis: obrasVisiveis\(usuario, ds\.obras\)\.map\(\(o\) => o\.codigo\), modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)\} visaoInicial=\{rota\.query\.get\('visao'\) === 'operacao' \? 'operacao' : 'diretoria'\} \/>/);
+    expect(caso).toMatch(/: p1 === 'compras' \? <ComprasCompacto entrada=\{entradaComprasDoApp\(/);
+    expect(caso.trimEnd()).toMatch(/: <div className="empty">Página não encontrada\.<\/div>;$/);
+    expect(app).toMatch(/const ComprasCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/ComprasCompacto'\)\);/);
+    expect(app).toMatch(/import \{ entradaDoApp as entradaComprasDoApp \} from '\.\/screens\/piloto\/comprasCompactoModel';/);
+    const linhas = app.split('\n').filter((l) => /ComprasCompacto|comprasCompactoModel/.test(l) && !/^\s*\/\//.test(l));
+    expect(linhas).toHaveLength(3); // import do adaptador, lazy e a linha do case
+    expect(app).toMatch(/const Inbox = lazy\(\(\) => import\('\.\/screens\/Inbox'\)\);/);
+    expect(app).toMatch(/case 'atendimento': tela = pode\(usuario, 'inbox'\)/);
+    const paleta = fs.readFileSync(path.resolve('src/ui/Paleta.tsx'), 'utf8');
+    expect(paleta).not.toMatch(/piloto/);
+  });
+  it('21-22. Financeiro e Obras seguem independentes: nenhum arquivo de runtime deles cita o piloto de compras', () => {
+    for (const f of ['FinanceiroCompacto.tsx', 'financeiroCompactoModel.ts', 'piloto.css', 'ObrasCompacto.tsx', 'obrasCompactoModel.ts', 'pilotoObras.css']) expect(fs.readFileSync(path.join(path.resolve('src/screens/piloto'), f), 'utf8'), f).not.toMatch(/ComprasCompacto|comprasCompacto|piloto-compra|pilotoCompras|piloto\/compras/);
   });
 });
 
