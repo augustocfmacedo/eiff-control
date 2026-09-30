@@ -7,7 +7,7 @@ import { contextoCnoDoPayload, envelopeCno, pedidoIntakeCno, type CnoObservacao,
 import { registroDeIntake, validarIntake } from './leadEngineIntake';
 import { filaDeRevisao, type ItemRevisaoLeadEngine } from './leadEngineReview';
 import {
-  FILTRO_VAZIO, JANELAS_DESCOBERTA, contadoresRevisao, dataLocalDe, descobertoHoje, filtrarRevisao, handoffDecisores, metricasPiloto,
+  FILTRO_VAZIO, FUSO_OPERACAO, JANELAS_DESCOBERTA, contadoresRevisao, dataHoraDescoberta, dataLocalDe, descobertoHoje, filtrarRevisao, handoffDecisores, metricasPiloto,
 } from './leadEngineRevisao';
 import { radarVazio, type Empresa, type Fonte, type RadarDataset, type RegistroFonte } from './types';
 
@@ -222,5 +222,52 @@ describe('LE3-D.1 · métricas do piloto', () => {
     const legado: RegistroFonte = { id: 'SR-L', fonteId: FONTE.id, tipo: 'empresa', recebidoEm: '2026-09-01T00:00:00.000Z', payload: { x: 1 } };
     const r = ds([legado, registro('SR-1', obs('1'), HOJE_ISO)]);
     expect(metricasPiloto(r, HOJE).descobertos).toBe(1);
+  });
+});
+
+describe('LE3-D.2 · "descoberto pelo EIFF em" no horário de Brasília', () => {
+  it('A · instante UTC vira horário de Brasília: 2026-09-23T21:31:57Z → 23/09/2026 18:31', () => {
+    expect(FUSO_OPERACAO).toBe('America/Sao_Paulo');
+    expect(dataHoraDescoberta('2026-09-23T21:31:57Z')).toBe('23/09/2026 18:31');
+    expect(dataHoraDescoberta('2026-09-23T21:31:57.062+00:00')).toBe('23/09/2026 18:31'); // formato que o Supabase devolve
+  });
+
+  it('B · virada de dia: 2026-09-24T02:30Z → 23/09/2026 23:30, a mesma data que o "Novo hoje" usa', () => {
+    const iso = '2026-09-24T02:30:00Z';
+    expect(dataHoraDescoberta(iso)).toBe('23/09/2026 23:30');
+    expect(dataLocalDe(iso)).toBe('2026-09-23');
+    expect(descobertoHoje({ recebidoEm: iso }, '2026-09-23')).toBe(true);
+    expect(descobertoHoje({ recebidoEm: iso }, '2026-09-24')).toBe(false);
+  });
+
+  it('C · ausente ou inválido → "—"', () => {
+    expect(dataHoraDescoberta(undefined)).toBe('—');
+    expect(dataHoraDescoberta('')).toBe('—');
+    expect(dataHoraDescoberta('nao-e-data')).toBe('—');
+  });
+
+  it('D · data CIVIL da fonte (data oficial do CNO) não é instante: sem deslocamento de fuso', () => {
+    // Date.parse('2026-09-02') seria meia-noite UTC = 01/09 21:00 em Brasília; a data declarada pela fonte não pode andar.
+    expect(dataHoraDescoberta('2026-09-02')).toBe('02/09/2026');
+    expect(dataHoraDescoberta('2026-01-01')).toBe('01/01/2026');
+    const r = ds([registro('SR-1', obs('900000000001', { dataInicio: '2026-09-02' }), '2026-09-03T01:00:00.000Z')]);
+    expect(item(r).contextoCno?.dataEventoCno).toBe('2026-09-02');
+    expect(dataHoraDescoberta(item(r).recebidoEm)).toBe('02/09/2026 22:00'); // descoberta: instante convertido
+  });
+
+  it('o formatador e o filtro concordam na data em qualquer hora do dia', () => {
+    for (let h = 0; h < 48; h++) {
+      const iso = new Date(Date.UTC(2026, 8, 23, h, 15)).toISOString();
+      const [dd, mm, aaaa] = dataHoraDescoberta(iso).slice(0, 10).split('/');
+      expect(`${aaaa}-${mm}-${dd}`, iso).toBe(dataLocalDe(iso));
+    }
+  });
+
+  it('a aba Candidatos usa o formatador local; o dh() global do Radar segue intocado', () => {
+    const ui = readFileSync('src/screens/radar/LeadEngineCandidatos.tsx', 'utf8');
+    expect(ui).toContain('dataHoraDescoberta(c.recebidoEm)');
+    expect(ui).not.toMatch(/\bdh\(/);
+    const comum = readFileSync('src/screens/radar/comum.tsx', 'utf8');
+    expect(comum).toContain("export const dh = (s?: string) => (s ? `${d(s)} ${s.length > 10 ? s.slice(11, 16) : ''}`.trim() : '—');");
   });
 });

@@ -16,7 +16,8 @@ import LeadEngineCandidatos, {
 } from './LeadEngineCandidatos';
 import { descobertasSuprimidas, filaDeRevisao } from '../../core/radar/leadEngineReview';
 import { FILTRO_VAZIO, contadoresRevisao } from '../../core/radar/leadEngineRevisao';
-import { payloadFingerprint } from '../../core/radar/leadEngineIntake';
+import { payloadFingerprint, registroDeIntake, validarIntake } from '../../core/radar/leadEngineIntake';
+import { pedidoIntakeCno, type CnoObservacaoCanonica } from '../../core/radar/cnoDadosAbertos';
 import { actions } from '../../data/store';
 import { radarVazio, type Empresa, type Fonte, type RadarDataset, type RegistroFonte, type Supressao } from '../../core/radar/types';
 
@@ -353,5 +354,41 @@ describe('LE-2E · mensagens humanas', () => {
     expect(avisos).toEqual(['Já existe uma empresa compatível. Associe o candidato à empresa existente.']);
     // uma chamada só: nenhuma tentativa automática de outra decisão
     expect(actions.processarCandidatoLeadEngine).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('LE3-D.2 · cartão mostra a descoberta no horário de Brasília', () => {
+  const canonical: CnoObservacaoCanonica = {
+    cno: '900000000777', dataInicio: '2026-09-02', dataRegistro: '2026-09-02', cnpjResponsavel: CNPJ, nomeResponsavel: 'Construtora Fictícia Alfa Ltda',
+    qualificacaoResponsavel: '0053', qualificacaoResponsavelNome: 'Pessoa Jurídica Construtora', nomeObra: 'Galpão Alfa', municipio: 'ANÁPOLIS', uf: 'GO',
+    endereco: 'RUA DAS ACÁCIAS SN', bairro: 'DISTRITO INDUSTRIAL', areaTotal: 4200, unidadeMedida: 'm2', situacao: '02', situacaoNome: 'ATIVA',
+    areas: [{ categoria: 'Obra Nova', destinacao: 'Galpão industrial' }], cnaes: [], vinculos: [],
+  };
+  const registroCno = (recebidoEm: string): RegistroFonte => {
+    const p = pedidoIntakeCno({ cno: canonical.cno, evidence: { obra: { CNO: canonical.cno }, areas: [], cnaes: [], vinculos: [] }, canonical }, FONTE_CNO.id, recebidoEm);
+    const v = validarIntake(p);
+    if (!v.ok) throw new Error('intake inválido');
+    return registroDeIntake(v, p, 'SR-TZ');
+  };
+  const cartao = (recebidoEm: string, hoje: string) => {
+    const c = filaDeRevisao(ds({ registrosFonte: [registroCno(recebidoEm)] }))[0];
+    const props = { c, empresas: [], podeAgir: true, hoje, empresaId: '', aberto: true, onAbrir: () => {}, onSelecionar: () => {}, onErro: () => {}, onOk: () => {} };
+    return renderToStaticMarkup(React.createElement(LinhaCandidato, props as never)).replace(/<!-- -->/g, '');
+  };
+
+  it('2026-09-24T02:30Z aparece como 23/09/2026 23:30, com "Novo hoje" no dia 23 — cartão e filtro concordam', () => {
+    const h = cartao('2026-09-24T02:30:00.000Z', '2026-09-23');
+    expect(h).toContain('descoberto pelo EIFF em 23/09/2026 23:30');
+    expect(h).toContain('Descoberto pelo EIFF em: <b>23/09/2026 23:30</b>');
+    expect(h).toContain('Novo hoje');
+    expect(h).not.toContain('24/09/2026');
+    expect(cartao('2026-09-24T02:30:00.000Z', '2026-09-24')).not.toContain('Novo hoje');
+  });
+
+  it('a data oficial do CNO continua a data civil da fonte, sem deslocamento', () => {
+    const h = cartao('2026-09-23T21:31:57.000Z', '2026-09-23');
+    expect(h).toContain('descoberto pelo EIFF em 23/09/2026 18:31');
+    expect(h).toContain('registro/evento CNO: 02/09/2026');
+    expect(h).not.toContain('01/09/2026');
   });
 });

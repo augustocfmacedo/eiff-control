@@ -922,20 +922,48 @@ describe('19 · Lead Engine: fechado ≠ desenhado ≠ operacional (autoridade d
     }
   });
 
-  it('4 · backfill não executado não vira sucesso: ensaio read-only é plano, "nada gravado" vem do estado atual', () => {
-    expect(comp('BACKFILL_90D').estado).toBe('PLANEJADO');
-    expect(comp('BACKFILL_90D').natureza).toBe('OPERACAO');
-    expect(cat('BACKFILL_90D').evidencias).toBeUndefined();
-    const p = cat('BACKFILL_90D').pendenciaDeclarada!;
-    expect(p.map((e) => [e.secao, e.simbolo])).toEqual([[SECOES_ATUAIS.leadEngineEstado, '65 novos, nada gravado']]);
-    expect(sinalPresente(p[0])).toBe(true);
+  it('4 · backfill executado em produção vira CONCLUÍDO por evidência: §41.1 (o fato) e o estado atual, nunca o ensaio da §40.1', () => {
+    const c = comp('BACKFILL_90D');
+    expect(c.estado).toBe('CONCLUIDO');
+    expect(c.origem).toBe('EVIDENCIA');
+    expect(c.natureza).toBe('PRODUCAO');
+    // a decisão de gravar foi tomada e executada: não há mais pendência declarada nem pendência humana
+    expect(cat('BACKFILL_90D').pendencia).toBeUndefined();
+    expect(cat('BACKFILL_90D').pendenciaDeclarada).toBeUndefined();
+    expect(pendenciasHumanasDoModulo(le).map((p) => p.componenteId)).not.toContain('BACKFILL_90D');
+    expect(componentesPlanejados().map((p) => p.componente.id)).not.toContain('BACKFILL_90D');
+    // toda evidência é de seção atual e está presente; as da §41.1 provam 65 inserts, 115 candidatos, 115 NOOP e scheduler desligado
+    const ev = cat('BACKFILL_90D').evidencias as EvidenciaConstrucao[];
+    for (const e of ev) {
+      expect(e.secao, `${e.referencia} # ${e.simbolo}`).toBeTruthy();
+      expect(sinalPresente(e), `${e.referencia} # ${e.simbolo}`).toBe(true);
+    }
+    expect(ev.filter((e) => e.secao === SECOES_ATUAIS.leadEngineBackfill).map((e) => e.simbolo)).toEqual([
+      '65 inserts numa única transação',
+      '| candidatos CNO `PENDING` | 50 | 115 |',
+      '**Segunda simulação contra a produção: 115 IDEMPOTENT_NOOP**',
+      '**Scheduler continua desligado.**',
+    ]);
+    expect(ev.some((e) => e.secao === SECOES_ATUAIS.leadEngineEstado && e.simbolo === '**Backfill de 90 dias executado em produção em 24/09/2026**')).toBe(true);
+    // o ensaio read-only (§40) nunca é prova, e a frase antiga saiu do estado atual
+    expect(ev.some((e) => /^#+ 40\./.test(e.secao ?? ''))).toBe(false);
+    expect(preambulo()).not.toContain('65 novos, nada gravado');
+    // a prova é exigente: se a §41.1 perder o fato, a evidência cai (o guarda de evidência ausente acusaria)
+    const s411 = secaoDe(conteudo(DOC_LE), SECOES_ATUAIS.leadEngineBackfill)!;
+    expect(s411.startsWith(SECOES_ATUAIS.leadEngineBackfill)).toBe(true);
+    expect(s411).not.toContain('### 41.2');
+    const semFato = conteudo(DOC_LE).replace('65 inserts numa única transação', '65 linhas previstas');
+    expect(secaoDe(semFato, SECOES_ATUAIS.leadEngineBackfill)!.includes('65 inserts numa única transação')).toBe(false);
+    // o passo seguinte continua plano de operação, com decisão humana
+    expect(comp('MONITOR_ATIVO').estado).toBe('PLANEJADO');
+    expect(pendenciasHumanasDoModulo(le).map((p) => p.componenteId)).toContain('MONITOR_ATIVO');
   });
 
   it('5 · o Lead Engine continua não concluído (LE-3 em andamento, LE-4..LE-8 não iniciados) e o próximo passo é legível, sem código de gate', () => {
     expect(le.estado).toBe('EM_CONSTRUCAO');
     expect(le.concluidos).toBeLessThan(le.total);
     expect(le.concluidos).toBe(le.componentes.filter((c) => c.estado === 'CONCLUIDO').length);
-    expect(le.proximoPasso).toBe('Descoberta contínua: backfill da janela de 90 dias gravado');
+    expect(le.proximoPasso).toBe('Descoberta contínua: monitor diário agendado e ligado');
     expect(le.proximoPasso).not.toMatch(/LE-?\d/);
     expect(preambulo()).toContain('**LE-3 EM ANDAMENTO');
     expect(comp('FONTES_FUTURAS').estado).toBe('PLANEJADO');
@@ -1058,7 +1086,7 @@ describe('21 · V2A: camada executiva da Central', () => {
     }
     const r = (id: string) => resumoExecutivo(panorama.modulos.find((p) => p.modulo.id === id)!, panorama);
     expect(r('INBOX').proximo).toBe('Tráfego externo real (mensagens de WhatsApp ingressando e roteadas)');
-    expect(r('LEAD_ENGINE').proximo).toBe('Descoberta contínua: backfill da janela de 90 dias gravado');
+    expect(r('LEAD_ENGINE').proximo).toBe('Descoberta contínua: monitor diário agendado e ligado');
     expect(r('FACTORY').proximo).not.toMatch(/packages\/api/);
     expect(corpoDe(VISAO, 'LinhaConstrucao')).toMatch(/r\.proximo/);
     expect(corpoDe(VISAO, 'CartaoModulo')).toMatch(/r\.proximo/);
