@@ -438,22 +438,25 @@ describe('guardas estaticas: somente leitura, sem store, sem rede, sem gravacao'
     expect(arquivos).not.toContain('main.tsx');
     expect(fs.existsSync(path.resolve('piloto-financeiro.html'))).toBe(false);
     const app = fs.readFileSync(path.resolve('src/App.tsx'), 'utf8');
-    // UX-P04: o App liga DOIS pilotos experimentais somente leitura pelo mesmo padrao (Financeiro compacto, UX-P02, e Obras
-    // compacto, UX-P04). Em vez de contar linhas, a guarda prende a lista exata das integracoes esperadas: toda linha nao
-    // comentada de App.tsx que cite "piloto" tem de ser uma destas, e cada uma tem de existir exatamente uma vez.
+    // UX-P04/UX-P06: o App liga TRES pilotos experimentais somente leitura pelo mesmo padrao (Financeiro compacto, UX-P02,
+    // Obras compacto, UX-P04, e Compras compacto, UX-P06). Em vez de contar linhas, a guarda prende a lista exata das
+    // integracoes esperadas: toda linha nao comentada de App.tsx que cite "piloto" tem de ser uma destas, e cada uma tem de
+    // existir exatamente uma vez (um quarto piloto, ou uma linha extra, reprova).
     const INTEGRACOES_ESPERADAS: Array<[string, RegExp]> = [
       ['import do adaptador do Financeiro compacto', /^import \{ entradaDoApp \} from '\.\/screens\/piloto\/financeiroCompactoModel';$/],
       ['import do adaptador do Obras compacto (UX-P04)', /^import \{ entradaDoApp as entradaObrasDoApp \} from '\.\/screens\/piloto\/obrasCompactoModel';$/],
+      ['import do adaptador do Compras compacto (UX-P06)', /^import \{ entradaDoApp as entradaComprasDoApp \} from '\.\/screens\/piloto\/comprasCompactoModel';$/],
       ['lazy do Financeiro compacto', /^const FinanceiroCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/FinanceiroCompacto'\)\);$/],
       ['lazy do Obras compacto (UX-P04)', /^const ObrasCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/ObrasCompacto'\)\);$/],
+      ['lazy do Compras compacto (UX-P06)', /^const ComprasCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/ComprasCompacto'\)\);$/],
       ['case da rota #/piloto (financeiro primeiro)', /^ {4}case 'piloto': tela = p1 === 'financeiro' \? <FinanceiroCompacto entrada=\{entradaDoApp\(/],
     ];
     const linhas = app.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => /piloto/i.test(l) && !/^\s*\/\//.test(l));
-    expect(linhas).toHaveLength(INTEGRACOES_ESPERADAS.length); // 5: dois imports de adaptador, dois lazy e o case da rota
+    expect(linhas).toHaveLength(INTEGRACOES_ESPERADAS.length); // 7: tres imports de adaptador, tres lazy e o case da rota
     for (const l of linhas) expect(INTEGRACOES_ESPERADAS.filter(([, re]) => re.test(l)), `linha inesperada com "piloto" em App.tsx: ${l.trim()}`).toHaveLength(1);
     for (const [nome, re] of INTEGRACOES_ESPERADAS) expect(linhas.filter((l) => re.test(l)), nome).toHaveLength(1);
     // nada de fixture no runtime, nem entrada de menu/paleta: a rota existe so pelo case
-    expect(app).not.toMatch(/fixtures|piloto-obra|piloto-fin|DADOS DE TESTE/);
+    expect(app).not.toMatch(/fixtures|piloto-obra|piloto-fin|piloto-compra|DADOS DE TESTE/);
     expect(app).not.toMatch(/ROTAS_NAV[^\n]*piloto|piloto[^\n]*ROTAS_NAV/);
     expect(app).toMatch(/const FinanceiroCompacto = lazy\(\(\) => import\('\.\/screens\/piloto\/FinanceiroCompacto'\)\);/);
     expect(app).toMatch(/import \{ entradaDoApp \} from '\.\/screens\/piloto\/financeiroCompactoModel';/);
@@ -461,7 +464,7 @@ describe('guardas estaticas: somente leitura, sem store, sem rede, sem gravacao'
     expect(caso).toMatch(/p1 === 'financeiro'/);
     expect(caso).toMatch(/entradaDoApp\(\{ ds, usuario, modo, carregando, erroInicial, sync, agora: new Date\(\)\.toISOString\(\) \}\)/);
     expect(caso).toMatch(/Página não encontrada/);
-    for (const f of ['src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/core/permissoes.ts', 'src/data/store.ts', 'src/core/engine.ts']) expect(fs.readFileSync(path.resolve(f), 'utf8'), `${f} referencia o piloto`).not.toMatch(/piloto\/financeiro|FinanceiroCompacto|financeiroCompacto|piloto\/obras|ObrasCompacto|obrasCompacto/);
+    for (const f of ['src/ui/Paleta.tsx', 'src/ui/Tour.tsx', 'src/ui/Sugestoes.tsx', 'src/core/permissoes.ts', 'src/data/store.ts', 'src/core/engine.ts']) expect(fs.readFileSync(path.resolve(f), 'utf8'), `${f} referencia o piloto`).not.toMatch(/piloto\/financeiro|FinanceiroCompacto|financeiroCompacto|piloto\/obras|ObrasCompacto|obrasCompacto|piloto\/compras|ComprasCompacto|comprasCompacto/);
   });
 });
 
