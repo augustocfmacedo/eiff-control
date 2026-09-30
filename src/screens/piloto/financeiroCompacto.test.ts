@@ -5,7 +5,7 @@
 // saida REAL do motor; o que so existe no JSX fica preso por guardas estaticas sobre o fonte da pasta.
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { saldoBancarioHoje, defasagemExtrato } from '../../core/cfo';
 import { calcLancamentos, dashboard, posicaoBancaria, reservaVinculadaTotal, slaVencido } from '../../core/engine';
 import { pode } from '../../core/permissoes';
@@ -14,6 +14,11 @@ import { DATA_BASE_TESTE, EXTRATO_ATE_PADRAO, FIXTURE_GERADA_EM, PREFIXO_TESTE, 
 import { ROTULO_SEVERIDADE, ROTULO_SINCRONIZACAO, SEVERIDADE_POR_TOM, TETO_ATENCAO, TETO_SITUACAO, TEXTO_RESTRITO, TEXTO_SEM_EXTRATO, VISOES, agruparPorSeveridade, entradaDoApp, montarPiloto, tempoRelativo, type EntradaPiloto, type EstadoDoApp, type ModeloPiloto, type Visao } from './financeiroCompactoModel';
 
 const AGORA = '2026-09-23T15:00:00.000Z';
+// `dashboard()` le o relogio real (`aprovacoesSlaVencido`, checks de SLA) e o piloto o chama por dentro: sem congelar, o
+// retrato da fixture muda quando o calendario passa de um `prazoSla` (APR-T02 vence em 25/09/2026). So `Date` e falso;
+// temporizadores seguem reais. Nenhuma regra muda: o motor so passa a ver o mesmo instante `AGORA` que o piloto recebe.
+beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(AGORA)); });
+afterAll(() => { vi.useRealTimers(); });
 const FONTE = { rotulo: ROTULO_TESTE, modo: 'teste' as const, atualizadoEm: FIXTURE_GERADA_EM, id: 'fixture' };
 const entrada = (variante: VarianteFixture, ds = datasetTeste(variante), visao: Visao = 'executivo'): EntradaPiloto => ({ estado: 'pronto', fonte: { ...FONTE, id: variante }, ds, usuario: usuarioDaVariante(variante), agora: AGORA, visao });
 const pronto = (m: ModeloPiloto) => { if (m.estado !== 'pronto') throw new Error(`esperava pronto, veio ${m.estado}`); return m; };
