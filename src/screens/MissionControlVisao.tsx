@@ -138,7 +138,8 @@ function TileConcluido({ r, onAbrir }: { r: ResumoExecutivo; onAbrir: (id: strin
   );
 }
 
-function ListaEspera({ itens, onAbrir, comModulo }: { itens: PendenciaHumana[]; onAbrir?: (id: string) => void; comModulo: boolean }) {
+/** Reutilizado pelo Mapa vivo (V2B): um drill-down só na Central. */
+export function ListaEspera({ itens, onAbrir, comModulo }: { itens: PendenciaHumana[]; onAbrir?: (id: string) => void; comModulo: boolean }) {
   return (
     <ul className="mcc-espera">
       {itens.map((p) => (
@@ -154,7 +155,8 @@ function ListaEspera({ itens, onAbrir, comModulo }: { itens: PendenciaHumana[]; 
   );
 }
 
-function PainelModulo({ mo, panorama, agora, leituraValida, onFechar, onIr }: { mo: ModuloProjetado; panorama: PanoramaConstrucao; agora: string; leituraValida: boolean; onFechar: () => void; onIr: (id: string) => void }) {
+/** Reutilizado pelo Mapa vivo (V2B): um drill-down só na Central. */
+export function PainelModulo({ mo, panorama, agora, leituraValida, onFechar, onIr }: { mo: ModuloProjetado; panorama: PanoramaConstrucao; agora: string; leituraValida: boolean; onFechar: () => void; onIr: (id: string) => void }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onFechar(); };
     window.addEventListener('keydown', esc);
