@@ -1,13 +1,13 @@
 # EIFF Lead Engine 1.0 — contrato arquitetural, autoridades e ciclo de vida
 
-Estado em 23/09/2026:
+Estado em 30/09/2026:
 
 - **LE-0 fechado** (contrato, §1 a §26) · **LE-1 fechado** (intake canônico, §27) · **LE2-A/B/C/E fechados** (persistência §28, núcleo de revisão §29, fronteira do store §30, UI no Command Center §31) · **LE2-F fechado** (rebaseline e certificação, §32).
 - **LE-2 RELEASED**: migration `0055` aplicada em produção e PR #9 mesclado em `main` (`0273da87`, §33).
-- **LE-3 EM ANDAMENTO — piloto em produção.** LE3-A/A1 fechados (contrato e evidência do CNO, §34) · LE3-B fechado (perfil do universo, §35) · LE3-C fechado (política piloto V1 e lote de 50, §36) · LE3-D fechado (fronteira de intake e rehearsal, §37) · **ingestão piloto executada em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, aguardando decisão humana. **LE3-D.1 fechado** (revisão comercial dos candidatos, §39). **LE3-E desenhado, não ativado** (§40: monitor de snapshot, retenção, auditoria de executor; backfill de 90 dias ensaiado read-only — 65 novos, nada gravado). LE-3 não está concluído enquanto o LE3-E não estiver ativo.
+- **LE-3 EM ANDAMENTO — piloto em produção.** LE3-A/A1 fechados (contrato e evidência do CNO, §34) · LE3-B fechado (perfil do universo, §35) · LE3-C fechado (política piloto V1 e lote de 50, §36) · LE3-D fechado (fronteira de intake e rehearsal, §37) · **ingestão piloto executada em 23/09/2026** (§38): 50 candidatos CNO PENDING na aba Candidatos, aguardando decisão humana. **LE3-D.1 fechado** (revisão comercial dos candidatos, §39). **LE3-E desenhado, não ativado** (§40: monitor de snapshot, retenção, auditoria de executor; backfill de 90 dias ensaiado read-only em 23/09). **Backfill de 90 dias executado em produção em 24/09/2026** (§41): 115 candidatos CNO PENDING. **LE3-D.2** (§41.3): smoke de produção PASS em 30/09/2026 e a hora de descoberta passa a ser exibida no horário de Brasília. **Scheduler desligado.** LE-3 não está concluído enquanto o LE3-E não estiver ativo e certificado.
 - **LE-4 a LE-8 não iniciados.**
 
-Branch ATUAL da linha: `feature/lead-engine-3`, criada de `origin/main @ 0273da8`; `origin/main @ d063194` foi incorporada formalmente pelo merge `aaadac4`. HEAD da linha antes desta correção documental: `52f7604`.
+LE3-D.1 e o desenho do LE3-E entraram na `main` pelo PR #15 (`7674125`, publicado em 24/09/2026); o LE3-D.2 (§41) segue em `feature/lead-engine-3d2-timezone-docs`, criada de `origin/main @ 7674125`. Branch da linha até o PR #12: `feature/lead-engine-3`, criada de `origin/main @ 0273da8`; `origin/main @ d063194` foi incorporada formalmente pelo merge `aaadac4`. HEAD da linha antes desta correção documental: `52f7604`.
 Histórico (não é a branch atual): `feature/lead-engine-2` levou LE-0 a LE2-F até o PR #9, com base em `origin/main @ 14d2ff7` e LE-0/LE-1 recuperados por cherry-pick; a antiga `feature/lead-engine-1` foi aposentada por colisão de worktree e o módulo órfão está preservado em `rescue/lead-engine-2-orphan`. Baseline histórico do LE-0: `main @ 88c9ccc`.
 Documento canônico do Lead Engine. A Máquina Comercial continua em `docs/commercial-machine.md` e
 `docs/commercial-machine-cm2.md`; o Radar, em `docs/radar.md`.
@@ -1840,6 +1840,9 @@ Conferências 115/115 em snapshot, fingerprint e política; segunda simulação 
 (65 inserts, só `radar_source_record`) em `scratch/cno-backfill-90d.sql`, gitignored. O número "65" é o
 resultado do recálculo, não a subtração histórica — coincidiu porque o snapshot é o mesmo.
 
+> Registro posterior: este lote foi **executado em produção em 24/09/2026**, com o mesmo snapshot e os mesmos
+> números. Ver §41.
+
 ### 40.2 Monitor diário (`cnoMonitor.ts` + `scripts/cno.mts -- monitor`)
 
 A fonte é snapshot; não há delta oficial. Ciclo:
@@ -1883,3 +1886,81 @@ caminho de escrita. **Nenhum cron foi ativado.**
 ### 40.5 O que este gate não fez
 
 Não gravou os 65. Não ativou scheduler. Não consumiu Vibe. Não alterou a política. Não mesclou, não deployou.
+
+## 41. Backfill CNO de 90 dias executado e LE3-D.2
+
+### 41.1 Execução em produção — 24/09/2026
+
+Autorização explícita ("BACKFILL CNO 90D AUTORIZADO"). Nenhuma regra, política ou código mudou; o lote é o
+mesmo ensaiado em §40.1, gravado pela porta governada do LE3-D (`scripts/cno-intake-producao.mts` com
+`--executar --confirmar CNO_PILOT_V1`).
+
+1. **Monitor antes de gravar**: `HEAD` na fonte oficial → `MESMO_SNAPSHOT` (ETag `"76bb7f93…"`, Last-Modified
+   12/09/2026, 330.628.581 bytes), sem download. O snapshot oficial não mudou desde o ensaio.
+2. **Novo ensaio read-only contra a produção**, imediatamente antes:
+
+```
+MANIFEST_ENTRIES 115 · SNAPSHOT_MATCH 115/115 · FINGERPRINT_MATCH 115/115 · POLICY_MATCH 115/115
+TOTAL_ELEGIVEL     115
+JA_EXISTENTE        50
+NOVO_REGISTRO       65
+NOVA_OBSERVACAO      0
+IDEMPOTENT_NOOP     50
+INVALIDO             0
+WOULD_INSERT        65
+efeitos colaterais: 0 empresa · 0 projeto · 0 sinal · 0 oportunidade · 0 tarefa · 0 atividade · 0 comunicação
+```
+
+3. **SQL conferido antes de aplicar**: uma transação, 65 `insert into radar_source_record`, nenhuma outra escrita.
+4. **Gravação**: 65 inserts numa única transação, todos `PENDING`, sem entidade.
+5. **Pós-carga** (consulta direta ao banco):
+
+| | antes | depois |
+|---|---|---|
+| `radar_source_record` | 158 | 223 |
+| candidatos CNO `PENDING` | 50 | 115 |
+| CNO_NEW / CNO_EXPANSION | 36 / 14 | 82 / 33 |
+| com empresa vinculada | 0 | 0 |
+| empresas · projetos · sinais do Radar | 91 · 0 · 2 | 91 · 0 · 2 |
+| operações Vibe | 0 | 0 |
+
+115 CNOs distintos e 115 fingerprints distintos. **Segunda simulação contra a produção: 115 IDEMPOTENT_NOOP**,
+0 NOVO_REGISTRO, 0 NOVA_OBSERVACAO. Nenhuma promoção automática, nenhum crédito Vibe consumido.
+**Scheduler continua desligado.**
+
+### 41.2 Smoke de produção — 30/09/2026
+
+**Dados** (código da aba Candidatos — `filaDeRevisao`, `contadoresRevisao`, `filtrarRevisao`, `metricasPiloto`
+e o render dos cartões — sobre export somente leitura da produção): 115 na fila, 0 campo vazio, 0 incoerência de
+política, 0 CNO duplicado, 16 CNPJs com mais de uma obra, 115 handoffs "promova primeiro" (nenhuma empresa
+parecida no Radar). **PASS.**
+
+**Visual** (sessão do usuário, somente leitura, nenhuma decisão): aba "Candidatos (115)"; métricas 115
+descobertos · 0 novos hoje · 0 promovidos · CNO_NEW 82 · CNO_EXPANSION 33; filtros Hoje 0 · 7 dias 115 ·
+30 dias 115 · 90 dias 115 · Obra nova 82 · Expansão 33; cartões fechados e abertos com obra, CNO, município/UF,
+endereço, área, situação, categoria, destinação, data oficial com origem, responsável, CNPJ e qualificação;
+"Buscar decisores" sem empresa só orienta Associar/Criar (nenhuma requisição, nenhuma navegação); Radar Hoje e
+Radar Empresas acessíveis; console sem erro. **PASS.**
+
+"Novo hoje" = 0 em 30/09 é o esperado: os 65 foram descobertos em 24/09 e os 50 em 23/09. A janela de 7 dias é
+inclusiva (dias ≤ 7). Achados da fonte, não defeitos: a CNO 900298971875 declara 813.513,65 m² (evidência bruta
+igual; o cartão mostra 813.514 m²), e em 66 dos 115 o nome da obra é a razão social do responsável.
+
+### 41.3 LE3-D.2 — hora de descoberta no horário de Brasília
+
+**Defeito de apresentação encontrado no smoke visual**: o cartão mostrava "descoberto pelo EIFF em 23/09/2026
+21:31" — a hora UTC cortada da ISO pelo `dh()` do Radar (`src/screens/radar/comum.tsx`); em Brasília foram
+18:31. O risco real é a virada do dia: um registro recebido entre 21h00 e 23h59 de Brasília (00h00–02h59 UTC)
+apareceria com a data do dia seguinte, enquanto o "Novo hoje" (`dataLocalDe`) o conta no dia local.
+
+**Correção, limitada ao Lead Engine**: `dataHoraDescoberta` em `leadEngineRevisao.ts` formata o instante em
+`America/Sao_Paulo` com `Intl.DateTimeFormat` (sem offset fixo) e a aba Candidatos usa esse formatador nos dois
+lugares onde mostra a descoberta. Data **civil** da fonte (AAAA-MM-DD, como a data oficial do CNO) não é instante e
+volta sem deslocamento. O `dh()` global **não mudou**: ele também é usado em importações (Command Center) e em
+atividades e sinais (página da Empresa); corrigi-lo lá é decisão separada, com a mesma auditoria de fuso.
+
+Não mudou: filtro "Novo hoje", janelas 7/30/90, ordenação, score, Commercial Queue, decisão humana, adapter CNO,
+payload, fingerprint, política. Testes: `leadEngineRevisao.test.ts` (UTC → Brasília, virada de dia, ausente,
+data civil, concordância com `dataLocalDe` em 48 horas seguidas, guarda do `dh()`) e
+`leadEngineCandidatos.test.ts` (cartão real com `2026-09-24T02:30Z` → "23/09/2026 23:30" e "Novo hoje" no dia 23;
+data oficial intacta).

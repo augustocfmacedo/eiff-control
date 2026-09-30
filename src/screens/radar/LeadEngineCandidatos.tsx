@@ -15,9 +15,9 @@ import { actions } from '../../data/store';
 import { Badge, Empty, Link, Select } from '../../ui/components';
 import { Icon } from '../../ui/icons';
 import type { CodigoBloqueio, ItemRevisaoLeadEngine, MotivoRecusa } from '../../core/radar/leadEngineReview';
-import { JANELAS_DESCOBERTA, descobertoHoje, handoffDecisores, type ContadoresRevisao, type FiltroRevisao, type JanelaDescoberta, type MetricasPiloto } from '../../core/radar/leadEngineRevisao';
+import { JANELAS_DESCOBERTA, dataHoraDescoberta, descobertoHoje, handoffDecisores, type ContadoresRevisao, type FiltroRevisao, type JanelaDescoberta, type MetricasPiloto } from '../../core/radar/leadEngineRevisao';
 import type { Empresa } from '../../core/radar/types';
-import { d, dh } from './comum';
+import { d } from './comum';
 
 /**
  * Traducao de APRESENTACAO dos codigos do core. Nao muda regra nenhuma: so troca o codigo tecnico por uma frase
@@ -158,7 +158,7 @@ export function LinhaCandidato({ c, empresas, podeAgir, hoje, empresaId, aberto,
           </div>
           <div className="small muted" style={{ marginTop: 4 }}>
             {c.fonteNome} · {c.tipo} · {c.externoId}
-            {' · descoberto pelo EIFF em '}{dh(c.recebidoEm)}
+            {' · descoberto pelo EIFF em '}{dataHoraDescoberta(c.recebidoEm)}
             {obra?.dataEventoCno ? <> · <span>registro/evento CNO: {d(obra.dataEventoCno)}</span></> : null}
           </div>
           {c.bloqueios.length ? <div className="small muted">{c.bloqueios.map((b) => ROTULO_BLOQUEIO_LE[b] ?? b).join(' · ')}</div> : null}
@@ -200,7 +200,7 @@ export function LinhaCandidato({ c, empresas, podeAgir, hoje, empresaId, aberto,
           <div>
             <h4 style={{ margin: '0 0 4px' }}>Origem</h4>
             <div className="small">
-              <div>Descoberto pelo EIFF em: <b>{dh(c.recebidoEm)}</b></div>
+              <div>Descoberto pelo EIFF em: <b>{dataHoraDescoberta(c.recebidoEm)}</b></div>
               <div>Data oficial no CNO: <b>{obra?.dataEventoCno ? d(obra.dataEventoCno) : '—'}</b></div>
               <div className="muted">Fonte: {c.fonteNome} · registro {c.tipo}</div>
             </div>

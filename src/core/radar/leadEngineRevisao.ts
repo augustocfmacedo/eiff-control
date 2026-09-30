@@ -22,6 +22,29 @@ export function dataLocalDe(iso: string, fusoMinutos = -180): string {
   return new Date(t + fusoMinutos * 60_000).toISOString().slice(0, 10);
 }
 
+/** Fuso em que a EIFF LE os instantes do Lead Engine (Goiânia = horário de Brasília). */
+export const FUSO_OPERACAO = 'America/Sao_Paulo';
+const FORMATO_INSTANTE = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: FUSO_OPERACAO, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+const DATA_CIVIL = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * "dd/mm/aaaa HH:mm" de um INSTANTE (ex. `recebidoEm`, gravado em UTC) no horário de Brasília — a mesma data
+ * local que `dataLocalDe` usa para "Novo hoje", então cartão e filtro nunca discordam na virada do dia.
+ * Data CIVIL da fonte (AAAA-MM-DD, ex. data oficial do CNO) NÃO é instante: volta como "dd/mm/aaaa", sem
+ * deslocamento. Ausente ou inválido: "—".
+ */
+export function dataHoraDescoberta(valor?: string): string {
+  if (!valor) return '—';
+  const civil = DATA_CIVIL.exec(valor);
+  if (civil) return `${civil[3]}/${civil[2]}/${civil[1]}`;
+  const t = Date.parse(valor);
+  if (!Number.isFinite(t)) return '—';
+  const p = Object.fromEntries(FORMATO_INSTANTE.formatToParts(t).map((x) => [x.type, x.value]));
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}`;
+}
+
 /** "Novo hoje" = descoberto pela EIFF hoje. Compara a data LOCAL do `recebidoEm` com `hoje` (AAAA-MM-DD). */
 export const descobertoHoje = (item: Pick<ItemRevisaoLeadEngine, 'recebidoEm'>, hoje: string, fusoMinutos = -180): boolean =>
   dataLocalDe(item.recebidoEm, fusoMinutos) === hoje;
