@@ -105,8 +105,11 @@ Motor de contexto de comunicação, reutilizável para qualquer conta, contato, 
   status do e-mail, celular, LinkedIn, fonte. Associação por id externo → domínio → razão social (+ UF). Mais de uma
   candidata, ou só nome parecido, vai para a **fila de revisão** (Command Center) sem criar empresa; empresa
   inexistente sem ambiguidade é criada a partir da linha.
-- **Métricas** (Command Center): empresas, com contato, com decisor adequado, com canal, precisam de pesquisa, precisam
-  de enriquecimento, sem decisor, fila de revisão; taxas de cobertura em `resumoRadar` e view `v_radar_contact_coverage`.
+- **Métricas** (Command Center): desde a D-6 (30/09/2026) o Command Center só mostra medidas do snapshot canônico do
+  Commercial Director (`snapshotComercialCD`): empresas ativas e empresas com contato elegível. Com decisor adequado,
+  com canal, precisam de pesquisa, precisam de enriquecimento, sem decisor e as taxas de cobertura do resumo legado
+  saíram por não terem definição canônica; a cobertura por conta segue na aba "Personas e decision fit" e na view
+  `v_radar_contact_coverage`.
 
 ## Telas
 

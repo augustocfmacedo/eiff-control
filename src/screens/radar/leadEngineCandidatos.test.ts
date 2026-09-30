@@ -119,10 +119,11 @@ const espiar = () => vi.spyOn(actions, 'processarCandidatoLeadEngine').mockImple
 describe('LE-2E · abas do Command Center', () => {
   it('1-3 · a aba Candidatos existe e NÃO se confunde com a fila de revisão da importação', () => {
     expect(CODIGO_CC).toContain("{ id: 'candidatos', label: `Candidatos (${candidatosLE.length})` }");
-    expect(CODIGO_CC).toContain("{ id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }");
+    expect(CODIGO_CC).toContain("{ id: 'revisao', label: 'Fila de revisão' }");
     expect(CODIGO_CC).toContain("| 'candidatos' |");
-    // a metrica antiga continua sendo a da importacao CSV, intocada
-    expect(CODIGO_CC).toContain('res.revisoesPendentes');
+    // D-6 (30/09/2026): a contagem da aba vinha do resumo legado, removido sem medida canônica; a aba continua sendo a
+    // da importação CSV e nunca usa a fila do Lead Engine
+    expect(CODIGO_CC).not.toMatch(/id: 'revisao', label: [^}]*candidatosLE/);
   });
 
   it('4 · o contador da aba usa filaDeRevisao, não a fila do CSV', () => {

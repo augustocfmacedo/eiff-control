@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { economiaInteligencia } from '../../core/radar/economia';
-import { DIMENSOES, FAIXAS_FUNCIONARIOS, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, PERSONAS, TIPOS_SINAL, calcularDecisionFit, configDe, filaHoje, descobertasSuprimidas, filaDeRevisao, oportunidadesSemProximaAcao, resumoRadar, type CondicaoRegra, type Dimensao, type Estrategia, type ImportacaoLinha, type Persona, type RegraPersona, type RegraScore } from '../../core/radar';
+import { DIMENSOES, FAIXAS_FUNCIONARIOS, NOME_ESTAGIO, NOME_PERSONA, NOME_SINAL, PERSONAS, TIPOS_SINAL, calcularDecisionFit, configDe, descobertasSuprimidas, filaDeRevisao, oportunidadesSemProximaAcao, ESTAGIOS, estagioAtivo, NOME_CATEGORIA_CM, TEXTO_RAZAO_CM, type CondicaoRegra, type Dimensao, type Estrategia, type ImportacaoLinha, type Persona, type RegraPersona, type RegraScore } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
-import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, ProgressRow, Select, Tabs, money, pct, tentar, useToast } from '../../ui/components';
-import { ImportarForm, ScorePill, d, dh, nomeUsuario } from './comum';
+import { Badge, Empty, Input, KpiHero, KpiStrip, Link, NumberInput, PageHead, Select, Tabs, money, tentar, useToast } from '../../ui/components';
+import { ImportarForm, d, dh, nomeUsuario } from './comum';
+import { snapshotComercialCD } from '../../core/radar/commercialDirector';
+import type { MedidaComercial } from '../../core/radar/commercialMetrics';
 import { VibePainel } from './Vibe';
 import { CoberturaDecisores } from './Cobertura';
 import LeadEngineCandidatos from './LeadEngineCandidatos';
@@ -17,18 +19,21 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
   const { toast, el } = useToast();
   const hoje = ds.params.dataBase;
   const r = ds.radar;
-  const res = resumoRadar(r, hoje);
+  // D-6: os indicadores da visão geral vêm do snapshot canônico do CD-1 e a lista operacional, da Commercial Queue
+  // (o snapshot só corta a fila, na ordem dela). A tela não calcula métrica: mostra a medida ou "—" com o motivo.
+  const cd = snapshotComercialCD(r, hoje, { limiteReferencias: 5 });
+  const mostrar = (m: MedidaComercial) => (m.estado === 'DISPONIVEL' ? m.valor : '—');
+  const porque = (m: MedidaComercial) => (m.estado === 'DISPONIVEL' ? undefined : m.motivoInsuficiencia);
   const eco = economiaInteligencia(r);
   const razao = (v: number | null) => (v == null ? '—' : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 }));
   const [aba, setAba] = useState<Aba>((aba0 as Aba) || 'visao');
   const [importar, setImportar] = useState(false);
   const podeAgir = pode(usuario, 'radar');
   const podeConfig = pode(usuario, 'radar_config');
-  const fila = filaHoje(r, hoje).slice(0, 5);
   const semAcao = oportunidadesSemProximaAcao(r);
   const vencidas = r.tarefas.filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) < hoje).sort((a, b) => (a.venceEm < b.venceEm ? -1 : 1));
   const cfg = configDe(r.configScore);
-  // LE-2E: projecoes do Lead Engine. A fila de revisao da importacao CSV (res.revisoesPendentes) e OUTRA coisa.
+  // LE-2E: projecoes do Lead Engine. A fila de revisao da importacao CSV (aba "Fila de revisão") e OUTRA coisa.
   const candidatosLE = filaDeRevisao(r);
   // LE-2E: a escolha de empresa por candidato vive AQUI para LeadEngineCandidatos/LinhaCandidato ficarem puros
   const [selecaoLE, setSelecaoLE] = useState<Record<string, string>>({});
@@ -50,31 +55,25 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         <Link to="/radar/hoje" className="btn primary">Abrir a fila de hoje</Link>
       </PageHead>
       <div className="hero-grid">
-        <KpiHero label="Pipeline ponderado" value={money(res.pipelinePonderado, true)} sufixo={`de ${money(res.pipeline, true)}`} hint={`${res.oportunidadesAtivas} oportunidade(s) ativa(s) · ${res.propostas30d} proposta(s) e ${res.projetosRecebidos30d} projeto(s) recebido(s) em 30 dias · ${res.ganhas90d} ganha(s) e ${res.perdidas90d} perdida(s) em 90 dias`}
-          secundarios={[{ label: 'Propostas 30 d', value: res.propostas30d }, { label: 'Projetos recebidos', value: res.projetosRecebidos30d }, { label: 'Reuniões 30 d', value: res.reunioes30d }, { label: 'Ganhas 90 d', value: res.ganhas90d }]}>
-          {res.porEstagio.filter((x) => x.estagio !== 'WON' && x.estagio !== 'LOST').map((x) => <ProgressRow key={x.estagio} label={x.nome} valor={res.pipeline ? x.valor / res.pipeline : 0} texto={`${x.quantidade} · ${money(x.valor, true)}`} />)}
-          {!res.porEstagio.length && <div className="muted small">Nenhuma oportunidade ainda. Abra a primeira na página da empresa.</div>}
+        <KpiHero label="Oportunidades ativas em contas ativas" value={mostrar(cd.funil.ativas)}
+          sufixo={cd.funil.valorEstimadoAtivas.estado === 'DISPONIVEL' ? `valor estimado ${money(cd.funil.valorEstimadoAtivas.valor ?? 0, true)}` : 'sem valor estimado'}
+          hint={`Valor estimado: soma das oportunidades ativas que têm valor (${mostrar(cd.funil.ativasSemValor)} sem valor).${porque(cd.funil.valorEstimadoAtivas) ? ` Indisponível: ${porque(cd.funil.valorEstimadoAtivas)}.` : ''}`}
+          secundarios={[{ label: 'Sem próxima ação (contas ativas)', value: mostrar(cd.funil.semProximaAcao) }, { label: 'Paradas na fila', value: mostrar(cd.funil.paradasNaFila) }, { label: 'Paradas críticas', value: mostrar(cd.funil.paradasCriticasNaFila) }, { label: 'Sem valor', value: mostrar(cd.funil.ativasSemValor) }]}>
+          {ESTAGIOS.filter((s) => estagioAtivo(s) && cd.funil.porEstagio[s].valor).map((s) => <div key={s} className="row small" style={{ gap: 8, padding: '3px 0' }}><span>{NOME_ESTAGIO[s]}</span><b>{mostrar(cd.funil.porEstagio[s])}</b></div>)}
+          {!cd.funil.ativas.valor && <div className="muted small">Nenhuma oportunidade ativa. Abra a primeira na página da empresa.</div>}
         </KpiHero>
-        <KpiHero label="Leads prioritários" value={res.aMais + res.a} sufixo={`${res.aMais} A+ · ${res.a} A`} tone={res.followUpsVencidos || res.oportunidadesSemAcao ? 'warn' : undefined} hint={`${res.followUpsVencidos} follow-up(s) vencido(s) · ${res.oportunidadesSemAcao} oportunidade(s) sem próxima ação · ${res.novosSinais7d} sinal(is) novo(s) em 7 dias`} to="/radar/hoje"
-          secundarios={[{ label: 'Classe B', value: res.b }, { label: 'Vencidos', value: res.followUpsVencidos }, { label: 'Sem ação', value: res.oportunidadesSemAcao }, { label: 'Sinais 7 d', value: res.novosSinais7d }]}>
-          {fila.map((i) => <div key={i.empresa.id} className="row small" style={{ gap: 8, padding: '3px 0' }}><ScorePill e={i.empresa} compacto /><b>{i.empresa.nomeFantasia ?? i.empresa.razaoSocial}</b><span className="muted">· {i.recomendacao.acao}</span></div>)}
+        <KpiHero label="Fila comercial" value={mostrar(cd.commercialQueue.total)} sufixo={`${mostrar(cd.commercialQueue.porCategoria.AGIR_AGORA)} para agir agora`}
+          hint="Contas na Commercial Queue, na ordem da fila (a mesma da Hoje)." to="/radar/hoje"
+          secundarios={[{ label: NOME_CATEGORIA_CM.AVANCAR_OPORTUNIDADE, value: mostrar(cd.commercialQueue.porCategoria.AVANCAR_OPORTUNIDADE) }, { label: NOME_CATEGORIA_CM.FOLLOW_UP, value: mostrar(cd.commercialQueue.porCategoria.FOLLOW_UP) }, { label: NOME_CATEGORIA_CM.REVISAR, value: mostrar(cd.commercialQueue.porCategoria.REVISAR) }, { label: NOME_CATEGORIA_CM.PROSPECTAR, value: mostrar(cd.commercialQueue.porCategoria.PROSPECTAR) }]}>
+          {cd.commercialQueue.referencias.map((x) => <div key={x.empresaId} className="row small" style={{ gap: 8, padding: '3px 0' }}><span className="muted">{x.posicao}.</span><b>{empresaNome(x.empresaId)}</b><span className="muted">· {NOME_CATEGORIA_CM[x.categoria]} · {TEXTO_RAZAO_CM[x.porQueAgora]}</span></div>)}
+          {!cd.commercialQueue.referencias.length && <div className="muted small">Nenhuma conta na fila comercial.</div>}
         </KpiHero>
       </div>
       <KpiStrip itens={[
-        { label: 'A+ leads', value: res.aMais, to: '/radar/empresas?classe=A%2B' }, { label: 'A leads', value: res.a, to: '/radar/empresas?classe=A' }, { label: 'Novos sinais (7 d)', value: res.novosSinais7d, hint: `${res.sinais30d} em 30 d` },
-        { label: 'Follow-ups vencidos', value: res.followUpsVencidos, tone: res.followUpsVencidos ? 'neg' : undefined }, { label: 'Sem próxima ação', value: res.oportunidadesSemAcao, tone: res.oportunidadesSemAcao ? 'warn' : undefined },
-        { label: 'Atividades (7 d)', value: res.atividades7d, hint: `${res.atividades30d} em 30 d` }, { label: 'Respostas (30 d)', value: res.respostas30d, hint: `${res.respostasPositivas30d} positivas` }, { label: 'Reuniões (30 d)', value: res.reunioes30d },
-        { label: 'Projetos recebidos', value: res.projetosRecebidos30d }, { label: 'Propostas (30 d)', value: res.propostas30d }, { label: 'Pipeline', value: money(res.pipeline, true), hint: `ponderado ${money(res.pipelinePonderado, true)}` },
-      ]} />
-      <div style={{ height: 8 }} />
-      <KpiStrip itens={[
-        { label: 'Empresas', value: res.empresas, hint: `${res.comContato} com contato (${pct(res.coberturaContato)})`, to: '/radar/empresas' },
-        { label: 'Com decisor adequado', value: res.comDecisor, hint: `cobertura ${pct(res.coberturaDecisor)}`, to: '/radar/empresas?situacao=sem-decisor' },
-        { label: 'Com canal de contato', value: res.comCanal, hint: `${pct(res.contatavel)} contatáveis` },
-        { label: 'Precisam de pesquisa', value: res.precisamPesquisa, hint: 'sem decisor adequado ou sem sinal', tone: res.precisamPesquisa ? 'warn' : undefined },
-        { label: 'Precisam de enriquecimento', value: res.precisamEnriquecimento, hint: 'decisor sem e-mail/telefone válido' },
-        { label: 'Sem decisor', value: res.semDecisor, to: '/radar/empresas?situacao=sem-decisor' },
-        { label: 'Fila de revisão', value: res.revisoesPendentes, tone: res.revisoesPendentes ? 'warn' : undefined, to: '/radar?aba=revisao' },
+        { label: 'A+ leads', value: mostrar(cd.base.porClasseRadar['A+']), to: '/radar/empresas?classe=A%2B' }, { label: 'A leads', value: mostrar(cd.base.porClasseRadar.A), to: '/radar/empresas?classe=A' },
+        { label: 'Empresas', value: mostrar(cd.base.empresasAtivas), hint: `${mostrar(cd.decisores.comContatoElegivel)} com contato elegível`, to: '/radar/empresas' },
+        { label: 'Tarefas vencidas na fila comercial', value: mostrar(cd.atividade.tarefasVencidasNaFila), tone: cd.atividade.tarefasVencidasNaFila.valor ? 'neg' : undefined },
+        { label: 'Toques comerciais (7 d)', value: mostrar(cd.atividade.toquesRecentes['7d']), hint: `${mostrar(cd.atividade.toquesRecentes['30d'])} em 30 d · notas não contam` },
       ]} />
       <div style={{ height: 16 }} />
       <div className="card">
@@ -92,24 +91,22 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         ]} />
       </div>
       <div style={{ height: 16 }} />
-      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'candidatos', label: `Candidatos (${candidatosLE.length})` }, { id: 'revisao', label: `Fila de revisão (${res.revisoesPendentes})` }, { id: 'duplicatas', label: `Duplicatas (${res.duplicatasPendentes})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }, { id: 'signal' as const, label: 'Signal Pilot' }] : [])]} />
+      <Tabs value={aba} onChange={setAba} items={[{ id: 'visao', label: 'Visão geral' }, { id: 'alertas', label: `Alertas (${semAcao.length + vencidas.length})` }, { id: 'regras', label: `Regras de score (${r.regrasScore.length})` }, { id: 'decisores', label: 'Personas e decision fit' }, { id: 'estrategias', label: `Estratégias (${r.estrategias.length})` }, { id: 'importacoes', label: `Importações (${r.importacoes.length})` }, { id: 'candidatos', label: `Candidatos (${candidatosLE.length})` }, { id: 'revisao', label: 'Fila de revisão' }, { id: 'duplicatas', label: `Duplicatas (${mostrar(cd.qualidade.duplicatasPendentes)})` }, { id: 'supressoes', label: `Não contatar (${r.supressoes.length})` }, ...(podeConfig ? [{ id: 'vibe' as const, label: 'Vibe Prospecting' }, { id: 'signal' as const, label: 'Signal Pilot' }] : [])]} />
 
       {aba === 'visao' && (
         <div className="grid cols-2">
           <div className="card">
-            <h2>Sinais nos últimos 30 dias</h2>
-            {!res.topSinais.length ? <Empty>Sem sinais. Registre sinais nas empresas ou conecte as fontes (CNO, PNCP, notícias).</Empty> : res.topSinais.map((s) => <ProgressRow key={s.tipo} label={s.nome} valor={res.sinais30d ? s.quantidade / res.sinais30d : 0} texto={String(s.quantidade)} />)}
-            <h3 style={{ marginTop: 14 }}>Fontes</h3>
+            <h2>Fontes</h2>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{r.fontes.filter((f) => f.ativo).map((f) => <Badge key={f.id} tone={r.registrosFonte.some((x) => x.fonteId === f.id) || r.sinais.some((s) => s.fonteId === f.id) ? 'ok' : 'muted'}>{f.nome}</Badge>)}</div>
           </div>
           <div className="card">
-            <h2>Funil</h2>
-            {!res.porEstagio.length ? <Empty>Sem oportunidades.</Empty> : (
-              <table className="small"><thead><tr><th>Estágio</th><th className="num">Qtd</th><th className="num">Valor</th></tr></thead><tbody>{res.porEstagio.map((x) => <tr key={x.estagio}><td>{x.nome}</td><td className="num">{x.quantidade}</td><td className="num">{money(x.valor, true)}</td></tr>)}</tbody></table>
+            <h2>Oportunidades por estágio (contas ativas)</h2>
+            {!cd.funil.oportunidades.valor ? <Empty>Sem oportunidades.</Empty> : (
+              <table className="small"><thead><tr><th>Estágio</th><th className="num">Qtd</th></tr></thead><tbody>{ESTAGIOS.filter((s) => cd.funil.porEstagio[s].valor).map((s) => <tr key={s}><td>{NOME_ESTAGIO[s]}</td><td className="num">{mostrar(cd.funil.porEstagio[s])}</td></tr>)}</tbody></table>
             )}
             <h3 style={{ marginTop: 14 }}>Distribuição por classe</h3>
-            <div className="pipeline-bar">{(['A+', 'A', 'B', 'C', 'D'] as const).map((c) => { const n = { 'A+': res.aMais, A: res.a, B: res.b, C: res.c, D: res.d }[c]; const tot = res.aMais + res.a + res.b + res.c + res.d; return n ? <i key={c} style={{ width: `${(n / tot) * 100}%` }} title={`${c}: ${n}`} /> : null; })}</div>
-            <div className="small muted" style={{ marginTop: 4 }}>A+ {res.aMais} · A {res.a} · B {res.b} · C {res.c} · D {res.d}</div>
+            <div className="pipeline-bar">{(['A+', 'A', 'B', 'C', 'D'] as const).map((c) => { const m = cd.base.porClasseRadar[c]; return m.valor && m.base ? <i key={c} style={{ width: `${(m.valor / m.base) * 100}%` }} title={`${c}: ${m.valor}`} /> : null; })}</div>
+            <div className="small muted" style={{ marginTop: 4 }}>{(['A+', 'A', 'B', 'C', 'D'] as const).map((c) => `${c} ${mostrar(cd.base.porClasseRadar[c])}`).join(' · ')}</div>
           </div>
         </div>
       )}

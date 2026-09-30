@@ -1,7 +1,7 @@
 // Signal Pilot 01: prontidao para receber sinais pesquisados externamente. Dado ficticio, so em memoria (modo local).
 import { beforeAll, describe, expect, it } from 'vitest';
 import { actions, getState } from './store';
-import { filaHoje, recomendarAcao, visaoSignalPilot } from '../core/radar';
+import { construirCommercialQueue, recomendarAcao, visaoSignalPilot } from '../core/radar';
 import { linhaDb, type ChaveRadar } from './radar.supabase';
 
 const radar = () => getState().ds.radar;
@@ -61,10 +61,8 @@ describe('Signal Pilot 01: inclusão manual de sinal', () => {
     const e1b = e2;
     const rec = recomendarAcao(e1b, radar(), hoje);
     expect(rec.estado).toBe('CONTACT_NOW'); expect(rec.contato?.contato.nome).toBe('Fulana Fictícia');
-    const fila = filaHoje(radar(), hoje);
-    const pos = fila.findIndex((i) => i.empresa.id === e0.id);
-    expect(pos).toBeGreaterThanOrEqual(0);
-    expect(fila[pos].empresa.priorityScore).toBe(e1b.priorityScore);
-    for (const item of fila.slice(0, pos)) expect(item.empresa.priorityScore).toBeGreaterThanOrEqual(e1b.priorityScore);
+    // D-6: filaHoje removida. A presença na fila é conferida na Commercial Queue (autoridade da Hoje). A afirmação
+    // de ordenação por priorityScore saiu sem sucessor: a Commercial Queue ordena por degrau/tier/urgência, não pelo score.
+    expect(construirCommercialQueue(radar(), hoje).itens.some((i) => i.empresaId === e0.id)).toBe(true);
   });
 });

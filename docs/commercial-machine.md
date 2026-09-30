@@ -410,8 +410,10 @@ Servidor: fuso da organização `EIFF_FUSO_HORARIO` (padrão `America/Sao_Paulo`
    `context_changed` (ação recalculada em outro dia). Explícito, mas pode confundir.
 6. **Custo de leitura.** A geração com intenção faz carga adicional por conta (tarefas, comunicações, duplicatas,
    histórico, supressões de todos os contatos). Monitorar antes de otimizar.
-7. **Command Center.** O bloco "Leads prioritários" ainda lista o top 5 de `filaHoje` com a ação de `recomendarAcao`,
-   podendo contradizer a Hoje. Não corrigido no CM1.
+7. **Command Center — RESOLVIDA na D-6 (30/09/2026).** O bloco "Leads prioritários" (top 5 da fila do dia legada com a
+   ação de `recomendarAcao`) virou "Fila comercial": as cinco primeiras contas da Commercial Queue, na ordem dela, com
+   categoria e razão do CM1-A, lidas do snapshot canônico do Commercial Director. A fila legada e o resumo legado
+   foram removidos do código (`docs/commercial-director-1.0.md` §18).
 8. **`CLAUDE.md`.** Não descreve a Máquina Comercial (arquivo compartilhado, alterado pela Wave 03): atualizar depois da
    integração.
 9. **`motivoSelecao` / `motivoCanal`.** São os textos existentes das regras de comunicação e mostram códigos crus
@@ -421,24 +423,25 @@ Servidor: fuso da organização `EIFF_FUSO_HORARIO` (padrão `America/Sao_Paulo`
 
 ### Consumidores conhecidos da autoridade antiga
 
-Busca por `filaHoje`, `recomendarAcao`, `contextoComunicacaoDe` e `lerEmpresa` fora de testes (CM1-E).
+Busca por `filaHoje`, `recomendarAcao`, `contextoComunicacaoDe` e `lerEmpresa` fora de testes (CM1-E). Na D-6
+(30/09/2026) a fila do dia legada foi removida; a guarda `src/core/radar/legadoD6.test.ts` impede que volte.
 
 | Consumidor | Uso | Classificação |
 |---|---|---|
-| `src/screens/radar/CommandCenter.tsx` | top 5 "Leads prioritários" por `filaHoje` | **precisa migrar** (contradiz a Hoje) |
+| `src/screens/radar/CommandCenter.tsx` | top 5 "Leads prioritários" pela fila do dia legada | **já migrado** (D-6: Commercial Queue + snapshot CD-1) |
 | `src/screens/radar/Empresa.tsx` | `lerEmpresa`: "ação recomendada", "sem próxima ação", "Agendar esta ação" | **precisa migrar** (mesma conta com outra decisão) |
 | `src/App.tsx` (contador do menu) | contagem de tarefas vencidas, não a fila | **precisa migrar** (após a Wave 03) |
-| `scripts/radar-registrar-sinal-producao.mts`, `radar-registrar-atividade-producao.mts` | posição na fila antiga no "antes/depois" | **precisa migrar** (operação em produção) |
+| `scripts/radar-registrar-sinal-producao.mts`, `radar-registrar-atividade-producao.mts` | posição na fila antiga no "antes/depois" | **removida** (D-6: os scripts não carregam duplicatas, comunicações nem histórico de estágios, então não reproduzem a Commercial Queue; a posição se confere na Hoje) |
 | `scripts/radar-persona-alinhar-producao.mts` | estado de `recomendarAcao` no "antes/depois" | **precisa migrar** (operação em produção) |
 | `src/screens/radar/Vibe.tsx` | contas sugeridas para busca de decisor (`SEARCH_DECISION_MAKER`) | **frente própria** (envolve créditos pagos; alinhar com `ENRIQUECER`) |
 | `src/screens/radar/Abordagem.tsx` (sem `commercialIntent`) | contexto de comunicação legado | pode permanecer legado; correção na frente do pipeline |
 | `src/data/store.ts` (`prepararSpecComunicacaoRadar`/`gerarComunicacaoRadar` sem intenção) | contexto de comunicação legado | pode permanecer legado |
 | `src/core/radar/comunicacaoServidor.ts` (`reconstruir` sem intenção, `validar_edicao` de rascunho sem origem CM) | Server Truth legado | pode permanecer legado (contrato público mantido) |
 | `src/core/radar/comunicacao.ts` (`contextoComunicacaoDe` → `recomendarAcao` em `proximaAcaoAtual`) | texto interno do contexto | **frente própria** (pipeline) |
-| `src/core/radar/pipeline.ts` (`filaHoje` → `lerEmpresa` → `recomendarAcao`) | definição do legado | **frente própria** (pipeline) |
+| `src/core/radar/pipeline.ts` (`lerEmpresa` → `recomendarAcao`) | definição do legado; a fila do dia e o resumo foram removidos na D-6 | **frente própria** (pipeline) |
 | `src/core/radar/cobertura.ts` | estados da cobertura de decisores | **frente própria** (alinhar estados com o plano) |
 | `src/core/radar/signalPilot.ts` | leitura do piloto de sinais | pode permanecer legado (piloto analítico, não comanda a fila) |
-| `src/core/radar/calibracao.ts`, `scripts/radar-calibracao-aplicar.mts`, `scripts/radar-calibracao-simular.mts` | relatórios da calibração de produção 01 | pode permanecer legado (histórico da calibração aplicada) |
+| `src/core/radar/calibracao.ts`, `scripts/radar-calibracao-aplicar.mts`, `scripts/radar-calibracao-simular.mts` | relatórios da calibração de produção 01 | pode permanecer legado (histórico da calibração aplicada); a posição na fila antiga saiu na D-6 |
 | `src/core/sugestoes.ts` | faixa de sugestões | **já migrado** (CM1-D1) |
 
 ---

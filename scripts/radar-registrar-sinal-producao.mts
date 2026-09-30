@@ -13,7 +13,7 @@ import path from 'node:path';
 import { criarIds, recalcularEmpresas } from '../src/core/radar/importacao';
 import { registrarSinalNormalizado } from '../src/core/radar/ingestao';
 import { normalizarNome } from '../src/core/radar/normalizar';
-import { filaHoje } from '../src/core/radar/pipeline';
+
 import { payloadComLeitura, visaoSignalPilot, type LeituraSinal } from '../src/core/radar/signalPilot';
 import { TIPOS_SINAL, radarVazio, type Fonte, type RadarDataset, type TipoSinal } from '../src/core/radar/types';
 import { linhaApp, linhaDb, type ChaveRadar, type HelpersRadar } from '../src/data/radar.supabase';
@@ -79,8 +79,8 @@ const hoje = new Date().toISOString().slice(0, 10); const agora = new Date().toI
 const foto = (r: RadarDataset) => {
   const e = r.empresas.find((x) => x.id === empresa.id)!;
   const l = visaoSignalPilot(r, hoje, [e.razaoSocial])[0];
-  const fila = filaHoje(r, hoje); const pos = fila.findIndex((i) => i.empresa.id === e.id);
-  return { priorityScore: e.priorityScore, priorityClass: e.priorityClass, timing: e.timingScore, intent: e.intentScore, decisionFit: l.decisionFit ?? null, contato: l.contato ?? null, signalCount: l.signalCount, strongestSignal: l.strongestSignal ?? '—', whyNow: l.whyNow, recommendedAction: l.recommendedAction, origemAcao: l.origemAcao ?? null, estadoCrm: l.estadoCrm ?? null, posicaoHoje: pos >= 0 ? `${pos + 1} de ${fila.length}` : `fora da fila (${fila.length} na fila)`, ultimoSinalEm: e.ultimoSinalEm ?? null };
+  // D-6: posicaoHoje (fila do dia legada) removida; a posição na Commercial Queue se confere na Hoje
+  return { priorityScore: e.priorityScore, priorityClass: e.priorityClass, timing: e.timingScore, intent: e.intentScore, decisionFit: l.decisionFit ?? null, contato: l.contato ?? null, signalCount: l.signalCount, strongestSignal: l.strongestSignal ?? '—', whyNow: l.whyNow, recommendedAction: l.recommendedAction, origemAcao: l.origemAcao ?? null, estadoCrm: l.estadoCrm ?? null, ultimoSinalEm: e.ultimoSinalEm ?? null };
 };
 console.log(`2) Empresa: ${empresa.razaoSocial} · company_id ${empresa.id} · fonte ${fonte.codigo} (confiabilidade ${fonte.confiabilidade})`);
 const antes = foto(r0);

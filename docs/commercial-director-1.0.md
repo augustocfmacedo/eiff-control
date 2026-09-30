@@ -539,7 +539,7 @@ outra coisa: o Diretor tem casa própria.
 - **D-5 · Dono de conta**: o Radar não tem responsável por conta; sem ele não há leitura por vendedor.
 - **D-6 · Legado — FECHADA (30/09/2026)**: `resumoRadar` e `filaHoje` estão DEPRECADOS como autoridades comerciais; o
   Diretor não os usa (teste prende). A remoção física é frente separada e acontece antes do CD-6. A Commercial Queue
-  continua a autoridade operacional.
+  continua a autoridade operacional. **Remoção física feita em 30/09/2026** (§18).
 
 ### 16.3 Riscos
 
@@ -594,3 +594,55 @@ congelados não são alterados; nenhuma chave de score/peso/ranking; referência
 Vibe, API, Supabase, store, envio ou relógio; mudar notas, observações, payload, descrições e texto de mensagem não muda
 o snapshot; taxa sem amostra = `DADO_INSUFICIENTE`; oportunidade vazia = 0 disponível e Inbox ausente = insuficiente;
 paridade com fila, plano, cadência, cobertura, elegibilidade, histórico e Lead Engine.
+
+## 18. D-6 — remoção física do legado (30/09/2026)
+
+Alternativa A da auditoria D-6, sem equivalências aproximadas: só migrou o que tem correspondência canônica real no CD-1;
+o resto saiu da tela. `commercialDirector.ts`, `commercialMetrics.ts` e os motores `commercial*.ts` não mudaram.
+
+**Removido do código.** A fila do dia legada (ordenação por `priorityScore` + vencida + sem próxima ação + hoje) e o
+resumo legado do Radar (tipo e função), em `src/core/radar/pipeline.ts`. Ficam `lerEmpresa`, `ItemFila` e
+`recomendarAcao` (página da empresa), além de `oportunidadesSemProximaAcao` e `decisorDe`.
+
+**Command Center.** Topo e Visão geral leem `snapshotComercialCD(r, hoje, { limiteReferencias: 5 })`; a tela não
+calcula, não ordena e não tem adapter. Medida em `DADO_INSUFICIENTE` aparece como "—".
+
+Mesma definição, mesmo rótulo:
+
+| Na tela | Fonte canônica |
+|---|---|
+| A+ leads · A leads · distribuição por classe (A+ a D) | `base.porClasseRadar` |
+| Empresas | `base.empresasAtivas` |
+| "N com contato elegível" (dica de Empresas; antes "com contato") | `decisores.comContatoElegivel` (mesmo `contatoElegivel`) |
+| Duplicatas (contagem na aba) | `qualidade.duplicatasPendentes` |
+
+Escopo ou definição diferentes, por isso com rótulo novo:
+
+| Antes | Agora | Fonte canônica |
+|---|---|---|
+| Leads prioritários (top 5 por score, ação de `recomendarAcao`) | Fila comercial: total, "para agir agora", quatro categorias e as cinco primeiras contas com posição, categoria e razão | `commercialQueue.total`, `porCategoria`, `referencias` |
+| Oportunidades ativas (todas as contas) | Oportunidades ativas em contas ativas | `funil.ativas` |
+| Pipeline (todas as contas) | Valor estimado, em contas ativas, com "N sem valor" | `funil.valorEstimadoAtivas`, `funil.ativasSemValor` |
+| Sem próxima ação (todas as oportunidades) | Sem próxima ação (contas ativas) | `funil.semProximaAcao` |
+| Funil por estágio, quantidade e valor | Oportunidades por estágio (contas ativas), só quantidade | `funil.porEstagio` |
+| Follow-ups vencidos (todas as tarefas abertas com vencimento anterior a hoje, esteja a conta na fila comercial ou não) | Tarefas vencidas na fila comercial (tarefas vencidas das contas presentes na Commercial Queue) | `atividade.tarefasVencidasNaFila` |
+| Atividades 7 d / 30 d (notas incluídas) | Toques comerciais 7 d / 30 d, notas não contam | `atividade.toquesRecentes` |
+
+Novos, sem antecessor: Paradas na fila e Paradas críticas (`funil.paradasNaFila`, `funil.paradasCriticasNaFila`).
+
+Saíram sem sucessor: pipeline ponderado, sinais 7 d e 30 d, top sinais em 30 dias (card "Sinais nos últimos 30 dias";
+o card virou só "Fontes"), respostas 30 d e positivas, propostas 30 d, projetos recebidos 30 d, reuniões 30 d, ganhas
+90 d, perdidas 90 d, Classe B como secundário (segue na distribuição), com decisor adequado, com canal de contato,
+precisam de pesquisa, precisam de enriquecimento, sem decisor, os percentuais de cobertura (contato, decisor,
+contatáveis), fila de revisão da importação CSV (cartão e contagem na aba) e a coluna de valor por estágio.
+
+**Scripts.** A posição na fila antiga saiu de `radar-registrar-sinal-producao.mts`,
+`radar-registrar-atividade-producao.mts`, `radar-calibracao-aplicar.mts` e `radar-calibracao-simular.mts`. Nenhum deles
+carrega duplicatas, comunicações e histórico de estágios, então uma posição na Commercial Queue calculada ali não seria a
+da Hoje; a posição se confere na Hoje. A próxima ação do "antes/depois" de atividades passou a vir de `lerEmpresa`.
+
+**Testes.** `src/core/radar/legadoD6.test.ts` prende zero ocorrência dos nomes em `src/` (fora de testes), `scripts/` e
+`netlify/`, a ausência nos exports e a leitura canônica do Command Center. Os testes de store passaram a usar
+`lerEmpresa`, `recomendarAcao`, `decisorDe`, `construirCommercialQueue` e `snapshotComercialCD`. Afirmações removidas
+por não terem sucessor: ordenação da fila por `priorityScore`, `pipelinePonderado`, as janelas de 30/90 dias do resumo
+(`respostas30d`), `followUpsVencidos`, `comDecisor`, `comCanal` e `precisamPesquisa`.
