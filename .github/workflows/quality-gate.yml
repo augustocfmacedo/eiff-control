@@ -136,5 +136,11 @@ jobs:
       - name: PostgreSQL Smoke (FIN-RESET)
         run: node scripts/pg-smoke-fin-reset.mjs
 
+      # scripts/pg-smoke-dono-conta.mjs aplica a 0063 (CD-D5, dono da conta) num PGlite descartável e prova FK, dono
+      # ativo da mesma organização (inativo e de outra organização recusados), remoção, auditoria do antes/depois, dono
+      # que ficou inativo sem revalidar outras gravações e a gravação da mescla. Sai com código 1 se qualquer prova falhar.
+      - name: PostgreSQL Smoke (CD-D5 dono da conta)
+        run: node scripts/pg-smoke-dono-conta.mjs
+
       - name: Full Migration Preflight
         run: node scripts/pg-preflight-central.mjs --ordem-corrigida
