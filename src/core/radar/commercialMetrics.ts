@@ -46,10 +46,12 @@ export const insuficiente = (d: Def, motivo: string, base?: number): MedidaComer
 export const naoAplicavel = (d: Def, motivo: string): MedidaComercial => ({ ...d, estado: 'NAO_APLICAVEL', motivoInsuficiencia: motivo });
 
 /**
- * Amostra mínima para publicar uma TAXA. Decisão D-4 ainda ABERTA: enquanto for `undefined`, nenhuma taxa é
- * publicada — toda razão sai DADO_INSUFICIENTE, mesmo com denominador positivo. Definir o valor é decisão humana.
+ * Amostra mínima para publicar uma TAXA — decisão CD-D4, FECHADA em 30/09/2026: 30 observações no denominador.
+ * Denominador 0 ou abaixo de 30 → DADO_INSUFICIENTE; 30 ou mais → taxa disponível. É uma regra de GOVERNANÇA do
+ * produto (quando a taxa pode ser mostrada), não uma afirmação de precisão estatística. Mudar o valor é nova decisão
+ * e sobe `VERSAO_REGRAS_CD`.
  */
-export const AMOSTRA_MINIMA_TAXA: number | undefined = undefined;
+export const AMOSTRA_MINIMA_TAXA: number = 30;
 
 /** Taxa numerador ÷ denominador (unidade RAZAO, valor entre 0 e 1). Sem amostra defensável, DADO_INSUFICIENTE. */
 export function taxa(d: Omit<Def, 'unidade'>, numerador: number, denominador: number, amostraMinima: number | undefined = AMOSTRA_MINIMA_TAXA): MedidaComercial {

@@ -261,17 +261,39 @@ describe('CD-1 · invariantes', () => {
     expect(vazio.funil.taxaGanhoSobreFechadas.estado).toBe('DADO_INSUFICIENTE');
     expect(vazio.funil.taxaGanhoSobreFechadas.motivoInsuficiencia).toMatch(/sem amostra/);
     expect(vazio.funil.taxaGanhoSobreFechadas.valor).toBeUndefined();
-    // com fechadas, mas amostra mínima ainda indefinida (D-4): continua insuficiente
+    // com fechadas, mas abaixo da amostra mínima de governança (CD-D4 = 30): continua insuficiente
     const s = snapshotComercialCD(mundo(), HOJE);
-    expect(AMOSTRA_MINIMA_TAXA).toBeUndefined();
+    expect(AMOSTRA_MINIMA_TAXA).toBe(30);
     expect(s.funil.taxaGanhoSobreFechadas.estado).toBe('DADO_INSUFICIENTE');
     expect(s.funil.taxaGanhoSobreFechadas.base).toBe(2);
-    expect(s.funil.taxaGanhoSobreFechadas.motivoInsuficiencia).toMatch(/D-4/);
+    expect(s.funil.taxaGanhoSobreFechadas.motivoInsuficiencia).toBe('amostra abaixo da mínima (2 < 30)');
     expect(s.funil.taxaContaTocadaParaOportunidade.estado).toBe('DADO_INSUFICIENTE');
     // a primitiva publica quando a amostra é definida e alcançada — e só então
     expect(taxa({ id: 't', descricao: 'teste de taxa', autoridade: 'RADAR' }, 1, 2, 2)).toMatchObject({ estado: 'DISPONIVEL', valor: 0.5, base: 2, unidade: 'RAZAO' });
     expect(taxa({ id: 't', descricao: 'teste de taxa', autoridade: 'RADAR' }, 1, 2, 3).estado).toBe('DADO_INSUFICIENTE');
     expect(medidasDoSnapshotCD(s).filter((m) => m.unidade === 'RAZAO' && m.estado === 'DISPONIVEL')).toEqual([]);
+  });
+
+  it('14b · CD-D4: corte de governança de 30 observações — 0 e 29 insuficientes, 30 e acima disponíveis', () => {
+    const d = { id: 't', descricao: 'teste de taxa', autoridade: 'RADAR' } as const;
+    // primitiva com o corte padrão (sem passar amostraMinima): a semântica da taxa() não mudou
+    expect(taxa(d, 0, 0)).toMatchObject({ estado: 'DADO_INSUFICIENTE', motivoInsuficiencia: 'sem amostra: o denominador é zero' });
+    expect(taxa(d, 0, 0).valor).toBeUndefined();
+    expect(taxa(d, 10, 29)).toMatchObject({ estado: 'DADO_INSUFICIENTE', base: 29, motivoInsuficiencia: 'amostra abaixo da mínima (29 < 30)' });
+    expect(taxa(d, 10, 29).valor).toBeUndefined();
+    expect(taxa(d, 15, 30)).toMatchObject({ estado: 'DISPONIVEL', valor: 0.5, base: 30, unidade: 'RAZAO' });
+    expect(taxa(d, 0, 30)).toMatchObject({ estado: 'DISPONIVEL', valor: 0, base: 30 }); // 0% real, com amostra
+    expect(taxa(d, 31, 31)).toMatchObject({ estado: 'DISPONIVEL', valor: 1, base: 31 });
+    expect(taxa(d, 25, 100)).toMatchObject({ estado: 'DISPONIVEL', valor: 0.25, base: 100 });
+    // o mesmo corte pelo snapshot: n oportunidades fechadas (WON + LOST) numa conta ativa
+    const fechadas = (n: number, ganhas: number) => ({
+      ...mundo(),
+      oportunidades: Array.from({ length: n }, (_, i) => opp(`F${i}`, 'E2', { estagio: i < ganhas ? 'WON' : 'LOST', fechadoEm: ts('2026-09-10') })),
+    });
+    expect(snapshotComercialCD(fechadas(29, 10), HOJE).funil.taxaGanhoSobreFechadas).toMatchObject({ estado: 'DADO_INSUFICIENTE', base: 29 });
+    expect(snapshotComercialCD(fechadas(30, 12), HOJE).funil.taxaGanhoSobreFechadas).toMatchObject({ estado: 'DISPONIVEL', valor: 0.4, base: 30 });
+    expect(snapshotComercialCD(fechadas(40, 10), HOJE).funil.taxaGanhoSobreFechadas).toMatchObject({ estado: 'DISPONIVEL', valor: 0.25, base: 40 });
+    expect(snapshotComercialCD(fechadas(30, 12), HOJE).versaoRegras).toBe('CD-1.1');
   });
 
   it('15 · coleção vazia conhecida (0) ≠ coleção indisponível (DADO_INSUFICIENTE)', () => {
