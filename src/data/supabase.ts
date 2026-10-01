@@ -80,7 +80,7 @@ interface Refs {
   contasInv: Map<string, string>;
   lancs: Map<string, string>; // code -> id
   lancsInv: Map<string, string>;
-  trans: Map<string, string>; // app id (uuid da linha, ou EXT-nnnn importada nesta sessao) -> uuid
+  trans: Map<string, string>; // app id (uuid da linha; o app gera o uuid ao importar) -> uuid
   aprov: Map<string, string>; // code -> id
   perfis: Map<string, string>; // id -> nome
   perfisInv: Map<string, string>; // nome -> id
@@ -119,9 +119,18 @@ export function idDaTransacao(t: Row): string {
 }
 
 /** Mapa usado na persistencia: id da transacao no app -> uuid da linha (identidade; nunca FITID -> uuid). Transacoes
- * importadas na sessao entram com o id local (EXT-nnnn) e o uuid devolvido pelo insert. */
+ * importadas na sessao ja nascem com o uuid que o insert grava. */
 export function mapaTransacoes(linhas: Row[]): Map<string, string> {
   return new Map(linhas.map((t) => [idDaTransacao(t), t.id]));
+}
+
+/**
+ * Linha nova de bank_transaction. O app ja nasce com o uuid da linha (importarTransacoes), entao o mesmo id vale no
+ * navegador e no banco. Linha descartada nunca e reaproveitada: o mesmo FITID depois de um reset entra como linha NOVA e
+ * a unicidade (conta, FITID) vale so entre as ativas (indice parcial da 0061).
+ */
+export function linhaTransacaoNova(t: TransacaoBancaria, orgId: string, contaId: string | undefined): Row {
+  return { ...(UUID.test(t.id) ? { id: t.id } : {}), organization_id: orgId, bank_account_id: contaId, record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito, imported_at: t.importadoEm ?? new Date().toISOString() };
 }
 
 /** Linha de bank_transaction (mais as suas conciliacoes) no formato do app. */
@@ -544,7 +553,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const t of mudou(antes.transacoes, depois.transacoes, 'id')) {
     let tid = r.trans.get(t.id);
     if (!tid) {
-      const { data, error } = await sb.from('bank_transaction').insert({ organization_id: r.orgId, bank_account_id: r.contas.get(t.conta), record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito, imported_at: t.importadoEm ?? new Date().toISOString() }).select('id');
+      const { data, error } = await sb.from('bank_transaction').insert(linhaTransacaoNova(t, r.orgId, r.contas.get(t.conta))).select('id');
       falha('importar transação', error);
       tid = data?.[0]?.id;
       if (tid) r.trans.set(t.id, tid);
@@ -555,8 +564,10 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
       const patch: Row = {};
       if (prev.conta !== t.conta) { patch.bank_account_id = r.contas.get(t.conta); patch.moved_from_account_id = r.contas.get(t.contaOrigem ?? prev.conta); patch.moved_at = t.movidaEm ?? new Date().toISOString(); patch.moved_by = atorId; }
       if (prev.descartadaEm !== t.descartadaEm) { patch.discarded_at = t.descartadaEm ?? null; patch.discarded_by = t.descartadaEm ? atorId : null; patch.discard_reason = t.descartadaEm ? t.motivoDescarte ?? null : null; }
-      const { error } = await sb.from('bank_transaction').update(patch).eq('id', tid);
+      // .select confere a linha gravada: sem a policy de UPDATE a RLS filtra em silencio e o app achava que tinha gravado
+      const { data, error } = await sb.from('bank_transaction').update(patch).eq('id', tid).select('id');
       falha('atualizar transação do extrato', error);
+      if (!data?.length) throw new RemotoError('O banco não aceitou alterar a transação do extrato (sem permissão de atualização). Nada foi gravado nesta transação; avise o administrador.');
     }
     if (tid && (!prev || JSON.stringify(prev.lancamentoIds) !== JSON.stringify(t.lancamentoIds) || prev.justificativa !== t.justificativa)) {
       const { error: e1 } = await sb.from('reconciliation').delete().eq('bank_transaction_id', tid);

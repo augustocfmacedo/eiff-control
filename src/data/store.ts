@@ -47,6 +47,7 @@ import type {
 } from '../core/types';
 import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
 import { planejarMovimentacao } from '../core/extratos';
+import { planejarResetExtrato } from '../core/resetExtrato';
 import { ORIGEM_DF, resumoParecer, type PrevisaoDF } from '../core/cfo';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
@@ -2820,7 +2821,6 @@ export const actions = {
     const novas: TransacaoBancaria[] = [];
     let duplicadas = 0; let antesDoCorte = 0;
     const quando = agora(); // identifica o lote: e por ele que a tela agrupa a importacao
-    const ids = ds.transacoes.map((t) => t.id);
     const corte = ds.params.corteExtrato;
     for (const l of linhas) {
       if (corte && l.data < corte) { antesDoCorte++; continue; } // anterior ao corte do extrato: nem entra
@@ -2830,7 +2830,8 @@ export const actions = {
       if ((chaveExt && externos.has(chaveExt)) || (!chaveExt && existentes.has(chave))) { duplicadas++; continue; }
       if (chaveExt) externos.add(chaveExt);
       existentes.add(chave);
-      const id = seq('EXT', [...ids, ...novas.map((n) => n.id)]);
+      // identidade da linha = uuid (o mesmo do banco): o FITID fica em idExterno e pode reaparecer depois de um reset
+      const id = crypto.randomUUID();
       novas.push({ id, registro: 'Real', conta, data: l.data, historico: l.historico, documento: l.documento, debito: l.debito, credito: l.credito, lancamentoIds: [], origem: l.idExterno ? 'ofx' : 'importacao', idExterno: l.idExterno, importadoEm: quando });
     }
     ds = registrar({ ...ds, transacoes: [...ds.transacoes, ...novas] }, 'importar_extrato', 'transacoes', conta, undefined, { importadas: novas.length, duplicadas, antesDoCorte });
@@ -2899,8 +2900,15 @@ export const actions = {
     exigir('conciliar');
     if (!motivo.trim()) throw new RegraDeNegocioError('Diga por que o extrato está sendo limpo (fica na auditoria).');
     if (conta && !ds.contas.some((c) => c.instituicao === conta)) throw new RegraDeNegocioError('Conta não encontrada.');
-    const alvo = ds.transacoes.filter((t) => !t.descartadaEm && (!conta || t.conta === conta));
+    const plano = planejarResetExtrato(ds, conta);
+    const alvo = plano.transacoes;
     if (!alvo.length) throw new RegraDeNegocioError('Não há extrato importado para limpar.');
+    // lancamento gerado do extrato existe por causa da linha do banco: limpar so a linha o deixaria no caixa e na DRE.
+    // O tratamento dele (estorno, cancelamento e exclusao logica) e o reset controlado FIN-RESET, que roda no banco.
+    if (plano.derivados.length || plano.excecoes.length) {
+      const n = plano.derivados.length + plano.excecoes.length;
+      throw new RegraDeNegocioError(`${n} lançamento(s) foram gerados a partir deste extrato ("Lançar a partir da transação") e continuariam no caixa e na DRE. Use o reset controlado do extrato (FIN-RESET), que estorna, cancela e exclui esses lançamentos com auditoria.`);
+    }
     const ids = new Set(alvo.map((t) => t.id));
     const desconciliados = new Set<string>();
     for (const t of alvo) for (const id of t.lancamentoIds) desconciliados.add(id);
@@ -2989,7 +2997,10 @@ export const actions = {
       categoria: dados.categoria, subcategoria: dados.subcategoria ?? '', centroCusto: dados.centroCusto ?? (dados.codigoObra ? 'Obra' : 'Corporativo'), codigoObra: dados.codigoObra ?? '', servicoId: dados.servicoId,
       contraparte: dados.contraparte, documento: dados.documento ?? t.documento ?? t.idExterno ?? '', descricao: dados.descricao,
       competencia: t.data, vencimento: t.data, realizacao: t.data, status: 'Realizado', confiabilidade: 'Confirmado', probabilidade: 1, contaFinanceira: t.conta,
-      valorBruto: valor, retencoes: 0, desconto: 0, multaJuros: 0, valorRealizado: valor, conciliado: true, observacoes: dados.observacoes ?? `Gerado do extrato ${t.id}: ${t.historico}`, origem: t.origem === 'ofx' ? 'ofx' : 'extrato', idExterno: t.idExterno ?? t.id, versao: 1,
+      valorBruto: valor, retencoes: 0, desconto: 0, multaJuros: 0, valorRealizado: valor, conciliado: true, observacoes: dados.observacoes ?? `Gerado do extrato ${t.idExterno ?? t.id}: ${t.historico}`, origem: t.origem === 'ofx' ? 'ofx' : 'extrato',
+      // a referencia e a LINHA do banco (uuid), nao o FITID: o FITID so e unico por conta e volta a aparecer quando o mesmo
+      // OFX e reimportado depois de um reset; financial_entry tem unique (organizacao, origem, external_id)
+      idExterno: t.id, versao: 1,
     };
     const erros = validarLancamento(ds, l);
     if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
