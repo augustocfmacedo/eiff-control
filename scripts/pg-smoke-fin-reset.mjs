@@ -1,4 +1,4 @@
-// Smoke do FIN-RESET-01 (migration 0061 + 0062) contra um PostgreSQL DE VERDADE (PGlite, em memória, ROLLBACK ao final).
+// Smoke do FIN-RESET-01 (migrations 0061, 0062 e 0063) contra um PostgreSQL DE VERDADE (PGlite, em memória, ROLLBACK ao final).
 //
 // Por que existe: a suíte vitest prova o que o APP decide (src/core/resetExtrato.ts, store) e o payload que ele manda;
 // aqui se prova o que o BANCO aceita: o reset numa transação só com lista fechada, a reimportação do MESMO OFX sem
@@ -27,6 +27,11 @@ do $prel$ begin
   if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin bypassrls; end if;
 end $prel$;
 grant usage on schema public to anon, authenticated, service_role;
+-- privilégios padrão do Supabase: toda tabela/função nova nasce com tudo para os papéis da API (inclusive TRUNCATE).
+-- Sem isto a prova P seria vazia: foi desse padrão que veio o TRUNCATE fechado pela 0063.
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
 create schema if not exists auth;
 grant usage on schema auth to anon, authenticated, service_role;
 create table if not exists auth.users (id uuid primary key, email text);
@@ -73,15 +78,51 @@ try {
     try { await db.exec(fs.readFileSync(path.join(RAIZ, arq), 'utf8')); await db.exec('commit;'); res.migrations[arq.slice(0, 4)] = 'APLICADA'; feitas.add(arq); }
     catch (e) { try { await db.exec('rollback;'); } catch { /* abortada */ } res.migrations[arq.slice(0, 4)] = `ERRO: ${so(e)}`; throw e; }
   };
+  const PAPEIS = ['PUBLIC', 'anon', 'authenticated', 'service_role'];
+  const TABELAS_RESET = ['financial_reset', 'financial_reset_item'];
+  /** privilégios explícitos por papel nas tabelas do reset (aclexplode: grantee 0 = PUBLIC) */
+  const privilegios = async () => Object.fromEntries((await q(`select c.relname || ':' || coalesce(r.rolname, 'PUBLIC') k, string_agg(a.privilege_type, ',' order by a.privilege_type) v
+      from pg_class c cross join lateral aclexplode(c.relacl) a left join pg_roles r on r.oid = a.grantee
+     where c.relname = any($1) and (a.grantee = 0 or r.rolname = any($2)) group by 1`, [TABELAS_RESET, PAPEIS.slice(1)])).map((x) => [x.k, x.v]));
+  let privAntes0063 = null;
   for (const arq of arquivos) {
     const n = arq.slice(0, 4);
     for (const antes of ORDEM_CORRIGIDA[n] ?? []) if (!feitas.has(antes)) await aplicar(antes);
+    if (n === '0063') privAntes0063 = await privilegios();
     if (!feitas.has(arq)) await aplicar(arq);
     if (n === SEMENTE) { await db.exec('begin;'); await db.exec(fs.readFileSync(path.join(RAIZ, '..', 'seed.sql'), 'utf8')); await db.exec('commit;'); }
   }
-  // reaplicar 0061/0062 tem de ser inofensivo (idempotência das migrations)
-  for (const arq of arquivos.filter((f) => /^006[12]_/.test(f))) { await db.exec(fs.readFileSync(path.join(RAIZ, arq), 'utf8')); }
-  res.migrations.reaplicacao_0061_0062 = 'ok';
+  // reaplicar 0061/0062/0063 tem de ser inofensivo (idempotência das migrations)
+  for (const arq of arquivos.filter((f) => /^006[123]_/.test(f))) { await db.exec(fs.readFileSync(path.join(RAIZ, arq), 'utf8')); }
+  res.migrations.reaplicacao_0061_0062_0063 = 'ok';
+
+  // P (0063): TRUNCATE fechado para PUBLIC/anon/authenticated/service_role; SELECT do app preservado; nada mais concedido
+  const privDepois = await privilegios();
+  const tem = (mapa, tabela, papel, priv) => (mapa?.[`${tabela}:${papel}`] ?? '').split(',').includes(priv);
+  const temPriv = async (papel, tabela, priv) => Boolean(await um(`select has_table_privilege($1, $2, $3)`, [papel, tabela, priv]));
+  const falhasP = [];
+  if (!TABELAS_RESET.every((t) => tem(privAntes0063, t, 'authenticated', 'TRUNCATE'))) falhasP.push('brecha não reproduzida antes da 0063');
+  for (const t of TABELAS_RESET) {
+    for (const p of PAPEIS) if (tem(privDepois, t, p, 'TRUNCATE')) falhasP.push(`${t}: ${p} ainda tem TRUNCATE`);
+    for (const p of PAPEIS.slice(1)) {
+      if (await temPriv(p, t, 'TRUNCATE')) falhasP.push(`${t}: has_table_privilege(${p}, TRUNCATE)`);
+      for (const priv of ['INSERT', 'UPDATE', 'DELETE']) if (await temPriv(p, t, priv)) falhasP.push(`${t}: ${p} tem ${priv}`);
+    }
+    if (!(await temPriv('authenticated', t, 'SELECT'))) falhasP.push(`${t}: authenticated perdeu SELECT`);
+    for (const p of PAPEIS) {
+      const novos = (privDepois[`${t}:${p}`] ?? '').split(',').filter(Boolean).filter((x) => !(privAntes0063?.[`${t}:${p}`] ?? '').split(',').includes(x));
+      if (novos.length) falhasP.push(`${t}: ${p} ganhou ${novos}`);
+    }
+  }
+  for (const fn of ['fin_reset_extrato(uuid,text,text,uuid,jsonb)', 'fin_reset_desfazer(uuid,text,text,uuid)'])
+    for (const p of PAPEIS.slice(1)) if (await um(`select has_function_privilege($1, $2, 'EXECUTE')`, [p, fn])) falhasP.push(`${fn}: ${p} executa`);
+  await db.exec('begin;');
+  let errTrunc = null;
+  try { await db.exec("set local role authenticated; truncate financial_reset_item, financial_reset;"); } catch (e) { errTrunc = so(e); }
+  await db.exec('rollback;');
+  if (!/permission denied/.test(errTrunc ?? '')) falhasP.push(`TRUNCATE como authenticated não foi recusado: ${errTrunc}`);
+  prova('P TRUNCATE fechado nas tabelas do reset (0063); SELECT do app mantido; nada concedido; funções só do dono',
+    falhasP.length === 0, falhasP.length ? falhasP.join(' · ') : `antes: ${JSON.stringify(privAntes0063)} · depois: ${JSON.stringify(privDepois)} · ${errTrunc}`);
 
   await db.exec('begin;');
   const org = await um(`select id from organization where code = 'EIFF'`);
