@@ -235,7 +235,7 @@ describe('CD-1 · invariantes', () => {
     for (const proibido of ['vibe', 'Vibe', 'fetch(', '/api/', 'supabase', 'persistir', 'actions', "'../../data", 'sendApproved', 'enviar', 'outbound', 'OUTBOUND', 'Date.now', 'new Date(', 'localStorage', 'processarCandidato'])
       for (const codigo of [CODIGO_CD, CODIGO_METRICAS]) expect(codigo, proibido).not.toContain(proibido);
     const imports = [...CODIGO_CD.matchAll(/from '([^']+)'/g)].map((m) => m[1]).sort();
-    expect(imports).toEqual(['../inbox/roteamento', '../inbox/tipos', './canais', './cobertura', './commercialActionPlan', './commercialCadence', './commercialMachine', './commercialMetrics', './comunicacao', './contatos', './leadEngineReview', './leadEngineRevisao', './pipeline', './score', './types']);
+    expect(imports).toEqual(['../inbox/roteamento', '../inbox/tipos', './canais', './cobertura', './commercialActionPlan', './commercialCadence', './commercialMachine', './commercialMetrics', './comunicacao', './contatos', './donoConta', './leadEngineReview', './leadEngineRevisao', './pipeline', './score', './types']);
     expect([...CODIGO_METRICAS.matchAll(/from '([^']+)'/g)]).toEqual([]);
   });
 
@@ -293,7 +293,7 @@ describe('CD-1 · invariantes', () => {
     expect(snapshotComercialCD(fechadas(29, 10), HOJE).funil.taxaGanhoSobreFechadas).toMatchObject({ estado: 'DADO_INSUFICIENTE', base: 29 });
     expect(snapshotComercialCD(fechadas(30, 12), HOJE).funil.taxaGanhoSobreFechadas).toMatchObject({ estado: 'DISPONIVEL', valor: 0.4, base: 30 });
     expect(snapshotComercialCD(fechadas(40, 10), HOJE).funil.taxaGanhoSobreFechadas).toMatchObject({ estado: 'DISPONIVEL', valor: 0.25, base: 40 });
-    expect(snapshotComercialCD(fechadas(30, 12), HOJE).versaoRegras).toBe('CD-1.1');
+    expect(snapshotComercialCD(fechadas(30, 12), HOJE).versaoRegras).toBe('CD-1.2'); // CD-1.2 (CD-D5) preserva o corte de 30 da CD-D4
   });
 
   it('15 · coleção vazia conhecida (0) ≠ coleção indisponível (DADO_INSUFICIENTE)', () => {

@@ -40,6 +40,12 @@ export interface Empresa {
   observacoes: string;
   ativo: boolean;
   mescladaEm?: string; // id da empresa que absorveu esta (duplicata resolvida)
+  /**
+   * CD-D5: dono comercial canônico da conta (0..1), id do usuário (`radar_company.commercial_owner_id`). Ausente =
+   * SEM_DONO. NÃO é o responsável da oportunidade, da tarefa nem o derivado pela Commercial Queue. Só muda por
+   * `actions.definirDonoContaRadar`; leitura de estado em `donoConta.ts`.
+   */
+  commercialOwnerId?: string;
   criadoEm: string;
   atualizadoEm: string;
   // cache de leitura (recalculado por recalcularEmpresa)

@@ -4,11 +4,12 @@ Estado em 30/09/2026:
 
 - **CD-0 CLOSED**: arquitetura, fronteiras, matriz de autoridade, inventário e baseline (PR #26, `main @ 51322a5`).
 - **CD-1 CLOSED** (PR #29, `main @ ce1e5ff`): snapshot comercial canônico, puro e somente leitura (§17). Sem rota,
-  tela, API, migration ou LLM. **CD-1.1** (amostra mínima das taxas = 30, decisão CD-D4) na branch
-  `feature/commercial-director-cd-d4` (§19).
+  tela, API, migration ou LLM. **CD-1.1** (amostra mínima das taxas = 30, decisão CD-D4) mesclado (PR #34,
+  `main @ 57b0af4`). **CD-1.2** (dono da conta, decisão CD-D5, migration 0064) na branch
+  `feature/commercial-director-cd-d5` (§19.3).
 - CD-2 a CD-10 não iniciados.
 - Decisões **D-1, D-2 e D-6 fechadas** em 30/09/2026 (§16.2); **CD-D3, CD-D4 e CD-D5 fechadas** em 30/09/2026 (§19).
-  Só a CD-D4 está implementada; CD-D5 e depois CD-D3 são frentes separadas.
+  CD-D4 implementada; CD-D5 em implementação; CD-D3 depois, em frente separada.
 
 Documentos vizinhos: Máquina Comercial em `docs/commercial-machine.md` e `docs/commercial-machine-cm2.md` (plano e
 histórico em `COMMERCIAL_MACHINE_V1_PLAN.md`), decisão de UX em `docs/commercial-ux-1.0-decisao.md`, Lead Engine em
@@ -205,7 +206,7 @@ type MedidaCD<T = number> =
 type FonteCD = 'RADAR' | 'CM1_A' | 'CM1_B' | 'CM2_B' | 'CM2_C' | 'COBERTURA' | 'LEAD_ENGINE' | 'INBOX';
 
 interface CommercialDirectorSnapshot {
-  versaoRegras: string;            // 'CD-1.1' desde a CD-D4; mudar corte ou definição sobe a versão
+  versaoRegras: string;            // 'CD-1.2' desde a CD-D5; mudar corte ou definição sobe a versão
   hoje: string;                    // AAAA-MM-DD explícito; nunca o relógio da máquina
   geradoDe: { versaoFila: string; versaoPlano: string; versaoCadencia: string };
   base: CommercialBaseHealth;
@@ -565,7 +566,7 @@ são outras e não mudam.
 ## 17. CD-1 — snapshot comercial canônico
 
 `snapshotComercialCD(radar, hoje, opcoes)` em `src/core/radar/commercialDirector.ts`, versão `VERSAO_REGRAS_CD` = `CD-1.0`
-(`CD-1.1` desde a CD-D4, §19.2).
+(`CD-1.1` desde a CD-D4, §19.2; `CD-1.2` desde a CD-D5, §19.3).
 Responde "o que sabemos objetivamente agora"; não diagnostica nem recomenda. Os nomes finais substituem a proposta da
 §5.1 onde diferem; os conceitos são os mesmos.
 
@@ -593,8 +594,8 @@ com denominador positivo e amostra mínima alcançada. No CD-1.0 a amostra míni
 
 **Não entra**: valor ponderado do pipeline (a única ponderação canônica hoje é por conta, dentro da fila, para
 desempate — somá-la não é pipeline), setor canônico (a classificação lê o payload bruto), taxas com menos de 30
-observações (CD-D4), meta e realizado (CD-D3, ainda não implementada) e qualquer métrica por dono (CD-D5, ainda não
-implementada).
+observações (CD-D4), meta e realizado (CD-D3, ainda não implementada) e qualquer métrica por dono ou vendedor (a CD-D5
+só prepara a autoridade; a única medida dela é `base.contasSemDono`).
 
 **Provas** (`commercialDirector.test.ts`): determinismo; permutação das coleções não muda o resultado; dataset e Inbox
 congelados não são alterados; nenhuma chave de score/peso/ranking; referências = `fila.itens` na mesma ordem (o único
@@ -691,7 +692,7 @@ da CD-D5 e da CD-D3 não se combinam.
   padrão, e 29, 30 e 40 oportunidades fechadas pelo snapshot; 0% com amostra é disponível, nunca confundido com falta
   de amostra.
 
-### 19.3 CD-D5 — Dono da conta (fechada; não implementada)
+### 19.3 CD-D5 — Dono da conta (fechada; implementada no CD-1.2)
 
 - Cada conta comercial tem **zero ou um** dono comercial canônico, que precisa ser usuário **ativo** da **mesma
   organização**. Sem dono = `SEM_DONO`.
@@ -703,3 +704,34 @@ da CD-D5 e da CD-D3 não se combinam.
   mesma organização.
 - **Mescla**: o dono da conta absorvida não é herdado automaticamente. A conta canônica mantém o próprio dono (com dono,
   mantém; sem dono, fica `SEM_DONO`). A decisão de dono depois de uma mescla é humana.
+- **Dono que fica inativo** (fechado em 01/10/2026): o vínculo histórico fica (`commercial_owner_id` não é limpo), a
+  conta passa a `DONO_INATIVO` (sem dono válido para fins operacionais), sai das métricas individuais e nada é
+  redistribuído automaticamente; trocar o dono é decisão humana.
+
+**Implementação (CD-1.2)**
+
+- **Banco** (`supabase/migrations/0064_radar_company_owner.sql`, independente de 0060–0063; numerada 0064 porque a 0063 é a do FIN-RESET (PR #36)): coluna opcional
+  `radar_company.commercial_owner_id` com FK para `profile` (o nome evita confusão com `radar_opportunity.owner_id`, que
+  é o responsável da oportunidade), índice parcial `(organization_id, commercial_owner_id)` e o trigger
+  `radar_company_dono_valido`, que exige perfil **ativo** da **mesma organização** só quando o dono (ou a organização da
+  conta) muda — qualquer outra gravação passa, mesmo com dono inativo. Sem carga, sem tabela de histórico (a auditoria
+  `radar_company_audit` já grava a linha inteira antes/depois com o autor), sem mudança de RLS (a política de escrita já
+  usa os papéis da permissão `radar`). Escrita por script com a chave de serviço fica sem autor na auditoria do banco.
+- **Core** (`src/core/radar/donoConta.ts`, puro): `estadoDonoConta` (COM_DONO, SEM_DONO, DONO_INATIVO — dono gravado
+  que está inativo ou não é usuário da organização), `donoValido`, `motivosRecusaDono`, `contasSemDonoValido` e
+  `entraEmMetricaIndividual` (porta única para métricas individuais futuras). Sem ranking, score, ordenação ou regra da
+  fila.
+- **Modelo**: `Empresa.commercialOwnerId`, mapeado nos dois sentidos em `radar.supabase.ts` (id sem tradução vai cru e
+  o banco recusa; nunca vira `null` em silêncio).
+- **Escrita**: só `actions.definirDonoContaRadar(empresaId, usuarioId | null, motivo?)` — permissão `radar`, conta
+  existente e não mesclada, usuário da lista da organização (`Dataset.usuarios`, lida de `profile` sob RLS) e ativo;
+  `null` remove, texto vazio é recusado; auditoria `radar_definir_dono_conta` / `radar_remover_dono_conta` com o dono
+  anterior e o novo. `salvarEmpresaRadar` preserva o dono atual (conta nova nasce sem dono); importação CSV, adapters
+  e Lead Engine passam por `upsertEmpresa`, cujo tipo de entrada não tem dono; a mescla copia só campos vazios de uma
+  lista fixa, sem o dono.
+- **Snapshot**: `base.contasSemDono` = contas ativas e não mescladas sem dono válido (SEM_DONO ou DONO_INATIVO). Recebe
+  os usuários em `opcoes.usuarios` (nunca repassados à fila); sem eles e com algum dono gravado, `DADO_INSUFICIENTE`.
+  `AMOSTRA_MINIMA_TAXA = 30`, `taxa()` e as demais medidas do CD-1.1 não mudaram.
+- **Provas**: `src/data/radar.dono.store.test.ts` (matriz 1–16 da decisão), `src/core/radar/donoConta.test.ts`
+  (estados, medida, mapeamento, `upsertEmpresa`) e `scripts/pg-smoke-dono-conta.mjs` no Quality Gate (FK, organização,
+  ativo, recusas, remoção, auditoria antes/depois com autor, dono que ficou inativo e a gravação da mescla).

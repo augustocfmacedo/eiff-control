@@ -20,6 +20,7 @@ import { NIVEIS_COBERTURA, coberturaEmpresa } from './cobertura';
 import { ESTADOS_COMUNICACAO, historicoDe } from './comunicacao';
 import { contatoElegivel } from './contatos';
 import { CONTEXTOS_COMUNICACAO } from './canais';
+import { contasSemDonoValido, type UsuarioDono } from './donoConta';
 import { descobertasSuprimidas, filaDeRevisao } from './leadEngineReview';
 import { contadoresRevisao, metricasPiloto } from './leadEngineRevisao';
 import { semProximaAcao } from './pipeline';
@@ -29,7 +30,8 @@ import { STATUS_THREAD, type InboxDataset } from '../inbox/tipos';
 import { estadoSla } from '../inbox/roteamento';
 
 /** Versão das definições do snapshot. Mudar uma definição ou um recorte sobe a versão. */
-export const VERSAO_REGRAS_CD = 'CD-1.1'; // CD-1.1: amostra mínima das taxas = 30 (decisão CD-D4)
+// CD-1.1: amostra mínima das taxas = 30 (decisão CD-D4). CD-1.2: medida base.contasSemDono (decisão CD-D5).
+export const VERSAO_REGRAS_CD = 'CD-1.2';
 
 const CLASSES_RADAR = ['A+', 'A', 'B', 'C', 'D'] as const satisfies readonly ClassePrioridade[];
 const TIPOS_SUPRESSAO = ['do_not_contact', 'email_bounced', 'invalid_phone', 'opt_out'] as const satisfies readonly TipoSupressao[];
@@ -52,6 +54,11 @@ export interface OpcoesSnapshotCD {
   agoraIso?: string;
   /** Quantas referências da fila carregar (padrão 10). */
   limiteReferencias?: number;
+  /**
+   * CD-D5: usuários da organização com o estado ativo, para saber se o dono gravado ainda é válido. NÃO é repassado à
+   * Commercial Queue. Ausente com alguma conta já com dono gravado → `base.contasSemDono` sai DADO_INSUFICIENTE.
+   */
+  usuarios?: readonly UsuarioDono[];
 }
 
 /** Uma conta citada pelo Diretor: sempre a referência da Commercial Queue, na posição original. */
@@ -79,6 +86,8 @@ export interface BlocoBaseCD {
   naFila: MedidaComercial;
   foraDaFila: MedidaComercial;
   porClasseRadar: Record<ClassePrioridade, MedidaComercial>;
+  /** CD-D5: ativas e não mescladas sem dono comercial válido (SEM_DONO ou DONO_INATIVO). Não é métrica por vendedor. */
+  contasSemDono: MedidaComercial;
 }
 
 export interface BlocoDecisoresCD {
@@ -233,12 +242,18 @@ export function snapshotComercialCD(radar: RadarDataset, hoje: string, opcoes: O
 
   function blocoBase(): BlocoBaseCD {
     const fora = (m: (typeof MOTIVOS_FORA_DA_FILA)[number]) => fila.foraDaFila.filter((f) => f.motivo === m).length;
+    // CD-D5: sem a lista de usuários, um dono já gravado não pode ser julgado ativo ou inativo
+    const defSemDono = { id: 'base.contasSemDono', descricao: 'contas ativas e não mescladas sem dono comercial válido (SEM_DONO ou DONO_INATIVO)', unidade: 'CONTAS', autoridade: 'RADAR' } as const;
+    const contasSemDono = !opcoes.usuarios && ativas.some((e) => e.commercialOwnerId?.trim())
+      ? insuficiente(defSemDono, 'sem a lista de usuários não dá para saber se o dono gravado ainda está ativo', nAtivas)
+      : disponivel(defSemDono, contasSemDonoValido({ empresas: ativas }, opcoes.usuarios ?? []).length, nAtivas);
     return {
       empresasRadar: disponivel({ id: 'base.empresasRadar', descricao: 'empresas no Radar (todas)', unidade: 'CONTAS', autoridade: 'RADAR' }, radar.empresas.length),
       empresasAtivas: disponivel({ id: 'base.empresasAtivas', descricao: 'empresas ativas e não mescladas', unidade: 'CONTAS', autoridade: 'COMMERCIAL_QUEUE' }, radar.empresas.length - fora('EMPRESA_MESCLADA') - fora('EMPRESA_INATIVA'), radar.empresas.length),
       naFila: disponivel({ id: 'base.naFila', descricao: 'empresas com entrada na Commercial Queue', unidade: 'CONTAS', autoridade: 'COMMERCIAL_QUEUE' }, fila.itens.length, radar.empresas.length),
       foraDaFila: disponivel({ id: 'base.foraDaFila', descricao: 'empresas fora da Commercial Queue (qualquer motivo)', unidade: 'CONTAS', autoridade: 'COMMERCIAL_QUEUE' }, fila.foraDaFila.length, radar.empresas.length),
       porClasseRadar: porCatalogo(CLASSES_RADAR, (c) => disponivel({ id: `base.classe.${c}`, descricao: `empresas ativas com classe ${c} no Radar`, unidade: 'CONTAS', autoridade: 'RADAR' }, ativas.filter((e) => e.priorityClass === c).length, nAtivas)),
+      contasSemDono,
     };
   }
 
