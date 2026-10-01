@@ -11,6 +11,7 @@ import type {
   Obra,
   Papel,
   Params,
+  TransacaoBancaria,
   Usuario,
 } from '../core/types';
 import { mapaPlano } from '../core/engine';
@@ -79,7 +80,7 @@ interface Refs {
   contasInv: Map<string, string>;
   lancs: Map<string, string>; // code -> id
   lancsInv: Map<string, string>;
-  trans: Map<string, string>; // app id (external_id ou uuid) -> uuid
+  trans: Map<string, string>; // app id (uuid da linha; o app gera o uuid ao importar) -> uuid
   aprov: Map<string, string>; // code -> id
   perfis: Map<string, string>; // id -> nome
   perfisInv: Map<string, string>; // nome -> id
@@ -106,6 +107,37 @@ interface Refs {
   rateios: Map<string, string>;
 }
 let refs: Refs | null = null;
+
+/**
+ * Identidade da transacao bancaria no app = uuid da linha em bank_transaction. O FITID do banco (external_id) fica so em
+ * `idExterno`: o mesmo FITID aparece em contas diferentes (extrato importado na conta errada ao lado da linha certa) e
+ * essas sao linhas distintas. A deduplicacao da importacao continua por conta + FITID, como a unique do banco
+ * (bank_account_id, external_id); identidade da entidade e regra de deduplicacao sao coisas diferentes.
+ */
+export function idDaTransacao(t: Row): string {
+  return t.id;
+}
+
+/** Mapa usado na persistencia: id da transacao no app -> uuid da linha (identidade; nunca FITID -> uuid). Transacoes
+ * importadas na sessao ja nascem com o uuid que o insert grava. */
+export function mapaTransacoes(linhas: Row[]): Map<string, string> {
+  return new Map(linhas.map((t) => [idDaTransacao(t), t.id]));
+}
+
+/**
+ * Linha nova de bank_transaction. O app ja nasce com o uuid da linha (importarTransacoes), entao o mesmo id vale no
+ * navegador e no banco. Linha descartada nunca e reaproveitada: o mesmo FITID depois de um reset entra como linha NOVA e
+ * a unicidade (conta, FITID) vale so entre as ativas (indice parcial da 0061).
+ */
+export function linhaTransacaoNova(t: TransacaoBancaria, orgId: string, contaId: string | undefined): Row {
+  return { ...(UUID.test(t.id) ? { id: t.id } : {}), organization_id: orgId, bank_account_id: contaId, record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito, imported_at: t.importadoEm ?? new Date().toISOString() };
+}
+
+/** Linha de bank_transaction (mais as suas conciliacoes) no formato do app. */
+export function transacaoDoBanco(t: Row, ctx: { contasInv: Map<string, string>; lancsInv: Map<string, string>; conciliacoes: Row[] }): TransacaoBancaria {
+  const links = ctx.conciliacoes;
+  return { id: idDaTransacao(t), registro: t.record_kind, data: t.transaction_date, conta: ctx.contasInv.get(t.bank_account_id) ?? '', historico: t.description ?? '', documento: t.document_number ?? '', debito: Number(t.debit), credito: Number(t.credit), lancamentoIds: links.map((x) => ctx.lancsInv.get(x.entry_id) ?? '').filter(Boolean), justificativa: links.find((x) => x.justification)?.justification ?? undefined, origem: 'supabase', idExterno: t.external_id ?? undefined, importadoEm: t.imported_at ?? undefined, descartadaEm: t.discarded_at ?? undefined, descartadaPor: t.discarded_by ?? undefined, motivoDescarte: t.discard_reason ?? undefined, movidaEm: t.moved_at ?? undefined, contaOrigem: t.moved_from_account_id ? ctx.contasInv.get(t.moved_from_account_id) : undefined };
+}
 
 const CORPORATIVOS: Papel[] = ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria', 'Compras'];
 
@@ -218,7 +250,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     contasInv: new Map(contas.map((c) => [c.id, c.institution])),
     lancs: new Map(lancs.map((l) => [l.code, l.id])),
     lancsInv: new Map(lancs.map((l) => [l.id, l.code])),
-    trans: new Map(trans.map((t) => [t.external_id ?? t.id, t.id])),
+    trans: mapaTransacoes(trans),
     aprov: new Map(aprovs.filter((a) => a.code).map((a) => [a.code, a.id])),
     perfis: perfilNome,
     perfisInv: new Map(perfis.map((p) => [p.name, p.id])),
@@ -308,10 +340,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       excluidoEm: l.deleted_at ?? undefined, excluidoPor: l.deleted_by ? nome(l.deleted_by) : undefined, motivoExclusao: l.deletion_reason ?? undefined,
     })),
     liquidacoes: liqs.map((q) => ({ id: q.id, lancamentoId: r.lancsInv.get(q.entry_id) ?? '', data: q.settled_on, valor: Number(q.amount), conta: r.contasInv.get(q.bank_account_id) ?? '', documento: q.document_number ?? undefined, criadoPor: nome(q.created_by), criadoEm: q.created_at })),
-    transacoes: trans.map((t) => {
-      const links = recPorTrans.get(t.id) ?? [];
-      return { id: t.external_id ?? t.id, registro: t.record_kind, data: t.transaction_date, conta: r.contasInv.get(t.bank_account_id) ?? '', historico: t.description ?? '', documento: t.document_number ?? '', debito: Number(t.debit), credito: Number(t.credit), lancamentoIds: links.map((x) => r.lancsInv.get(x.entry_id) ?? '').filter(Boolean), justificativa: links.find((x) => x.justification)?.justification ?? undefined, origem: 'supabase', idExterno: t.external_id ?? undefined, importadoEm: t.imported_at ?? undefined, descartadaEm: t.discarded_at ?? undefined, descartadaPor: t.discarded_by ?? undefined, motivoDescarte: t.discard_reason ?? undefined, movidaEm: t.moved_at ?? undefined, contaOrigem: t.moved_from_account_id ? r.contasInv.get(t.moved_from_account_id) : undefined };
-    }),
+    transacoes: trans.map((t) => transacaoDoBanco(t, { contasInv: r.contasInv, lancsInv: r.lancsInv, conciliacoes: recPorTrans.get(t.id) ?? [] })),
     dividas: dividas.map((d) => ({ id: d.code, registro: d.record_kind, credor: d.creditor_name ?? '', instrumento: d.instrument, contratacao: d.contracted_at ?? undefined, principal: Number(d.principal), saldoDevedor: Number(d.outstanding_balance), taxaAa: Number(d.annual_rate ?? 0), parcelaMensal: Number(d.monthly_installment ?? 0), proximoVencimento: d.next_due_date ?? undefined, parcelasRestantes: Number(d.remaining_installments ?? 0), garantia: d.guarantee ?? '', status: d.status, observacoes: d.notes ?? '' })),
     aprovacoes: aprovs.map((a) => ({
       id: a.code ?? a.id, tipo: a.entity_kind, entidadeId: r.lancsInv.get(a.entity_id) ?? a.entity_id, titulo: a.title, valor: Number(a.amount), codigoObra: a.project_id ? r.obrasInv.get(a.project_id) : undefined,
@@ -524,7 +553,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const t of mudou(antes.transacoes, depois.transacoes, 'id')) {
     let tid = r.trans.get(t.id);
     if (!tid) {
-      const { data, error } = await sb.from('bank_transaction').insert({ organization_id: r.orgId, bank_account_id: r.contas.get(t.conta), record_kind: t.registro, external_id: t.idExterno ?? t.id, transaction_date: t.data, description: t.historico, document_number: t.documento, debit: t.debito, credit: t.credito, imported_at: t.importadoEm ?? new Date().toISOString() }).select('id');
+      const { data, error } = await sb.from('bank_transaction').insert(linhaTransacaoNova(t, r.orgId, r.contas.get(t.conta))).select('id');
       falha('importar transação', error);
       tid = data?.[0]?.id;
       if (tid) r.trans.set(t.id, tid);
@@ -535,8 +564,10 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
       const patch: Row = {};
       if (prev.conta !== t.conta) { patch.bank_account_id = r.contas.get(t.conta); patch.moved_from_account_id = r.contas.get(t.contaOrigem ?? prev.conta); patch.moved_at = t.movidaEm ?? new Date().toISOString(); patch.moved_by = atorId; }
       if (prev.descartadaEm !== t.descartadaEm) { patch.discarded_at = t.descartadaEm ?? null; patch.discarded_by = t.descartadaEm ? atorId : null; patch.discard_reason = t.descartadaEm ? t.motivoDescarte ?? null : null; }
-      const { error } = await sb.from('bank_transaction').update(patch).eq('id', tid);
+      // .select confere a linha gravada: sem a policy de UPDATE a RLS filtra em silencio e o app achava que tinha gravado
+      const { data, error } = await sb.from('bank_transaction').update(patch).eq('id', tid).select('id');
       falha('atualizar transação do extrato', error);
+      if (!data?.length) throw new RemotoError('O banco não aceitou alterar a transação do extrato (sem permissão de atualização). Nada foi gravado nesta transação; avise o administrador.');
     }
     if (tid && (!prev || JSON.stringify(prev.lancamentoIds) !== JSON.stringify(t.lancamentoIds) || prev.justificativa !== t.justificativa)) {
       const { error: e1 } = await sb.from('reconciliation').delete().eq('bank_transaction_id', tid);

@@ -130,5 +130,11 @@ jobs:
       - name: PostgreSQL Smoke (EIFF Inbox)
         run: node scripts/pg-smoke-inbox.mjs
 
+      # scripts/pg-smoke-fin-reset.mjs aplica a fila INTEIRA de migrations num PGlite descartável e prova o FIN-RESET-01
+      # (0061/0062): reset do extrato com lista fechada, reimportação do mesmo OFX sem FITID ativo duplicado, relançamento
+      # sem colidir, desfazer e autoridade (só o dono do banco executa). Sai com código 1 se qualquer prova falhar.
+      - name: PostgreSQL Smoke (FIN-RESET)
+        run: node scripts/pg-smoke-fin-reset.mjs
+
       - name: Full Migration Preflight
         run: node scripts/pg-preflight-central.mjs --ordem-corrigida

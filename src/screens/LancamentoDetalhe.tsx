@@ -90,7 +90,7 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
           {verBancos && trans.length > 0 && (
             <>
               <h3 style={{ marginTop: 12 }}>Transações bancárias conciliadas</h3>
-              <table><tbody>{trans.map((t) => <tr key={t.id}><td><Link to={`/conciliacao?id=${t.id}`}>{t.id}</Link></td><td>{t.data.split('-').reverse().join('/')}</td><td>{t.historico}</td><td><Money v={t.credito - t.debito} sign /></td></tr>)}</tbody></table>
+              <table><tbody>{trans.map((t) => <tr key={t.id}><td><Link to={`/conciliacao?id=${t.id}`}>{t.idExterno ?? t.id}</Link></td><td>{t.data.split('-').reverse().join('/')}</td><td>{t.historico}</td><td><Money v={t.credito - t.debito} sign /></td></tr>)}</tbody></table>
             </>
           )}
           {aprov.length > 0 && (
