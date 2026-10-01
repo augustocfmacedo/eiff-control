@@ -1,4 +1,4 @@
-// Smoke test da migration 0063 (CD-D5 — dono da conta) contra um PostgreSQL DE VERDADE.
+// Smoke test da migration 0064 (CD-D5 — dono da conta) contra um PostgreSQL DE VERDADE.
 //
 // Por que existe: teste de TypeScript prova o que o app MANDA; só o banco prova o que ele ACEITA. A regra do dono
 // (perfil ativo e da mesma organização, validada só quando o dono muda) vive num trigger, então a prova é aqui.
@@ -9,7 +9,7 @@
 // O @electric-sql/pglite é devDependency FIXADA. O banco é criado em memória, roda dentro de BEGIN ... ROLLBACK e
 // morre com o processo. NADA toca produção, não há conexão de rede.
 //
-// O prelúdio recria só o que a 0063 assume do resto do schema: organization, profile, audit_log com o audit_row()
+// O prelúdio recria só o que a 0064 assume do resto do schema: organization, profile, audit_log com o audit_row()
 // de produção (linha inteira antes/depois + auth.uid()) e a radar_company com as colunas que a regra usa. Não é o
 // banco real; é o suficiente para provar FK, trigger, auditoria e a gravação da mescla.
 //
@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
-const SQL_0063 = readFileSync('supabase/migrations/0063_radar_company_owner.sql', 'utf8');
+const SQL_0064 = readFileSync('supabase/migrations/0064_radar_company_owner.sql', 'utf8');
 
 const PRELUDIO = `
 create schema auth;
@@ -109,10 +109,10 @@ function igual(nome, obtido, esperado) {
 }
 
 async function main() {
-  console.log('CD-D5 · smoke da migration 0063 em PostgreSQL descartavel (PGlite)\n');
+  console.log('CD-D5 · smoke da migration 0064 em PostgreSQL descartavel (PGlite)\n');
   await db.exec(PRELUDIO);
-  await db.exec(SQL_0063);
-  console.log('  preludio + 0063 aplicadas\n');
+  await db.exec(SQL_0064);
+  console.log('  preludio + 0064 aplicadas\n');
 
   await db.exec('begin');
   const um = async (sql, params = []) => (await db.query(sql, params)).rows[0]?.id;

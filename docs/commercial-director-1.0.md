@@ -5,7 +5,7 @@ Estado em 30/09/2026:
 - **CD-0 CLOSED**: arquitetura, fronteiras, matriz de autoridade, inventário e baseline (PR #26, `main @ 51322a5`).
 - **CD-1 CLOSED** (PR #29, `main @ ce1e5ff`): snapshot comercial canônico, puro e somente leitura (§17). Sem rota,
   tela, API, migration ou LLM. **CD-1.1** (amostra mínima das taxas = 30, decisão CD-D4) mesclado (PR #34,
-  `main @ 57b0af4`). **CD-1.2** (dono da conta, decisão CD-D5, migration 0063) na branch
+  `main @ 57b0af4`). **CD-1.2** (dono da conta, decisão CD-D5, migration 0064) na branch
   `feature/commercial-director-cd-d5` (§19.3).
 - CD-2 a CD-10 não iniciados.
 - Decisões **D-1, D-2 e D-6 fechadas** em 30/09/2026 (§16.2); **CD-D3, CD-D4 e CD-D5 fechadas** em 30/09/2026 (§19).
@@ -710,7 +710,7 @@ da CD-D5 e da CD-D3 não se combinam.
 
 **Implementação (CD-1.2)**
 
-- **Banco** (`supabase/migrations/0063_radar_company_owner.sql`, independente de 0060–0062): coluna opcional
+- **Banco** (`supabase/migrations/0064_radar_company_owner.sql`, independente de 0060–0063; numerada 0064 porque a 0063 é a do FIN-RESET (PR #36)): coluna opcional
   `radar_company.commercial_owner_id` com FK para `profile` (o nome evita confusão com `radar_opportunity.owner_id`, que
   é o responsável da oportunidade), índice parcial `(organization_id, commercial_owner_id)` e o trigger
   `radar_company_dono_valido`, que exige perfil **ativo** da **mesma organização** só quando o dono (ou a organização da

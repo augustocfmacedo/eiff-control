@@ -13,7 +13,7 @@
 //                   válido para fins operacionais. Trocar o dono é decisão humana.
 //
 // "Mesma organização" no app = estar na lista de usuários carregada para a organização (`Dataset.usuarios`, lida de
-// `profile` sob RLS por organização). No banco, o trigger da migration 0063 confere a organização de verdade.
+// `profile` sob RLS por organização). No banco, o trigger da migration 0064 confere a organização de verdade.
 import type { Empresa, RadarDataset } from './types';
 
 export const ESTADOS_DONO_CONTA = ['COM_DONO', 'SEM_DONO', 'DONO_INATIVO'] as const;

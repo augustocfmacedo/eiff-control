@@ -110,7 +110,7 @@ Motor de contexto de comunicação, reutilizável para qualquer conta, contato, 
   com canal, precisam de pesquisa, precisam de enriquecimento, sem decisor e as taxas de cobertura do resumo legado
   saíram por não terem definição canônica; a cobertura por conta segue na aba "Personas e decision fit" e na view
   `v_radar_contact_coverage`.
-- **Dono da conta** (CD-D5, migration 0063, `src/core/radar/donoConta.ts`): cada empresa tem zero ou um dono comercial
+- **Dono da conta** (CD-D5, migration 0064, `src/core/radar/donoConta.ts`): cada empresa tem zero ou um dono comercial
   canônico (`Empresa.commercialOwnerId` / `radar_company.commercial_owner_id`), usuário ativo da mesma organização,
   definido ou removido só por `actions.definirDonoContaRadar` (permissão `radar`, auditado). Sem dono = SEM_DONO; dono
   que ficou inativo = DONO_INATIVO (o vínculo fica, nada é limpo). O dono não é o responsável da oportunidade, da
