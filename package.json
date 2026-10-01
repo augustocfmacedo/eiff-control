@@ -12,6 +12,7 @@
     "migrate:planilha": "node scripts/migrate-spreadsheet.mjs",
     "radar:dry-run": "vite-node scripts/radar-dry-run.mts --",
     "smoke:inbox": "node scripts/pg-smoke-inbox.mjs",
+    "smoke:fin-reset": "node scripts/pg-smoke-fin-reset.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
     "lint": "eslint src"
