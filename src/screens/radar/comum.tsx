@@ -332,15 +332,41 @@ export function ConcluirTarefaForm({ tarefa, onClose, onErro, onOk }: { tarefa: 
   );
 }
 
+/**
+ * CD-D3/E0 — o que o formulário de oportunidade grava, numa ÚNICA ação do store: mudou o estágio de uma oportunidade
+ * existente → `mudarEstagioRadar` com o motivo e as demais edições (`campos`) no mesmo commit; senão
+ * `salvarOportunidadeRadar` (criação leva o motivo de fechamento quando nasce fechada). Antes eram duas gravações, e a
+ * segunda (com o estado inicial do formulário) apagava o instante de fechamento e devolvia a próxima ação a um ganho.
+ */
+export function gravarOportunidadeDoFormulario(inicial: Oportunidade, o: Oportunidade, motivo: string, existe: boolean): Oportunidade {
+  if (existe && inicial.estagio !== o.estagio) {
+    return actions.mudarEstagioRadar(o.id, o.estagio, { motivo, proximaAcao: o.proximaAcao, proximaAcaoEm: o.proximaAcaoEm, valorEstimado: o.valorEstimado, campos: o });
+  }
+  return actions.salvarOportunidadeRadar(existe ? o : { ...o, motivoFechamento: motivo.trim() || o.motivoFechamento });
+}
+
+/** Rótulo do motivo que o formulário pede, ou `undefined` quando não pede (fechar, ou reabrir um ganho). */
+export function motivoPedidoNoFormulario(inicial: Pick<Oportunidade, 'estagio'>, o: Pick<Oportunidade, 'estagio'>, existe: boolean): string | undefined {
+  const mudou = !existe || inicial.estagio !== o.estagio;
+  if (!mudou) return undefined;
+  if (o.estagio === 'WON') return 'Motivo do ganho';
+  if (o.estagio === 'LOST') return 'Motivo da perda';
+  if (existe && inicial.estagio === 'WON') return 'Motivo da reabertura';
+  return undefined;
+}
+
 export function OportunidadeForm({ inicial, onClose, onErro, onOk }: FormProps<Oportunidade>) {
   const { ds } = useStore();
   const [o, setO] = useState(inicial);
   const [motivo, setMotivo] = useState('');
   const up = (p: Partial<Oportunidade>) => setO({ ...o, ...p });
   const existe = ds.radar.oportunidades.some((x) => x.id === o.id);
+  // ganha e mantida ganha: valor e responsável só mudam reabrindo com motivo; fechada não tem próxima ação
+  const ganhaTravada = existe && inicial.estagio === 'WON' && o.estagio === 'WON';
+  const fechada = o.estagio === 'WON' || o.estagio === 'LOST';
+  const rotuloMotivo = motivoPedidoNoFormulario(inicial, o, existe);
   const salvar = () => tentar(() => {
-    if (existe && inicial.estagio !== o.estagio) { actions.mudarEstagioRadar(o.id, o.estagio, { motivo, proximaAcao: o.proximaAcao, proximaAcaoEm: o.proximaAcaoEm, valorEstimado: o.valorEstimado }); actions.salvarOportunidadeRadar({ ...o, estagio: o.estagio, motivoFechamento: motivo || o.motivoFechamento }); }
-    else actions.salvarOportunidadeRadar(o);
+    gravarOportunidadeDoFormulario(inicial, o, motivo, existe);
     onOk('Oportunidade salva.');
   }, onErro, onClose);
   return (
@@ -348,14 +374,14 @@ export function OportunidadeForm({ inicial, onClose, onErro, onOk }: FormProps<O
       <div className="form">
         <Field label="Título" req full><Input value={o.titulo} onChange={(ev) => up({ titulo: ev.target.value })} /></Field>
         <Field label="Estágio" req><Select value={o.estagio} onChange={(v) => up({ estagio: v as Estagio })} options={ESTAGIOS.map((e) => ({ value: e, label: NOME_ESTAGIO[e] }))} /></Field>
-        <Field label="Responsável" req><Select value={o.responsavelId} onChange={(v) => up({ responsavelId: v })} options={ds.usuarios.filter((u) => u.ativo).map((u) => ({ value: u.id, label: u.nome }))} /></Field>
-        <Field label="Valor estimado (R$)"><NumberInput value={o.valorEstimado ?? 0} onChange={(v) => up({ valorEstimado: v || undefined })} /></Field>
+        <Field label="Responsável" req hint={ganhaTravada ? 'oportunidade ganha: reabra para corrigir' : undefined}><Select value={o.responsavelId} disabled={ganhaTravada} onChange={(v) => up({ responsavelId: v })} options={ds.usuarios.filter((u) => u.ativo || u.id === o.responsavelId).map((u) => ({ value: u.id, label: u.nome }))} /></Field>
+        <Field label="Valor estimado (R$)" hint={ganhaTravada ? 'oportunidade ganha: reabra para corrigir' : undefined}><NumberInput value={o.valorEstimado ?? 0} disabled={ganhaTravada} onChange={(v) => up({ valorEstimado: v || undefined })} /></Field>
         <Field label="Previsão de fechamento"><Input type="date" value={o.previsaoFechamento ?? ''} onChange={(ev) => up({ previsaoFechamento: ev.target.value || undefined })} /></Field>
         <Field label="Projeto"><Select value={o.projetoId ?? ''} onChange={(v) => up({ projetoId: v || undefined })} options={ds.radar.projetos.filter((p) => p.empresaId === o.empresaId).map((p) => ({ value: p.id, label: p.nome }))} allowEmpty="—" /></Field>
         <Field label="Estratégia"><Select value={o.estrategiaId ?? ''} onChange={(v) => up({ estrategiaId: v || undefined })} options={ds.radar.estrategias.filter((e) => e.ativo).map((e) => ({ value: e.id, label: e.nome }))} allowEmpty="—" /></Field>
-        <Field label="Próxima ação" req hint="obrigatória em estágio ativo"><Input value={o.proximaAcao ?? ''} onChange={(ev) => up({ proximaAcao: ev.target.value || undefined })} placeholder="Ligar para confirmar o cronograma" /></Field>
-        <Field label="Quando" req><Input type="date" value={o.proximaAcaoEm?.slice(0, 10) ?? ''} onChange={(ev) => up({ proximaAcaoEm: ev.target.value || undefined })} /></Field>
-        {(o.estagio === 'WON' || o.estagio === 'LOST') && <Field label={o.estagio === 'WON' ? 'Motivo do ganho' : 'Motivo da perda'} req full><Input value={motivo} onChange={(ev) => setMotivo(ev.target.value)} /></Field>}
+        {!fechada && <Field label="Próxima ação" req hint="obrigatória em estágio ativo"><Input value={o.proximaAcao ?? ''} onChange={(ev) => up({ proximaAcao: ev.target.value || undefined })} placeholder="Ligar para confirmar o cronograma" /></Field>}
+        {!fechada && <Field label="Quando" req><Input type="date" value={o.proximaAcaoEm?.slice(0, 10) ?? ''} onChange={(ev) => up({ proximaAcaoEm: ev.target.value || undefined })} /></Field>}
+        {rotuloMotivo && <Field label={rotuloMotivo} req full><Input value={motivo} onChange={(ev) => setMotivo(ev.target.value)} /></Field>}
         <Field label="Observações" full><Input value={o.observacoes} onChange={(ev) => up({ observacoes: ev.target.value })} /></Field>
       </div>
       <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={salvar}>Salvar</button></div>

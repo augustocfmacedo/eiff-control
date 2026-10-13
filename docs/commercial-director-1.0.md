@@ -850,3 +850,30 @@ governada**, no padrão do EIFF Inbox (`inbox_assign_thread` + privilégio por c
   (`COLUNAS_APP` = chaves de `linhaDb`, conferido por teste) e o rollback; `src/data/radar.dono.persistencia.test.ts` (só a RPC leva o dono,
   motivo, falha fechada, auditoria sem duplicata, guardas de fonte); `src/data/radar.dono.store.test.ts` (#16 papéis,
   #17 motivo); `src/screens/radar/DonoConta.test.ts` (passo do motivo, erro em linha, controles por `radar_dono`).
+
+### 19.6 CD-D3 / E0 — fluxo de oportunidades (13/10/2026)
+
+Pré-requisito da CD-D3 (plano aprovado em 13/10/2026 com as decisões D3-A a D3-G; só a E0 autorizada). Sem migration,
+sem mudança de banco, sem metas.
+
+- **Causa do defeito F1**: o formulário de oportunidade (`OportunidadeForm`, `src/screens/radar/comum.tsx`) gravava duas
+  vezes ao mudar o estágio — `mudarEstagioRadar` (que grava o instante de fechamento e encerra a próxima ação) e, logo
+  depois, `salvarOportunidadeRadar` com o objeto do formulário, que ainda trazia o estado inicial. A segunda gravação
+  apagava `fechadoEm` e devolvia a próxima ação a uma oportunidade ganha. Reproduzido em teste antes da correção.
+- **Transição canônica** (`src/core/radar/estagioOportunidade.ts`, puro): `motivosRecusaTransicao` (estágio inválido;
+  mesmo estágio — WON → WON não é nova transição; fechar exige motivo; reabrir um ganho exige motivo) e
+  `aplicarTransicao` (fechar grava o instante e o motivo, encerra a próxima ação; reabrir limpa o instante; o valor
+  informado na transição prevalece). `motivosRecusaEdicao` e `camposEditaveis` cuidam da edição comum.
+- **Store**: `mudarEstagioRadar` é a ÚNICA ação de mudança de estágio; recebe em `campos` as demais edições do formulário
+  e grava tudo num commit, com histórico e auditoria (antes/depois com estágio, instante e valor). `salvarOportunidadeRadar`
+  cria pela mesma transição (nascer fechada exige motivo em `motivoFechamento`) e, na edição, recusa mudança de estágio,
+  nunca grava estágio, instante nem motivo de fechamento, recusa alterar valor, empresa, responsável ou data de
+  fechamento de oportunidade ganha (corrigir = reabrir com motivo) e recusa próxima ação em oportunidade fechada.
+- **Formulário**: o Salvar chama só `gravarOportunidadeDoFormulario` (uma ação ou a outra, nunca as duas); pede o motivo
+  ao ganhar, perder ou reabrir um ganho; numa oportunidade ganha, valor e responsável ficam desabilitados com a dica
+  "reabra para corrigir"; oportunidade fechada não mostra os campos de próxima ação.
+- **Compatibilidade**: perda segue exigindo motivo e reabrir uma perda não exige motivo; estágios ativos e a regra da
+  próxima ação não mudaram; a mescla de empresas continua movendo as oportunidades para a conta canônica (o livro de
+  desfechos da E3 congela a empresa do ganho).
+- **Provas**: `src/data/radar.oportunidade.e0.test.ts` (fluxo real do formulário, WON → WON, reabertura, campos
+  travados, criação já fechada, perda, estágios ativos, permissão, regras puras e guarda de fonte do formulário).
