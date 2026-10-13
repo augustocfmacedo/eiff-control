@@ -39,12 +39,13 @@ export type Acao =
   | 'pedir_pagamento';
 
 export const MATRIZ: Record<Acao, Papel[]> = {
-  ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
+  // saldo, bancos, extrato, Caixa e o parecer do Diretor Financeiro: so o Administrador (decisao do Augusto em 13/10/2026)
+  ver_bancos: ['Administrador'],
   editar_lancamento: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras'],
   // pedido de pagamento ao Diretor Financeiro: quem lanca e o Solicitante (que so faz isso; no banco, so pelas portas df_*)
   pedir_pagamento: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Solicitante'],
   liquidar: ['Administrador', 'Financeiro'],
-  conciliar: ['Administrador', 'Financeiro'],
+  conciliar: ['Administrador'], // conciliar exige ver o extrato (ver_bancos), so do Administrador desde 13/10/2026
   aprovar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'],
   editar_obra: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'],
   editar_etc: ['Administrador', 'Diretoria', 'Gestor de obra', 'Engenharia', 'Financeiro'],

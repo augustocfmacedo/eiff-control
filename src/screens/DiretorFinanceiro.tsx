@@ -3,7 +3,7 @@
 // impacto no caixa, alcada), o briefing do dia, a agenda da semana e o historico; e a conversa completa com numeros.
 // Toda analise e deterministica (src/core/cfo.ts); a IA (opcional) so interpreta o texto.
 import React, { useEffect, useRef, useState } from 'react';
-import { NOME_DF, ROTULO_STATUS_DF, analisarPagamento, br, catalogoDe, centralDF, completarPedido, type CentralDF as DadosCentralDF, fmt, interpretacaoDaIa, interpretarPedido, meusPedidosDF, montarPrevisao, responderDF, statusPedidoDF, type Parecer, type PedidoInterpretado } from '../core/cfo';
+import { NOME_DF, ROTULO_STATUS_DF, analisarPagamento, dataDoVeredicto, type VeredictoDF, br, catalogoDe, centralDF, completarPedido, type CentralDF as DadosCentralDF, fmt, interpretacaoDaIa, interpretarPedido, meusPedidosDF, montarPrevisao, responderDF, statusPedidoDF, type Parecer, type PedidoInterpretado } from '../core/cfo';
 import { addDays } from '../core/engine';
 import { actions, pode, useStore } from '../data/store';
 import { tokenSessao } from '../data/supabase';
@@ -11,7 +11,7 @@ import { Badge, Field, Input, Modal, PageHead, Select, Tabs, money, tentar, useT
 import { Icon } from '../ui/icons';
 import { registrarAcao } from '../data/telemetria';
 
-interface Msg { papel: 'usuario' | 'assistente'; texto: string; pedido?: PedidoInterpretado; parecer?: Parecer; registrado?: string; sugestoes?: string[]; origem?: 'ia' | 'local' }
+interface Msg { papel: 'usuario' | 'assistente'; texto: string; pedido?: PedidoInterpretado; parecer?: Parecer; veredicto?: VeredictoDF; registrado?: string; sugestoes?: string[]; origem?: 'ia' | 'local' }
 const CHAVE = 'eiff-control:df:conversa';
 const TOM_STATUS: Record<string, 'ok' | 'info' | 'warn' | 'bad' | 'muted'> = { aguardando: 'warn', programado: 'ok', em_aprovacao: 'info', reagendado: 'info', recusado: 'bad', pago: 'ok' };
 
@@ -61,6 +61,16 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
     } catch { return local; }
   };
 
+  const buscarVeredicto = async (p: PedidoInterpretado): Promise<VeredictoDF | null> => {
+    try {
+      const token = await tokenSessao();
+      const r = await fetch('/api/diretor-financeiro', { method: 'POST', headers: { 'content-type': 'application/json', 'x-supabase-anon': (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ acao: 'veredicto', pedido: { valor: p.valor, vencimento: p.vencimento, ...(p.codigoObra ? { codigoObra: p.codigoObra } : {}), ...(p.categoria ? { categoria: p.categoria } : {}) } }) });
+      if (!r.ok) return null;
+      const d = (await r.json()) as { veredicto?: VeredictoDF };
+      return d.veredicto ?? null;
+    } catch { return null; }
+  };
+
   const enviar = async (q0?: string) => {
     const q = (q0 ?? texto).trim(); if (!q || ocupado) return;
     setTexto(''); const hist: Msg[] = [...msgs, { papel: 'usuario', texto: q }]; setMsgs(hist); setOcupado(true); registrarAcao('df:pergunta');
@@ -69,8 +79,11 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
       const pendente = ultimoPedidoIncompleto();
       // complemento ("500 reais, sexta") junta-se ao pedido que ficou incompleto; um pedido novo e completo segue sozinho
       if (pendente && (pedido.intencao === 'pagamento' || pedido.intencao === 'outro') && (pedido.valor || pedido.vencimento) && (pedido.intencao === 'outro' || pedido.faltando.length > 0)) pedido = completarPedido(pendente, pedido);
-      const r = responderDF(ds, usuario, pedido, veCaixa);
-      setMsgs([...hist, { papel: 'assistente', texto: r.texto, pedido: r.pedido, parecer: r.parecer, sugestoes: r.sugestoes, origem: pedido.origem }]);
+      // quem nao ve caixa, no sistema ligado ao banco, nao tem o caixa no aparelho: o veredito vem do servidor (sem valores)
+      const completo = pedido.intencao === 'pagamento' && !pedido.faltando.length && !!pedido.valor && !!pedido.vencimento;
+      const veredictoServidor = !veCaixa && modo === 'remoto' && completo ? await buscarVeredicto(pedido) : undefined;
+      const r = responderDF(ds, usuario, pedido, veCaixa, veredictoServidor);
+      setMsgs([...hist, { papel: 'assistente', texto: r.texto, pedido: r.pedido, parecer: r.parecer, veredicto: r.veredicto, sugestoes: r.sugestoes, origem: pedido.origem }]);
     } finally { setOcupado(false); }
   };
 
@@ -112,7 +125,9 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
                 <div className="actions">
                   {veCaixa && m.parecer
                     ? <><button className="btn primary sm" onClick={() => registrar(i, m.parecer!.dataSugerida ?? m.parecer!.vencimento)}>Registrar previsão{m.parecer.dataSugerida ? ` para ${br(m.parecer.dataSugerida)}` : ''}</button>{m.parecer.dataSugerida && <button className="btn sm" onClick={() => registrar(i, m.parecer!.vencimento)}>Manter {br(m.parecer.vencimento)} mesmo assim</button>}</>
-                    : <button className="btn primary sm" disabled={ocupado} onClick={() => registrar(i, m.pedido!.vencimento ?? parecerDe(m).vencimento)}>Confirmar e encaminhar à Diretoria</button>}
+                    : m.veredicto?.decisao === 'reagendar' && m.veredicto.dataSugerida
+                      ? <><button className="btn primary sm" disabled={ocupado} onClick={() => registrar(i, dataDoVeredicto(m.veredicto!))}>Encaminhar para {br(m.veredicto.dataSugerida)}</button><button className="btn sm" disabled={ocupado} onClick={() => registrar(i, m.pedido!.vencimento!)}>Manter {br(m.pedido!.vencimento)} (a Diretoria avalia)</button></>
+                      : <button className="btn primary sm" disabled={ocupado} onClick={() => registrar(i, m.pedido!.vencimento ?? parecerDe(m).vencimento)}>Confirmar e encaminhar à Diretoria</button>}
                   <button className="btn sm" onClick={() => abrirAjuste(i)}>Ajustar</button>
                 </div>
               </div>}

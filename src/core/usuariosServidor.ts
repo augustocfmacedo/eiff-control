@@ -16,7 +16,11 @@ export type PedidoUsuarios =
   | { acao: 'listar' }
   | { acao: 'convidar'; nome: string; email: string; papel: Papel; obras?: string[] }
   | { acao: 'alterar'; id: string; nome?: string; papel?: Papel; ativo?: boolean; obras?: string[] }
-  | { acao: 'enviar_acesso'; id: string };
+  | { acao: 'enviar_acesso'; id: string }
+  // criar ja com senha (o Administrador entrega a senha inicial) e definir senha de quem ja existe; `trocar` = a pessoa cria a
+  // propria senha no primeiro acesso (user_metadata.trocar_senha, lido pelo app). A senha nunca e gravada em tabela nem log.
+  | { acao: 'criar'; nome: string; email: string; papel: Papel; obras?: string[]; senha: string; trocar: boolean }
+  | { acao: 'definir_senha'; id: string; senha: string; trocar: boolean };
 export interface Resposta { status: number; corpo: unknown }
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -50,6 +54,22 @@ export function validarPedido(c: unknown): PedidoUsuarios | string {
     if (o.ativo !== undefined && typeof o.ativo !== 'boolean') return 'Situação inválida.';
     if (!obrasOk(o.obras)) return 'Obras inválidas.';
     return { acao, id: o.id, nome: typeof o.nome === 'string' ? o.nome.trim() : undefined, papel: o.papel as Papel | undefined, ativo: o.ativo as boolean | undefined, obras: o.obras as string[] | undefined };
+  }
+  const senhaOk = (x: unknown) => typeof x === 'string' && x.length >= 8 && x.length <= 72 && /[A-Za-z]/.test(x) && /\d/.test(x);
+  if (acao === 'criar') {
+    if (!so(['acao', 'nome', 'email', 'papel', 'obras', 'senha', 'trocar'])) return 'campos não permitidos';
+    const base = validarPedido({ acao: 'convidar', nome: o.nome, email: o.email, papel: o.papel, ...(o.obras !== undefined ? { obras: o.obras } : {}) });
+    if (typeof base === 'string') return base;
+    if (!senhaOk(o.senha)) return 'Senha fraca: use de 8 a 72 caracteres, com letras e números.';
+    if (typeof o.trocar !== 'boolean') return 'Informe se a pessoa troca a senha no primeiro acesso.';
+    return { ...base, acao: 'criar', senha: o.senha as string, trocar: o.trocar } as PedidoUsuarios;
+  }
+  if (acao === 'definir_senha') {
+    if (!so(['acao', 'id', 'senha', 'trocar'])) return 'campos não permitidos';
+    if (typeof o.id !== 'string' || !UUID.test(o.id)) return 'Usuário inválido.';
+    if (!senhaOk(o.senha)) return 'Senha fraca: use de 8 a 72 caracteres, com letras e números.';
+    if (typeof o.trocar !== 'boolean') return 'Informe se a pessoa troca a senha no primeiro acesso.';
+    return { acao, id: o.id, senha: o.senha as string, trocar: o.trocar };
   }
   if (acao === 'enviar_acesso') {
     if (!so(['acao', 'id'])) return 'campos não permitidos';
@@ -176,6 +196,37 @@ export async function tratarUsuarios(req: { token: string | null; corpo: unknown
     if (p.papel !== undefined || p.obras !== undefined) await gravarEscopo(p.id, papel, p.obras);
     await auditar('alterar_usuario', p.id, { nome: antes.name, papel: antes.role, ativo: antes.active }, { ...muda, obras: p.obras ?? undefined });
     return ok({ id: p.id, alterado: Object.keys(muda) });
+  }
+
+  if (p.acao === 'criar') {
+    const jaPerfil = await sb.rest(`profile?organization_id=eq.${org}&email=ilike.${encodeURIComponent(p.email)}&select=id`);
+    if (jaPerfil.length) return erro(409, 'ja_existe', 'Já existe um usuário com este e-mail.');
+    // login ja confirmado (sem e-mail de confirmacao): o Administrador entrega e-mail e senha a pessoa
+    const c = await sb.auth('admin/users', { method: 'POST', body: JSON.stringify({ email: p.email, password: p.senha, email_confirm: true, user_metadata: { nome: p.nome, trocar_senha: p.trocar } }) });
+    if (!c.ok) {
+      const msg = String(c.dados.msg ?? c.dados.message ?? c.dados.error_description ?? c.status);
+      if (/already|registered|exists/i.test(msg)) return erro(409, 'login_existe', 'Já existe um login com este e-mail no Supabase. Use "Convidar" (liga o login existente) ou peça para a pessoa usar "Esqueci minha senha".');
+      if (/password/i.test(msg)) return erro(400, 'senha_recusada', 'O Supabase recusou a senha: use uma senha mais forte.');
+      return erro(502, 'criacao_falhou', `O Supabase recusou a criação: ${msg}`);
+    }
+    const id = String(c.dados.id ?? '');
+    if (!UUID.test(id)) return erro(502, 'criacao_falhou', 'O Supabase não devolveu o usuário criado.');
+    await sb.rest('profile', { method: 'POST', body: JSON.stringify({ id, organization_id: org, name: p.nome, email: p.email, role: p.papel, active: true, mfa_required: MFA.includes(p.papel) }), headers: { prefer: 'return=minimal' } });
+    await gravarEscopo(id, p.papel, p.obras);
+    await auditar('criar_usuario_com_senha', id, null, { nome: p.nome, email: p.email, papel: p.papel, obras: p.obras ?? null, trocarNoPrimeiroAcesso: p.trocar });
+    return ok({ id, criado: true }, 201);
+  }
+
+  if (p.acao === 'definir_senha') {
+    const alvo = await perfilDaOrg(p.id);
+    if (!alvo) return erro(404, 'nao_encontrado', 'Usuário não encontrado.');
+    if (p.id === eu.id) return erro(400, 'propria_senha', 'Para trocar a sua própria senha, use "Esqueci minha senha" na tela de entrada.');
+    const a = await sb.auth(`admin/users/${p.id}`);
+    const meta = { ...((a.dados.user_metadata as Row | undefined) ?? {}), trocar_senha: p.trocar };
+    const r = await sb.auth(`admin/users/${p.id}`, { method: 'PUT', body: JSON.stringify({ password: p.senha, email_confirm: true, user_metadata: meta }) });
+    if (!r.ok) return erro(/password/i.test(String(r.dados.msg ?? r.dados.message ?? '')) ? 400 : 502, 'senha_recusada', `O Supabase recusou a senha: ${String(r.dados.msg ?? r.dados.message ?? r.status)}`);
+    await auditar('definir_senha_usuario', p.id, null, { trocarNoPrimeiroAcesso: p.trocar });
+    return ok({ id: p.id, senhaDefinida: true });
   }
 
   // enviar_acesso: quem nunca entrou recebe o convite de novo; quem ja tem senha recebe o link de "criar nova senha"

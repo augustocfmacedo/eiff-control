@@ -36,7 +36,7 @@ export default function Conciliacao({ query }: { query: URLSearchParams }) {
   const [alvo, setAlvo] = useState<string | null>(null);
   const lancs = useMemo(() => calcLancamentos(ds), [ds]);
   const trans = useMemo(() => calcTransacoes(ds, lancs), [ds, lancs]);
-  if (!pode(usuario, 'ver_bancos')) return <Empty>Extratos e conciliação são restritos a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
+  if (!pode(usuario, 'ver_bancos')) return <Empty>Extratos e conciliação são restritos ao Administrador.</Empty>;
   const podeConciliar = pode(usuario, 'conciliar');
   const t = trans.find((x) => x.id === sel);
   const sug = t ? sugerirConciliacao(ds, t, lancs) : [];

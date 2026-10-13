@@ -35,7 +35,12 @@ function supabaseFalso(opts: { tokenDe?: Record<string, string>; inviteFalha?: b
     chamadas.push({ metodo, url, corpo, auth });
     const u = new URL(url);
     if (u.pathname === '/auth/v1/user') { const id = opts.tokenDe?.[String(auth).replace('Bearer ', '')]; return id ? resp(200, { id }) : resp(401, {}); }
+    if (u.pathname === '/auth/v1/admin/users' && metodo === 'POST') {
+      if (db.authUsers.some((x) => x.email === corpo.email)) return resp(422, { msg: 'A user with this email address has already been registered' });
+      db.authUsers.push({ id: NOVO, email: corpo.email, email_confirmed_at: '2026-10-13', user_metadata: corpo.user_metadata, password: corpo.password }); return resp(200, { id: NOVO, email: corpo.email });
+    }
     if (u.pathname === '/auth/v1/admin/users') return resp(200, { users: db.authUsers });
+    if (u.pathname.startsWith('/auth/v1/admin/users/') && metodo === 'PUT') { const a = db.authUsers.find((x) => x.id === u.pathname.split('/').pop()); if (!a) return resp(404, {}); Object.assign(a, corpo); return resp(200, a); }
     if (u.pathname.startsWith('/auth/v1/admin/users/')) return resp(200, db.authUsers.find((x) => x.id === u.pathname.split('/').pop()) ?? {});
     if (u.pathname === '/auth/v1/invite') {
       if (opts.inviteFalha || db.authUsers.some((x) => x.email === corpo.email)) return resp(422, { msg: 'A user with this email address has already been registered' });
@@ -120,6 +125,31 @@ describe('/api/usuarios (handler puro)', () => {
     s.db.profile.find((p) => p.id === ADMIN)!.active = true;
     expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'alterar', id: FIN, ativo: false } }, s.f, amb)).status).toBe(200);
     expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'alterar', id: ADMIN, nome: 'Augusto Macedo' } }, s.f, amb)).status).toBe(200);
+  });
+  it('criar já com senha: login confirmado com "trocar no primeiro acesso", perfil e auditoria SEM a senha', async () => {
+    const s = supabaseFalso(comoAdmin);
+    expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'criar', nome: 'Equipe', email: 'eq@eiff.com', papel: 'Solicitante', senha: 'curta1', trocar: true } }, s.f, amb)).status).toBe(400);
+    expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'criar', nome: 'Equipe', email: 'eq@eiff.com', papel: 'Solicitante', senha: 'semnumeroaqui', trocar: true } }, s.f, amb)).status).toBe(400);
+    const r = await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'criar', nome: 'Equipe', email: 'eq@eiff.com', papel: 'Solicitante', senha: 'Inicial2026x', trocar: true } }, s.f, amb);
+    expect(r).toMatchObject({ status: 201, corpo: { id: NOVO, criado: true } });
+    const criacao = s.chamadas.find((c) => c.metodo === 'POST' && c.url.endsWith('/auth/v1/admin/users'))!;
+    expect(criacao.corpo).toMatchObject({ email: 'eq@eiff.com', password: 'Inicial2026x', email_confirm: true, user_metadata: { nome: 'Equipe', trocar_senha: true } });
+    expect(s.db.profile.find((p) => p.id === NOVO)).toMatchObject({ role: 'Solicitante', organization_id: ORG });
+    const aud = JSON.stringify(s.db.audit_log);
+    expect(aud).toContain('criar_usuario_com_senha');
+    expect(aud).not.toContain('Inicial2026x'); // a senha nunca vai para a auditoria
+    // e-mail que ja tem login: 409 com orientacao, sem criar perfil
+    expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'criar', nome: 'Fin2', email: 'fin@eiff.com', papel: 'Solicitante', senha: 'Outra2026x', trocar: true } }, s.f, amb)).status).toBe(409);
+  });
+  it('definir senha de quem já existe: troca no Supabase, mantém os outros dados do login, não vale para a própria senha', async () => {
+    const s = supabaseFalso(comoAdmin);
+    s.db.authUsers.find((x) => x.id === FIN)!.user_metadata = { nome: 'Fin', apelido: 'F' };
+    const r = await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'definir_senha', id: FIN, senha: 'NovaSenha99', trocar: false } }, s.f, amb);
+    expect(r).toMatchObject({ status: 200, corpo: { senhaDefinida: true } });
+    expect(s.db.authUsers.find((x) => x.id === FIN)).toMatchObject({ password: 'NovaSenha99', user_metadata: { nome: 'Fin', apelido: 'F', trocar_senha: false } });
+    expect(JSON.stringify(s.db.audit_log)).not.toContain('NovaSenha99');
+    expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'definir_senha', id: ADMIN, senha: 'MinhaSenha99', trocar: false } }, s.f, amb)).status).toBe(400);
+    expect((await tratarUsuarios({ token: 'tok-admin', corpo: { acao: 'definir_senha', id: FIN, senha: 'NovaSenha99', trocar: false, extra: 1 } }, s.f, amb)).status).toBe(400);
   });
   it('enviar acesso: quem nunca entrou recebe o convite de novo; quem já tem senha recebe link de nova senha; inativo é recusado', async () => {
     const s = supabaseFalso(comoAdmin);
