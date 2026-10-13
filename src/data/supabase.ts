@@ -105,6 +105,9 @@ interface Refs {
   funcoes: Map<string, string>;
   alocacoes: Map<string, string>;
   rateios: Map<string, string>;
+  // versao atual da linha no banco por lancamento (code): liquidar/estornar dispara o trigger apply_settlement, que atualiza o
+  // titulo e sobe a versao; sem isso, a gravacao seguinte do mesmo titulo era recusada como "alterado por outro usuario"
+  versaoLanc: Map<string, number>;
 }
 let refs: Refs | null = null;
 
@@ -275,6 +278,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     funcoes: new Map(funcRows.map((x) => [x.id, x.id])),
     alocacoes: new Map(alocRows.map((x) => [x.id, x.id])),
     rateios: new Map(rateioRows.map((x) => [x.id, x.id])),
+    versaoLanc: new Map(),
   };
   const r = refs;
   const concluidasPor = new Map<string, string[]>();
@@ -513,9 +517,18 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
 
   // liquidacoes revertidas (cancelamento/estorno) antes do titulo
   const liqDepois = new Set(depois.liquidacoes.map((q) => q.id));
+  // o trigger apply_settlement atualiza o titulo (e a versao dele) a cada liquidacao gravada ou estornada: relemos a versao
+  const relerVersao = async (code: string) => {
+    const id = r.lancs.get(code);
+    if (!id) return;
+    const { data, error } = await sb.from('financial_entry').select('version').eq('id', id).maybeSingle();
+    falha(`ler versão de ${code}`, error);
+    if (data?.version != null) r.versaoLanc.set(code, Number(data.version));
+  };
   for (const q of antes.liquidacoes.filter((x) => !liqDepois.has(x.id) && UUID.test(x.id))) {
     const { error } = await sb.from('settlement').update({ reversed: true, reversal_reason: 'estorno/cancelamento do título' }).eq('id', q.id);
     falha('reverter liquidação', error);
+    await relerVersao(q.lancamentoId);
   }
 
   // lancamentos
@@ -524,13 +537,15 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     const row = lancRow(l, r, tipoDe, atorId);
     const prev = lancAntes.get(l.id);
     if (prev && r.lancs.has(l.id)) {
-      const { data, error } = await sb.from('financial_entry').update(row).eq('id', r.lancs.get(l.id)!).eq('version', prev.versao).select('id');
+      const versao = r.versaoLanc.get(l.id) ?? prev.versao;
+      const { data, error } = await sb.from('financial_entry').update(row).eq('id', r.lancs.get(l.id)!).eq('version', versao).select('id, version');
       falha(`salvar lançamento ${l.id}`, error);
       if (!data?.length) throw new RemotoError(`Lançamento ${l.id} foi alterado por outro usuário. Recarregue.`);
+      if (data[0].version != null) r.versaoLanc.set(l.id, Number(data[0].version));
     } else {
-      const { data, error } = await sb.from('financial_entry').insert({ ...row, code: l.id, organization_id: r.orgId, company_id: r.companyId, created_by: atorId }).select('id');
+      const { data, error } = await sb.from('financial_entry').insert({ ...row, code: l.id, organization_id: r.orgId, company_id: r.companyId, created_by: atorId }).select('id, version');
       falha(`criar lançamento ${l.id}`, error);
-      if (data?.[0]) { r.lancs.set(l.id, data[0].id); r.lancsInv.set(data[0].id, l.id); }
+      if (data?.[0]) { r.lancs.set(l.id, data[0].id); r.lancsInv.set(data[0].id, l.id); if (data[0].version != null) r.versaoLanc.set(l.id, Number(data[0].version)); }
     }
   }
 
@@ -539,6 +554,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const q of depois.liquidacoes.filter((x) => UUID.test(x.id) && liqAntesMapa.has(x.id) && liqAntesMapa.get(x.id) !== JSON.stringify(x))) {
     const { error } = await sb.from('settlement').update({ settled_on: q.data, amount: q.valor, bank_account_id: r.contas.get(q.conta), document_number: q.documento }).eq('id', q.id);
     falha(`alterar liquidação de ${q.lancamentoId}`, error);
+    await relerVersao(q.lancamentoId);
   }
 
   // liquidacoes novas
@@ -546,6 +562,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
   for (const q of depois.liquidacoes.filter((x) => !liqAntes.has(x.id))) {
     const { error } = await sb.from('settlement').insert({ organization_id: r.orgId, entry_id: r.lancs.get(q.lancamentoId), settled_on: q.data, amount: q.valor, bank_account_id: r.contas.get(q.conta), document_number: q.documento, created_by: atorId });
     falha(`registrar liquidação de ${q.lancamentoId}`, error);
+    await relerVersao(q.lancamentoId);
   }
 
   // transacoes bancarias e conciliacao

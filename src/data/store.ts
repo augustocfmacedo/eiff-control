@@ -49,6 +49,7 @@ import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
 import { planejarMovimentacao } from '../core/extratos';
 import { planejarResetExtrato } from '../core/resetExtrato';
 import { ORIGEM_DF, resumoParecer, type PrevisaoDF } from '../core/cfo';
+import { ORIGEM_CAIXA, categoriaDoCaixa, validarLinhaCaixa, type NovaLinhaCaixa } from '../core/caixa';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
 import { calcOrcamento, criaCiclo, servicosDeOrcamento } from '../core/orcamentos';
@@ -887,6 +888,83 @@ export const actions = {
     ds = registrar(ds, 'liquidar', 'lancamento', lancamentoId, atual, l);
     commit(ds);
     return l;
+  },
+
+  /**
+   * Desfaz o pagamento/recebimento: estorna as liquidacoes do titulo (no banco viram settlement.reversed, nunca DELETE) e o
+   * titulo volta a previsto. Titulo conciliado com o extrato nao estorna (o extrato e o fato): desfaca a conciliacao antes.
+   */
+  estornarLiquidacoes(lancamentoId: string, motivo: string) {
+    let ds = state.ds;
+    const atual = ds.lancamentos.find((l) => l.id === lancamentoId);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    exigir('liquidar', atual.codigoObra || undefined);
+    if (atual.status === 'Cancelado' || atual.excluidoEm) throw new RegraDeNegocioError('Lançamento cancelado ou excluído.');
+    if (!ds.liquidacoes.some((q) => q.lancamentoId === lancamentoId)) throw new RegraDeNegocioError('Lançamento sem pagamento registrado.');
+    if (!motivo.trim()) throw new RegraDeNegocioError('Motivo do estorno é obrigatório.');
+    if (ds.transacoes.some((t) => t.lancamentoIds.includes(lancamentoId))) throw new RegraDeNegocioError('Pagamento conciliado com o extrato: desfaça a conciliação antes.');
+    if (periodoFechado(ds, atual.competencia)) throw new RegraDeNegocioError('Período fechado.');
+    const l: Lancamento = { ...atual, status: atual.status === 'Realizado' ? 'Programado' : atual.status, valorRealizado: undefined, realizacao: undefined, conciliado: false, atualizadoEm: agora(), atualizadoPor: state.usuario.nome, versao: atual.versao + 1 };
+    ds = { ...ds, liquidacoes: ds.liquidacoes.filter((q) => q.lancamentoId !== lancamentoId), lancamentos: ds.lancamentos.map((x) => (x.id === lancamentoId ? l : x)) };
+    ds = registrar(ds, 'estornar_liquidacao', 'lancamento', lancamentoId, atual, l, motivo.trim());
+    commit(ds);
+    return l;
+  },
+
+  /**
+   * Caixa (formato da planilha): uma linha digitada vira lancamento de verdade. O departamento vira o centro de custo e
+   * escolhe a categoria (categoriaDoCaixa); conta = primeira conta ativa; alcadas normais (pode ficar em aprovacao).
+   * "Pago" liquida na propria data (nunca no futuro); se o lancamento caiu em aprovacao, fica previsto ate a decisao.
+   */
+  lancarCaixa(x: NovaLinhaCaixa): { lancamento: Lancamento; aprovacaoAberta: boolean; pago: boolean; categoriaAjustada: boolean } {
+    const erros = validarLinhaCaixa(x);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    if (x.pago && x.data > state.ds.params.dataBase) throw new RegraDeNegocioError('Pagamento com data futura: lance como previsto e marque como pago no dia.');
+    if (x.pago) exigir('liquidar');
+    const conta = state.ds.contas.find((c) => c.ativa)?.instituicao;
+    if (!conta) throw new RegraDeNegocioError('Nenhuma conta financeira ativa.');
+    const { categoria, ajustada } = categoriaDoCaixa(state.ds, x.departamento, x.tipo, x.codigoObra);
+    const valor = Math.round(x.valor * 100) / 100;
+    const l = this.novoLancamento({
+      categoria, centroCusto: x.departamento, codigoObra: x.codigoObra ?? '', contraparte: x.contraparte?.trim() || x.descricao.trim().slice(0, 120),
+      descricao: x.descricao.trim().slice(0, 120), competencia: x.data, vencimento: x.data, confiabilidade: 'Confirmado', probabilidade: 1,
+      contaFinanceira: conta, valorBruto: valor, origem: ORIGEM_CAIXA,
+      observacoes: ajustada ? `Lançado no Caixa. Categoria genérica (${categoria}): a do departamento ${x.departamento} exige obra ou não está ativa no plano.` : 'Lançado no Caixa.',
+    });
+    const r = this.salvarLancamento(l);
+    let pago = false;
+    if (x.pago && r.lancamento.status !== 'Pendente' && r.lancamento.status !== 'Rascunho') {
+      this.liquidar(r.lancamento.id, { data: x.data, valor, conta, documento: 'Caixa: pago' });
+      pago = true;
+    }
+    return { lancamento: state.ds.lancamentos.find((y) => y.id === l.id) ?? r.lancamento, aprovacaoAberta: r.aprovacaoAberta, pago, categoriaAjustada: ajustada };
+  },
+
+  /** Caixa: marca como pago o que falta do titulo, na data informada (padrao: hoje), na conta do titulo (ou na primeira ativa). */
+  pagarCaixa(lancamentoId: string, data?: string) {
+    const ds = state.ds;
+    const atual = ds.lancamentos.find((l) => l.id === lancamentoId);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    const quando = data ?? ds.params.dataBase;
+    if (quando > ds.params.dataBase) throw new RegraDeNegocioError('Não dá para marcar como pago no futuro.');
+    const liquido = atual.valorBruto - atual.retencoes - atual.desconto + atual.multaJuros;
+    const jaPago = ds.liquidacoes.filter((q) => q.lancamentoId === lancamentoId).reduce((a, q) => a + q.valor, 0);
+    const falta = Math.round((liquido - jaPago) * 100) / 100;
+    if (!(falta > 0)) throw new RegraDeNegocioError('Nada a pagar neste lançamento.');
+    const conta = ds.contas.some((c) => c.ativa && c.instituicao === atual.contaFinanceira) ? atual.contaFinanceira : ds.contas.find((c) => c.ativa)?.instituicao ?? '';
+    return this.liquidar(lancamentoId, { data: quando, valor: falta, conta, documento: 'Caixa: pago' });
+  },
+
+  /** Caixa: altera data, descricao, departamento, obra e valor de um previsto; a categoria acompanha o departamento. */
+  editarLinhaCaixa(lancamentoId: string, c: { data: string; descricao: string; departamento: string; valor: number; codigoObra?: string }) {
+    const atual = state.ds.lancamentos.find((l) => l.id === lancamentoId);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    const tipo = mapaPlano(state.ds).get(atual.categoria)?.tipo === 'Entrada' ? 'Entrada' : 'Saída';
+    const erros = validarLinhaCaixa({ ...c, tipo, pago: false });
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    const mudouClasse = c.departamento !== atual.centroCusto || (c.codigoObra ?? '') !== atual.codigoObra;
+    const categoria = mudouClasse ? categoriaDoCaixa(state.ds, c.departamento, tipo, c.codigoObra).categoria : atual.categoria;
+    return this.salvarLancamento({ ...atual, vencimento: c.data, competencia: atual.competencia === atual.vencimento ? c.data : atual.competencia, descricao: c.descricao.trim().slice(0, 120), centroCusto: c.departamento, codigoObra: c.codigoObra ?? '', categoria, valorBruto: Math.round(c.valor * 100) / 100 });
   },
 
   /** APR-002: aprovar, rejeitar ou devolver a etapa corrente. */

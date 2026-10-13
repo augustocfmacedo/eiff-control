@@ -246,9 +246,10 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'TESOURARIA', titulo: 'Tesouraria', dominio: 'GESTAO', rota: '/fluxo13', dependeDe: ['FINANCEIRO'],
-    rotas: ['/posicao', '/fluxo13', '/fluxo24', '/conciliacao', '/dividas'],
+    rotas: ['/caixa', '/posicao', '/fluxo13', '/fluxo24', '/conciliacao', '/dividas'],
     descricao: 'Fluxo de caixa 13 semanas e 24 meses, posição bancária pelo extrato, conciliação e cenários.',
     componentes: [
+      { id: 'CAIXA', titulo: 'Caixa no formato da planilha', evidencias: [mod('src/core/caixa.ts', 'livroCaixa'), mod('src/screens/Caixa.tsx')] },
       { id: 'FLUXO', titulo: 'Fluxo 13 semanas / 24 meses', evidencias: [mod('src/core/engine.ts', 'fluxo13Semanas'), mod('src/screens/Tesouraria.tsx')] },
       { id: 'POSICAO', titulo: 'Posição bancária e corte do extrato', evidencias: [mod('src/core/engine.ts', 'posicaoBancaria'), mod('src/core/engine.ts', 'incluirTransacao')] },
       { id: 'CONCILIACAO', titulo: 'Conciliação e importação OFX', evidencias: [mod('src/data/store.ts', 'conciliar'), mod('src/core/ofx.ts', 'parseOfx'), mod('src/screens/Conciliacao.tsx')] },

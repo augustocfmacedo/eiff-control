@@ -1252,3 +1252,29 @@ tr.arrastando td { opacity: 0.55; }
   .mcv .btn, .mcv-item-corpo .btn, .mcv .mcc-pill-btn { min-height: 44px; }
   .mcv .mcc-pill-btn { display: inline-flex; align-items: center; }
 }
+
+/* Caixa no formato da planilha (src/screens/Caixa.tsx) */
+.caixa-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(400px, 34%); gap: 14px; margin-top: var(--space-4); align-items: start; }
+.caixa-lateral { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.caixa-lateral > .card { min-width: 0; overflow-x: auto; }
+.caixa-lateral table { width: 100%; font-size: 12.5px; }
+.caixa-lateral td, .caixa-lateral th { white-space: nowrap; }
+.caixa-novo { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 10px; align-items: end; padding-bottom: var(--space-3); margin-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+.caixa-novo .field { margin: 0; min-width: 0; }
+.caixa-novo .field:nth-child(2) { grid-column: span 2; }
+.caixa-novo input, .caixa-novo select { width: 100%; min-width: 0; }
+.caixa-layout > * { min-width: 0; }
+.caixa-pago { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--text-sm, 13px); padding-bottom: 8px; }
+.caixa-erros { grid-column: 1 / -1; color: var(--bad); font-size: 13px; }
+.caixa-filtros { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: var(--space-2); }
+.caixa-situacao { cursor: pointer; border: 0; font: inherit; }
+.caixa-situacao:disabled { cursor: default; opacity: .85; }
+.caixa-situacao:not(:disabled):hover { filter: brightness(1.15); outline: 1px solid currentColor; }
+.caixa-dias { max-height: 420px; overflow: auto; }
+.caixa-dias tr.destaque td { background: var(--brand-soft); }
+@media (max-width: 1500px) { .caixa-layout { grid-template-columns: minmax(0, 1fr); } .caixa-lateral { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .caixa-lateral { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .caixa-novo { grid-template-columns: repeat(2, minmax(0, 1fr)); } .caixa-novo .field:nth-child(2) { grid-column: 1 / -1; } }
+.caixa-tabela th, .caixa-tabela td { padding-left: 7px; padding-right: 7px; }
+.caixa-tabela td .small { line-height: 1.35; }
+.caixa-filtros select { width: auto; min-width: 220px; }
