@@ -67,7 +67,7 @@ import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { lancamentoDoPedido } from './solicitante';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
@@ -286,7 +286,8 @@ export async function inicializar(): Promise<void> {
       const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
       const ds = usuario.papel === 'Solicitante' ? dsRemoto : garantirInbox(garantirPadroesRadar(dsRemoto), 'remoto');
       if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
-      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
+      const trocarSenha = state.definirSenha || await precisaTrocarSenha();
+      state = { ...state, ds, usuario, carregando: false, sessao: true, definirSenha: trocarSenha, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
       if (offline) agendarRetentativa();
       emit();
       ajustarDataBase();
@@ -671,7 +672,8 @@ export const actions = {
       const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
       const ds = usuario.papel === 'Solicitante' ? dsRemoto : garantirPadroesRadar(dsRemoto);
       if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
-      state = { ...state, ds, usuario, carregando: false, sessao: true, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
+      const trocarSenha = state.definirSenha || await precisaTrocarSenha();
+      state = { ...state, ds, usuario, carregando: false, sessao: true, definirSenha: trocarSenha, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
       if (offline) agendarRetentativa();
     } catch (e) {
       state = { ...state, carregando: false, erroInicial: (e as Error).message };

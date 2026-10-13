@@ -1,6 +1,6 @@
 // Cadastros › Usuarios (modo remoto, so Administrador): convidar pessoas, trocar papel e obras, desativar/reativar e reenviar
 // o acesso. Tudo passa por /api/usuarios (netlify/functions/usuarios.ts -> src/core/usuariosServidor.ts), que confere no
-// servidor se quem pede e Administrador antes de usar a chave administrativa. A senha nunca passa por aqui: a pessoa recebe
+// servidor se quem pede e Administrador antes de usar a chave administrativa. Duas formas: criar ja com senha inicial (o Administrador entrega; a pessoa troca no primeiro acesso) ou convite por e-mail. A senha nunca e gravada: a pessoa recebe
 // um e-mail com link e cria a propria senha (tela DefinirSenha).
 import { useCallback, useEffect, useState } from 'react';
 import type { Papel } from '../core/types';
@@ -30,8 +30,20 @@ async function chamar<T>(corpo: unknown): Promise<T> {
   return d as T;
 }
 
-interface Form { id?: string; nome: string; email: string; papel: Papel; obras: string[]; ativo: boolean }
-const VAZIO: Form = { nome: '', email: '', papel: 'Solicitante', obras: [], ativo: true };
+// modo 'senha': o Administrador cria o login ja com a senha inicial e entrega a pessoa; 'convite': e-mail do Supabase com link
+interface Form { id?: string; nome: string; email: string; papel: Papel; obras: string[]; ativo: boolean; modo: 'senha' | 'convite'; senha: string; trocar: boolean }
+const VAZIO: Form = { nome: '', email: '', papel: 'Solicitante', obras: [], ativo: true, modo: 'senha', senha: '', trocar: true };
+interface Acesso { nome: string; email: string; senha: string; link: string; trocar: boolean }
+
+/** Senha inicial forte e legivel (sem 0/O/1/l/I): 12 caracteres com letras maiusculas, minusculas e numeros. */
+export function gerarSenha(): string {
+  const letras = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'; const numeros = '23456789'; const todos = letras + numeros;
+  const r = new Uint32Array(12); crypto.getRandomValues(r);
+  const s = Array.from(r, (v) => todos[v % todos.length]);
+  s[3] = numeros[r[3] % numeros.length]; s[8] = numeros[r[8] % numeros.length]; s[0] = letras[r[0] % letras.length].toUpperCase();
+  return s.join('');
+}
+const mensagemDeAcesso = (a: Acesso) => `Olá, ${a.nome.split(' ')[0]}! Seu acesso ao EIFF Control:\n${a.link}\nE-mail: ${a.email}\nSenha${a.trocar ? ' inicial' : ''}: ${a.senha}${a.trocar ? '\nNo primeiro acesso, o sistema vai pedir para você criar a sua própria senha.' : ''}`;
 
 export function GestaoUsuarios() {
   const { toast, el } = useToast();
@@ -41,7 +53,9 @@ export function GestaoUsuarios() {
   const [form, setForm] = useState<Form | null>(null);
   const [erroForm, setErroForm] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [acesso, setAcesso] = useState<Acesso | null>(null);
   const linkEquipe = `${window.location.origin}/#/diretor/nova`;
+  const linkDe = (papel: Papel) => (papel === 'Solicitante' ? linkEquipe : `${window.location.origin}/#/`);
 
   const carregar = useCallback(async () => {
     try { const r = await chamar<{ usuarios: UsuarioLista[]; obras: string[] }>({ acao: 'listar' }); setLista(r.usuarios); setObras(r.obras); setFalha(null); }
@@ -56,7 +70,13 @@ export function GestaoUsuarios() {
       const obrasDoPapel = PAPEIS_COM_OBRAS.includes(form.papel) ? form.obras : [];
       if (form.id) {
         await chamar({ acao: 'alterar', id: form.id, nome: form.nome, papel: form.papel, ativo: form.ativo, obras: obrasDoPapel });
-        toast(`${form.nome}: alterações salvas.`);
+        if (form.senha) {
+          await chamar({ acao: 'definir_senha', id: form.id, senha: form.senha, trocar: form.trocar });
+          setAcesso({ nome: form.nome, email: form.email, senha: form.senha, link: linkDe(form.papel), trocar: form.trocar });
+        } else toast(`${form.nome}: alterações salvas.`);
+      } else if (form.modo === 'senha') {
+        await chamar({ acao: 'criar', nome: form.nome, email: form.email, papel: form.papel, obras: obrasDoPapel, senha: form.senha, trocar: form.trocar });
+        setAcesso({ nome: form.nome, email: form.email.trim().toLowerCase(), senha: form.senha, link: linkDe(form.papel), trocar: form.trocar });
       } else {
         const r = await chamar<{ convite: string }>({ acao: 'convidar', nome: form.nome, email: form.email, papel: form.papel, obras: obrasDoPapel });
         toast(r.convite === 'enviado' ? `Convite enviado para ${form.email}. A pessoa cria a própria senha pelo link do e-mail.` : `${form.email} já tinha login: liguei ao papel e mandei um link para criar nova senha.`);
@@ -91,7 +111,7 @@ export function GestaoUsuarios() {
         <h2 style={{ margin: 0 }}>Usuários</h2>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <button className="btn sm" onClick={copiarLink} title={linkEquipe}>Copiar link da equipe (Diretor Financeiro)</button>
-          <button className="btn primary sm" onClick={() => { setForm({ ...VAZIO }); setErroForm(null); }}>Convidar pessoa</button>
+          <button className="btn primary sm" onClick={() => { setForm({ ...VAZIO }); setErroForm(null); }}>Novo usuário</button>
         </div>
       </div>
       <p className="small muted">O convite chega por e-mail e a pessoa cria a própria senha pelo link. Quem é <b>Solicitante</b> entra direto na conversa com o Diretor Financeiro e não vê mais nada do sistema.</p>
@@ -108,7 +128,7 @@ export function GestaoUsuarios() {
               <div className="muted">{u.ultimoAcesso ? `último acesso ${dia(u.ultimoAcesso)}` : u.confirmadoEm ? 'senha criada' : 'convite pendente'}</div>
             </td>
             <td className="no-print">
-              <button className="btn sm" onClick={() => { setForm({ id: u.id, nome: u.nome, email: u.email, papel: u.papel, obras: u.obras === '*' ? [] : u.obras, ativo: u.ativo }); setErroForm(null); }}>Editar</button>{' '}
+              <button className="btn sm" onClick={() => { setForm({ ...VAZIO, id: u.id, nome: u.nome, email: u.email, papel: u.papel, obras: u.obras === '*' ? [] : u.obras, ativo: u.ativo }); setErroForm(null); }}>Editar</button>{' '}
               {u.ativo && !u.voce && <button className="btn sm" onClick={() => void enviarAcesso(u)} title={u.confirmadoEm ? 'Manda um link para criar nova senha' : 'Reenvia o convite'}>{u.confirmadoEm ? 'Nova senha' : 'Reenviar convite'}</button>}
             </td>
           </>
@@ -116,7 +136,7 @@ export function GestaoUsuarios() {
       )}
 
       {form && (
-        <Modal title={form.id ? `Editar ${form.nome}` : 'Convidar pessoa'} onClose={() => setForm(null)}>
+        <Modal title={form.id ? `Editar ${form.nome}` : 'Novo usuário'} onClose={() => setForm(null)}>
           <div className="form">
             <Field label="Nome" req><input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} autoFocus /></Field>
             <Field label="E-mail" req hint={form.id ? 'O e-mail do login não muda por aqui.' : 'Para onde vai o convite.'}><input type="email" value={form.email} disabled={!!form.id} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
@@ -129,11 +149,42 @@ export function GestaoUsuarios() {
               </Field>
             )}
             {form.id && <Field label="Situação" full hint="Inativo não entra no sistema; o histórico fica."><label className="small"><input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></Field>}
+            {!form.id && (
+              <Field label="Como entregar o acesso" full>
+                <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
+                  <label className="small"><input type="radio" name="modo" checked={form.modo === 'senha'} onChange={() => setForm({ ...form, modo: 'senha' })} /> Criar já com senha (eu entrego à pessoa)</label>
+                  <label className="small"><input type="radio" name="modo" checked={form.modo === 'convite'} onChange={() => setForm({ ...form, modo: 'convite' })} /> Enviar convite por e-mail (a pessoa cria a senha)</label>
+                </div>
+              </Field>
+            )}
+            {(form.id || form.modo === 'senha') && (
+              <Field label={form.id ? 'Nova senha (opcional)' : 'Senha inicial'} req={!form.id} full hint="De 8 a 72 caracteres, com letras e números. Ela não fica gravada no sistema: anote ou copie ao final.">
+                <div className="row" style={{ gap: 8 }}>
+                  <input type="text" autoComplete="new-password" spellCheck={false} value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} placeholder={form.id ? 'deixe vazio para não mudar' : ''} style={{ flex: 1, fontFamily: 'monospace' }} />
+                  <button type="button" className="btn sm" onClick={() => setForm({ ...form, senha: gerarSenha() })}>Gerar senha</button>
+                </div>
+              </Field>
+            )}
+            {(form.id ? !!form.senha : form.modo === 'senha') && (
+              <Field label="Primeiro acesso" full>
+                <label className="small"><input type="checkbox" checked={form.trocar} onChange={(e) => setForm({ ...form, trocar: e.target.checked })} /> Pedir para a pessoa criar a própria senha no primeiro acesso (recomendado)</label>
+              </Field>
+            )}
           </div>
           {erroForm && <div className="alert bad" role="alert" style={{ marginTop: 10 }}>{erroForm}</div>}
           <div className="foot">
             <button className="btn" onClick={() => setForm(null)}>Cancelar</button>
-            <button className="btn primary" disabled={ocupado} onClick={() => void salvar()}>{ocupado ? 'Salvando…' : form.id ? 'Salvar' : 'Enviar convite'}</button>
+            <button className="btn primary" disabled={ocupado} onClick={() => void salvar()}>{ocupado ? 'Salvando…' : form.id ? 'Salvar' : form.modo === 'senha' ? 'Criar acesso' : 'Enviar convite'}</button>
+          </div>
+        </Modal>
+      )}
+      {acesso && (
+        <Modal title="Acesso pronto" onClose={() => setAcesso(null)}>
+          <p className="small">Entregue estes dados a <b>{acesso.nome}</b>. A senha não fica gravada no sistema: depois de fechar esta janela, não dá para vê-la de novo.</p>
+          <pre className="acesso-pronto">{mensagemDeAcesso(acesso)}</pre>
+          <div className="foot">
+            <button className="btn" onClick={() => setAcesso(null)}>Fechar</button>
+            <button className="btn primary" onClick={async () => { try { await navigator.clipboard.writeText(mensagemDeAcesso(acesso)); toast('Mensagem copiada: cole no WhatsApp ou no e-mail da pessoa.'); } catch { toast('Não consegui copiar: selecione o texto e copie.'); } }}>Copiar mensagem</button>
           </div>
         </Modal>
       )}
