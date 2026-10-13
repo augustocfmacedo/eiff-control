@@ -8,7 +8,7 @@ import { centralDF } from '../core/cfo';
 import { saudeCaixa, type Sinal } from '../core/saudeCaixa';
 import { BriefingDF, ConversaDF, PedidosDF } from './DiretorFinanceiro';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
-import { Sparkline } from '../ui/charts';
+import { GraficoSaldo } from '../ui/GraficoSaldo';
 import { Badge, Empty, Field, KpiHero, KpiStrip, Modal, MoedaInput, PageHead, Select, money, tentar, useToast, type Tone } from '../ui/components';
 import { Tabela, type Coluna } from '../ui/Tabela';
 import { navegar } from '../ui/router';
@@ -104,7 +104,6 @@ export default function Caixa() {
     </>
   );
 
-  const valores30 = livro.dias.map((x) => x.saldo);
   const abaixo = livro.dias.filter((x) => x.abaixoReserva);
   return (
     <>
@@ -127,9 +126,7 @@ export default function Caixa() {
             { label: 'No banco (extrato)', value: livro.extratoAte ? money(livro.saldoBanco) : 'sem extrato' },
             { label: 'Daqui a 7 dias', value: money(livro.previsto7), tone: livro.previsto7 < livro.reserva ? 'neg' : undefined },
             { label: 'Daqui a 30 dias', value: money(livro.previsto30), tone: livro.previsto30 < livro.reserva ? 'neg' : undefined },
-          ]}>
-          <Sparkline valores={valores30} referencia={livro.reserva || undefined} rotulos={livro.dias.map((x) => dCurta(x.data))} />
-        </KpiHero>
+          ]} />
         <KpiHero label="Menor saldo no período" value={money(livro.menor.saldo)} hint={`em ${d(livro.menor.data)}${livro.reserva ? ` · reserva mínima ${money(livro.reserva)}` : ''}`} tone={livro.menor.saldo < 0 ? 'bad' : livro.menor.saldo < livro.reserva ? 'warn' : 'ok'}
           secundarios={[{ label: `Saldo em ${dCurta(livro.ate)}`, value: money(livro.saldoFinal) }]} />
       </div>
@@ -139,6 +136,13 @@ export default function Caixa() {
         { label: 'Pagamentos vencidos', value: money(livro.vencidosPagar), tone: livro.vencidosPagar ? 'neg' : undefined, hint: 'contam no saldo de hoje' },
         { label: 'Recebimentos vencidos', value: money(livro.vencidosReceber), tone: livro.vencidosReceber ? 'warn' : undefined, hint: 'fora do saldo até entrar' },
       ]} />
+      <div className="card grafico-saldo-card">
+        <div className="cab">
+          <h2>Evolução do saldo</h2>
+          <span className="small muted">saldo no fim de cada dia, de hoje até {d(livro.ate)}, com o que já está previsto · passe o mouse ou use as setas</span>
+        </div>
+        <GraficoSaldo pontos={livro.dias} minimo={livro.reserva} />
+      </div>
       {saude && (
         <div className="card saude">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
