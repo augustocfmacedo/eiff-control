@@ -67,7 +67,7 @@ import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { lancamentoDoPedido } from './solicitante';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
@@ -140,6 +140,8 @@ interface State {
   modo: 'local' | 'remoto';
   carregando: boolean;
   sessao: boolean;
+  /** entrou pelo link do e-mail (convite/recuperacao): precisa criar a senha antes de usar o sistema */
+  definirSenha?: boolean;
   sync: SyncStatus;
   erroInicial?: string;
   pendencias?: boolean; // ha alteracoes offline guardadas neste aparelho ainda nao aplicadas no Supabase
@@ -150,7 +152,7 @@ const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 function carregar(): State {
   const base = clone(seed) as unknown as Dataset;
   if (remotoAtivo) {
-    return { ds: base, usuario: base.usuarios[0], modo: 'remoto', carregando: true, sessao: false, sync: { status: 'ok' } };
+    return { ds: base, usuario: base.usuarios[0], modo: 'remoto', carregando: true, sessao: false, definirSenha: !!linkDeSenha, sync: { status: 'ok' } };
   }
   let ds = base;
   try {
@@ -625,6 +627,21 @@ export const actions = {
 
   async entrar(email: string, senha: string) {
     await loginRemoto(email, senha);
+  },
+
+  /** Tela "Crie sua senha" (link de convite ou de recuperacao): grava a senha e segue para o sistema. */
+  async definirSenha(senha: string, confirmacao: string) {
+    if (senha.length < 8) throw new RegraDeNegocioError('A senha precisa ter ao menos 8 caracteres.');
+    if (senha !== confirmacao) throw new RegraDeNegocioError('As duas senhas não conferem.');
+    await definirSenhaRemota(senha);
+    state = { ...state, definirSenha: false };
+    emit();
+    if (typeof window !== 'undefined') window.location.hash = state.usuario.papel === 'Solicitante' ? '/diretor/nova' : '/';
+  },
+
+  async pedirNovaSenha(email: string) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new RegraDeNegocioError('Informe o seu e-mail.');
+    await pedirNovaSenhaRemota(email.trim().toLowerCase());
   },
 
   async sair() {

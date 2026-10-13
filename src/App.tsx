@@ -5,6 +5,7 @@ import { actions, inicializar, obrasVisiveis, pode, useStore } from './data/stor
 import { Badge, EstadoErro, SkeletonTela, StatusBadge, dataHora } from './ui/components';
 import { href, useRota } from './ui/router';
 import Login from './screens/Login';
+import DefinirSenha from './screens/DefinirSenha';
 import { trilhaDe } from './core/capacitacao';
 import { Assistente } from './ui/Assistente';
 import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
@@ -65,7 +66,7 @@ const ProducaoCompacto = lazy(() => import('./screens/piloto/ProducaoCompacto'))
 
 export default function App() {
   const rota = useRota();
-  const { ds, usuario, modo, carregando, sessao, sync, erroInicial, pendencias } = useStore();
+  const { ds, usuario, modo, carregando, sessao, sync, erroInicial, pendencias, definirSenha } = useStore();
   useEffect(() => { void inicializar(); }, []);
   // todos os hooks antes de qualquer saida antecipada (regra dos hooks)
   const [recolhida, setRecolhida] = useState<boolean>(() => { try { return localStorage.getItem('eiff-control:sidebar') === 'recolhida'; } catch { return false; } });
@@ -106,6 +107,8 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [rota.path, modo, sessao, carregando]);
   if (modo === 'remoto' && carregando) return <div className="carregando"><CenaEstrutura variante="carregando" /><div className="carregando-txt">Carregando dados do Supabase…</div></div>;
+  // veio pelo link do e-mail (convite/recuperacao): cria a senha antes de qualquer outra tela
+  if (modo === 'remoto' && sessao && definirSenha) return <DefinirSenha />;
   if (modo === 'remoto' && !sessao) return <Login />;
   if (modo === 'remoto' && erroInicial) {
     return (
