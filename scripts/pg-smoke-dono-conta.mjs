@@ -126,6 +126,16 @@ function igual(nome, obtido, esperado) {
   else quebrou(nome, `esperado ${JSON.stringify(esperado)}, obtido ${JSON.stringify(obtido)}`);
 }
 
+/**
+ * Colunas que o app grava em radar_company na escrita genérica: exatamente as chaves de linhaDb('empresas', …) em
+ * src/data/radar.supabase.ts (o teste src/data/radar.dono.persistencia.test.ts confere que a lista é a mesma).
+ * O insert acrescenta organization_id e created_by. commercial_owner_id NÃO está aqui (CD-D5.2).
+ */
+const COLUNAS_APP = ["cnpj","legal_name","trade_name","domain","website","linkedin_url","industry","cnae","city","state","country","employee_range","revenue_range","capital_social","number_of_locations","source_id","source_external_id","explorium_business_id","notes","active","merged_into","fit_score","intent_score","timing_score","relationship_score","data_quality_score","priority_score","priority_class","last_signal_at","last_contact_at","next_action_at","updated_by"];
+
+/** Rollback da 0065 (docs/commercial-director-1.0.md §19.5): o mesmo texto é provado no fim deste smoke. */
+const ROLLBACK_0065 = 'drop function if exists radar_definir_dono_conta(uuid, uuid, text); grant insert, update on radar_company to anon, authenticated;';
+
 async function main() {
   console.log('CD-D5 · smoke das migrations 0064 e 0065 em PostgreSQL descartavel (PGlite)\n');
   await db.exec(PRELUDIO);
@@ -203,6 +213,30 @@ async function main() {
   await aceita('mesclar absorvida cujo dono ficou inativo é aceito (não revalida)', 'update radar_company set active=false, merged_into=$2 where id=$1', [absorvidaC, canonicaSemDono]);
 
   // ------------------------------------------------------------------------------------------------------------------
+  console.log('\nCD-D5.2 · compatibilidade ANTES da 0065 (banco atual de produção)');
+  const comoPapel = async (papel, sql, params = []) => emSavepoint(async () => {
+    await db.exec(`set local role ${papel}`);
+    const r = await db.query(sql, params);
+    await db.exec('reset role');
+    return r;
+  });
+  const esperaNegado = async (nome, x) => { if (x.ok) quebrou(nome, 'o banco ACEITOU'); else if (!/permission denied/i.test(String(x.e.message))) quebrou(nome, 'motivo errado: ' + x.e.message); else passou(nome); };
+  const esperaAceito = (nome, x) => { if (x.ok) passou(nome); else quebrou(nome, 'recusado: ' + x.e.message); };
+  /** UPDATE e INSERT exatamente como o app novo manda (chaves de linhaDb, RETURNING id), como authenticated */
+  const valoresApp = (ator) => COLUNAS_APP.map((c) => ({ legal_name: 'Via app', country: 'Brasil', active: true, notes: 'n', priority_class: 'D', updated_by: ator }[c] ?? (c.endsWith('score') ? 1 : null)));
+  const updateApp = (id, ator) => comoPapel('authenticated', 'update radar_company set ' + COLUNAS_APP.map((c, i) => c + '=$' + (i + 2)).join(', ') + ' where id=$1 returning id', [id, ...valoresApp(ator)]);
+  const insertApp = (organizacao, ator) => { const cols = [...COLUNAS_APP, 'organization_id', 'created_by']; return comoPapel('authenticated', 'insert into radar_company (' + cols.join(',') + ') values (' + cols.map((_, i) => '$' + (i + 1)).join(',') + ') returning id', [...valoresApp(ator), organizacao, ator]); };
+  /** o app antigo (até a CD-D5.1) manda commercial_owner_id em toda gravação de empresa */
+  const updateAntigo = (id, dono) => comoPapel('authenticated', 'update radar_company set notes=$2, commercial_owner_id=$3 where id=$1 returning id', [id, 'app antigo', dono]);
+  const insertAntigo = (organizacao) => comoPapel('authenticated', "insert into radar_company (organization_id, legal_name, commercial_owner_id) values ($1,'App antigo',null) returning id", [organizacao]);
+  const contaCompat = await um("insert into radar_company (organization_id, legal_name) values ($1,'Conta compat') returning id", [org]);
+  esperaAceito('app ANTIGO + banco sem 0065: UPDATE com commercial_owner_id funciona', await updateAntigo(contaCompat, null));
+  esperaAceito('app ANTIGO + banco sem 0065: INSERT com commercial_owner_id funciona', await insertAntigo(org));
+  esperaAceito('app NOVO + banco sem 0065: UPDATE das demais colunas funciona', await updateApp(contaCompat, ana));
+  esperaAceito('app NOVO + banco sem 0065: INSERT sem o dono funciona', await insertApp(org, ana));
+  await recusa('app NOVO + banco sem 0065: mudar o dono falha fechado (RPC ainda não existe)', 'select radar_definir_dono_conta($1, $2, $3)', [contaCompat, ana, 'antes da 0065'], 'does not exist');
+  igual('app NOVO + banco sem 0065: nada mudou no dono', await valor('select commercial_owner_id from radar_company where id=$1', [contaCompat]), null);
+
   console.log('\nCD-D5.2 · 0065: atribuição governada (RPC radar_definir_dono_conta + privilégio de coluna)');
   await db.exec(SQL_0065);
   const perfil = (nome, papel, organizacao = org, ativo = true) =>
@@ -254,12 +288,26 @@ async function main() {
   const nAntesRecusas = await eventosDono();
   await comoAutor(compras);
   await recusa('perfil sem a permissão (Compras) é recusado', RPC, [contaG, dora, 'tentativa'], 'sem permissão');
+  for (const papel of ['Financeiro', 'Gestor de obra', 'Engenharia', 'Contabilidade', 'Auditoria']) {
+    await comoAutor(await perfil('Sem permissão ' + papel, papel));
+    await recusa(`perfil sem a permissão (${papel}) é recusado`, RPC, [contaG, dora, 'tentativa'], 'sem permissão');
+  }
   await comoAutor(admInativo);
   await recusa('autor inativo é recusado', RPC, [contaG, dora, 'tentativa'], 'sem perfil ativo');
   await comoAutor(null);
   await recusa('sem sessão é recusado', RPC, [contaG, dora, 'tentativa'], 'não autenticada');
   await comoAutor(admFora);
   await recusa('Administrador de outra organização não enxerga a conta', RPC, [contaG, dora, 'tentativa'], 'empresa não encontrada');
+  // endurecimento: em produção role e active são NOT NULL, mas a função não depende disso
+  await db.exec('alter table profile alter column role drop not null, alter column active drop not null');
+  const semPapel = await um("insert into profile (organization_id, name, role) values ($1,'Sem papel',null) returning id", [org]);
+  const semSituacao = await um("insert into profile (organization_id, name, role, active) values ($1,'Sem situação','Administrador',null) returning id", [org]);
+  await comoAutor(semPapel);
+  await recusa('papel nulo é recusado (falha fechada)', RPC, [contaG, dora, 'tentativa'], 'sem permissão');
+  await comoAutor(semSituacao);
+  await recusa('situação ativa nula é recusada (falha fechada)', RPC, [contaG, dora, 'tentativa'], 'sem perfil ativo');
+  await db.query('delete from profile where id in ($1,$2)', [semPapel, semSituacao]);
+  await db.exec('alter table profile alter column role set not null, alter column active set not null');
   await comoAutor(adm);
   await recusa('motivo vazio é recusado', RPC, [contaG, dora, '  '], 'motivo');
   await recusa('dono inativo é recusado', RPC, [contaG, inativo, 'tentativa'], 'dono comercial inválido');
@@ -278,14 +326,6 @@ async function main() {
   await db.exec('drop trigger falha_simulada on audit_log; drop function falha_simulada();');
 
   console.log('\ngravação direta pelos papéis do app (privilégio de coluna)');
-  const comoPapel = async (papel, sql, params = []) => emSavepoint(async () => {
-    await db.exec(`set local role ${papel}`);
-    const r = await db.query(sql, params);
-    await db.exec('reset role');
-    return r;
-  });
-  const esperaNegado = async (nome, x) => { if (x.ok) quebrou(nome, 'o banco ACEITOU'); else if (!/permission denied/i.test(String(x.e.message))) quebrou(nome, 'motivo errado: ' + x.e.message); else passou(nome); };
-  const esperaAceito = (nome, x) => { if (x.ok) passou(nome); else quebrou(nome, 'recusado: ' + x.e.message); };
   await esperaNegado('authenticated não grava commercial_owner_id direto (UPDATE)', await comoPapel('authenticated', 'update radar_company set commercial_owner_id=$2 where id=$1', [contaG, dora]));
   await esperaNegado('authenticated não grava commercial_owner_id direto (INSERT)', await comoPapel('authenticated', "insert into radar_company (organization_id, legal_name, commercial_owner_id) values ($1,'X',$2)", [org, dora]));
   esperaAceito('authenticated continua gravando os demais campos (UPDATE)', await comoPapel('authenticated', "update radar_company set notes='nota' , legal_name='Conta governada (ed.)' where id=$1", [contaG]));
@@ -300,6 +340,21 @@ async function main() {
       and not has_column_privilege('authenticated', 'radar_company', c.column_name, 'UPDATE')`), 0);
   igual('commercial_owner_id sem UPDATE/INSERT para authenticated',
     await valor("select (has_column_privilege('authenticated','radar_company','commercial_owner_id','UPDATE') or has_column_privilege('authenticated','radar_company','commercial_owner_id','INSERT'))::text"), 'false');
+
+  console.log('\nCD-D5.2 · compatibilidade DEPOIS da 0065');
+  esperaAceito('app NOVO + banco com 0065: UPDATE das demais colunas (chaves de linhaDb + RETURNING) funciona', await updateApp(contaG, adm));
+  esperaAceito('app NOVO + banco com 0065: INSERT sem o dono (+ organization_id/created_by) funciona', await insertApp(org, adm));
+  await esperaNegado('app ANTIGO + banco com 0065: UPDATE com commercial_owner_id (mesmo valor) é negado', await updateAntigo(contaG, await donoDe(contaG)));
+  await esperaNegado('app ANTIGO + banco com 0065: INSERT com commercial_owner_id null é negado', await insertAntigo(org));
+
+  console.log('\nCD-D5.2 · rollback da 0065');
+  await db.exec(ROLLBACK_0065);
+  esperaAceito('depois do rollback: app ANTIGO volta a gravar (UPDATE com commercial_owner_id)', await updateAntigo(contaG, await donoDe(contaG)));
+  esperaAceito('depois do rollback: app ANTIGO volta a criar (INSERT com commercial_owner_id)', await insertAntigo(org));
+  esperaAceito('depois do rollback: app NOVO segue gravando as demais colunas', await updateApp(contaG, adm));
+  igual('depois do rollback: a RPC não existe', await valor("select count(*)::int from pg_proc where proname='radar_definir_dono_conta'"), 0);
+  igual('depois do rollback: o dono e a auditoria gravados pela RPC permanecem', `${await donoDe(contaG)}/${(await eventosDono()) > 0}`, `${dora}/true`);
+  igual('depois do rollback: o gatilho da 0064 continua barrando dono de outra organização', (await comoPapel('authenticated', 'update radar_company set commercial_owner_id=$2 where id=$1', [contaG, deFora])).ok, false);
 
   await db.exec('rollback');
   console.log(`\n${ok} ok, ${falhou} falha(s)`);

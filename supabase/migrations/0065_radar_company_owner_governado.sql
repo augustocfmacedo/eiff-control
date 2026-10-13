@@ -34,10 +34,11 @@ begin
     raise exception 'dono da conta: sessão não autenticada' using errcode = 'insufficient_privilege';
   end if;
   select p.organization_id, p.role, p.active into v_org, v_papel, v_ativo from profile p where p.id = v_ator;
-  if not found or not v_ativo then
+  -- falha fechada também para valores nulos (as colunas são NOT NULL hoje; a função não depende disso)
+  if not found or v_ativo is null or not v_ativo then
     raise exception 'dono da conta: usuário sem perfil ativo' using errcode = 'insufficient_privilege';
   end if;
-  if v_papel not in ('Administrador', 'Diretoria') then
+  if v_papel is null or v_papel not in ('Administrador', 'Diretoria') then
     raise exception 'dono da conta: sem permissão para definir o dono comercial' using errcode = 'insufficient_privilege';
   end if;
   if char_length(v_motivo) < 3 or char_length(v_motivo) > 500 then
