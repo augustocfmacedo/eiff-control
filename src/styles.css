@@ -1301,3 +1301,20 @@ tr.arrastando td { opacity: 0.55; }
 .saude-acao { color: var(--text); }
 .saude-geral { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
 .saude-geral.verde { background: var(--ok-bg); color: var(--ok); } .saude-geral.amarelo { background: var(--warn-bg); color: var(--warn); } .saude-geral.vermelho { background: var(--bad-bg); color: var(--bad); }
+
+/* GraficoSaldo (src/ui/GraficoSaldo.tsx): evolucao do saldo na Caixa */
+.grafico-saldo { width: 100%; min-width: 0; overflow: hidden; }
+.grafico-saldo svg:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+.gs-area { fill: var(--viz-1); fill-opacity: 0.12; }
+.gs-zero { stroke: var(--muted); stroke-width: 1; }
+.gs-minimo { stroke: var(--viz-critical); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.gs-minimo-txt { fill: var(--muted); font-size: 11px; font-weight: 600; }
+.gs-zona { fill: var(--viz-critical); fill-opacity: 0.08; }
+.gs-ponto-ruim { color: var(--viz-critical); fill: var(--viz-critical); }
+.gs-tooltip { top: 8px; min-width: 150px; display: grid; gap: 2px; }
+.gs-tooltip div { display: block; }
+.gs-tt-saldo { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gs-tt-alerta { color: var(--bad); font-weight: 600; }
+.grafico-saldo-card { margin-top: 14px; }
+.grafico-saldo-card .cab { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.grafico-saldo-card h2 { margin: 0; }
