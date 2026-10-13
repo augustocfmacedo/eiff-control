@@ -1,4 +1,4 @@
-// Smoke do papel Solicitante (migrations 0065 e 0066) contra um PostgreSQL DE VERDADE (PGlite, em memória).
+// Smoke do papel Solicitante (migrations 0066 e 0067) contra um PostgreSQL DE VERDADE (PGlite, em memória).
 //
 // Por que existe: o Solicitante só pode conversar com o Diretor Financeiro. A tela esconde o resto, mas quem garante é o
 // BANCO: aqui o Solicitante tenta ler CADA tabela do schema public e do storage, gravar lançamento direto, se promover a
@@ -90,9 +90,9 @@ try {
     if (!feitas.has(arq)) await aplicar(arq);
     if (n === SEMENTE) { await db.exec('begin;'); await db.exec(fs.readFileSync(path.join(RAIZ, '..', 'seed.sql'), 'utf8')); await db.exec('commit;'); }
   }
-  // reaplicar a 0066 tem de ser inofensivo (create or replace / grants)
-  await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0066_'))), 'utf8'));
-  res.migrations.reaplicacao_0066 = 'ok';
+  // reaplicar a 0067 tem de ser inofensivo (create or replace / grants)
+  await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0067_'))), 'utf8'));
+  res.migrations.reaplicacao_0067 = 'ok';
 
   await db.exec('begin;');
   const org = await um(`select id from organization where code = 'EIFF'`);

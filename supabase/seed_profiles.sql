@@ -1,7 +1,7 @@
 -- Perfis de acesso (DEC-02). Execute DEPOIS de criar os usuarios em Authentication > Users no painel do Supabase.
 -- Cada linha liga um e-mail ja existente em auth.users a um papel. Ajuste nomes, e-mails e papeis conforme a lista real.
 -- Papeis: Administrador | Diretoria | Financeiro | Gestor de obra | Engenharia | Compras | Contabilidade | Auditoria | Solicitante
--- Solicitante (0065/0066): equipe que SO conversa com o Diretor Financeiro para pedir pagamentos. Nao precisa de user_scope
+-- Solicitante (0066/0067): equipe que SO conversa com o Diretor Financeiro para pedir pagamentos. Nao precisa de user_scope
 -- (o banco ignora o escopo dele) e nao le nenhuma tabela; entra pelo link https://eiffcontrol.com.br/#/diretor/nova
 
 insert into profile (id, organization_id, name, email, role, mfa_required)

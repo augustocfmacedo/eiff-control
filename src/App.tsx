@@ -198,7 +198,7 @@ export default function App() {
   }
 
   // Solicitante (equipe): SO a conversa com o Diretor Financeiro e os proprios pedidos. Sem menu, busca, tour ou outras telas;
-  // qualquer endereco cai aqui. #/diretor/nova abre sempre uma conversa nova. O banco ja fecha o resto (0066).
+  // qualquer endereco cai aqui. #/diretor/nova abre sempre uma conversa nova. O banco ja fecha o resto (0067).
   if (usuario.papel === 'Solicitante') {
     const nova = p0 === 'diretor' && p1 === 'nova';
     return (

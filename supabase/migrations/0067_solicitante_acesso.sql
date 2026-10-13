@@ -1,4 +1,4 @@
--- Acesso do papel Solicitante (0065): SO o chat do Diretor Financeiro. Duas metades:
+-- Acesso do papel Solicitante (0066): SO o chat do Diretor Financeiro. Duas metades:
 --
 -- 1) FECHAMENTO. As politicas RLS do schema leem o contexto do usuario pelas funcoes auxiliares da 0003 (current_org,
 --    auth_profile, has_role, can_access_company, can_access_project). Elas passam a ignorar o perfil Solicitante: para

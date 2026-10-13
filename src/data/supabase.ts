@@ -173,7 +173,7 @@ async function selTodos(tabela: string, ordem: string, comId = true): Promise<Ro
 // Leitura: banco -> Dataset
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------------------------------------
-// Perfil Solicitante (0066): nao le nenhuma tabela; so as tres portas do banco
+// Perfil Solicitante (0067): nao le nenhuma tabela; so as tres portas do banco
 // ---------------------------------------------------------------------------------------------------------------------
 async function porta<T>(nome: string, args?: Record<string, unknown>): Promise<T> {
   if (!supabase) throw new RemotoError('Supabase não configurado.');
@@ -193,7 +193,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const [perfis, orgs, companies] = await Promise.all([sel('profile'), sel('organization'), sel('company')]);
   const meu = perfis.find((p) => p.id === sessao.userId);
   if (!meu) {
-    // o Solicitante nao enxerga a tabela profile (0066): o perfil dele vem da porta df_contexto, e o dataset e so o do pedido
+    // o Solicitante nao enxerga a tabela profile (0067): o perfil dele vem da porta df_contexto, e o dataset e so o do pedido
     const ctx = await contextoSolicitante().catch(() => null);
     if (ctx?.perfil.papel === 'Solicitante') return datasetSolicitante(ctx, await meusPedidosSolicitante(), hojeLocal());
   }

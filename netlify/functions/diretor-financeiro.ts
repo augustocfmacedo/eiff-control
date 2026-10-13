@@ -18,7 +18,7 @@ export default async (req: Request): Promise<Response> => {
   if (!token) return json({ erro: 'nao_autenticado' }, 401);
   const user = await fetch(`${url}/auth/v1/user`, { headers: { apikey: anon, authorization: `Bearer ${token}` } });
   if (!user.ok) return json({ erro: 'nao_autenticado' }, 401);
-  // sessao valida nao basta: exige perfil ATIVO no banco (porta df_contexto da 0066, que tambem atende o Solicitante, que nao le
+  // sessao valida nao basta: exige perfil ATIVO no banco (porta df_contexto da 0067, que tambem atende o Solicitante, que nao le
   // a tabela profile). Login sem perfil ou desativado nao usa a IA.
   const perfil = await fetch(`${url}/rest/v1/rpc/df_contexto`, { method: 'POST', headers: { apikey: anon, authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
   if (!perfil.ok) return json({ erro: 'sem_perfil' }, 403);

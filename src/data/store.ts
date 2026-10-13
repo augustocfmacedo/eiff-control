@@ -767,7 +767,7 @@ export const actions = {
 
   /**
    * Pedido de pagamento pelo Diretor Financeiro, para qualquer papel que possa pedir. O Solicitante em modo remoto nao grava
-   * nada pelas vias normais (0066): o pedido vai pela porta df_registrar_pedido e a lista dele e relida de df_meus_pedidos.
+   * nada pelas vias normais (0067): o pedido vai pela porta df_registrar_pedido e a lista dele e relida de df_meus_pedidos.
    */
   async solicitarPagamentoDF(p: PrevisaoDF): Promise<Lancamento> {
     exigir('pedir_pagamento');

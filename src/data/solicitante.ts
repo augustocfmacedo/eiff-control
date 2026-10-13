@@ -1,4 +1,4 @@
-// Perfil Solicitante (equipe que so conversa com o Diretor Financeiro). No banco ele nao le nenhuma tabela (0066): tudo vem
+// Perfil Solicitante (equipe que so conversa com o Diretor Financeiro). No banco ele nao le nenhuma tabela (0067): tudo vem
 // das portas df_contexto / df_meus_pedidos e o pedido vai por df_registrar_pedido. Aqui ficam as conversoes PURAS entre o
 // que as portas devolvem e o Dataset que o app usa — um Dataset minimo: o catalogo do pedido (categorias de saida e obras
 // ativas) e os pedidos da propria pessoa. Nada de saldo, conta, lancamento alheio ou cadastro.
