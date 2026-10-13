@@ -146,6 +146,21 @@ describe('CD-D5.2 · guardas de fonte', () => {
     expect(fonte('src/data/store.ts')).not.toContain('commercial_owner_id');
   });
 
+  it('o smoke de compatibilidade grava exatamente as colunas que o app manda (COLUNAS_APP = chaves de linhaDb)', () => {
+    const smoke = fonte('scripts/pg-smoke-dono-conta.mjs');
+    const lista = JSON.parse(smoke.match(/const COLUNAS_APP = (\[[^\]]*\]);/)![1]) as string[];
+    const chaves = Object.keys(linhaDb('empresas', emp('E1', { commercialOwnerId: 'u-ana' }), ref, helpers({})));
+    expect(lista).toEqual(chaves);
+    expect(lista).not.toContain('commercial_owner_id');
+    // e todas estão nos GRANTs da 0065 (insert e update), junto com organization_id e created_by do insert
+    const sql = fonte('supabase/migrations/0065_radar_company_owner_governado.sql');
+    for (const g of ['insert', 'update']) {
+      const cols = sql.match(new RegExp(`grant ${g} \\(([^)]*)\\)`))![1].split(',').map((c) => c.trim());
+      for (const c of [...lista, 'organization_id', 'created_by']) expect(cols, `${g} ${c}`).toContain(c);
+      expect(cols).not.toContain('commercial_owner_id');
+    }
+  });
+
   it('a mudança de dono vai pela RPC; a auditoria do app pula as ações que a RPC já audita', () => {
     expect(fonte('src/data/radar.supabase.ts')).toContain("h.rpc('radar_definir_dono_conta'");
     const sb = fonte('src/data/supabase.ts');

@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { RegraDeNegocioError, actions, getState } from './store';
 import { construirCommercialQueue, contasSemDonoValido, entraEmMetricaIndividual, estadoDonoConta } from '../core/radar';
 import { snapshotComercialCD } from '../core/radar/commercialDirector';
+import { MATRIZ } from '../core/permissoes';
 
 /** CD-D5.2: toda mudança de dono exige motivo */
 const M = 'redistribuição da carteira (teste)';
@@ -165,6 +166,8 @@ describe('CD-D5 · dono da conta (store)', () => {
   });
 
   it('16 · CD-D5.2: só Administrador e Diretoria (radar_dono) mudam o dono; os demais papéis do Radar são recusados', () => {
+    expect(MATRIZ.radar_dono).toEqual(['Administrador', 'Diretoria']); // espelho da RPC radar_definir_dono_conta (0065)
+    expect(MATRIZ.radar).not.toEqual(MATRIZ.radar_dono); // a permissão radar não foi reduzida nem ampliada
     const dono = empresa(gama).commercialOwnerId;
     for (const u of ['u-contab', 'u-audit', 'u-compras', 'u-eng', 'u-fin', 'u-obra']) {
       actions.trocarUsuario(u);
