@@ -52,9 +52,15 @@ export default function RadarEmpresa({ id, query }: { id: string; query: URLSear
         {podeAgir && <button className="btn" onClick={() => setSinal(true)}>+ Sinal</button>}
         {podeAgir && <button className="btn primary" onClick={() => setAtividade({ contatoId: item.decisor?.id, oportunidadeId: item.oportunidade?.id })}>Registrar atividade</button>}
       </PageHead>
-      <DonoConta empresa={e} usuarios={ds.usuarios} podeEditar={podeAgir} onDefinir={(usuarioId) => {
-        if (usuarioId === null && !window.confirm('Remover o dono desta conta? Ela passa a aparecer como sem dono.')) return;
-        tentar(() => actions.definirDonoContaRadar(e.id, usuarioId), toast, () => toast(usuarioId ? 'Dono da conta definido.' : 'Dono da conta removido.'));
+      {/* CD-D5.2: só Administrador e Diretoria (radar_dono) mudam o dono, sempre com motivo; o erro volta em linha */}
+      <DonoConta empresa={e} usuarios={ds.usuarios} podeEditar={pode(usuario, 'radar_dono')} onDefinir={(usuarioId, motivo) => {
+        try {
+          actions.definirDonoContaRadar(e.id, usuarioId, motivo);
+        } catch (err) {
+          return (err as Error).message;
+        }
+        toast(usuarioId ? 'Dono da conta definido.' : 'Dono da conta removido.');
+        return undefined;
       }} />
       <div style={{ height: 10 }} />
       <KpiStrip itens={[

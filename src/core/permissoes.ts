@@ -33,6 +33,7 @@ export type Acao =
   | 'comprar'
   | 'radar'
   | 'radar_config'
+  | 'radar_dono'
   | 'inbox'
   | 'inbox_config';
 
@@ -59,6 +60,9 @@ export const MATRIZ: Record<Acao, Papel[]> = {
   comprar: ['Administrador', 'Diretoria', 'Financeiro', 'Compras', 'Gestor de obra', 'Engenharia'],
   radar: [...PAPEIS_RADAR], // mesma lista que a funcao /api/comunicacao confere no perfil do banco
   radar_config: ['Administrador', 'Diretoria'],
+  // CD-D5.2: definir, trocar ou remover o dono comercial da conta. Permissao propria (nao amplia `radar`): no banco a RPC
+  // radar_definir_dono_conta (0065) confere os mesmos dois papeis no perfil, e a coluna so muda por ela.
+  radar_dono: ['Administrador', 'Diretoria'],
   // EIFF Inbox: a permissao abre a central; o recorte por setor e feito DENTRO dela (src/core/inbox/roteamento.ts), nunca uma segunda ACL.
   inbox: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
   inbox_config: ['Administrador', 'Diretoria'],

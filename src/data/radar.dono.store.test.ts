@@ -6,7 +6,10 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { RegraDeNegocioError, actions, getState } from './store';
 import { construirCommercialQueue, contasSemDonoValido, entraEmMetricaIndividual, estadoDonoConta } from '../core/radar';
 import { snapshotComercialCD } from '../core/radar/commercialDirector';
+import { MATRIZ } from '../core/permissoes';
 
+/** CD-D5.2: toda mudança de dono exige motivo */
+const M = 'redistribuição da carteira (teste)';
 const radar = () => getState().ds.radar;
 const hoje = () => getState().ds.params.dataBase;
 const usuarios = () => getState().ds.usuarios;
@@ -55,29 +58,29 @@ describe('CD-D5 · dono da conta (store)', () => {
   });
 
   it('2 · usuário ativo da mesma organização pode ser dono', () => {
-    const e = actions.definirDonoContaRadar(acme, 'u-eng');
+    const e = actions.definirDonoContaRadar(acme, 'u-eng', M);
     expect(e.commercialOwnerId).toBe('u-eng');
     expect(estadoDonoConta(empresa(acme), usuarios())).toBe('COM_DONO');
   });
 
   it('3 · usuário inativo não pode ser atribuído (falha fechada, nada muda)', () => {
     comAtivo('u-obra', false, () => {
-      expect(() => actions.definirDonoContaRadar(beta, 'u-obra')).toThrow(/ativo/);
+      expect(() => actions.definirDonoContaRadar(beta, 'u-obra', M)).toThrow(/ativo/);
     });
     expect(empresa(beta).commercialOwnerId).toBeUndefined();
   });
 
   it('4 · usuário de outra organização (fora da lista da organização) não pode ser atribuído', () => {
-    expect(() => actions.definirDonoContaRadar(beta, 'u-de-outra-organizacao')).toThrow(/mesma organização/);
-    expect(() => actions.definirDonoContaRadar(beta, '   ')).toThrow(RegraDeNegocioError);
-    expect(() => actions.definirDonoContaRadar('empresa-que-nao-existe', 'u-eng')).toThrow(/não encontrada/);
+    expect(() => actions.definirDonoContaRadar(beta, 'u-de-outra-organizacao', M)).toThrow(/mesma organização/);
+    expect(() => actions.definirDonoContaRadar(beta, '   ', M)).toThrow(RegraDeNegocioError);
+    expect(() => actions.definirDonoContaRadar('empresa-que-nao-existe', 'u-eng', M)).toThrow(/não encontrada/);
     expect(empresa(beta).commercialOwnerId).toBeUndefined();
   });
 
   it('5 · remover o dono volta a SEM_DONO', () => {
-    actions.definirDonoContaRadar(gama, 'u-compras');
+    actions.definirDonoContaRadar(gama, 'u-compras', M);
     expect(estadoDonoConta(empresa(gama), usuarios())).toBe('COM_DONO');
-    actions.definirDonoContaRadar(gama, null);
+    actions.definirDonoContaRadar(gama, null, M);
     expect(empresa(gama).commercialOwnerId).toBeUndefined();
     expect(estadoDonoConta(empresa(gama), usuarios())).toBe('SEM_DONO');
   });
@@ -86,10 +89,10 @@ describe('CD-D5 · dono da conta (store)', () => {
     actions.definirDonoContaRadar(acme, 'u-fin', 'redistribuição da carteira');
     const a = getState().ds.auditoria[0];
     expect(a).toMatchObject({ acao: 'radar_definir_dono_conta', entidade: 'radar_empresa', entidadeId: acme, antes: { commercialOwnerId: 'u-eng' }, depois: { commercialOwnerId: 'u-fin' }, motivo: 'redistribuição da carteira' });
-    actions.definirDonoContaRadar(acme, null);
+    actions.definirDonoContaRadar(acme, null, M);
     expect(getState().ds.auditoria[0]).toMatchObject({ acao: 'radar_remover_dono_conta', antes: { commercialOwnerId: 'u-fin' }, depois: { commercialOwnerId: null } });
     const n = getState().ds.auditoria.length;
-    actions.definirDonoContaRadar(acme, null); // sem mudança: nada a auditar
+    actions.definirDonoContaRadar(acme, null, M); // sem mudança: nada a auditar
     expect(getState().ds.auditoria.length).toBe(n);
   });
 
@@ -97,9 +100,9 @@ describe('CD-D5 · dono da conta (store)', () => {
     const oportunidades = structuredClone(radar().oportunidades);
     const tarefas = structuredClone(radar().tarefas);
     const filaAntes = construirCommercialQueue(radar(), hoje());
-    actions.definirDonoContaRadar(acme, 'u-eng');
-    actions.definirDonoContaRadar(beta, 'u-eng');
-    actions.definirDonoContaRadar(gama, 'u-eng');
+    actions.definirDonoContaRadar(acme, 'u-eng', M);
+    actions.definirDonoContaRadar(beta, 'u-eng', M);
+    actions.definirDonoContaRadar(gama, 'u-eng', M);
     expect(radar().oportunidades).toEqual(oportunidades); // responsavelId da oportunidade (u-fin) intacto
     expect(radar().oportunidades.find((o) => o.empresaId === beta)!.responsavelId).toBe('u-fin');
     expect(radar().tarefas).toEqual(tarefas); // responsável da tarefa (u-compras) intacto
@@ -110,7 +113,7 @@ describe('CD-D5 · dono da conta (store)', () => {
   });
 
   it('11 · conta sem dono continua podendo estar na fila', () => {
-    actions.definirDonoContaRadar(acme, null);
+    actions.definirDonoContaRadar(acme, null, M);
     const fila = construirCommercialQueue(radar(), hoje());
     expect(fila.itens.some((i) => i.empresaId === acme)).toBe(true);
     expect(estadoDonoConta(empresa(acme), usuarios())).toBe('SEM_DONO');
@@ -145,30 +148,49 @@ describe('CD-D5 · dono da conta (store)', () => {
   it('14 · mescla com canônica que tem dono preserva o dono da canônica', () => {
     const canonica = actions.salvarEmpresaRadar({ ...actions.novaEmpresaRadar(), razaoSocial: 'Canônica Com Dono Fictícia', uf: 'GO', cidade: 'Goiânia' });
     const absorvida = actions.salvarEmpresaRadar({ ...actions.novaEmpresaRadar(), razaoSocial: 'Absorvida Um Fictícia', uf: 'MT', cidade: 'Cuiabá' });
-    actions.definirDonoContaRadar(canonica.id, 'u-eng');
-    actions.definirDonoContaRadar(absorvida.id, 'u-fin');
+    actions.definirDonoContaRadar(canonica.id, 'u-eng', M);
+    actions.definirDonoContaRadar(absorvida.id, 'u-fin', M);
     actions.mesclarEmpresasRadar(canonica.id, absorvida.id, 'teste CD-D5');
     expect(empresa(canonica.id).commercialOwnerId).toBe('u-eng');
     expect(empresa(absorvida.id).mescladaEm).toBe(canonica.id);
-    expect(() => actions.definirDonoContaRadar(absorvida.id, 'u-eng')).toThrow(/canônica/);
+    expect(() => actions.definirDonoContaRadar(absorvida.id, 'u-eng', M)).toThrow(/canônica/);
   });
 
   it('15 · mescla com canônica sem dono NÃO herda o dono da absorvida', () => {
     const canonica = actions.salvarEmpresaRadar({ ...actions.novaEmpresaRadar(), razaoSocial: 'Canônica Sem Dono Fictícia', uf: 'GO', cidade: 'Anápolis' });
     const absorvida = actions.salvarEmpresaRadar({ ...actions.novaEmpresaRadar(), razaoSocial: 'Absorvida Dois Fictícia', uf: 'PR', cidade: 'Curitiba' });
-    actions.definirDonoContaRadar(absorvida.id, 'u-fin');
+    actions.definirDonoContaRadar(absorvida.id, 'u-fin', M);
     actions.mesclarEmpresasRadar(canonica.id, absorvida.id, 'teste CD-D5');
     expect(empresa(canonica.id).commercialOwnerId).toBeUndefined();
     expect(estadoDonoConta(empresa(canonica.id), usuarios())).toBe('SEM_DONO');
   });
 
-  it('16 · permissão radar é respeitada', () => {
-    actions.trocarUsuario('u-contab'); // Contabilidade não tem a permissão radar
-    expect(() => actions.definirDonoContaRadar(gama, 'u-eng')).toThrow(/permiss/i);
-    actions.trocarUsuario('u-audit');
-    expect(() => actions.definirDonoContaRadar(gama, null)).toThrow(/permiss/i);
-    actions.trocarUsuario('u-compras'); // Compras tem radar
-    expect(actions.definirDonoContaRadar(gama, 'u-compras').commercialOwnerId).toBe('u-compras');
+  it('16 · CD-D5.2: só Administrador e Diretoria (radar_dono) mudam o dono; os demais papéis do Radar são recusados', () => {
+    expect(MATRIZ.radar_dono).toEqual(['Administrador', 'Diretoria']); // espelho da RPC radar_definir_dono_conta (0065)
+    expect(MATRIZ.radar).not.toEqual(MATRIZ.radar_dono); // a permissão radar não foi reduzida nem ampliada
+    const dono = empresa(gama).commercialOwnerId;
+    for (const u of ['u-contab', 'u-audit', 'u-compras', 'u-eng', 'u-fin', 'u-obra']) {
+      actions.trocarUsuario(u);
+      expect(() => actions.definirDonoContaRadar(gama, 'u-eng', M), u).toThrow(/permiss/i);
+      expect(() => actions.definirDonoContaRadar(gama, null, M), u).toThrow(/permiss/i);
+    }
+    expect(empresa(gama).commercialOwnerId).toBe(dono); // nenhuma recusa mudou nada
+    actions.trocarUsuario('u-augusto'); // Diretoria
+    expect(actions.definirDonoContaRadar(gama, 'u-compras', M).commercialOwnerId).toBe('u-compras');
     actions.trocarUsuario('u-admin');
+    expect(actions.definirDonoContaRadar(gama, 'u-fin', M).commercialOwnerId).toBe('u-fin');
+  });
+
+  it('17 · CD-D5.2: motivo obrigatório para definir, trocar e remover (3 a 500 caracteres); recusa não muda nem audita', () => {
+    const dono = empresa(gama).commercialOwnerId;
+    const n = getState().ds.auditoria.length;
+    for (const motivo of ['', '  ', 'ab', 'x'.repeat(501), undefined as unknown as string]) {
+      expect(() => actions.definirDonoContaRadar(gama, 'u-eng', motivo)).toThrow(/motivo/i);
+      expect(() => actions.definirDonoContaRadar(gama, null, motivo)).toThrow(/motivo/i);
+    }
+    expect(empresa(gama).commercialOwnerId).toBe(dono);
+    expect(getState().ds.auditoria.length).toBe(n);
+    actions.definirDonoContaRadar(gama, null, '  saiu da carteira  ');
+    expect(getState().ds.auditoria[0]).toMatchObject({ acao: 'radar_remover_dono_conta', motivo: 'saiu da carteira' }); // motivo aparado
   });
 });

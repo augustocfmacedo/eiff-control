@@ -17,6 +17,10 @@ export interface HelpersRadar {
   atorId: string;
   uuid: (v?: string) => string | null;
   perfil: (usuarioId?: string) => string | null; // id de usuario do app -> profile.id
+  /** operação governada no banco, com o JWT do usuário (a autoridade é conferida lá) */
+  rpc: (nome: string, args: Row) => Promise<unknown>;
+  /** CD-D5.2: motivo da mudança de dono da empresa (id do app), lido da auditoria do app desta sincronização */
+  motivoDono: (empresaId: string) => string | undefined;
 }
 
 type Chave = keyof RadarDataset;
@@ -45,7 +49,7 @@ const SPECS: Spec<{ id: string }>[] = [
   { chave: 'fontes', tabela: 'radar_source', ordem: 'code', app: (x) => ({ id: x.id, codigo: x.code, nome: x.name, tipo: x.source_type, descricao: x.description ?? '', confiabilidade: Number(x.reliability ?? 1), ativo: !!x.active, criadoEm: x.created_at }), db: (o: Row) => ({ code: o.codigo, name: o.nome, source_type: o.tipo, description: nn(o.descricao), reliability: o.confiabilidade, active: o.ativo }) },
   { chave: 'estrategias', tabela: 'radar_strategy', ordem: 'sort_order', app: (x) => ({ id: x.id, codigo: x.code, nome: x.name, descricao: x.description ?? '', mensagemModelo: x.message_template ?? '', ativo: !!x.active, ordem: Number(x.sort_order ?? 0) }), db: (o: Row) => ({ code: o.codigo, name: o.nome, description: nn(o.descricao), message_template: nn(o.mensagemModelo), active: o.ativo, sort_order: o.ordem }) },
   { chave: 'regrasScore', tabela: 'radar_score_rule', ordem: 'priority', app: (x) => ({ id: x.id, nome: x.rule_name, dimensao: x.dimension, tipoSinal: s(x.signal_type), condicao: x.condition, peso: Number(x.weight), decaimento: !!x.decay_enabled, decaimentoDias: n(x.decay_days), ativo: !!x.active, prioridade: Number(x.priority ?? 0) }), db: (o: Row) => ({ rule_name: o.nome, dimension: o.dimensao, signal_type: nn(o.tipoSinal), condition: o.condicao, weight: o.peso, decay_enabled: o.decaimento, decay_days: nn(o.decaimentoDias), active: o.ativo, priority: o.prioridade }) },
-  { chave: 'empresas', tabela: 'radar_company', ordem: 'legal_name', app: (x) => ({ id: x.id, cnpj: s(x.cnpj), razaoSocial: x.legal_name, nomeFantasia: s(x.trade_name), dominio: s(x.domain), site: s(x.website), linkedin: s(x.linkedin_url), setor: s(x.industry), cnae: s(x.cnae), cidade: s(x.city), uf: s(x.state), pais: x.country ?? 'Brasil', faixaFuncionarios: s(x.employee_range), faixaReceita: s(x.revenue_range), capitalSocial: n(x.capital_social), numeroUnidades: n(x.number_of_locations), fonteId: s(x.source_id), fonteExternaId: s(x.source_external_id), businessId: s(x.explorium_business_id), observacoes: x.notes ?? '', ativo: !!x.active, mescladaEm: s(x.merged_into), commercialOwnerId: s(x.commercial_owner_id), criadoEm: x.created_at, atualizadoEm: x.updated_at, fitScore: Number(x.fit_score ?? 0), intentScore: Number(x.intent_score ?? 0), timingScore: Number(x.timing_score ?? 0), relationshipScore: Number(x.relationship_score ?? 0), dataQualityScore: Number(x.data_quality_score ?? 0), priorityScore: Number(x.priority_score ?? 0), priorityClass: x.priority_class ?? 'D', ultimoSinalEm: s(x.last_signal_at), ultimoContatoEm: s(x.last_contact_at), proximaAcaoEm: s(x.next_action_at) }), db: (o: Row, ref, h) => ({ cnpj: nn(o.cnpj), legal_name: o.razaoSocial, trade_name: nn(o.nomeFantasia), domain: nn(o.dominio), website: nn(o.site), linkedin_url: nn(o.linkedin), industry: nn(o.setor), cnae: nn(o.cnae), city: nn(o.cidade), state: nn(o.uf), country: o.pais ?? 'Brasil', employee_range: nn(o.faixaFuncionarios), revenue_range: nn(o.faixaReceita), capital_social: nn(o.capitalSocial), number_of_locations: nn(o.numeroUnidades), source_id: ref('fontes', o.fonteId), source_external_id: nn(o.fonteExternaId), explorium_business_id: nn(o.businessId), notes: nn(o.observacoes), active: o.ativo, merged_into: ref('empresas', o.mescladaEm), commercial_owner_id: o.commercialOwnerId ? h.perfil(o.commercialOwnerId) ?? o.commercialOwnerId : null, /* CD-D5: sem tradução, vai o id cru e o banco recusa (nunca vira null em silêncio) */ fit_score: o.fitScore, intent_score: o.intentScore, timing_score: o.timingScore, relationship_score: o.relationshipScore, data_quality_score: o.dataQualityScore, priority_score: o.priorityScore, priority_class: o.priorityClass, last_signal_at: nn(o.ultimoSinalEm), last_contact_at: nn(o.ultimoContatoEm), next_action_at: nn(o.proximaAcaoEm), updated_by: h.atorId }) },
+  { chave: 'empresas', tabela: 'radar_company', ordem: 'legal_name', app: (x) => ({ id: x.id, cnpj: s(x.cnpj), razaoSocial: x.legal_name, nomeFantasia: s(x.trade_name), dominio: s(x.domain), site: s(x.website), linkedin: s(x.linkedin_url), setor: s(x.industry), cnae: s(x.cnae), cidade: s(x.city), uf: s(x.state), pais: x.country ?? 'Brasil', faixaFuncionarios: s(x.employee_range), faixaReceita: s(x.revenue_range), capitalSocial: n(x.capital_social), numeroUnidades: n(x.number_of_locations), fonteId: s(x.source_id), fonteExternaId: s(x.source_external_id), businessId: s(x.explorium_business_id), observacoes: x.notes ?? '', ativo: !!x.active, mescladaEm: s(x.merged_into), commercialOwnerId: s(x.commercial_owner_id), criadoEm: x.created_at, atualizadoEm: x.updated_at, fitScore: Number(x.fit_score ?? 0), intentScore: Number(x.intent_score ?? 0), timingScore: Number(x.timing_score ?? 0), relationshipScore: Number(x.relationship_score ?? 0), dataQualityScore: Number(x.data_quality_score ?? 0), priorityScore: Number(x.priority_score ?? 0), priorityClass: x.priority_class ?? 'D', ultimoSinalEm: s(x.last_signal_at), ultimoContatoEm: s(x.last_contact_at), proximaAcaoEm: s(x.next_action_at) }), db: (o: Row, ref, h) => ({ cnpj: nn(o.cnpj), legal_name: o.razaoSocial, trade_name: nn(o.nomeFantasia), domain: nn(o.dominio), website: nn(o.site), linkedin_url: nn(o.linkedin), industry: nn(o.setor), cnae: nn(o.cnae), city: nn(o.cidade), state: nn(o.uf), country: o.pais ?? 'Brasil', employee_range: nn(o.faixaFuncionarios), revenue_range: nn(o.faixaReceita), capital_social: nn(o.capitalSocial), number_of_locations: nn(o.numeroUnidades), source_id: ref('fontes', o.fonteId), source_external_id: nn(o.fonteExternaId), explorium_business_id: nn(o.businessId), notes: nn(o.observacoes), active: o.ativo, merged_into: ref('empresas', o.mescladaEm), /* CD-D5.2: commercial_owner_id NÃO vai na escrita genérica (o banco nem concede a coluna); muda só pela RPC radar_definir_dono_conta em persistirRadar */ fit_score: o.fitScore, intent_score: o.intentScore, timing_score: o.timingScore, relationship_score: o.relationshipScore, data_quality_score: o.dataQualityScore, priority_score: o.priorityScore, priority_class: o.priorityClass, last_signal_at: nn(o.ultimoSinalEm), last_contact_at: nn(o.ultimoContatoEm), next_action_at: nn(o.proximaAcaoEm), updated_by: h.atorId }) },
   { chave: 'regrasPersona', tabela: 'radar_persona_rule', ordem: 'priority', app: (x) => ({ id: x.id, persona: x.persona, campo: x.field, termos: x.terms ?? [], excluir: x.exclude_terms ?? undefined, prioridade: Number(x.priority ?? 0), ativo: !!x.active }), db: (o: Row) => ({ persona: o.persona, field: o.campo, terms: o.termos, exclude_terms: o.excluir ?? null, priority: o.prioridade, active: o.ativo }) },
   { chave: 'contatos', tabela: 'radar_contact', ordem: 'full_name', app: (x) => ({ id: x.id, empresaId: x.company_id, nome: x.full_name, cargo: s(x.job_title), departamento: s(x.department), senioridade: s(x.seniority), email: s(x.email), telefone: s(x.phone), celular: s(x.mobile_phone), whatsapp: s(x.whatsapp), linkedin: s(x.linkedin_url), decisor: !!x.is_decision_maker, poderDecisao: s(x.decision_power), persona: s(x.persona), personaManual: !!x.persona_manual, decisionFitScore: Number(x.decision_fit_score ?? 0), isPrimario: !!x.is_primary_contact, qualidade: Number(x.contact_quality ?? 0), statusEmail: s(x.professional_email_status), statusTelefone: s(x.phone_status), situacao: x.status ?? 'ATIVO', fonteId: s(x.source_id), fonteExternaId: s(x.source_external_id), verificadoEm: s(x.last_verified_at), observacoes: x.notes ?? '', ativo: !!x.active, criadoEm: x.created_at, atualizadoEm: x.updated_at }), db: (o: Row, ref) => ({ company_id: ref('empresas', o.empresaId), source_external_id: nn(o.fonteExternaId), full_name: o.nome, job_title: nn(o.cargo), department: nn(o.departamento), seniority: nn(o.senioridade), email: nn(o.email), phone: nn(o.telefone), mobile_phone: nn(o.celular), whatsapp: nn(o.whatsapp), linkedin_url: nn(o.linkedin), is_decision_maker: o.decisor, decision_power: nn(o.poderDecisao), persona: nn(o.persona), persona_manual: !!o.personaManual, decision_fit_score: o.decisionFitScore ?? 0, is_primary_contact: !!o.isPrimario, contact_quality: o.qualidade, professional_email_status: nn(o.statusEmail), phone_status: nn(o.statusTelefone), status: o.situacao ?? 'ATIVO', source_id: ref('fontes', o.fonteId), last_verified_at: nn(o.verificadoEm), notes: nn(o.observacoes), active: o.ativo }) },
   { chave: 'projetos', tabela: 'radar_project', ordem: 'name', app: (x) => ({ id: x.id, empresaId: x.company_id, nome: x.name, tipo: s(x.project_type), cidade: s(x.city), uf: s(x.state), endereco: s(x.address), areaM2: n(x.estimated_area_m2), valorEstimado: n(x.estimated_value), estagio: s(x.stage), inicioPrevisto: s(x.expected_start_date), fonteId: s(x.source_id), fonteExternaId: s(x.source_external_id), observacoes: x.notes ?? '', criadoEm: x.created_at, atualizadoEm: x.updated_at }), db: (o: Row, ref) => ({ company_id: ref('empresas', o.empresaId), name: o.nome, project_type: nn(o.tipo), city: nn(o.cidade), state: nn(o.uf), address: nn(o.endereco), estimated_area_m2: nn(o.areaM2), estimated_value: nn(o.valorEstimado), stage: nn(o.estagio), expected_start_date: nn(o.inicioPrevisto), source_id: ref('fontes', o.fonteId), source_external_id: nn(o.fonteExternaId), notes: nn(o.observacoes) }) },
@@ -102,6 +106,32 @@ export type { Chave as ChaveRadar };
 export function registrarRefRadar(chave: Chave, id: string): void { refs?.get(chave)?.set(id, id); }
 
 const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** Empresa sem os campos que a escrita genérica não grava (dono e carimbo local): só o dono mudou = nada a gravar na tabela. */
+const semDono = (e?: { id: string }) => { if (!e) return e; const resto: Record<string, unknown> = { ...e }; delete resto.commercialOwnerId; delete resto.atualizadoEm; return resto; };
+const donoDe = (e?: { id: string }) => (e as { commercialOwnerId?: string } | undefined)?.commercialOwnerId?.trim() || undefined;
+
+/**
+ * CD-D5.2 — dono comercial da conta pela operação governada (0065): uma chamada por empresa cujo dono mudou desde a
+ * última sincronização, depois da escrita genérica (a empresa nova já existe no banco). A RPC confere autor, papel,
+ * organização, conta, novo dono e motivo e grava dono + auditoria numa transação; recusa = exceção, nada muda.
+ * Falha fechada: sem motivo na auditoria do app não chama a RPC e a sincronização para com erro.
+ * Fila offline: várias trocas da mesma conta viram UMA chamada com o estado final e o motivo mais recente.
+ */
+async function persistirDonos(h: HelpersRadar, antes: { id: string }[], depois: { id: string }[], mapa: Map<string, string>): Promise<void> {
+  const anterior = new Map(antes.map((x) => [x.id, x]));
+  for (const x of depois) {
+    const novo = donoDe(x);
+    if (donoDe(anterior.get(x.id)) === novo) continue;
+    // conta nova sem dono: nasce sem dono no banco, nada a chamar
+    if (!anterior.has(x.id) && !novo) continue;
+    const empresa = mapa.get(x.id) ?? h.uuid(x.id);
+    const motivo = h.motivoDono(x.id)?.trim();
+    if (!empresa) throw new Error('dono da conta: empresa ainda não gravada no banco.');
+    if (!motivo) throw new Error('dono da conta: mudança sem motivo registrado; nada foi gravado.');
+    // sem tradução para profile.id vai o id cru e o banco recusa (nunca vira remoção em silêncio)
+    await h.rpc('radar_definir_dono_conta', { p_empresa: empresa, p_dono: novo ? h.perfil(novo) ?? novo : null, p_motivo: motivo });
+  }
+}
 
 export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | undefined, depois: RadarDataset | undefined): Promise<void> {
   if (!depois || !refs) return;
@@ -123,10 +153,11 @@ export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | unde
       continue;
     }
     for (const x of lista) {
-      if (mapa.has(x.id) && igual(anterior.get(x.id), x)) continue;
+      if (mapa.has(x.id) && (sp.chave === 'empresas' ? igual(semDono(anterior.get(x.id)), semDono(x)) : igual(anterior.get(x.id), x))) continue;
       const data = await h.gravar(sp.tabela, { id: mapa.get(x.id) }, sp.db(x, ref, h), { organization_id: h.orgId, ...(sp.chave === 'empresas' || sp.chave === 'oportunidades' ? { created_by: h.atorId } : {}) });
       if (data?.id) mapa.set(x.id, data.id);
     }
+    if (sp.chave === 'empresas') await persistirDonos(h, (a.empresas ?? []) as { id: string }[], lista, mapa);
   }
   // tabelas de chave composta
   for (const t of depois.tiposResposta ?? []) {

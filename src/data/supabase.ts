@@ -6,6 +6,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   Aprovacao,
+  Auditoria,
   Dataset,
   Lancamento,
   Obra,
@@ -437,6 +438,16 @@ const mudou = <T,>(antes: T[], depois: T[], chave: keyof T): T[] => {
   return depois.filter((x) => a.get(String(x[chave])) !== JSON.stringify(x));
 };
 const uuidOuNulo = (v?: string) => (v && UUID.test(v) ? v : null);
+
+/** CD-D5.2: acoes de dono da conta que a RPC radar_definir_dono_conta ja audita no banco (o app nao duplica). */
+export const ACOES_DONO_RPC: ReadonlySet<string> = new Set(['radar_definir_dono_conta', 'radar_remover_dono_conta']);
+
+/** Motivo da mudanca de dono mais recente da empresa (id do app) entre as entradas de auditoria desta sincronizacao. */
+export function motivoDonoDaAuditoria(entradas: readonly Auditoria[], empresaId: string): string | undefined {
+  let achada: Auditoria | undefined;
+  for (const a of entradas) if (ACOES_DONO_RPC.has(a.acao) && a.entidade === 'radar_empresa' && a.entidadeId === empresaId && (!achada || a.ts >= achada.ts)) achada = a;
+  return achada?.motivo?.trim() || undefined;
+}
 
 /**
  * Atualiza a linha que casa com `filtro` ou insere uma nova. Evita INSERT ... ON CONFLICT (upsert), que o
@@ -957,10 +968,17 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     r.alocacoes.delete(a.id);
   }
 
+  // auditoria da aplicacao desta sincronizacao (gravada no fim; a mudanca de dono da conta le o motivo daqui)
+  const audAntes = new Set(antes.auditoria.map((a) => a.id));
+  const novas = depois.auditoria.filter((a) => !audAntes.has(a.id) && !/^\d+$/.test(a.id));
+
   // EIFF Radar
   await persistirRadar({
     sel: selTodos, gravar, orgId: r.orgId, atorId, uuid: uuidOuNulo,
     perfil: (id) => uuidOuNulo(id) ?? (id ? r.perfisInv.get(id) ?? null : null),
+    // CD-D5.2: operacao governada radar_definir_dono_conta, com o JWT do usuario (autoridade conferida no banco)
+    rpc: async (nome, args) => { const { data, error } = await sb.rpc(nome, args); falha(`rpc ${nome}`, error); return data; },
+    motivoDono: (empresaId) => motivoDonoDaAuditoria(novas, empresaId),
     inserir: async (tabela, rows) => { const { data, error } = await sb.from(tabela).insert(rows).select('id'); falha(`inserir ${tabela}`, error); return data ?? []; },
     gravarComposta: async (tabela, chave, row) => {
       let q = sb.from(tabela).update(row);
@@ -995,11 +1013,11 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     rpc: async (nome, args) => { const { data, error } = await sb.rpc(nome, args); falha(`rpc ${nome}`, error); return (data ?? {}) as Row; },
   }, antes.inbox, depois.inbox);
 
-  // auditoria da aplicacao (o banco tambem grava a sua por trigger)
-  const audAntes = new Set(antes.auditoria.map((a) => a.id));
-  const novas = depois.auditoria.filter((a) => !audAntes.has(a.id) && !/^\d+$/.test(a.id));
-  if (novas.length) {
-    const { error } = await sb.from('audit_log').insert(novas.map((a) => ({ organization_id: r.orgId, occurred_at: a.ts, actor_id: atorId, action: a.acao, entity_type: a.entidade, entity_id: a.entidadeId, before_data: a.antes ?? null, after_data: a.depois ?? null, reason: a.motivo ?? null, source: 'app' })));
+  // auditoria da aplicacao (o banco tambem grava a sua por trigger); a mudanca de dono da conta ja foi auditada pela
+  // RPC radar_definir_dono_conta na mesma transacao da mudanca, entao nao duplica aqui
+  const aGravar = novas.filter((a) => !ACOES_DONO_RPC.has(a.acao));
+  if (aGravar.length) {
+    const { error } = await sb.from('audit_log').insert(aGravar.map((a) => ({ organization_id: r.orgId, occurred_at: a.ts, actor_id: atorId, action: a.acao, entity_type: a.entidade, entity_id: a.entidadeId, before_data: a.antes ?? null, after_data: a.depois ?? null, reason: a.motivo ?? null, source: 'app' })));
     if (error && !/policy/i.test(error.message)) falha('auditoria', error);
   }
 }
