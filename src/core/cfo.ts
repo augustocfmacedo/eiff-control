@@ -3,7 +3,7 @@
 // atencao, nao recomendado) com a alcada exigida, monta a previsao de lancamento e o alinhamento diario da Diretoria.
 // A IA (funcao Netlify /api/diretor-financeiro) so ajuda a INTERPRETAR o texto; os numeros e a decisao vem daqui.
 import type { Dataset, Lancamento, Papel, Usuario } from './types';
-import { addDays, calcLancamentos, etapasExigidas, mapaPlano, posicaoBancaria, reservaVinculadaTotal, type LancamentoCalc } from './engine';
+import { addDays, caixaHoje, calcLancamentos, etapasExigidas, mapaPlano, posicaoBancaria, reservaVinculadaTotal, type LancamentoCalc } from './engine';
 
 export const ORIGEM_DF = 'diretor-financeiro';
 export const NOME_DF = 'Diretor Financeiro';
@@ -133,6 +133,17 @@ export function interpretarPedido(texto: string, catalogo: CatalogoDF): PedidoIn
 export interface DiaCaixa { data: string; entradas: number; saidas: number; saldoInicio: number; saldo: number }
 /** Caixa de fato: saldo bancario de hoje pelo extrato da Tesouraria (abertura + creditos - debitos), somando as contas ativas. */
 export const saldoBancarioHoje = (ds: Dataset, lancs?: LancamentoCalc[]) => posicaoBancaria(ds, lancs).reduce((a, p) => a + p.saldoBancario, 0);
+/**
+ * Caixa de hoje do Diretor = o mesmo da tela Caixa (`caixaHoje` do motor): extrato + o que ja foi pago/recebido e ainda nao
+ * aparece nele. Com o extrato em dia e conciliado, e igual ao saldo bancario da Posicao diaria.
+ */
+export const saldoCaixaHoje = (ds: Dataset, lancs?: LancamentoCalc[]) => caixaHoje(ds, lancs).total;
+/** Como o caixa de hoje foi formado, para o texto do parecer/briefing. */
+export function origemCaixa(ds: Dataset, lancs?: LancamentoCalc[]): string {
+  const c = caixaHoje(ds, lancs); const ext = defasagemExtrato(ds);
+  const base = c.extratoAte ? `extrato ${fmt(c.banco)} (${ext.texto})` : `abertura das contas ${fmt(c.banco)} (sem extrato importado)`;
+  return c.foraDoExtrato ? `${base} ${c.foraDoExtrato > 0 ? '+' : '−'} ${fmt(Math.abs(c.foraDoExtrato))} de saldo já ${c.foraDoExtrato > 0 ? 'recebido' : 'pago'} que ainda não está no extrato` : c.extratoAte ? `saldo bancário da Posição diária, ${ext.texto}` : base;
+}
 /** Ate quando o extrato foi importado (ultima transacao das contas ativas) e quantos dias o saldo esta defasado em relacao a hoje. */
 export const LIMITE_DEFASAGEM_DIAS = 1;
 export function defasagemExtrato(ds: Dataset): { ate?: string; dias: number; texto: string; alerta?: string } {
@@ -148,11 +159,11 @@ export const recebiveisVencidos = (lancs: LancamentoCalc[]) => lancs.filter((l) 
 /**
  * Saldo projetado dia a dia a partir do SALDO BANCARIO DE HOJE (extrato). Dali para frente entram so os compromissos ainda
  * nao efetivados: pagamentos vencidos no primeiro dia (tem de ser pagos), previstos por vencimento; recebiveis vencidos
- * ficam fora ate serem recebidos. Realizados nao entram (ja estao no extrato).
+ * ficam fora ate serem recebidos. Realizados nao entram: ja estao no caixa de hoje (extrato ou, se o extrato atrasou, caixaHoje).
  */
 export function projecaoDiaria(ds: Dataset, ate: string, lancs: LancamentoCalc[] = calcLancamentos(ds), extras: { data: string; valor: number }[] = []): DiaCaixa[] {
   const hoje = ds.params.dataBase;
-  let saldo = saldoBancarioHoje(ds, lancs);
+  let saldo = saldoCaixaHoje(ds, lancs);
   const porDia = new Map<string, { e: number; s: number }>();
   const add = (data: string, v: number) => { const d = data < hoje ? hoje : data; const x = porDia.get(d) ?? { e: 0, s: 0 }; if (v >= 0) x.e += v; else x.s += -v; porDia.set(d, x); };
   for (const l of lancs) {
@@ -190,7 +201,7 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   const minDesde = (d: string, janela = 30) => { const fatia = proj.filter((x) => x.data >= d && x.data <= addDays(d, janela)); const m = fatia.reduce((a, x) => (x.saldo < a.saldo ? x : a), fatia[0]); return m; };
   const reservaVinculada = reservaVinculadaTotal(ds);
   const reserva = p.reservaMinima + reservaVinculada; // piso: reserva operacional (parametro) + dinheiro ja separado nas contas
-  const saldoHoje = proj[0].saldoInicio; // saldo bancario de hoje, o mesmo da Posicao diaria da Tesouraria
+  const saldoHoje = proj[0].saldoInicio; // caixa de hoje, o mesmo da tela Caixa (extrato + pagos fora do extrato)
   const compromissosHoje = arred(proj[0].saidas - proj[0].entradas); // vencidos + vencendo hoje, ainda nao pagos
   const saldoAposHoje = proj[0].saldo;
   const saldoNaData = saldoEm(venc);
@@ -212,7 +223,7 @@ export function analisarPagamento(ds: Dataset, pedido: { valor: number; vencimen
   const alcada = precisaAprovacao ? etapasExigidas(p, pedido.valor, !!obra, excecao) : [];
   const motivos: string[] = [];
   const extrato = defasagemExtrato(ds);
-  motivos.push(`Caixa hoje ${fmt(saldoHoje)}: saldo bancário da Posição diária, ${extrato.texto}.`);
+  motivos.push(`Caixa hoje ${fmt(saldoHoje)}: ${origemCaixa(ds, lancs)}.`);
   if (extrato.alerta) motivos.push(extrato.alerta);
   if (compromissosHoje !== 0) motivos.push(`Vencidos e vencendo hoje ainda não pagos: ${fmt(compromissosHoje)} → sobra ${fmt(saldoAposHoje)}.`);
   motivos.push(`Piso do caixa: reserva mínima ${fmt(p.reservaMinima)}${reservaVinculada > 0 ? ` + reserva vinculada das contas ${fmt(reservaVinculada)} = ${fmt(reserva)}` : ''}.`);
@@ -288,7 +299,7 @@ export function redigirCaixa(ds: Dataset): string {
   const recVenc = recebiveisVencidos(calcLancamentos(ds));
   const ext = defasagemExtrato(ds);
   const compromissos = hoje.saidas - hoje.entradas;
-  return [`Caixa hoje: **${fmt(hoje.saldoInicio)}** (saldo bancário da Posição diária, ${ext.texto}).`, ext.alerta ? `⚠ ${ext.alerta}` : '', compromissos !== 0 ? `Vencidos e vencendo hoje ainda não pagos: ${fmt(compromissos)} → sobra ${fmt(hoje.saldo)}.` : 'Nada vencido nem vencendo hoje.', `Piso do caixa (reserva mínima + reserva vinculada): ${fmt(reserva)}; folga após hoje ${fmt(hoje.saldo - reserva)}.`, `Ponto mais baixo em 14 dias: ${br(menor.data)} com ${fmt(menor.saldo)}.`, recVenc > 0 ? `Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.` : '', 'Próximos 7 dias:', ...linhas].filter(Boolean).join('\n');
+  return [`Caixa hoje: **${fmt(hoje.saldoInicio)}** (${origemCaixa(ds)}).`, ext.alerta ? `⚠ ${ext.alerta}` : '', compromissos !== 0 ? `Vencidos e vencendo hoje ainda não pagos: ${fmt(compromissos)} → sobra ${fmt(hoje.saldo)}.` : 'Nada vencido nem vencendo hoje.', `Piso do caixa (reserva mínima + reserva vinculada): ${fmt(reserva)}; folga após hoje ${fmt(hoje.saldo - reserva)}.`, `Ponto mais baixo em 14 dias: ${br(menor.data)} com ${fmt(menor.saldo)}.`, recVenc > 0 ? `Recebíveis vencidos de ${fmt(recVenc)} não contam até entrarem.` : '', 'Próximos 7 dias:', ...linhas].filter(Boolean).join('\n');
 }
 export function redigirVencimentos(ds: Dataset): string {
   const hoje = ds.params.dataBase; const ate = addDays(hoje, 7);
@@ -377,7 +388,7 @@ export function centralDF(ds: Dataset, dias = 14): CentralDF {
   const n = al.previsoes.length;
   const linhas = [
     `${n ? `${n} pedido(s) da equipe aguardam sua decisão, ${fmt(al.totalPrevisoes)} no total.` : 'Nenhum pedido da equipe aguardando decisão.'}`,
-    `Caixa hoje ${fmt(al.saldoHoje)} (saldo bancário da Posição diária, ${al.extrato.texto})${al.compromissosHoje ? `, com ${fmt(al.compromissosHoje)} vencidos ou vencendo hoje ainda a pagar` : ''}; menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; piso ${fmt(al.reserva)}.`,
+    `Caixa hoje ${fmt(al.saldoHoje)} (${origemCaixa(ds)})${al.compromissosHoje ? `, com ${fmt(al.compromissosHoje)} vencidos ou vencendo hoje ainda a pagar` : ''}; menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; piso ${fmt(al.reserva)}.`,
     n ? `Minha orientação: ${[contagem.programar ? `programar ${contagem.programar}` : null, contagem.reagendar ? `reagendar ${contagem.reagendar}` : null, contagem.avaliar ? `${contagem.avaliar} depende(m) do seu aval (reserva)` : null, contagem.recusar ? `${contagem.recusar} não recomendado(s)` : null].filter(Boolean).join(', ')}.` : '',
     al.venceHoje.length ? `Vence hoje: ${al.venceHoje.length} pagamento(s), ${fmt(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}.` : 'Nada vence hoje.',
     ...al.alertas.map((a) => `Atenção: ${a}`),

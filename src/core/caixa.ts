@@ -3,7 +3,7 @@
 // linha e um lancamento de verdade (DRE, Obra 360, Diretor Financeiro e conciliacao continuam valendo); o departamento e o
 // centro de custo do lancamento e escolhe a categoria do plano por tras (categoriaDoCaixa). Nada aqui grava.
 import type { Dataset } from './types';
-import { addDays, calcLancamentos, incluirRegistro, mapaPlano, posicaoBancaria, reservaVinculadaTotal, round2, type LancamentoCalc } from './engine';
+import { addDays, caixaHoje, calcLancamentos, incluirRegistro, mapaPlano, reservaVinculadaTotal, round2, type LancamentoCalc } from './engine';
 
 export interface Departamento { id: string; saida: string; entrada: string; pedeObra?: boolean }
 
@@ -52,7 +52,7 @@ export function departamentoDe(l: { centroCusto: string; categoria: string; codi
   return porCategoria?.id ?? (l.centroCusto?.trim() || 'Administrativo');
 }
 
-export type SituacaoCaixa = 'Pago' | 'Previsto' | 'Vencido' | 'Em aprovação' | 'Rascunho';
+export type SituacaoCaixa = 'Pago' | 'Previsto' | 'Vencido' | 'Em aprovação' | 'Rascunho' | 'Extrato';
 
 export interface LinhaCaixa {
   chave: string;
@@ -78,7 +78,8 @@ export interface DiaCaixaPlanilha { data: string; entra: number; sai: number; sa
 export interface LivroCaixa {
   marco: string; hoje: string; ate: string;
   saldoAbertura: number;
-  saldoHoje: number; // abertura + pagos ate hoje
+  saldoHoje: number; // caixa de hoje (caixaHoje do motor): o mesmo do Diretor Financeiro
+  ajusteExtrato: number; // extrato - lancamentos: movimentos do banco ainda nao lancados/conciliados (linha 'Extrato' da lista)
   saldoBanco?: number; extratoAte?: string; // extrato importado (quando ha permissao de ver bancos)
   reserva: number;
   linhas: LinhaCaixa[];
@@ -130,12 +131,22 @@ export function livroCaixa(ds: Dataset, ate: string, lancs: LancamentoCalc[] = c
   // ordem da planilha: por data; no mesmo dia, pagos antes dos previstos
   const peso = (x: LinhaCaixa) => (x.situacao === 'Pago' ? 0 : 1);
   linhas.sort((a, b) => a.dataSaldo.localeCompare(b.dataSaldo) || peso(a) - peso(b) || a.data.localeCompare(b.data) || a.lancamentoId.localeCompare(b.lancamentoId));
+  // o caixa de hoje vem do motor (extrato + pagos fora do extrato); o que o extrato tem e os lancamentos ainda nao explicam
+  // vira uma linha propria hoje, para o saldo corrido da lista bater com o caixa e com o Diretor Financeiro
+  const caixa = caixaHoje(ds, lancs);
+  const pagosAteHoje = linhas.filter((x) => x.situacao === 'Pago' && x.dataSaldo <= hoje).reduce((a, x) => a + x.entra - x.sai, 0);
+  const ajusteExtrato = round2(caixa.total - (saldoAbertura + pagosAteHoje));
+  if (Math.abs(ajusteExtrato) >= 0.01) {
+    const idx = linhas.findIndex((x) => x.dataSaldo > hoje || (x.dataSaldo === hoje && x.situacao !== 'Pago'));
+    const linha: LinhaCaixa = { chave: 'extrato:ajuste', lancamentoId: '', data: hoje, dataSaldo: hoje, descricao: 'Movimentos do extrato ainda não lançados ou conciliados', contraparte: '', departamento: '—', codigoObra: '', tipo: ajusteExtrato > 0 ? 'Entrada' : 'Saída', entra: ajusteExtrato > 0 ? ajusteExtrato : 0, sai: ajusteExtrato < 0 ? -ajusteExtrato : 0, situacao: 'Extrato', contaNoSaldo: true, nota: 'lance ou concilie em Bancos e conciliação', conciliado: false };
+    linhas.splice(idx < 0 ? linhas.length : idx, 0, linha);
+  }
   let saldo = saldoAbertura;
   for (const x of linhas) if (x.contaNoSaldo) { saldo = round2(saldo + x.entra - x.sai); x.saldo = saldo; }
 
   const contam = linhas.filter((x) => x.contaNoSaldo);
   const saldoAteDia = (d: string) => round2(saldoAbertura + contam.filter((x) => x.dataSaldo <= d).reduce((a, x) => a + x.entra - x.sai, 0));
-  const saldoHoje = round2(saldoAbertura + contam.filter((x) => x.situacao === 'Pago' && x.dataSaldo <= hoje).reduce((a, x) => a + x.entra - x.sai, 0));
+  const saldoHoje = caixa.total;
   const dias: DiaCaixaPlanilha[] = [];
   for (let d = hoje; d <= ate; d = addDays(d, 1)) {
     const doDia = contam.filter((x) => x.dataSaldo === d);
@@ -143,18 +154,14 @@ export function livroCaixa(ds: Dataset, ate: string, lancs: LancamentoCalc[] = c
     dias.push({ data: d, entra: round2(doDia.reduce((a, x) => a + x.entra, 0)), sai: round2(doDia.reduce((a, x) => a + x.sai, 0)), saldo: s, abaixoReserva: s < reserva });
   }
   const menor = dias.reduce((m, x) => (x.saldo < m.saldo ? { data: x.data, saldo: x.saldo } : m), { data: hoje, saldo: dias[0]?.saldo ?? saldoHoje });
-  const emAberto = linhas.filter((x) => x.situacao !== 'Pago');
+  const emAberto = linhas.filter((x) => x.situacao !== 'Pago' && x.situacao !== 'Extrato');
   const porDep = new Map<string, { entra: number; sai: number }>();
-  for (const x of linhas) { const p = porDep.get(x.departamento) ?? { entra: 0, sai: 0 }; p.entra += x.entra; p.sai += x.sai; porDep.set(x.departamento, p); }
+  for (const x of linhas.filter((y) => y.situacao !== 'Extrato')) { const p = porDep.get(x.departamento) ?? { entra: 0, sai: 0 }; p.entra += x.entra; p.sai += x.sai; porDep.set(x.departamento, p); }
 
-  let saldoBanco: number | undefined; let extratoAte: string | undefined;
-  if (opcoes.verBancos) {
-    const pos = posicaoBancaria(ds, lancs);
-    saldoBanco = round2(pos.reduce((a, p) => a + p.saldoBancario, 0));
-    extratoAte = pos.map((p) => p.ultimaTransacao).filter((x): x is string => !!x).sort().pop();
-  }
+  const saldoBanco = opcoes.verBancos ? caixa.banco : undefined;
+  const extratoAte = opcoes.verBancos ? caixa.extratoAte : undefined;
   return {
-    marco, hoje, ate, saldoAbertura, saldoHoje, saldoBanco, extratoAte, reserva, linhas, dias,
+    marco, hoje, ate, saldoAbertura, saldoHoje, ajusteExtrato, saldoBanco, extratoAte, reserva, linhas, dias,
     saldoFinal: saldoAteDia(ate), menor,
     previsto7: saldoAteDia(addDays(hoje, 7)), previsto30: saldoAteDia(addDays(hoje, 30)),
     entradasPrevistas: round2(emAberto.filter((x) => x.contaNoSaldo).reduce((a, x) => a + x.entra, 0)),

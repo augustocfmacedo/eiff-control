@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEPARTAMENTOS, categoriaDoCaixa, departamentoDe, livroCaixa, validarLinhaCaixa } from './caixa';
-import { calcLancamentos } from './engine';
+import { caixaHoje, calcLancamentos } from './engine';
+import { projecaoDiaria, saldoCaixaHoje } from './cfo';
 import type { Dataset, Lancamento } from './types';
 import { actions, getState } from '../data/store';
 
@@ -93,6 +94,52 @@ describe('livro caixa no formato da planilha', () => {
     expect(lv.saldoFinal).toBe(900);
     expect(lv.vencidosPagar).toBe(100);
     expect(lv.vencidosReceber).toBe(500);
+  });
+});
+
+describe('caixa de hoje único: Caixa = Diretor Financeiro', () => {
+  const planilha = () => {
+    let ds = base();
+    for (const v of [12000, 727, 8059.49]) ds = pago(ds, lanc(ds, { categoria: 'Outros pagamentos', valorBruto: v, vencimento: HOJE }), HOJE);
+    for (const [data, v, tipo] of [['2026-10-15', 7000, 'S'], ['2026-10-16', 77531.45, 'E'], ['2026-10-20', 2530, 'S']] as const) ds = { ...ds, lancamentos: [...ds.lancamentos, lanc(ds, { categoria: tipo === 'E' ? 'Outros recebimentos' : 'Outros pagamentos', valorBruto: v, vencimento: data })] };
+    return ds;
+  };
+  const tx = (ds: Dataset, id: string, data: string, debito: number, credito: number, lancamentoIds: string[] = []) => ({ id, registro: 'Real' as const, data, conta: ds.contas[0].instituicao, historico: id, documento: '', debito, credito, lancamentoIds, origem: 'teste', idExterno: id });
+  it('sem extrato: abertura + pagos; o Diretor parte do mesmo número e projeta os mesmos saldos', () => {
+    const ds = planilha();
+    const lv = livroCaixa(ds, '2026-10-31');
+    expect(caixaHoje(ds)).toMatchObject({ banco: 67410.42, foraDoExtrato: -20786.49, total: 46623.93 });
+    expect(lv.saldoHoje).toBe(46623.93);
+    expect(lv.ajusteExtrato).toBe(0);
+    expect(saldoCaixaHoje(ds)).toBe(46623.93);
+    const proj = projecaoDiaria(ds, '2026-10-31');
+    expect(proj[0].saldoInicio).toBe(46623.93);
+    for (const d of lv.dias) expect(proj.find((p) => p.data === d.data)!.saldo, d.data).toBeCloseTo(d.saldo, 2);
+  });
+  it('extrato até ontem com os pagos de hoje fora dele: soma só o que o extrato ainda não tem', () => {
+    let ds = planilha();
+    ds = { ...ds, contas: [{ ...ds.contas[0], saldoInicialData: '2026-10-12' }], params: { ...ds.params, corteExtrato: '2026-10-12' }, transacoes: [tx(ds, 'T1', '2026-10-12', 410.42, 0)] };
+    const c = caixaHoje(ds);
+    expect(c).toMatchObject({ banco: 67000, foraDoExtrato: -20786.49, total: 46213.51, extratoAte: '2026-10-12' });
+    expect(projecaoDiaria(ds, '2026-10-20')[0].saldoInicio).toBe(46213.51);
+    const lv = livroCaixa(ds, '2026-10-31', calcLancamentos(ds), { verBancos: true });
+    expect(lv.saldoHoje).toBe(46213.51);
+    expect(lv.saldoBanco).toBe(67000);
+    // a tarifa de 410,42 do extrato ainda nao foi lancada: vira a linha "Extrato" e o saldo corrido bate
+    expect(lv.ajusteExtrato).toBe(-410.42);
+    const ajuste = lv.linhas.find((x) => x.situacao === 'Extrato')!;
+    expect(ajuste).toMatchObject({ sai: 410.42, dataSaldo: HOJE, contaNoSaldo: true });
+    expect(lv.linhas.filter((x) => x.dataSaldo <= HOJE && x.contaNoSaldo).pop()!.saldo).toBe(46213.51);
+    expect(lv.porDepartamento.some((x) => x.departamento === '—')).toBe(false);
+  });
+  it('extrato de hoje já com os pagos (conciliados ou não): não soma de novo', () => {
+    let ds = planilha();
+    const ids = ds.lancamentos.filter((l) => l.status === 'Realizado').map((l) => l.id);
+    ds = { ...ds, transacoes: [tx(ds, 'A', HOJE, 12000, 0, [ids[0]]), tx(ds, 'B', HOJE, 727, 0), tx(ds, 'C', HOJE, 8059.49, 0)] };
+    // A esta conciliada (vinculo); B e C estao no extrato do mesmo dia: o ultimo movimento e hoje, entao nada fica "fora"
+    expect(caixaHoje(ds)).toMatchObject({ banco: 46623.93, foraDoExtrato: 0, total: 46623.93 });
+    const lv = livroCaixa(ds, '2026-10-31', calcLancamentos(ds), { verBancos: true });
+    expect(lv.saldoHoje).toBe(46623.93); expect(lv.ajusteExtrato).toBe(0);
   });
 });
 

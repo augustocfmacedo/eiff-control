@@ -255,7 +255,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
       { id: 'CONCILIACAO', titulo: 'Conciliação e importação OFX', evidencias: [mod('src/data/store.ts', 'conciliar'), mod('src/core/ofx.ts', 'parseOfx'), mod('src/screens/Conciliacao.tsx')] },
       { id: 'CENARIOS', titulo: 'Cenários interativos de caixa', evidencias: [mod('src/core/cenarioCaixa.ts', 'aplicarCenario')] },
       { id: 'DIVIDAS', titulo: 'Dívidas', evidencias: [mod('src/screens/Dividas.tsx')] },
-      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', pendencia: { tipo: 'DECISAO', acao: 'Aprovar o valor da reserva mínima de caixa' }, pendenciaDeclarada: [doc('CLAUDE.md', 'reserva mínima (DEC-09)', SECOES_ATUAIS.estadoProjeto)] },
+      { id: 'RESERVA_MINIMA', titulo: 'Reserva mínima aprovada (DEC-09)', natureza: 'PRODUCAO', evidencias: [doc('CLAUDE.md', '**Caixa mínimo (reserva mínima, DEC-09) = R$ 20.000,00**', SECOES_ATUAIS.estadoProjeto)] },
     ],
   }),
   m({

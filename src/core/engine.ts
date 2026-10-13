@@ -244,6 +244,39 @@ export interface PosicaoConta {
   ultimaTransacao?: string;
 }
 
+export interface CaixaHoje { total: number; banco: number; foraDoExtrato: number; extratoAte?: string }
+/**
+ * Caixa de hoje, a definicao unica da Caixa e do Diretor Financeiro: saldo do extrato (posicaoBancaria) + o que ja foi
+ * pago/recebido e ainda nao aparece no extrato (liquidacao da conta depois do ultimo movimento importado, desde o inicio da
+ * conta, ate hoje, de titulo sem vinculo com o extrato). Sem extrato = abertura + tudo o que foi liquidado desde o marco;
+ * com o extrato em dia e conciliado = o proprio extrato. Assim o caixa nao fica otimista quando o OFX atrasa.
+ */
+export function caixaHoje(ds: Dataset, lancs: LancamentoCalc[] = calcLancamentos(ds)): CaixaHoje {
+  const hoje = ds.params.dataBase;
+  const porId = new Map(lancs.map((l) => [l.id, l]));
+  const conta = (l: LancamentoCalc) => l.oficial && !l.direto && l.status !== 'Cancelado' && !l.vinculoBancario && (l.tipo === 'Entrada' || l.tipo === 'Saída');
+  let banco = 0; let fora = 0; const ates: string[] = [];
+  for (const p of posicaoBancaria(ds, lancs)) {
+    banco += p.saldoBancario;
+    if (p.ultimaTransacao) ates.push(p.ultimaTransacao);
+    const ini = [dataAbertura(p.conta, ds), ds.params.corteExtrato ?? ''].sort().pop()!;
+    const naJanela = (d?: string) => !!d && d >= ini && d <= hoje && (!p.ultimaTransacao || d > p.ultimaTransacao);
+    const comLiq = new Set<string>();
+    for (const q of ds.liquidacoes) {
+      comLiq.add(q.lancamentoId);
+      const l = porId.get(q.lancamentoId);
+      if (!l || q.conta !== p.conta.instituicao || !conta(l) || !naJanela(q.data)) continue;
+      fora += l.tipo === 'Entrada' ? q.valor : -q.valor;
+    }
+    // realizado sem liquidacao registrada (legado: valorRealizado no titulo)
+    for (const l of lancs) {
+      if (comLiq.has(l.id) || l.status !== 'Realizado' || l.contaFinanceira !== p.conta.instituicao || !conta(l) || !naJanela(l.dataCaixa)) continue;
+      fora += l.valorCaixaProjetado;
+    }
+  }
+  return { total: round2(banco + fora), banco: round2(banco), foraDoExtrato: round2(fora), extratoAte: ates.sort().pop() };
+}
+
 export function posicaoBancaria(ds: Dataset, lancs: LancamentoCalc[] = calcLancamentos(ds)): PosicaoConta[] {
   return ds.contas
     .filter((c) => c.ativa && incluirRegistro(c.registro, ds.params))
