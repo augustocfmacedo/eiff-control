@@ -64,6 +64,7 @@ export interface LinhaCaixa {
   departamento: string;
   codigoObra: string;
   tipo: 'Entrada' | 'Saída';
+  categoria: string; // categoria do plano (vazio na linha de ajuste do extrato)
   entra: number;
   sai: number;
   situacao: SituacaoCaixa;
@@ -109,7 +110,7 @@ export function livroCaixa(ds: Dataset, ate: string, lancs: LancamentoCalc[] = c
   for (const l of lancs) {
     if (!l.incluir || l.direto || l.status === 'Cancelado' || (l.tipo !== 'Entrada' && l.tipo !== 'Saída')) continue;
     const tipo = l.tipo;
-    const base = { lancamentoId: l.id, descricao: l.descricao, contraparte: l.contraparte, departamento: departamentoDe(l), codigoObra: l.codigoObra, tipo, conciliado: l.vinculoBancario || l.conciliado } as const;
+    const base = { lancamentoId: l.id, categoria: l.categoria, descricao: l.descricao, contraparte: l.contraparte, departamento: departamentoDe(l), codigoObra: l.codigoObra, tipo, conciliado: l.vinculoBancario || l.conciliado } as const;
     const valores = (v: number) => (tipo === 'Entrada' ? { entra: round2(v), sai: 0 } : { entra: 0, sai: round2(v) });
     // parte paga (titulo realizado ou liquidacao parcial)
     if (l.valorRealizadoTotal > 0) {
@@ -138,7 +139,7 @@ export function livroCaixa(ds: Dataset, ate: string, lancs: LancamentoCalc[] = c
   const ajusteExtrato = round2(caixa.total - (saldoAbertura + pagosAteHoje));
   if (Math.abs(ajusteExtrato) >= 0.01) {
     const idx = linhas.findIndex((x) => x.dataSaldo > hoje || (x.dataSaldo === hoje && x.situacao !== 'Pago'));
-    const linha: LinhaCaixa = { chave: 'extrato:ajuste', lancamentoId: '', data: hoje, dataSaldo: hoje, descricao: 'Movimentos do extrato ainda não lançados ou conciliados', contraparte: '', departamento: '—', codigoObra: '', tipo: ajusteExtrato > 0 ? 'Entrada' : 'Saída', entra: ajusteExtrato > 0 ? ajusteExtrato : 0, sai: ajusteExtrato < 0 ? -ajusteExtrato : 0, situacao: 'Extrato', contaNoSaldo: true, nota: 'lance ou concilie em Bancos e conciliação', conciliado: false };
+    const linha: LinhaCaixa = { chave: 'extrato:ajuste', lancamentoId: '', categoria: '', data: hoje, dataSaldo: hoje, descricao: 'Movimentos do extrato ainda não lançados ou conciliados', contraparte: '', departamento: '—', codigoObra: '', tipo: ajusteExtrato > 0 ? 'Entrada' : 'Saída', entra: ajusteExtrato > 0 ? ajusteExtrato : 0, sai: ajusteExtrato < 0 ? -ajusteExtrato : 0, situacao: 'Extrato', contaNoSaldo: true, nota: 'lance ou concilie em Bancos e conciliação', conciliado: false };
     linhas.splice(idx < 0 ? linhas.length : idx, 0, linha);
   }
   let saldo = saldoAbertura;

@@ -743,6 +743,11 @@ export const actions = {
     exigir('editar_lancamento', p.codigoObra || undefined);
     if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor da previsão deve ser positivo.');
     if (!p.vencimento) throw new RegraDeNegocioError('Data da previsão é obrigatória.');
+    // idempotencia: o mesmo pedido (mesma pessoa, valor, data, fornecedor, categoria e descricao) ainda aguardando decisao nao
+    // vira um segundo lancamento — clique repetido ou conversa recarregada devolvem o pedido que ja existe
+    const valor = Math.round(p.valor * 100) / 100; const descricao = p.descricao.slice(0, 120); const contraparte = p.contraparte || 'A definir';
+    const igual = state.ds.lancamentos.find((x) => x.origem === ORIGEM_DF && x.status === 'Rascunho' && !x.excluidoEm && x.criadoPor === state.usuario.nome && x.valorBruto === valor && x.vencimento === p.vencimento && x.contraparte === contraparte && x.categoria === p.categoria && x.descricao === descricao && (x.codigoObra || '') === (p.codigoObra ?? ''));
+    if (igual) return igual;
     const l = this.novoLancamento({
       categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
       status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
