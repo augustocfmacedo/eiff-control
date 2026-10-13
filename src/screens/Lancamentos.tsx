@@ -10,6 +10,17 @@ import { LancamentoForm } from './LancamentoForm';
 
 export type ModoLista = 'todos' | 'pagar' | 'receber';
 
+/** Quem paga: a EIFF (caixa da empresa) ou o cliente direto ao fornecedor (faturamento direto, fora do caixa da EIFF). */
+export type Pagador = 'eiff' | 'cliente' | 'todos';
+const PAGADORES: { id: Pagador; rotulo: string; dica: string }[] = [
+  { id: 'eiff', rotulo: 'Da EIFF', dica: 'Só o que sai do caixa da EIFF' },
+  { id: 'cliente', rotulo: 'Faturado ao cliente', dica: 'Compras da obra que o cliente paga direto ao fornecedor (faturamento direto)' },
+  { id: 'todos', rotulo: 'Todos', dica: 'EIFF e faturado ao cliente juntos' },
+];
+/** Padrao: em Contas a pagar so o que e da EIFF; nas demais listas, tudo. */
+export const pagadorPadrao = (modo: ModoLista): Pagador => (modo === 'pagar' ? 'eiff' : 'todos');
+export const filtroPagador = (p: Pagador) => (l: { faturamentoDireto?: boolean }) => p === 'todos' || (p === 'cliente' ? !!l.faturamentoDireto : !l.faturamentoDireto);
+
 /** Celula de data editavel na grade: salva ao escolher a data; clique nao abre o detalhe. */
 function DataCell({ valor, editavel, onChange, className, title }: { valor?: string; editavel: boolean; onChange: (v: string) => void; className?: string; title?: string }) {
   if (!editavel) return <td className={className} title={title}>{valor?.split('-').reverse().join('/')}</td>;
@@ -43,7 +54,9 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
   };
   const [f, setF] = useState({
     busca: query.get('busca') ?? '', obra: query.get('obra') ?? '', categoria: '', status: query.get('status') ?? '', situacao: query.get('situacao') ?? '', de: '', ate: '', contraparte: '', excluidos: false,
+    pagador: (['eiff', 'cliente', 'todos'] as Pagador[]).find((p) => p === query.get('pagador')) ?? pagadorPadrao(modo),
   });
+  const comPagador = modo !== 'receber'; // faturamento direto so existe em saidas
   const visiveis = obrasVisiveis(usuario, ds.obras).map((o) => o.codigo);
   const verBancos = pode(usuario, 'ver_bancos');
   const todos = useMemo(() => calcLancamentos(ds), [ds]);
@@ -52,6 +65,7 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
     .filter((l) => (usuario.obras === '*' || l.codigoObra) ? true : ['Financeiro', 'Diretoria', 'Administrador', 'Contabilidade', 'Auditoria', 'Compras'].includes(usuario.papel))
     .filter((l) => modo === 'todos' || (modo === 'pagar' ? l.tipo === 'Saída' : l.tipo === 'Entrada'))
     .filter((l) => f.excluidos || !l.excluidoEm)
+    .filter((l) => !comPagador || filtroPagador(f.pagador)(l))
     .filter((l) => !f.obra || l.codigoObra === f.obra)
     .filter((l) => !f.categoria || l.categoria === f.categoria)
     .filter((l) => !f.status || l.status === f.status)
@@ -68,6 +82,8 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
   const realizado = lista.filter((l) => l.oficial && l.status === 'Realizado').reduce((a, l) => a + l.valorRealizadoTotal, 0);
   const titulo = modo === 'pagar' ? 'Contas a pagar' : modo === 'receber' ? 'Contas a receber' : 'Lançamentos';
   const ag = modo === 'todos' ? null : aging(lista, modo === 'pagar' ? 'Saída' : 'Entrada');
+  const diretos = comPagador && f.pagador === 'cliente' ? lista.filter((l) => l.faturamentoDireto && l.status !== 'Cancelado' && !l.excluidoEm) : [];
+  const naoRepassado = diretos.filter((l) => l.status !== 'Rascunho' && !l.enviadoClienteEm).reduce((a, l) => a + l.valorLiquidoPrevisto, 0);
 
   const exportarCsv = () => {
     const cab = ['ID', 'Tipo', 'Categoria', 'Grupo', 'Obra', 'Contraparte', 'Documento', 'Descrição', 'Competência', 'Vencimento', 'Data caixa', 'Status', 'Situação', 'Bruto', 'Líquido', 'Realizado', 'Caixa projetado'];
@@ -91,6 +107,13 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
         {pode(usuario, 'exportar') && <button className="btn" onClick={exportarCsv}>Exportar CSV</button>}
         {pode(usuario, 'editar_lancamento') && <button className="btn primary" onClick={() => setNovo(actions.novoLancamento(modo === 'receber' ? { categoria: 'Medições de obras', centroCusto: 'Obra' } : {}))}>+ Novo lançamento</button>}
       </PageHead>
+      {comPagador && (
+        <div className="row no-print" role="group" aria-label="Quem paga" style={{ gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          {PAGADORES.map((p) => <button key={p.id} className={`btn sm${f.pagador === p.id ? ' primary' : ''}`} aria-pressed={f.pagador === p.id} title={p.dica} onClick={() => setF({ ...f, pagador: p.id })}>{p.rotulo}</button>)}
+          <span className="small muted">{PAGADORES.find((p) => p.id === f.pagador)?.dica}</span>
+        </div>
+      )}
+      {f.pagador === 'cliente' && comPagador && <div className="alert info">Faturamento direto: o cliente paga ao fornecedor e o valor abate o contrato. Não sai do caixa da EIFF, não entra no fluxo nem na DRE. {diretos.length} nota(s){naoRepassado > 0 ? <>; <b>{money(naoRepassado)}</b> ainda não repassados ao cliente.</> : '.'}</div>}
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <Kpi label="Saldo em aberto" value={money(totalAberto)} hint={`${abertos.length} títulos`} />
         <Kpi label="Vencido" value={money(vencido)} tone={vencido > 0 ? 'bad' : 'ok'} />
@@ -114,8 +137,8 @@ export default function Lancamentos({ modo, query }: { modo: ModoLista; query: U
         <label className="field"><span>Data caixa de</span><input type="date" value={f.de} onChange={(e) => setF({ ...f, de: e.target.value })} /></label>
         <label className="field"><span>até</span><input type="date" value={f.ate} onChange={(e) => setF({ ...f, ate: e.target.value })} /></label>
         <label className="field"><span>Excluídos</span><input type="checkbox" checked={f.excluidos} onChange={(e) => setF({ ...f, excluidos: e.target.checked })} title="mostrar lançamentos excluídos" /></label>
-        <button className="btn sm" onClick={() => setF({ busca: '', obra: '', categoria: '', status: '', situacao: '', de: '', ate: '', contraparte: '', excluidos: false })}>Limpar</button>
-        <VistasSalvas tela={`lancamentos-${modo}`} filtros={f} aplicar={(v) => setF({ ...f, ...v })} ehPadrao={(v) => Object.values(v).every((x) => x === '' || x === false)} />
+        <button className="btn sm" onClick={() => setF({ busca: '', obra: '', categoria: '', status: '', situacao: '', de: '', ate: '', contraparte: '', excluidos: false, pagador: pagadorPadrao(modo) })}>Limpar</button>
+        <VistasSalvas tela={`lancamentos-${modo}`} filtros={f} aplicar={(v) => setF({ ...f, ...v })} ehPadrao={(v) => Object.entries(v).every(([k, x]) => (k === 'pagador' ? x === pagadorPadrao(modo) : x === '' || x === false))} />
       </div>
       <Tabela className="card" linhas={lista} chave={(l) => l.id} onLinha={(l) => navegar(`/lancamentos/${l.id}`)} vazio="Nenhum lançamento com esses filtros." colunas={colunas} linha={(l) => (
               <>
