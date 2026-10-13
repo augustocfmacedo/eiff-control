@@ -757,10 +757,69 @@ pela ação única `actions.definirDonoContaRadar`. Sem migration, sem mudança 
   (`motivosRecusaDono`) e o gatilho `radar_company_dono_valido` recusa no banco perfil inexistente, inativo ou de outra
   organização. Auditoria em duas camadas: `radar_definir_dono_conta` / `radar_remover_dono_conta` no app (antes, depois,
   motivo) e `radar_company_audit` no banco (linha inteira antes/depois com o autor).
-- **Limite conhecido, sem mudança nesta fase**: quem tem a permissão `radar` também pode gravar
+- **Limite conhecido, sem mudança nesta fase** (fechado na §19.5): quem tem a permissão `radar` também pode gravar
   `commercial_owner_id` direto pela API do banco, sem passar pela ação do app — o gatilho continua impedindo dono
   inválido e a auditoria do banco registra, mas a auditoria do app (com motivo) não. Fechar isso exigiria revogar o
   UPDATE da coluna para `authenticated` e criar uma RPC; é proposta separada, não autorizada.
 - **Provas**: `src/screens/radar/DonoConta.test.ts` (quatro estados, opções só de ativos, sem permissão = só leitura,
   conta mesclada, filtro da carteira, guardas de que a tela não grava nem valida por conta própria), além das provas
   da CD-D5 (§19.3).
+
+### 19.5 CD-D5.2 — atribuição governada do dono (13/10/2026)
+
+Fecha o limite conhecido da §19.4: o dono da conta deixa de ser uma coluna gravável e passa a ser uma **operação
+governada**, no padrão do EIFF Inbox (`inbox_assign_thread` + privilégio por coluna, 0056).
+
+- **Permissão própria `radar_dono`** (`src/core/permissoes.ts`): Administrador e Diretoria. Não amplia nenhuma
+  permissão existente: `radar` continua com os mesmos papéis para todo o resto do Radar; quem tem só `radar` vê o
+  dono, mas não muda. Outros papéis só com concessão específica aprovada depois.
+- **Migration 0065** (`supabase/migrations/0065_radar_company_owner_governado.sql`, **não aplicada**): RPC
+  `radar_definir_dono_conta(p_empresa, p_dono, p_motivo)` em `security definer`, executável só por `authenticated`.
+  Ordem das guardas, todas por exceção (recusa = nada muda; papel ou situação nulos também são recusados, sem depender
+  do NOT NULL das colunas): sessão (`auth.uid()`) → perfil ativo → papel Administrador
+  ou Diretoria → motivo de 3 a 500 caracteres → conta da mesma organização (`for update`) → conta não mesclada → novo
+  dono ativo e da mesma organização (ou `null` para remover). Mesmo dono = devolve `alterado: false`, sem escrita e sem
+  auditoria. Mudança: grava o dono e uma linha em `audit_log` (`radar_definir_dono_conta` / `radar_remover_dono_conta`,
+  dono anterior em `before_data`, novo em `after_data`, autor, data, motivo, `source = 'rpc'`) **na mesma transação**;
+  se a auditoria falhar, o dono não muda. O gatilho `radar_company_dono_valido` e o `audit_row` continuam como segunda
+  barreira e trilha da linha inteira.
+- **Privilégio por coluna**: `authenticated` perde INSERT/UPDATE de `radar_company` e recebe de volta INSERT/UPDATE em
+  todas as colunas **menos** `commercial_owner_id`; `anon` perde INSERT/UPDATE (já barrado pela RLS). A RLS de
+  `radar_company` não muda. **Coluna nova em `radar_company` daqui para frente precisa entrar nos dois GRANTs.**
+- **App**: `actions.definirDonoContaRadar(empresaId, usuarioId | null, motivo)` exige `radar_dono` e motivo
+  (`recusaMotivoDono`, mesmos limites da RPC) antes das guardas da CD-D5. Na persistência, o mapeamento de escrita de
+  `radar_company` não leva mais `commercial_owner_id`; `persistirRadar` chama a RPC uma vez por empresa cujo dono mudou,
+  **depois** da escrita genérica (empresa nova já existe), com o motivo da auditoria do app desta sincronização
+  (`motivoDonoDaAuditoria`); sem motivo, não chama e a sincronização para com erro (falha fechada). A auditoria do app
+  não reenvia as duas ações de dono (`ACOES_DONO_RPC`), porque a RPC já as gravou com o motivo.
+- **Tela**: o campo "Dono da conta" só mostra controles com `radar_dono`. Definir, trocar e remover passam pelo mesmo
+  passo de motivo em linha (frase do que vai acontecer, campo obrigatório, Confirmar só com 3+ caracteres, Esc
+  cancela); a confirmação do navegador da remoção saiu. Recusa local aparece em linha como alerta; recusa do banco
+  aparece como erro de sincronização com a mensagem da RPC ("dono da conta: …").
+- **Fila offline**: várias trocas da mesma conta antes de sincronizar viram **uma** chamada com o estado final e o
+  motivo mais recente; as trocas intermediárias ficam só na auditoria local até a sincronização (não vão ao banco).
+- **Compatibilidade app × banco** (provada no smoke, matriz completa):
+
+  | | banco sem a 0065 | banco com a 0065 |
+  |---|---|---|
+  | app antigo (até CD-D5.1) | grava normalmente | **toda gravação de empresa é negada** (manda `commercial_owner_id`) |
+  | app novo (CD-D5.2) | grava normalmente; mudar dono falha fechado (RPC inexistente, nada muda) | grava normalmente; dono pela RPC |
+
+- **Implantação — código primeiro, migration depois** (nenhuma combinação intermediária quebra a gravação de
+  empresas): (1) merge; (2) publicar o build da `main` (restore do deploy, trava mantida); (3) recarregar as abas
+  abertas — aba com código antigo depois da 0065 dá erro de sincronização até recarregar, e a pendência guardada é
+  reaplicada pelo código novo sem a coluna; (4) conferência somente leitura (RPC ausente, colunas de `radar_company`
+  iguais às listas dos GRANTs) e aplicar a 0065 numa transação; (5) smoke em produção só com recusas, em transação
+  desfeita (UPDATE direto do dono negado, RPC sem motivo recusada). Entre (2) e (4) a única perda é mudar o dono.
+- **Rollback** (banco primeiro, depois o deploy anterior; provado no smoke):
+  `drop function if exists radar_definir_dono_conta(uuid, uuid, text); grant insert, update on radar_company to anon, authenticated;`
+  — o app antigo volta a gravar, o novo continua gravando, o dono e a auditoria já gravados pela RPC permanecem e o
+  gatilho da 0064 segue barrando dono inválido. Só então, se preciso, restaurar o deploy anterior.
+- **Provas**: `scripts/pg-smoke-dono-conta.mjs` (PGlite, no CI) prova atribuição, troca, remoção, mesmo dono sem
+  escrita, recusas sem mudança e sem auditoria (os seis papéis sem permissão, papel nulo, situação nula, autor inativo, sem sessão, Administrador de outra
+  organização, motivo vazio, dono inativo, dono de outra organização, conta de outra organização, conta mesclada),
+  atomicidade (falha forçada na auditoria desfaz o dono), UPDATE/INSERT direto da coluna negado para `authenticated`
+  com as demais colunas liberadas e `anon` negado, a matriz app × banco acima com as colunas exatas do app
+  (`COLUNAS_APP` = chaves de `linhaDb`, conferido por teste) e o rollback; `src/data/radar.dono.persistencia.test.ts` (só a RPC leva o dono,
+  motivo, falha fechada, auditoria sem duplicata, guardas de fonte); `src/data/radar.dono.store.test.ts` (#16 papéis,
+  #17 motivo); `src/screens/radar/DonoConta.test.ts` (passo do motivo, erro em linha, controles por `radar_dono`).

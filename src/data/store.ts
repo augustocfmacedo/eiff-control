@@ -63,7 +63,7 @@ import { MATRIZ, pode, type Acao } from '../core/permissoes';
 import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATUS, RISCOS, alvoDaDecisao, aoResponder, aplicarStatus, classificacaoAuditavel, decidirRoteamento, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, reavaliar, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type DecisaoOctopus, type EntradaRoteador, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
-import { motivosRecusaDono } from '../core/radar/donoConta';
+import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
@@ -2037,12 +2037,17 @@ export const actions = {
   /**
    * CD-D5 — define (usuarioId) ou remove (null) o dono comercial canônico da conta. ÚNICA porta de escrita do dono:
    * oportunidade, tarefa, atividade, fila, cadência, Lead Engine, importação e mescla não o alteram. Falha fechada:
-   * permissão `radar`, conta existente e não mesclada, usuário da organização e ativo (`motivosRecusaDono`); grava
-   * auditoria com o dono anterior e o novo. Não mexe em responsável de oportunidade, tarefa ou fila.
+   * permissão `radar_dono` (CD-D5.2: Administrador e Diretoria), motivo obrigatório, conta existente e não mesclada,
+   * usuário da organização e ativo (`motivosRecusaDono`); grava auditoria com o dono anterior, o novo e o motivo. Não
+   * mexe em responsável de oportunidade, tarefa ou fila. No banco a mudança vai SÓ pela RPC radar_definir_dono_conta
+   * (`persistirRadar`), que repete as mesmas guardas e grava a auditoria na mesma transação.
    */
-  definirDonoContaRadar(empresaId: string, usuarioId: string | null, motivo?: string) {
+  definirDonoContaRadar(empresaId: string, usuarioId: string | null, motivo: string) {
     let ds = state.ds;
-    exigir('radar');
+    exigir('radar_dono');
+    const porque = (motivo ?? '').trim();
+    const recusaMotivo = recusaMotivoDono(porque);
+    if (recusaMotivo) throw new RegraDeNegocioError(recusaMotivo);
     const r = ds.radar;
     const e = r.empresas.find((x) => x.id === empresaId);
     if (!e) throw new RegraDeNegocioError('Empresa não encontrada.');
@@ -2057,7 +2062,7 @@ export const actions = {
     if (anterior === novo) return e;
     const atualizada: Empresa = { ...e, commercialOwnerId: novo, atualizadoEm: agora() };
     const radar: RadarDataset = { ...r, empresas: r.empresas.map((x) => (x.id === empresaId ? atualizada : x)) };
-    ds = registrar({ ...ds, radar }, novo ? 'radar_definir_dono_conta' : 'radar_remover_dono_conta', 'radar_empresa', empresaId, { commercialOwnerId: anterior ?? null }, { commercialOwnerId: novo ?? null }, motivo);
+    ds = registrar({ ...ds, radar }, novo ? 'radar_definir_dono_conta' : 'radar_remover_dono_conta', 'radar_empresa', empresaId, { commercialOwnerId: anterior ?? null }, { commercialOwnerId: novo ?? null }, porque);
     commit(ds);
     return atualizada;
   },

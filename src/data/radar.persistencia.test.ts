@@ -21,7 +21,7 @@ const AGORA = '2026-09-23T12:00:00.000Z';
 // ---------------------------------------------------------------------------------------------------------
 // Helpers de teste: um espelho do que o provider real faz, mas gravando as chamadas em vez de falar com a rede
 // ---------------------------------------------------------------------------------------------------------
-interface Chamada { op: 'gravar' | 'inserir' | 'apagar'; tabela: string; filtro?: unknown; row?: Record<string, unknown>; rows?: Record<string, unknown>[]; id?: string }
+interface Chamada { op: 'gravar' | 'inserir' | 'apagar' | 'rpc'; tabela: string; filtro?: unknown; row?: Record<string, unknown>; rows?: Record<string, unknown>[]; id?: string }
 
 function helpers(linhas: Record<string, Record<string, unknown>[]> = {}): HelpersRadar & { chamadas: Chamada[] } {
   const chamadas: Chamada[] = [];
@@ -36,6 +36,8 @@ function helpers(linhas: Record<string, Record<string, unknown>[]> = {}): Helper
     atorId: 'perfil-ator',
     uuid: (v) => v ?? null,
     perfil: (u) => (u ? `perfil-${u}` : null),
+    rpc: async (nome, args) => { chamadas.push({ op: 'rpc', tabela: nome, row: args }); return {}; },
+    motivoDono: () => undefined,
   };
 }
 

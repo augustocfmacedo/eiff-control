@@ -50,6 +50,19 @@ export function motivosRecusaDono(usuarioId: string, usuarios: readonly UsuarioD
   return [];
 }
 
+/**
+ * CD-D5.2: toda mudança de dono (definir, trocar, remover) exige motivo. Os limites são os mesmos que a RPC
+ * radar_definir_dono_conta (0065) confere no banco.
+ */
+export const MOTIVO_DONO_MIN = 3;
+export const MOTIVO_DONO_MAX = 500;
+
+/** Motivo aceito para mudar o dono: texto aparado entre os limites. Devolve a mensagem de recusa, ou `undefined`. */
+export function recusaMotivoDono(motivo: string | undefined): string | undefined {
+  const n = (motivo ?? '').trim().length;
+  return n < MOTIVO_DONO_MIN || n > MOTIVO_DONO_MAX ? `Informe o motivo da mudança de dono (${MOTIVO_DONO_MIN} a ${MOTIVO_DONO_MAX} caracteres).` : undefined;
+}
+
 /** Conta ativa e não mesclada: o universo das contas comerciais operacionais. */
 const operacional = (e: Pick<Empresa, 'ativo' | 'mescladaEm'>) => e.ativo && !e.mescladaEm;
 

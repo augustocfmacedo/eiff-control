@@ -118,6 +118,9 @@ Motor de contexto de comunicação, reutilizável para qualquer conta, contato, 
   definem nem herdam dono. Detalhes em `docs/commercial-director-1.0.md` §19.3.
   Na tela (CD-D5.1): linha "Dono da conta" na ficha da empresa (definir, trocar, remover; só leitura sem a permissão
   `radar`) e, na carteira, coluna "Dono", filtro por dono ou "Sem dono" e o indicador "Sem dono" (§19.4).
+  CD-D5.2 (migration 0065, não aplicada): mudar o dono exige a permissão `radar_dono` (Administrador e Diretoria) e
+  motivo, e no banco só acontece pela RPC `radar_definir_dono_conta`, que grava dono e auditoria na mesma transação;
+  `authenticated` não tem mais INSERT/UPDATE na coluna `commercial_owner_id` (§19.5).
 
 ## Telas
 
