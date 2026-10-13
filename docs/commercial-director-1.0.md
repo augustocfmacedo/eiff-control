@@ -773,7 +773,8 @@ governada**, no padrão do EIFF Inbox (`inbox_assign_thread` + privilégio por c
 - **Permissão própria `radar_dono`** (`src/core/permissoes.ts`): Administrador e Diretoria. Não amplia nenhuma
   permissão existente: `radar` continua com os mesmos papéis para todo o resto do Radar; quem tem só `radar` vê o
   dono, mas não muda. Outros papéis só com concessão específica aprovada depois.
-- **Migration 0065** (`supabase/migrations/0065_radar_company_owner_governado.sql`, **não aplicada**): RPC
+- **Migration 0065** (`supabase/migrations/0065_radar_company_owner_governado.sql`, **aplicada em produção em 13/10/2026,
+  19:06 UTC**, depois da publicação do código — ver "Estado em produção" abaixo): RPC
   `radar_definir_dono_conta(p_empresa, p_dono, p_motivo)` em `security definer`, executável só por `authenticated`.
   Ordem das guardas, todas por exceção (recusa = nada muda; papel ou situação nulos também são recusados, sem depender
   do NOT NULL das colunas): sessão (`auth.uid()`) → perfil ativo → papel Administrador
@@ -811,10 +812,36 @@ governada**, no padrão do EIFF Inbox (`inbox_assign_thread` + privilégio por c
   reaplicada pelo código novo sem a coluna; (4) conferência somente leitura (RPC ausente, colunas de `radar_company`
   iguais às listas dos GRANTs) e aplicar a 0065 numa transação; (5) smoke em produção só com recusas, em transação
   desfeita (UPDATE direto do dono negado, RPC sem motivo recusada). Entre (2) e (4) a única perda é mudar o dono.
-- **Rollback** (banco primeiro, depois o deploy anterior; provado no smoke):
-  `drop function if exists radar_definir_dono_conta(uuid, uuid, text); grant insert, update on radar_company to anon, authenticated;`
-  — o app antigo volta a gravar, o novo continua gravando, o dono e a auditoria já gravados pela RPC permanecem e o
-  gatilho da 0064 segue barrando dono inválido. Só então, se preciso, restaurar o deploy anterior.
+- **Rollback EXATO** (versionado em `supabase/rollbacks/0065_radar_company_owner_governado.rollback.sql`, fora de
+  `supabase/migrations`; só com autorização expressa, nunca automático). Ordem: banco primeiro (o arquivo, que já traz
+  `begin`/`commit`), depois, se preciso, restaurar o deploy anterior do app. O arquivo remove a função, **revoga os
+  privilégios por coluna** que a 0065 criou para `authenticated` (as mesmas 38 colunas dos GRANTs) e devolve INSERT/UPDATE
+  da tabela para `anon` e `authenticated`. A orientação anterior (só `drop function` + `grant`) devolvia o acesso, mas
+  deixava 38 privilégios por coluna redundantes: o estado não voltava a ser idêntico. Resultado provado: a ACL de
+  `radar_company` volta ao texto exato de antes da 0065 — em produção, lido em 13/10/2026,
+  `{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}`
+  e nenhuma coluna com privilégio próprio —, cada privilégio de `anon`/`authenticated` por coluna e por tabela fica igual
+  ao de antes (nada ampliado, nada perdido), o app antigo volta a gravar, o novo continua gravando, o dono e a auditoria
+  já gravados pela RPC permanecem e o gatilho da 0064 segue barrando dono inválido. O smoke lê o próprio arquivo, e um
+  teste confere que as colunas revogadas são as concedidas pela 0065 — coluna nova nos GRANTs precisa entrar também no
+  rollback.
+- **Estado em produção (13/10/2026)**: código publicado primeiro (deploy `6ace7cb3…`, commit `3b75744`, trava mantida);
+  0065 aplicada às 19:06 UTC numa transação com verificações internas (função de definidor com `search_path` fixo, ACL
+  esperada, 38 colunas graváveis, dono bloqueado, `anon` sem acesso, EXECUTE só para `authenticated`, dados intactos).
+  O corpo da função em produção é idêntico ao da migration. Pós-check em transação desfeita, só com recusas e escritas
+  de zero linhas: sem sessão, usuário inexistente, autor inativo, motivo vazio/curto/longo, empresa inexistente, dono
+  inexistente ou inativo, UPDATE/INSERT direto do dono, `anon` na RPC e na tabela — todos recusados; UPDATE/INSERT das
+  colunas do app aceitos; sequência da auditoria inalterada; 39 tabelas comerciais e financeiras com o mesmo conteúdo.
+  A produção não tem perfil Diretoria nem segunda organização: esses caminhos e a atribuição bem-sucedida com auditoria
+  atômica estão provados no smoke.
+- **Homologação funcional (13/10/2026, modo demonstração com o código da `main`)**: Administrador definiu, trocou e
+  removeu o dono, sempre pelo passo de motivo ("Definir X como dono", "Trocar X por Y", "Remover X da conta"); motivo com
+  menos de 3 caracteres mantém Confirmar desabilitado e Enter não grava; Diretoria definiu o dono; Financeiro, Compras,
+  Engenharia, Gestor de obra, Contabilidade e Auditoria veem o dono sem nenhum controle, e o Solicitante nem abre o
+  Radar; a Auditoria mostra autor, ação, conta e motivo, com o dono anterior e o novo no detalhe; editar a empresa (cidade,
+  UF, porte, observações) grava e preserva o dono; a carteira mostra a coluna "Dono", o indicador "Sem dono" e o filtro
+  (Sem dono / por usuário). Sem erro no console. Pendente: a mesma jornada logado em produção, que grava de verdade e por
+  isso depende de autorização.
 - **Provas**: `scripts/pg-smoke-dono-conta.mjs` (PGlite, no CI) prova atribuição, troca, remoção, mesmo dono sem
   escrita, recusas sem mudança e sem auditoria (os seis papéis sem permissão, papel nulo, situação nula, autor inativo, sem sessão, Administrador de outra
   organização, motivo vazio, dono inativo, dono de outra organização, conta de outra organização, conta mesclada),
