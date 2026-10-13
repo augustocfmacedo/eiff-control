@@ -70,7 +70,8 @@ export async function tokenSessao(): Promise<string | null> {
 /** Cria/troca a senha de quem entrou pelo link do e-mail (convite ou recuperacao). */
 export async function definirSenhaRemota(senha: string): Promise<void> {
   if (!supabase) throw new RemotoError('Supabase não configurado.');
-  const { error } = await supabase.auth.updateUser({ password: senha });
+  // a senha nova tambem desliga o "trocar no primeiro acesso" (senha inicial entregue pelo Administrador)
+  const { error } = await supabase.auth.updateUser({ password: senha, data: { trocar_senha: false } });
   if (error) throw new RemotoError(/should be different/i.test(error.message) ? 'A nova senha precisa ser diferente da anterior.' : /weak|at least/i.test(error.message) ? 'Senha fraca: use ao menos 8 caracteres, misturando letras e números.' : error.message);
 }
 
@@ -80,6 +81,13 @@ export async function pedirNovaSenhaRemota(email: string): Promise<void> {
   const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/` });
   if (error && !/rate limit/i.test(error.message)) throw new RemotoError(error.message);
   if (error) throw new RemotoError('Muitos pedidos seguidos: espere alguns minutos e tente de novo.');
+}
+
+/** Login criado pelo Administrador com senha inicial e "trocar no primeiro acesso" ligado (user_metadata.trocar_senha). */
+export async function precisaTrocarSenha(): Promise<boolean> {
+  if (!supabase) return false;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user?.user_metadata?.trocar_senha === true;
 }
 
 export async function logout(): Promise<void> {
