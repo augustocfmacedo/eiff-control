@@ -197,6 +197,25 @@ export default function App() {
     default: tela = <div className="empty">Página não encontrada.</div>;
   }
 
+  // Solicitante (equipe): SO a conversa com o Diretor Financeiro e os proprios pedidos. Sem menu, busca, tour ou outras telas;
+  // qualquer endereco cai aqui. #/diretor/nova abre sempre uma conversa nova. O banco ja fecha o resto (0066).
+  if (usuario.papel === 'Solicitante') {
+    const nova = p0 === 'diretor' && p1 === 'nova';
+    return (
+      <div className="campo solicitante">
+        <header className="topbar" style={{ padding: '10px 14px' }}>
+          <div className="brand" style={{ padding: 0 }}><Logotipo height={30} /><div className="brand-txt"><b>Control</b><span>Pedidos de pagamento</span></div></div>
+          <div className="spacer" />
+          <span className="small">{usuario.nome.split(' ')[0]}</span>
+          {modo === 'remoto' && sync.status === 'erro' && <Badge tone="bad">sem conexão com o servidor</Badge>}
+          {modo === 'remoto' && <button className="btn sm" onClick={() => void actions.sair()}>Sair</button>}
+          {modo !== 'remoto' && <select aria-label="Usuário (demonstração)" value={usuario.id} onChange={(e) => actions.trocarUsuario(e.target.value)} style={{ padding: 4, borderRadius: 6, border: '1px solid var(--border)' }}>{ds.usuarios.map((u) => <option key={u.id} value={u.id}>{u.nome} · {u.papel}</option>)}</select>}
+        </header>
+        <main className="content" id="conteudo" style={{ padding: 14 }}><Suspense fallback={<SkeletonTela />}><DiretorFinanceiro aba0={nova ? 'nova' : undefined} key={nova ? `nova-${rota.query.toString()}` : 'chat'} /></Suspense></main>
+      </div>
+    );
+  }
+
   if (p0 === 'campo') {
     return (
       <div className="campo">

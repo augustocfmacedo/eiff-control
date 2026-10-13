@@ -30,6 +30,7 @@ const PAPEIS_PERMISSOES: Record<Papel, string> = {
   Compras: 'pedidos de compra, estoque, lançar; não aprova',
   Contabilidade: 'ver bancos, DRE, auditoria, comentar; não lança nem aprova',
   Auditoria: 'somente leitura de bancos e auditoria',
+  Solicitante: 'somente a conversa com o Diretor Financeiro: pedir pagamentos e acompanhar os próprios pedidos; não vê saldo nem outras telas',
 };
 
 const resumoLicao = (l: Licao) => `### ${l.titulo} [id ${l.id}] (tela ${l.rota}, ${l.area})

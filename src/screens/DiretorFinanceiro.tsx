@@ -20,11 +20,12 @@ function Texto({ t }: { t: string }) {
 }
 
 /** Chat com o Diretor Financeiro. veCaixa = Diretoria/Financeiro (respostas com numeros); equipe so pede e acompanha. */
-export function ConversaDF({ veCaixa }: { veCaixa: boolean }) {
+export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?: boolean }) {
   const { ds, usuario, modo } = useStore();
   const { toast, el } = useToast();
   const chave = `${CHAVE}:${usuario.id}`; // conversa por usuario: num aparelho compartilhado ninguem ve o chat do outro
-  const [msgs, setMsgs] = useState<Msg[]>(() => { try { const v = sessionStorage.getItem(chave); return v ? (JSON.parse(v) as Msg[]) : []; } catch { return []; } });
+  // `nova` (link #/diretor/nova): a conversa sempre comeca do zero
+  const [msgs, setMsgs] = useState<Msg[]>(() => { if (nova) return []; try { const v = sessionStorage.getItem(chave); return v ? (JSON.parse(v) as Msg[]) : []; } catch { return []; } });
   const [texto, setTexto] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [ia, setIa] = useState<'desconhecido' | 'ok' | 'indisponivel'>(modo === 'remoto' ? 'desconhecido' : 'indisponivel');
@@ -33,7 +34,16 @@ export function ConversaDF({ veCaixa }: { veCaixa: boolean }) {
   // rola so a area das mensagens (nunca a pagina): a conversa tambem vive dentro da tela Caixa
   useEffect(() => { const box = fim.current?.parentElement; if (box) box.scrollTop = box.scrollHeight; try { sessionStorage.setItem(chave, JSON.stringify(msgs.slice(-30))); } catch { /* ignore */ } }, [msgs, chave]);
   const catalogo = catalogoDe(ds);
-  const podeRegistrar = pode(usuario, 'editar_lancamento');
+  const podeRegistrar = pode(usuario, 'pedir_pagamento');
+  // a equipe nao recebe o parecer (saldo, reserva): o botao de encaminhar aparece pelo pedido completo, e o parecer e calculado so na hora de montar
+  const pedidoPronto = (m: Msg) => m.papel === 'assistente' && !!m.pedido && m.pedido.intencao === 'pagamento' && !m.pedido.faltando.length && !!m.pedido.valor;
+  const parecerDe = (m: Msg) => m.parecer ?? analisarPagamento(ds, { valor: m.pedido!.valor!, vencimento: m.pedido!.vencimento, codigoObra: m.pedido!.codigoObra, categoria: m.pedido!.categoria });
+  const enviarPedido = async (prev: ReturnType<typeof montarPrevisao>, marcar: (id: string) => void) => {
+    setOcupado(true);
+    try { const l = await actions.solicitarPagamentoDF(prev); marcar(l.id); setMsgs((ms) => ms.concat({ papel: 'assistente', texto: confirmacao(l.id, l.valorBruto, l.vencimento, l.categoria, l.codigoObra, l.contraparte) })); registrarAcao('df:previsao'); }
+    catch (e) { toast((e as Error).message); }
+    finally { setOcupado(false); }
+  };
   const ultimoPedidoIncompleto = () => [...msgs].reverse().find((m) => m.papel === 'assistente' && m.pedido?.intencao === 'pagamento' && m.pedido.faltando.length && !m.registrado)?.pedido;
 
   const interpretar = async (q: string, hist: Msg[]): Promise<PedidoInterpretado> => {
@@ -68,21 +78,22 @@ export function ConversaDF({ veCaixa }: { veCaixa: boolean }) {
     ? `Previsão **${id}** registrada: ${fmt(valor)} em ${br(venc)}, ${cat}${obra ? `, obra ${obra}` : ''}, fornecedor ${forn}. Entra na Central para decisão; acompanhe em [/lancamentos/${id}].`
     : `Pedido **${id}** encaminhado à Diretoria: ${fmt(valor)} para ${br(venc)}${forn !== 'A definir' ? `, ${forn}` : ''}. Te aviso quando for decidido; veja o andamento em "Meus pedidos".`;
   const registrar = (idx: number, data: string) => {
-    const m = msgs[idx]; if (!m.pedido || !m.parecer) return;
-    const prev = montarPrevisao(ds, m.pedido, m.parecer, data);
-    tentar(() => { const l = actions.registrarPrevisaoDF(prev); setMsgs((ms) => ms.map((x, i) => (i === idx ? { ...x, registrado: l.id } : x)).concat({ papel: 'assistente', texto: confirmacao(l.id, l.valorBruto, l.vencimento, l.categoria, l.codigoObra, l.contraparte) })); registrarAcao('df:previsao'); }, toast);
+    const m = msgs[idx]; if (!m.pedido || (!m.parecer && !pedidoPronto(m))) return;
+    const prev = montarPrevisao(ds, m.pedido, parecerDe(m), data);
+    void enviarPedido(prev, (id) => setMsgs((ms) => ms.map((x, i) => (i === idx ? { ...x, registrado: id } : x))));
   };
-  const abrirAjuste = (idx: number) => { const m = msgs[idx]; if (!m.pedido || !m.parecer) return; const prev = montarPrevisao(ds, m.pedido, m.parecer, veCaixa ? m.parecer.dataSugerida ?? m.parecer.vencimento : m.parecer.vencimento); setAjuste({ idx, valor: prev.valor, vencimento: prev.vencimento, categoria: prev.categoria, codigoObra: prev.codigoObra ?? '', contraparte: prev.contraparte === 'A definir' ? '' : prev.contraparte, descricao: prev.descricao }); };
+  const abrirAjuste = (idx: number) => { const m = msgs[idx]; if (!m.pedido || (!m.parecer && !pedidoPronto(m))) return; const pa = parecerDe(m); const prev = montarPrevisao(ds, m.pedido, pa, veCaixa ? pa.dataSugerida ?? pa.vencimento : m.pedido.vencimento ?? pa.vencimento); setAjuste({ idx, valor: prev.valor, vencimento: prev.vencimento, categoria: prev.categoria, codigoObra: prev.codigoObra ?? '', contraparte: prev.contraparte === 'A definir' ? '' : prev.contraparte, descricao: prev.descricao }); };
   const confirmarAjuste = () => {
     if (!ajuste) return;
     const m = msgs[ajuste.idx]; if (!m.pedido) return;
     const pedido: PedidoInterpretado = { ...m.pedido, valor: ajuste.valor, vencimento: ajuste.vencimento, categoria: ajuste.categoria, codigoObra: ajuste.codigoObra || undefined, contraparte: ajuste.contraparte || undefined, descricao: ajuste.descricao, faltando: [] };
     const parecer = analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria });
     const prev = montarPrevisao(ds, pedido, parecer, ajuste.vencimento);
-    tentar(() => { const l = actions.registrarPrevisaoDF(prev); setMsgs((ms) => ms.map((x, i) => (i === ajuste.idx ? { ...x, registrado: l.id } : x)).concat({ papel: 'assistente', texto: confirmacao(l.id, l.valorBruto, l.vencimento, l.categoria, l.codigoObra, l.contraparte) })); setAjuste(null); registrarAcao('df:previsao'); }, toast);
+    const idx = ajuste.idx; setAjuste(null);
+    void enviarPedido(prev, (id) => setMsgs((ms) => ms.map((x, i) => (i === idx ? { ...x, registrado: id } : x))));
   };
   const tom = (p: Parecer) => (p.decisao === 'liberar' ? 'ok' : p.decisao === 'reagendar' ? 'info' : p.decisao === 'atencao' ? 'warn' : 'bad') as 'ok' | 'info' | 'warn' | 'bad';
-  const sugestoesIniciais = veCaixa ? ['Preciso pagar um frete de R$ 500 amanhã', 'Como está o caixa?', 'O que vence essa semana?', 'Quais previsões estão pendentes?'] : ['Preciso pagar um frete de R$ 500 amanhã para a Transportadora X', 'Meus pedidos'];
+  const sugestoesIniciais = veCaixa ? ['Preciso pagar um frete de R$ 500 amanhã', 'Como está o caixa?', 'O que vence essa semana?', 'Quais previsões estão pendentes?'] : ['Preciso agendar um pagamento', 'Preciso pagar um frete de R$ 500 amanhã para a Transportadora X', 'Meus pedidos'];
 
   return (
     <div className="df">
@@ -96,16 +107,16 @@ export function ConversaDF({ veCaixa }: { veCaixa: boolean }) {
           <div key={i} className={`chat-msg ${m.papel}`}>
             <div className="chat-bolha">
               <Texto t={m.texto} />
-              {m.parecer && !m.registrado && podeRegistrar && <div className="df-card">
-                {veCaixa && <div className="df-card-cab"><Badge tone={tom(m.parecer)}>{m.parecer.decisao === 'liberar' ? 'cabe no caixa' : m.parecer.decisao === 'reagendar' ? 'melhor reagendar' : m.parecer.decisao === 'atencao' ? 'consome a reserva' : 'não recomendado'}</Badge><span>{fmt(m.parecer.valor)} · {br(m.parecer.dataSugerida ?? m.parecer.vencimento)}</span></div>}
+              {(m.parecer || (!veCaixa && pedidoPronto(m))) && !m.registrado && podeRegistrar && <div className="df-card">
+                {veCaixa && m.parecer && <div className="df-card-cab"><Badge tone={tom(m.parecer)}>{m.parecer.decisao === 'liberar' ? 'cabe no caixa' : m.parecer.decisao === 'reagendar' ? 'melhor reagendar' : m.parecer.decisao === 'atencao' ? 'consome a reserva' : 'não recomendado'}</Badge><span>{fmt(m.parecer.valor)} · {br(m.parecer.dataSugerida ?? m.parecer.vencimento)}</span></div>}
                 <div className="actions">
-                  {veCaixa
+                  {veCaixa && m.parecer
                     ? <><button className="btn primary sm" onClick={() => registrar(i, m.parecer!.dataSugerida ?? m.parecer!.vencimento)}>Registrar previsão{m.parecer.dataSugerida ? ` para ${br(m.parecer.dataSugerida)}` : ''}</button>{m.parecer.dataSugerida && <button className="btn sm" onClick={() => registrar(i, m.parecer!.vencimento)}>Manter {br(m.parecer.vencimento)} mesmo assim</button>}</>
-                    : <button className="btn primary sm" onClick={() => registrar(i, m.parecer!.vencimento)}>Confirmar e encaminhar à Diretoria</button>}
+                    : <button className="btn primary sm" disabled={ocupado} onClick={() => registrar(i, m.pedido!.vencimento ?? parecerDe(m).vencimento)}>Confirmar e encaminhar à Diretoria</button>}
                   <button className="btn sm" onClick={() => abrirAjuste(i)}>Ajustar</button>
                 </div>
               </div>}
-              {m.parecer && !podeRegistrar && <div className="small muted" style={{ marginTop: 6 }}>Seu perfil não registra pedidos; peça a um gestor ou ao financeiro.</div>}
+              {(m.parecer || pedidoPronto(m)) && !podeRegistrar && <div className="small muted" style={{ marginTop: 6 }}>Seu perfil não registra pedidos; peça a um gestor ou ao financeiro.</div>}
               {m.registrado && <div className="small muted" style={{ marginTop: 6 }}>{veCaixa ? 'Registrada como' : 'Encaminhado como'} {m.registrado}.</div>}
               {m.sugestoes && <div className="chips" style={{ marginTop: 8 }}>{m.sugestoes.map((s) => <button key={s} className="chip sm" onClick={() => void enviar(s)}>{s}</button>)}</div>}
             </div>
@@ -138,11 +149,16 @@ export function ConversaDF({ veCaixa }: { veCaixa: boolean }) {
 
 /** Andamento dos pedidos do proprio usuario (equipe), sem dados de caixa. */
 export function MeusPedidosDF() {
-  const { ds, usuario } = useStore();
+  const { ds, usuario, modo } = useStore();
+  const solicitante = usuario.papel === 'Solicitante' && modo === 'remoto';
+  const [atualizando, setAtualizando] = useState(false);
+  const atualizar = () => { setAtualizando(true); actions.atualizarPedidosSolicitante().catch(() => undefined).finally(() => setAtualizando(false)); };
+  // o Solicitante nao recebe atualizacao automatica dos dados: relê a lista a cada minuto enquanto a tela esta aberta
+  useEffect(() => { if (!solicitante) return; const t = window.setInterval(() => { void actions.atualizarPedidosSolicitante().catch(() => undefined); }, 60_000); return () => window.clearInterval(t); }, [solicitante]);
   const meus = meusPedidosDF(ds, usuario).slice(0, 20);
   return (
     <div className="card">
-      <h2>Meus pedidos</h2>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}><h2 style={{ margin: 0 }}>Meus pedidos</h2>{solicitante && <button className="btn sm" onClick={atualizar} disabled={atualizando}>{atualizando ? 'Atualizando…' : 'Atualizar'}</button>}</div>
       {!meus.length && <p className="muted small">Nenhum pedido ainda. Fale com o Diretor Financeiro ao lado.</p>}
       {meus.map((l) => { const s = statusPedidoDF(l); return (
         <div key={l.id} className="df-prev">
@@ -253,19 +269,19 @@ export default function DiretorFinanceiro({ aba0 }: { aba0?: string }) {
   const { ds, usuario } = useStore();
   const veCaixa = pode(usuario, 'ver_bancos');
   const diretoria = veCaixa && pode(usuario, 'aprovar');
-  const [aba, setAba] = useState<'central' | 'conversa'>(diretoria && aba0 !== 'conversa' ? 'central' : 'conversa');
+  const [aba, setAba] = useState<'central' | 'conversa'>(diretoria && aba0 !== 'conversa' && aba0 !== 'nova' ? 'central' : 'conversa');
   const pendentes = ds.lancamentos.filter((l) => l.origem === 'diretor-financeiro' && l.status === 'Rascunho' && !l.excluidoEm).length;
   if (!diretoria) return (
     <>
       <PageHead title={`${NOME_DF} virtual`} subtitle="Peça um pagamento, informe quanto, para quando e para quem. O Diretor confere com a Diretoria e te avisa a decisão." />
-      <div className="df-equipe"><div className="card df-card-chat"><ConversaDF key={usuario.id} veCaixa={veCaixa} /></div><MeusPedidosDF /></div>
+      <div className="df-equipe"><div className="card df-card-chat"><ConversaDF key={usuario.id} veCaixa={veCaixa} nova={aba0 === 'nova'} /></div><MeusPedidosDF /></div>
     </>
   );
   return (
     <>
       <PageHead title={`${NOME_DF} virtual · Central`} subtitle="O Diretor escuta a equipe, analisa cada pedido contra o caixa e a reserva e traz aqui a orientação. Você decide; nada é pago sem isso." />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'central', label: `Central (${pendentes})` }, { id: 'conversa', label: 'Conversar com o Diretor' }]} />
-      {aba === 'central' ? <CentralDF /> : <div className="card df-card-chat"><ConversaDF key={usuario.id} veCaixa /></div>}
+      {aba === 'central' ? <CentralDF /> : <div className="card df-card-chat"><ConversaDF key={usuario.id} veCaixa nova={aba0 === 'nova'} /></div>}
     </>
   );
 }

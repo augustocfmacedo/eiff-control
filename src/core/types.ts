@@ -25,7 +25,9 @@ export type Papel =
   | 'Engenharia'
   | 'Compras'
   | 'Contabilidade'
-  | 'Auditoria';
+  | 'Auditoria'
+  // equipe que so conversa com o Diretor Financeiro para pedir pagamentos (sem acesso ao resto; banco fechado na 0066)
+  | 'Solicitante';
 
 export interface FatoresCenario {
   entradas: number;

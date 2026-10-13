@@ -18,6 +18,8 @@ import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
 import { carregarRadar, persistirRadar } from './radar.supabase';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
+import { datasetSolicitante, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
+import { hojeLocal } from '../core/engine';
 
 const URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
 const KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
@@ -169,6 +171,19 @@ async function selTodos(tabela: string, ordem: string, comId = true): Promise<Ro
 // ---------------------------------------------------------------------------
 // Leitura: banco -> Dataset
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------
+// Perfil Solicitante (0066): nao le nenhuma tabela; so as tres portas do banco
+// ---------------------------------------------------------------------------------------------------------------------
+async function porta<T>(nome: string, args?: Record<string, unknown>): Promise<T> {
+  if (!supabase) throw new RemotoError('Supabase não configurado.');
+  const { data, error } = await supabase.rpc(nome, args);
+  falha(nome, error);
+  return data as T;
+}
+export const contextoSolicitante = () => porta<ContextoSolicitante>('df_contexto');
+export const meusPedidosSolicitante = () => porta<PedidoSolicitante[]>('df_meus_pedidos');
+export const registrarPedidoSolicitante = (p: NovoPedidoSolicitante) => porta<PedidoSolicitante>('df_registrar_pedido', { p });
+
 export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario }> {
   if (!supabase) throw new RemotoError('Supabase não configurado.');
   const sessao = await sessaoAtual();
@@ -176,6 +191,11 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
 
   const [perfis, orgs, companies] = await Promise.all([sel('profile'), sel('organization'), sel('company')]);
   const meu = perfis.find((p) => p.id === sessao.userId);
+  if (!meu) {
+    // o Solicitante nao enxerga a tabela profile (0066): o perfil dele vem da porta df_contexto, e o dataset e so o do pedido
+    const ctx = await contextoSolicitante().catch(() => null);
+    if (ctx?.perfil.papel === 'Solicitante') return datasetSolicitante(ctx, await meusPedidosSolicitante(), hojeLocal());
+  }
   if (!meu) throw new RemotoError(`Usuário ${sessao.email} autenticado, mas sem perfil na tabela profile. Execute supabase/seed_profiles.sql.`);
   const org = orgs[0];
   const company = companies[0];

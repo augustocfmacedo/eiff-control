@@ -233,6 +233,7 @@ const usuarios = [
   { id: 'u-compras', nome: 'Compras', email: 'compras@eiff.local', papel: 'Compras', obras: '*', ativo: true },
   { id: 'u-contab', nome: 'Contabilidade', email: 'contabilidade@eiff.local', papel: 'Contabilidade', obras: '*', ativo: true },
   { id: 'u-audit', nome: 'Auditoria', email: 'auditoria@eiff.local', papel: 'Auditoria', obras: '*', ativo: true },
+  { id: 'u-solicitante', nome: 'Equipe (solicitante)', email: 'equipe@eiff.local', papel: 'Solicitante', obras: [], ativo: true },
 ];
 
 const dataset = {

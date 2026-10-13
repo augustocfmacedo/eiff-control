@@ -583,6 +583,7 @@ export const TRILHAS: Record<Papel, string[]> = {
   Compras: [...BASE, 'comp-pedido', 'comp-receber', 'comp-comparativo', 'est-entrada', 'est-consumo', 'eng-composicoes', 'fin-lancamento'],
   Contabilidade: [...BASE, 'ctb-dre', 'fin-receber', 'fin-fechamento', 'aud-auditoria'],
   Auditoria: [...BASE, 'aud-auditoria', 'fin-fechamento', 'ctb-dre', 'fin-ofx'],
+  Solicitante: ['fin-diretor-virtual'],
 };
 
 const porId = new Map(LICOES.map((l) => [l.id, l]));
@@ -719,6 +720,11 @@ export const ROTINAS: Record<Papel, Rotina> = {
     diaria: [],
     semanal: [{ texto: 'Amostra da trilha de auditoria', rota: '/auditoria', licaoId: 'aud-auditoria' }],
     mensal: [{ texto: 'Fechamento: divergências justificadas e reaberturas', rota: '/checks', licaoId: 'fin-fechamento' }, { texto: 'Conciliação completa das contas', rota: '/conciliacao', licaoId: 'fin-ofx' }],
+  },
+  Solicitante: {
+    diaria: [{ texto: 'Pedir ao Diretor Financeiro cada pagamento que precisar (valor, data, para quem, obra)', rota: '/diretor', licaoId: 'fin-diretor-virtual' }, { texto: 'Conferir em "Meus pedidos" o que foi decidido', rota: '/diretor' }],
+    semanal: [],
+    mensal: [],
   },
 };
 

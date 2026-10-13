@@ -67,7 +67,8 @@ import { motivosRecusaDono } from '../core/radar/donoConta';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, persistirRemoto, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { aoMudarSessao, carregarRemoto, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { lancamentoDoPedido } from './solicitante';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
 
@@ -281,7 +282,7 @@ export async function inicializar(): Promise<void> {
     emit();
     try {
       const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
-      const ds = garantirInbox(garantirPadroesRadar(dsRemoto), 'remoto');
+      const ds = usuario.papel === 'Solicitante' ? dsRemoto : garantirInbox(garantirPadroesRadar(dsRemoto), 'remoto');
       if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
       state = { ...state, ds, usuario, carregando: false, sessao: true, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
       if (offline) agendarRetentativa();
@@ -651,7 +652,7 @@ export const actions = {
     emit();
     try {
       const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
-      const ds = garantirPadroesRadar(dsRemoto);
+      const ds = usuario.papel === 'Solicitante' ? dsRemoto : garantirPadroesRadar(dsRemoto);
       if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
       state = { ...state, ds, usuario, carregando: false, sessao: true, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
       if (offline) agendarRetentativa();
@@ -740,7 +741,7 @@ export const actions = {
    * oficial nem abre alcada; espera a decisao da Diretoria no alinhamento diario (decidirPrevisaoDF).
    */
   registrarPrevisaoDF(p: PrevisaoDF): Lancamento {
-    exigir('editar_lancamento', p.codigoObra || undefined);
+    exigir('pedir_pagamento', state.usuario.papel === 'Solicitante' ? undefined : p.codigoObra || undefined);
     if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor da previsão deve ser positivo.');
     if (!p.vencimento) throw new RegraDeNegocioError('Data da previsão é obrigatória.');
     // idempotencia: o mesmo pedido (mesma pessoa, valor, data, fornecedor, categoria e descricao) ainda aguardando decisao nao
@@ -751,9 +752,41 @@ export const actions = {
     const l = this.novoLancamento({
       categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
       status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
-      observacoes: `Previsão registrada pelo Diretor Financeiro virtual a pedido de ${state.usuario.nome} (${state.usuario.papel}). Parecer: ${resumoParecer(p.parecer)}. Aguarda alinhamento diário.`,
+      observacoes: state.usuario.papel === 'Solicitante'
+        ? `Pedido de ${state.usuario.nome} pelo Diretor Financeiro virtual (perfil Solicitante). Aguarda o alinhamento diário da Diretoria.`
+        : `Previsão registrada pelo Diretor Financeiro virtual a pedido de ${state.usuario.nome} (${state.usuario.papel}). Parecer: ${resumoParecer(p.parecer)}. Aguarda alinhamento diário.`,
     });
-    return this.salvarLancamento(l).lancamento;
+    if (state.usuario.papel !== 'Solicitante') return this.salvarLancamento(l).lancamento;
+    // Solicitante (modo local/demo): so este pedido, numerado como no banco (PED-nnnn), sem passar por editar_lancamento
+    const ped: Lancamento = { ...l, id: seq('PED', state.ds.lancamentos.map((x) => x.id).filter((id) => id.startsWith('PED-'))), versao: 1 };
+    const erros = validarLancamento(state.ds, ped);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    commit(registrar({ ...state.ds, lancamentos: [...state.ds.lancamentos, ped] }, 'criar_lancamento', 'lancamento', ped.id, undefined, ped));
+    return ped;
+  },
+
+  /**
+   * Pedido de pagamento pelo Diretor Financeiro, para qualquer papel que possa pedir. O Solicitante em modo remoto nao grava
+   * nada pelas vias normais (0066): o pedido vai pela porta df_registrar_pedido e a lista dele e relida de df_meus_pedidos.
+   */
+  async solicitarPagamentoDF(p: PrevisaoDF): Promise<Lancamento> {
+    exigir('pedir_pagamento');
+    if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return this.registrarPrevisaoDF(p);
+    if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor do pedido deve ser positivo.');
+    if (!p.vencimento) throw new RegraDeNegocioError('Data do pedido é obrigatória.');
+    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120) });
+    await this.atualizarPedidosSolicitante();
+    return state.ds.lancamentos.find((x) => x.id === r.codigo) ?? lancamentoDoPedido(r, state.usuario.nome);
+  },
+
+  /** Relê os pedidos do Solicitante (porta df_meus_pedidos). Troca so a lista: nada e sincronizado de volta. */
+  async atualizarPedidosSolicitante() {
+    if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return;
+    const pedidos = await meusPedidosSolicitante();
+    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)) };
+    baseSincronizada = ds;
+    state = { ...state, ds };
+    emit();
   },
   /** Alinhamento diario (Diretoria/Financeiro): programar (vira lancamento oficial, alcadas normais), reagendar (segue rascunho) ou recusar (cancela com motivo). */
   decidirPrevisaoDF(id: string, decisao: 'programar' | 'reagendar' | 'recusar', dados: { vencimento?: string; motivo?: string } = {}) {
