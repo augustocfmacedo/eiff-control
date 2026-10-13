@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NOME_SINAL, decisorDe, empresaSuprimida, sinalPrincipal, type Empresa } from '../../core/radar';
+import { FILTRO_SEM_DONO, NOME_SINAL, contasSemDonoValido, correspondeFiltroDono, decisorDe, empresaSuprimida, estadoDonoConta, sinalPrincipal, type Empresa } from '../../core/radar';
 import { actions, pode, useStore } from '../../data/store';
 import { Badge, Empty, Input, KpiStrip, Link, PageHead, Select, useToast } from '../../ui/components';
 import { EmpresaForm, ImportarForm, ScoreModal, ScorePill, d } from './comum';
@@ -15,6 +15,7 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
   const [uf, setUf] = useState('');
   const [setor, setSetor] = useState('');
   const [situacao, setSituacao] = useState('');
+  const [dono, setDono] = useState(query.get('dono') ?? ''); // CD-D5.1: '' = todos, FILTRO_SEM_DONO ou id do usuário
   const [ordem, setOrdem] = useState<'prioridade' | 'nome' | 'proxima' | 'sinal'>('prioridade');
   const [limite, setLimite] = useState(50);
   const [score, setScore] = useState<Empresa | null>(null);
@@ -26,7 +27,12 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
   const ufs = [...new Set(todas.map((e) => e.uf).filter((x): x is string => !!x))].sort();
   const setores = [...new Set(todas.map((e) => e.setor).filter((x): x is string => !!x))].sort();
   const q = busca.trim().toLowerCase();
-  let lista = todas.filter((e) => (!q || `${e.razaoSocial} ${e.nomeFantasia ?? ''} ${e.cnpj ?? ''} ${e.dominio ?? ''} ${e.cidade ?? ''}`.toLowerCase().includes(q)) && (!classe || e.priorityClass === classe) && (!uf || e.uf === uf) && (!setor || e.setor === setor));
+  let lista = todas.filter((e) => (!q || `${e.razaoSocial} ${e.nomeFantasia ?? ''} ${e.cnpj ?? ''} ${e.dominio ?? ''} ${e.cidade ?? ''}`.toLowerCase().includes(q)) && (!classe || e.priorityClass === classe) && (!uf || e.uf === uf) && (!setor || e.setor === setor) && correspondeFiltroDono(e, dono, ds.usuarios));
+  // CD-D5.1: dono da conta (o mesmo estado de donoConta.ts; a tela só projeta)
+  const nomeDono = (e: Empresa) => ds.usuarios.find((u) => u.id === e.commercialOwnerId)?.nome;
+  const idsDonosGravados = new Set(todas.map((e) => e.commercialOwnerId).filter((x): x is string => !!x));
+  const opcoesDono = [{ value: FILTRO_SEM_DONO, label: 'Sem dono' }, ...ds.usuarios.filter((u) => u.ativo || idsDonosGravados.has(u.id)).map((u) => ({ value: u.id, label: u.ativo ? u.nome : `${u.nome} (inativo)` })).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))];
+  const semDono = contasSemDonoValido({ empresas: todas }, ds.usuarios).length;
   if (situacao === 'vencida') lista = lista.filter((e) => e.proximaAcaoEm && e.proximaAcaoEm.slice(0, 10) < hoje);
   if (situacao === 'sem-acao') lista = lista.filter((e) => !e.proximaAcaoEm);
   if (situacao === 'sem-decisor') lista = lista.filter((e) => !decisorDe(e.id, r)?.decisor);
@@ -45,6 +51,7 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
         { label: 'Com decisor', value: todas.filter((e) => decisorDe(e.id, r)?.decisor).length },
         { label: 'Com sinal (30 d)', value: todas.filter((e) => e.ultimoSinalEm && e.ultimoSinalEm >= new Date(new Date(hoje).getTime() - 30 * 86400000).toISOString().slice(0, 10)).length },
         { label: 'Sem próxima ação', value: todas.filter((e) => !e.proximaAcaoEm).length },
+        { label: 'Sem dono', value: semDono, hint: 'contas ativas sem dono comercial válido', tone: semDono ? 'warn' : undefined },
         { label: 'Duplicatas pendentes', value: r.duplicatas.filter((x) => x.status === 'pendente').length, to: '/radar?aba=duplicatas' },
       ]} />
       <div style={{ height: 16 }} />
@@ -55,16 +62,18 @@ export default function RadarEmpresas({ query }: { query: URLSearchParams }) {
           <Select value={uf} onChange={setUf} options={ufs} allowEmpty="UF" />
           <Select value={setor} onChange={setSetor} options={setores} allowEmpty="Setor" />
           <Select value={situacao} onChange={setSituacao} options={[{ value: 'vencida', label: 'Próxima ação vencida' }, { value: 'sem-acao', label: 'Sem próxima ação' }, { value: 'sem-decisor', label: 'Sem decisor' }, { value: 'sinal-30', label: 'Sinal nos últimos 30 dias' }, { value: 'suprimida', label: 'Não contatar' }]} allowEmpty="Situação" />
+          <Select value={dono} onChange={setDono} options={opcoesDono} allowEmpty="Dono" aria-label="Filtrar por dono da conta" />
           <Select value={ordem} onChange={(v) => setOrdem(v as 'prioridade')} options={[{ value: 'prioridade', label: 'Ordenar: prioridade' }, { value: 'nome', label: 'Ordenar: nome' }, { value: 'proxima', label: 'Ordenar: próxima ação' }, { value: 'sinal', label: 'Ordenar: último sinal' }]} />
           <span className="small muted">{lista.length} de {todas.length}</span>
-          <VistasSalvas tela="radar-empresas" filtros={{ busca, classe, uf, setor, situacao, ordem }} aplicar={(v) => { setBusca(v.busca); setClasse(v.classe); setUf(v.uf); setSetor(v.setor); setSituacao(v.situacao); setOrdem(v.ordem); }} ehPadrao={(v) => !v.busca && !v.classe && !v.uf && !v.setor && !v.situacao && v.ordem === 'prioridade'} />
+          <VistasSalvas tela="radar-empresas" filtros={{ busca, classe, uf, setor, situacao, dono, ordem }} aplicar={(v) => { setBusca(v.busca); setClasse(v.classe); setUf(v.uf); setSetor(v.setor); setSituacao(v.situacao); setDono(v.dono ?? ''); setOrdem(v.ordem); }} ehPadrao={(v) => !v.busca && !v.classe && !v.uf && !v.setor && !v.situacao && !v.dono && v.ordem === 'prioridade'} />
         </div>
         {!lista.length ? <Empty icone="empresas" titulo={todas.length ? 'Nenhuma empresa com esses filtros' : 'Nenhuma empresa'}>{todas.length ? 'Ajuste os filtros.' : 'Importe uma base em CSV ou cadastre a primeira empresa.'}</Empty> : (
-          <Tabela linhas={lista.slice(0, limite)} chave={(e) => e.id} altura="calc(100vh - 300px)" csv={{ nome: 'radar-empresas', cabecalho: ['Empresa', 'Razão social', 'CNPJ', 'Cidade', 'UF', 'Setor', 'Classe', 'Prioridade', 'Fit', 'Timing', 'Intenção', 'Último contato', 'Próxima ação'], linha: (e) => [e.nomeFantasia ?? e.razaoSocial, e.razaoSocial, e.cnpj, e.cidade, e.uf, e.setor, e.priorityClass, e.priorityScore, e.fitScore, e.timingScore, e.intentScore, e.ultimoContatoEm, e.proximaAcaoEm] }}
-            colunas={[{ titulo: 'Empresa', ordenar: (e) => e.nomeFantasia ?? e.razaoSocial }, { titulo: 'Local', ordenar: (e) => [e.cidade, e.uf].filter(Boolean).join('/') || undefined }, { titulo: 'Setor', ordenar: (e) => e.setor }, { titulo: 'Prioridade', num: true, ordenar: (e) => e.priorityScore }, { titulo: 'Fit', num: true, ordenar: (e) => e.fitScore }, { titulo: 'Timing', num: true, ordenar: (e) => e.timingScore }, { titulo: 'Intenção', num: true, ordenar: (e) => e.intentScore }, { titulo: 'Sinal principal' }, { titulo: 'Decisor' }, { titulo: 'Último contato', ordenar: (e) => e.ultimoContatoEm }, { titulo: 'Próxima ação', ordenar: (e) => e.proximaAcaoEm }]}
+          <Tabela linhas={lista.slice(0, limite)} chave={(e) => e.id} altura="calc(100vh - 300px)" csv={{ nome: 'radar-empresas', cabecalho: ['Empresa', 'Razão social', 'CNPJ', 'Cidade', 'UF', 'Setor', 'Classe', 'Prioridade', 'Fit', 'Timing', 'Intenção', 'Último contato', 'Próxima ação', 'Dono'], linha: (e) => [e.nomeFantasia ?? e.razaoSocial, e.razaoSocial, e.cnpj, e.cidade, e.uf, e.setor, e.priorityClass, e.priorityScore, e.fitScore, e.timingScore, e.intentScore, e.ultimoContatoEm, e.proximaAcaoEm, estadoDonoConta(e, ds.usuarios) === 'SEM_DONO' ? 'sem dono' : `${nomeDono(e) ?? e.commercialOwnerId}${estadoDonoConta(e, ds.usuarios) === 'DONO_INATIVO' ? ' (inativo)' : ''}`] }}
+            colunas={[{ titulo: 'Empresa', ordenar: (e) => e.nomeFantasia ?? e.razaoSocial }, { titulo: 'Dono', ordenar: (e) => nomeDono(e) }, { titulo: 'Local', ordenar: (e) => [e.cidade, e.uf].filter(Boolean).join('/') || undefined }, { titulo: 'Setor', ordenar: (e) => e.setor }, { titulo: 'Prioridade', num: true, ordenar: (e) => e.priorityScore }, { titulo: 'Fit', num: true, ordenar: (e) => e.fitScore }, { titulo: 'Timing', num: true, ordenar: (e) => e.timingScore }, { titulo: 'Intenção', num: true, ordenar: (e) => e.intentScore }, { titulo: 'Sinal principal' }, { titulo: 'Decisor' }, { titulo: 'Último contato', ordenar: (e) => e.ultimoContatoEm }, { titulo: 'Próxima ação', ordenar: (e) => e.proximaAcaoEm }]}
             linha={(e) => { const s = sinalPrincipal(e.id, r, hoje); const dec = decisorDe(e.id, r); const venc = e.proximaAcaoEm && e.proximaAcaoEm.slice(0, 10) < hoje; return (
               <>
                 <td><Link to={`/radar/empresas/${e.id}`}><b>{e.nomeFantasia ?? e.razaoSocial}</b></Link>{e.nomeFantasia && <div className="muted small">{e.razaoSocial}</div>}{empresaSuprimida(e.id, r) && <Badge tone="bad">não contatar</Badge>}</td>
+                <td className="small">{estadoDonoConta(e, ds.usuarios) === 'SEM_DONO' ? <span className="muted">sem dono</span> : <>{nomeDono(e) ?? '—'}{estadoDonoConta(e, ds.usuarios) === 'DONO_INATIVO' && <> <Badge tone="warn">inativo</Badge></>}</>}</td>
                 <td className="small">{[e.cidade, e.uf].filter(Boolean).join('/') || '—'}</td><td className="small">{e.setor ?? '—'}</td>
                 <td className="num"><ScorePill e={e} onClick={() => setScore(e)} /></td><td className="num">{n(e.fitScore)}</td><td className="num">{n(e.timingScore)}</td><td className="num">{n(e.intentScore)}</td>
                 <td className="small">{s ? `${NOME_SINAL[s.tipo]} · ${d(s.eventoEm)}` : '—'}</td>

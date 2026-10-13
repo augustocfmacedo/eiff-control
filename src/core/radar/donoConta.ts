@@ -58,6 +58,20 @@ export function contasSemDonoValido(r: Pick<RadarDataset, 'empresas'>, usuarios:
   return r.empresas.filter((e) => operacional(e) && estadoDonoConta(e, usuarios) !== 'COM_DONO');
 }
 
+/** CD-D5.1: valor do filtro da carteira para "sem dono válido" (SEM_DONO ou DONO_INATIVO). */
+export const FILTRO_SEM_DONO = 'sem-dono';
+
+/**
+ * CD-D5.1 — filtro da carteira por dono. Vazio = todas; `FILTRO_SEM_DONO` = sem dono válido; qualquer outro valor é o
+ * id de um usuário e casa com o dono GRAVADO (mesmo que esse usuário esteja inativo, para a conta aparecer e ser
+ * redistribuída). Não ordena nem pontua: só diz se a conta entra na lista.
+ */
+export function correspondeFiltroDono(e: Pick<Empresa, 'commercialOwnerId'>, filtro: string, usuarios: readonly UsuarioDono[]): boolean {
+  if (!filtro) return true;
+  if (filtro === FILTRO_SEM_DONO) return estadoDonoConta(e, usuarios) !== 'COM_DONO';
+  return e.commercialOwnerId?.trim() === filtro;
+}
+
 /**
  * Porta única para qualquer métrica de desempenho individual futura: só conta ativa, não mesclada e COM dono válido
  * entra. SEM_DONO e DONO_INATIVO ficam fora.
