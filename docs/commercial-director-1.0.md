@@ -735,3 +735,32 @@ da CD-D5 e da CD-D3 não se combinam.
 - **Provas**: `src/data/radar.dono.store.test.ts` (matriz 1–16 da decisão), `src/core/radar/donoConta.test.ts`
   (estados, medida, mapeamento, `upsertEmpresa`) e `scripts/pg-smoke-dono-conta.mjs` no Quality Gate (FK, organização,
   ativo, recusas, remoção, auditoria antes/depois com autor, dono que ficou inativo e a gravação da mescla).
+
+### 19.4 CD-D5.1 — gestão do dono na interface (13/10/2026)
+
+Torna o dono da conta utilizável na tela, sem lógica nova: a interface só projeta o estado de `donoConta.ts` e grava
+pela ação única `actions.definirDonoContaRadar`. Sem migration, sem mudança de RLS, gatilho ou permissão.
+
+- **Ficha da empresa** (`src/screens/radar/Empresa.tsx` + componente `src/screens/radar/DonoConta.tsx`): linha
+  compacta "Dono da conta" logo abaixo do cabeçalho, visível em todas as abas. Mostra o nome (COM_DONO), "sem dono"
+  (SEM_DONO) ou o nome com a marca "inativo" (DONO_INATIVO). Com a permissão `radar`: escolher entre os usuários
+  **ativos** da organização ("Definir dono…" / "Trocar por…", o dono atual não aparece na lista), confirmar com um
+  clique e "Remover" (pede confirmação). Sem a permissão, só leitura. Conta mesclada não é editável e aponta para a
+  conta canônica. A dica do rótulo lembra que o dono não muda o responsável de tarefas e oportunidades.
+- **Carteira** (`src/screens/radar/Empresas.tsx`): coluna "Dono" (ordenável), filtro "Dono" com "Sem dono" (SEM_DONO
+  ou DONO_INATIVO) e cada usuário ativo ou que já é dono gravado (marcado "inativo"), por `correspondeFiltroDono`;
+  indicador "Sem dono" na faixa (`contasSemDonoValido`); a coluna entra na exportação CSV e o filtro nas vistas
+  salvas (vistas antigas sem o campo abrem com "todos"). A carteira é só leitura.
+- **Regra de autorização (sem ampliar nada)**: definir, trocar ou remover dono exige a permissão `radar` — os mesmos
+  papéis da política `radar_company_write` no banco (Administrador, Diretoria, Financeiro, Compras, Gestor de obra,
+  Engenharia). Validação em duas camadas: o store recusa usuário fora da lista da organização ou inativo
+  (`motivosRecusaDono`) e o gatilho `radar_company_dono_valido` recusa no banco perfil inexistente, inativo ou de outra
+  organização. Auditoria em duas camadas: `radar_definir_dono_conta` / `radar_remover_dono_conta` no app (antes, depois,
+  motivo) e `radar_company_audit` no banco (linha inteira antes/depois com o autor).
+- **Limite conhecido, sem mudança nesta fase**: quem tem a permissão `radar` também pode gravar
+  `commercial_owner_id` direto pela API do banco, sem passar pela ação do app — o gatilho continua impedindo dono
+  inválido e a auditoria do banco registra, mas a auditoria do app (com motivo) não. Fechar isso exigiria revogar o
+  UPDATE da coluna para `authenticated` e criar uma RPC; é proposta separada, não autorizada.
+- **Provas**: `src/screens/radar/DonoConta.test.ts` (quatro estados, opções só de ativos, sem permissão = só leitura,
+  conta mesclada, filtro da carteira, guardas de que a tela não grava nem valida por conta própria), além das provas
+  da CD-D5 (§19.3).
