@@ -133,8 +133,23 @@ function igual(nome, obtido, esperado) {
  */
 const COLUNAS_APP = ["cnpj","legal_name","trade_name","domain","website","linkedin_url","industry","cnae","city","state","country","employee_range","revenue_range","capital_social","number_of_locations","source_id","source_external_id","explorium_business_id","notes","active","merged_into","fit_score","intent_score","timing_score","relationship_score","data_quality_score","priority_score","priority_class","last_signal_at","last_contact_at","next_action_at","updated_by"];
 
-/** Rollback da 0065 (docs/commercial-director-1.0.md §19.5): o mesmo texto é provado no fim deste smoke. */
-const ROLLBACK_0065 = 'drop function if exists radar_definir_dono_conta(uuid, uuid, text); grant insert, update on radar_company to anon, authenticated;';
+/**
+ * Rollback EXATO da 0065: o arquivo versionado, o mesmo que a produção usaria (docs/commercial-director-1.0.md §19.5).
+ * O begin/commit dele sai aqui porque o smoke já roda dentro de uma transação que termina em rollback.
+ */
+const ROLLBACK_0065 = readFileSync(new URL('../supabase/rollbacks/0065_radar_company_owner_governado.rollback.sql', import.meta.url), 'utf8')
+  .replace(/^(begin|commit);$/gm, '');
+
+/** ACL de radar_company: o texto exato da tabela, as colunas com privilégio próprio e cada privilégio de anon/authenticated. */
+const ACL_RADAR_COMPANY = `select json_build_object(
+  'relacl', (select relacl::text from pg_class where oid = 'radar_company'::regclass),
+  'colunas_com_acl', (select count(*) from pg_attribute where attrelid = 'radar_company'::regclass and attnum > 0 and not attisdropped and attacl is not null),
+  'privilegios', (select string_agg(r || ':' || c.attname || ':' || p || '=' || has_column_privilege(r, 'radar_company', c.attname, p), ',' order by r, c.attname, p)
+    from unnest(array['anon', 'authenticated']) r cross join pg_attribute c cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) p
+    where c.attrelid = 'radar_company'::regclass and c.attnum > 0 and not c.attisdropped),
+  'tabela', (select string_agg(r || ':' || p || '=' || has_table_privilege(r, 'radar_company', p), ',' order by r, p)
+    from unnest(array['anon', 'authenticated']) r cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p)
+)::text as acl`;
 
 async function main() {
   console.log('CD-D5 · smoke das migrations 0064 e 0065 em PostgreSQL descartavel (PGlite)\n');
@@ -236,6 +251,8 @@ async function main() {
   esperaAceito('app NOVO + banco sem 0065: INSERT sem o dono funciona', await insertApp(org, ana));
   await recusa('app NOVO + banco sem 0065: mudar o dono falha fechado (RPC ainda não existe)', 'select radar_definir_dono_conta($1, $2, $3)', [contaCompat, ana, 'antes da 0065'], 'does not exist');
   igual('app NOVO + banco sem 0065: nada mudou no dono', await valor('select commercial_owner_id from radar_company where id=$1', [contaCompat]), null);
+
+  const aclAntes0065 = JSON.parse(await valor(ACL_RADAR_COMPANY));
 
   console.log('\nCD-D5.2 · 0065: atribuição governada (RPC radar_definir_dono_conta + privilégio de coluna)');
   await db.exec(SQL_0065);
@@ -347,8 +364,15 @@ async function main() {
   await esperaNegado('app ANTIGO + banco com 0065: UPDATE com commercial_owner_id (mesmo valor) é negado', await updateAntigo(contaG, await donoDe(contaG)));
   await esperaNegado('app ANTIGO + banco com 0065: INSERT com commercial_owner_id null é negado', await insertAntigo(org));
 
-  console.log('\nCD-D5.2 · rollback da 0065');
+  console.log('\nCD-D5.2 · rollback EXATO da 0065 (supabase/rollbacks/0065_radar_company_owner_governado.rollback.sql)');
+  const aclCom0065 = JSON.parse(await valor(ACL_RADAR_COMPANY));
+  igual('com a 0065: 38 colunas ganharam privilégio próprio (as demais, sem o dono)', aclCom0065.colunas_com_acl, 38);
   await db.exec(ROLLBACK_0065);
+  const aclDepois = JSON.parse(await valor(ACL_RADAR_COMPANY));
+  igual('rollback: ACL da tabela idêntica à de antes da 0065 (texto exato)', aclDepois.relacl, aclAntes0065.relacl);
+  igual('rollback: nenhuma coluna com privilégio próprio (como antes da 0065)', aclDepois.colunas_com_acl, aclAntes0065.colunas_com_acl);
+  igual('rollback: cada privilégio de anon/authenticated por coluna igual ao de antes (nada ampliado, nada perdido)', aclDepois.privilegios, aclAntes0065.privilegios);
+  igual('rollback: privilégios de tabela de anon/authenticated iguais aos de antes', aclDepois.tabela, aclAntes0065.tabela);
   esperaAceito('depois do rollback: app ANTIGO volta a gravar (UPDATE com commercial_owner_id)', await updateAntigo(contaG, await donoDe(contaG)));
   esperaAceito('depois do rollback: app ANTIGO volta a criar (INSERT com commercial_owner_id)', await insertAntigo(org));
   esperaAceito('depois do rollback: app NOVO segue gravando as demais colunas', await updateApp(contaG, adm));

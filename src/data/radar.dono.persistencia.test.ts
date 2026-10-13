@@ -161,6 +161,21 @@ describe('CD-D5.2 · guardas de fonte', () => {
     }
   });
 
+  it('o rollback versionado da 0065 revoga exatamente as colunas que a 0065 concedeu, numa transação, e a §19.5 aponta para ele', () => {
+    const colunas = (sql: string, re: RegExp) => sql.match(re)![1].split(',').map((c) => c.trim()).sort();
+    const migration = fonte('supabase/migrations/0065_radar_company_owner_governado.sql');
+    const rollback = fonte('supabase/rollbacks/0065_radar_company_owner_governado.rollback.sql');
+    for (const g of ['insert', 'update']) {
+      expect(colunas(rollback, new RegExp(`revoke ${g} \\(([^)]*)\\)`)), g).toEqual(colunas(migration, new RegExp(`grant ${g} \\(([^)]*)\\)`)));
+    }
+    expect(rollback.match(/^begin;$/gm)).toHaveLength(1);
+    expect(rollback.match(/^commit;$/gm)).toHaveLength(1);
+    expect(rollback).toContain('drop function if exists public.radar_definir_dono_conta(uuid, uuid, text);');
+    expect(rollback).toContain('grant insert, update on public.radar_company to anon, authenticated;');
+    expect(fonte('docs/commercial-director-1.0.md')).toContain('supabase/rollbacks/0065_radar_company_owner_governado.rollback.sql');
+    expect(fonte('scripts/pg-smoke-dono-conta.mjs')).toContain('supabase/rollbacks/0065_radar_company_owner_governado.rollback.sql');
+  });
+
   it('a mudança de dono vai pela RPC; a auditoria do app pula as ações que a RPC já audita', () => {
     expect(fonte('src/data/radar.supabase.ts')).toContain("h.rpc('radar_definir_dono_conta'");
     const sb = fonte('src/data/supabase.ts');
