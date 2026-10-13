@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { addDays, calcLancamentos } from '../core/engine';
 import { DEPARTAMENTOS, livroCaixa, type LinhaCaixa } from '../core/caixa';
 import { centralDF } from '../core/cfo';
+import { saudeCaixa, type Sinal } from '../core/saudeCaixa';
 import { BriefingDF, ConversaDF, PedidosDF } from './DiretorFinanceiro';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Sparkline } from '../ui/charts';
@@ -15,6 +16,7 @@ import { navegar } from '../ui/router';
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 const dCurta = (s: string) => s.split('-').reverse().slice(0, 2).join('/');
 const TOM: Record<LinhaCaixa['situacao'], Tone> = { Pago: 'ok', Previsto: 'info', Vencido: 'bad', 'Em aprovação': 'warn', Rascunho: 'muted', Extrato: 'warn' };
+const ROTULO_SINAL: Record<Sinal, string> = { verde: 'em ordem', amarelo: 'atenção', vermelho: 'crítico' };
 const HORIZONTES = [{ value: '30', label: 'Próximos 30 dias' }, { value: '60', label: 'Próximos 60 dias' }, { value: '90', label: 'Próximos 90 dias' }, { value: '365', label: 'Próximos 12 meses' }];
 
 interface Rascunho { data: string; descricao: string; departamento: string; codigoObra: string; entra: number; sai: number; pago: boolean }
@@ -35,7 +37,9 @@ export default function Caixa() {
   const { toast, el } = useToast();
   const verBancos = pode(usuario, 'ver_bancos');
   const ate = addDays(hoje, Number(horizonte));
-  const livro = useMemo(() => livroCaixa(ds, ate, calcLancamentos(ds), { verBancos }), [ds, ate, verBancos]);
+  const lancs = useMemo(() => calcLancamentos(ds), [ds]);
+  const livro = useMemo(() => livroCaixa(ds, ate, lancs, { verBancos }), [ds, ate, lancs, verBancos]);
+  const saude = useMemo(() => (verBancos ? saudeCaixa(ds, lancs) : null), [ds, lancs, verBancos]);
   const obras = useMemo(() => obrasVisiveis(usuario, ds.obras).filter((o) => o.status !== 'Cancelada' && o.status !== 'Concluída'), [usuario, ds.obras]);
   const linhas = useMemo(() => livro.linhas.filter((x) => (!dep || x.departamento === dep) && (!soAberto || x.situacao !== 'Pago')), [livro, dep, soAberto]);
   // Diretor Financeiro dentro da Caixa: briefing do dia e pedidos da equipe para decidir (so para quem decide: ve bancos e aprova)
@@ -135,6 +139,22 @@ export default function Caixa() {
         { label: 'Pagamentos vencidos', value: money(livro.vencidosPagar), tone: livro.vencidosPagar ? 'neg' : undefined, hint: 'contam no saldo de hoje' },
         { label: 'Recebimentos vencidos', value: money(livro.vencidosReceber), tone: livro.vencidosReceber ? 'warn' : undefined, hint: 'fora do saldo até entrar' },
       ]} />
+      {saude && (
+        <div className="card saude">
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <h2 style={{ margin: 0 }}>Saúde do caixa · próximos {saude.janela} dias</h2>
+            <span className={`saude-geral ${saude.geral}`}>{saude.vermelhos ? `${saude.vermelhos} em vermelho` : saude.amarelos ? 'atenção' : 'tudo em ordem'}{saude.vermelhos && saude.amarelos ? ` · ${saude.amarelos} em atenção` : ''}</span>
+          </div>
+          <div className="saude-grid">{saude.indicadores.map((i) => (
+            <div key={i.id} className={`saude-item ${i.sinal}${i.rota ? ' link' : ''}`} onClick={i.rota ? () => navegar(i.rota!) : undefined} title={i.sinal !== 'verde' && i.acao ? i.acao : i.explicacao}>
+              <div className="saude-cab"><span className={`saude-ponto ${i.sinal}`} aria-label={ROTULO_SINAL[i.sinal]} />{i.titulo}</div>
+              <div className="saude-valor">{i.valor}</div>
+              <div className="small muted">{i.explicacao}</div>
+              {i.sinal !== 'verde' && i.acao && <div className="small saude-acao">{i.acao}</div>}
+            </div>
+          ))}</div>
+        </div>
+      )}
       {livro.extratoAte === undefined && <div className="alert info">Ainda não há extrato importado depois do marco. Importe o OFX em Bancos e conciliação para conferir o saldo e marcar os pagos automaticamente.</div>}
       {abaixo.length > 0 && <div className="alert warn">O saldo fica abaixo da reserva mínima em {abaixo.length} dia(s), a partir de {d(abaixo[0].data)}.</div>}
 
