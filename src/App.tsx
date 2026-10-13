@@ -24,6 +24,7 @@ const Aprovacoes = lazy(() => import('./screens/Aprovacoes'));
 const Auditoria = lazy(() => import('./screens/Auditoria'));
 const Cadastros = lazy(() => import('./screens/Cadastros'));
 const DiretorFinanceiro = lazy(() => import('./screens/DiretorFinanceiro'));
+const Caixa = lazy(() => import('./screens/Caixa'));
 const CaixaEntrada = lazy(() => import('./screens/CaixaEntrada'));
 const CentralObras = lazy(() => import('./screens/CentralObras'));
 const Checks = lazy(() => import('./screens/Checks'));
@@ -173,6 +174,7 @@ export default function App() {
     case 'pagar': tela = <Lancamentos modo="pagar" query={rota.query} key={'p' + rota.query.toString()} />; break;
     case 'receber': tela = <Lancamentos modo="receber" query={rota.query} key={'r' + rota.query.toString()} />; break;
     case 'aprovacoes': tela = <Aprovacoes query={rota.query} key={rota.query.toString()} />; break;
+    case 'caixa': tela = <Caixa />; break;
     case 'posicao': tela = <PosicaoDiaria />; break;
     case 'fluxo13': tela = <Fluxo13 />; break;
     case 'fluxo24': tela = <Fluxo24 />; break;
