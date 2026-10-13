@@ -347,6 +347,8 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 @media (max-width: 900px) { .df-equipe { grid-template-columns: 1fr; } }
 .df-briefing { display: flex; gap: 12px; align-items: flex-start; border-left: 4px solid var(--brand); }
 .df-briefing p { margin: 4px 0 0; line-height: 1.5; }
+.df-briefing + .card, .df-briefing + .hero-grid { margin-top: 14px; }
+.df-briefing .row { margin-top: 10px; }
 .df-pedido { padding: 12px 0; border-top: 1px solid var(--border); }
 .df-pedido:first-of-type { border-top: 0; }
 .df-pedido-cab { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }

@@ -3,7 +3,7 @@
 // impacto no caixa, alcada), o briefing do dia, a agenda da semana e o historico; e a conversa completa com numeros.
 // Toda analise e deterministica (src/core/cfo.ts); a IA (opcional) so interpreta o texto.
 import React, { useEffect, useRef, useState } from 'react';
-import { NOME_DF, ROTULO_STATUS_DF, analisarPagamento, br, catalogoDe, centralDF, completarPedido, fmt, interpretacaoDaIa, interpretarPedido, meusPedidosDF, montarPrevisao, responderDF, statusPedidoDF, type Parecer, type PedidoInterpretado } from '../core/cfo';
+import { NOME_DF, ROTULO_STATUS_DF, analisarPagamento, br, catalogoDe, centralDF, completarPedido, type CentralDF as DadosCentralDF, fmt, interpretacaoDaIa, interpretarPedido, meusPedidosDF, montarPrevisao, responderDF, statusPedidoDF, type Parecer, type PedidoInterpretado } from '../core/cfo';
 import { addDays } from '../core/engine';
 import { actions, pode, useStore } from '../data/store';
 import { tokenSessao } from '../data/supabase';
@@ -154,34 +154,33 @@ export function MeusPedidosDF() {
 }
 
 /** Central da Diretoria: o DF entrega os pedidos ja orientados; um clique segue a recomendacao. */
-export function CentralDF() {
-  const { ds, usuario } = useStore();
+/** Briefing falado do dia (src/core/cfo.ts centralDF): usado na Central e no topo da tela Caixa. */
+export function BriefingDF({ c, acoes }: { c: DadosCentralDF; acoes?: React.ReactNode }) {
+  const { ds } = useStore();
+  return (
+    <div className="card df-briefing">
+      <div className="df-avatar"><Icon name="chat" size={22} /></div>
+      <div style={{ flex: 1 }}><b>Briefing do {NOME_DF} · {br(ds.params.dataBase)}</b><p>{c.briefing}</p>{acoes && <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>{acoes}</div>}</div>
+    </div>
+  );
+}
+
+/** Pedidos da equipe ja orientados, com a decisao na hora (programar, reagendar, outra data, recusar). Na Central e na Caixa. */
+export function PedidosDF({ c, vazio = true }: { c: DadosCentralDF; vazio?: boolean }) {
+  const { usuario } = useStore();
   const { toast, el } = useToast();
-  const c = centralDF(ds);
   const al = c.alinhamento;
   const [reag, setReag] = useState<{ id: string; data: string } | null>(null);
   const [recusa, setRecusa] = useState<{ id: string; motivo: string } | null>(null);
   const podeDecidir = pode(usuario, 'aprovar');
-  const max = Math.max(1, ...al.dias.map((d) => Math.abs(d.saldo)), ...al.dias.map((d) => Math.abs(d.saldoComPrevisoes)), al.reserva);
-  const seguir = (id: string, o: ReturnType<typeof centralDF>['orientacoes'] extends Map<string, infer V> ? V : never) => {
+  const seguir = (id: string, o: DadosCentralDF['orientacoes'] extends Map<string, infer V> ? V : never) => {
     if (o.acaoSugerida === 'programar') tentar(() => actions.decidirPrevisaoDF(id, 'programar'), toast, () => toast(`${id} programado.`));
     else if (o.acaoSugerida === 'reagendar' && o.dataSugerida) tentar(() => actions.decidirPrevisaoDF(id, 'reagendar', { vencimento: o.dataSugerida }), toast, () => toast(`${id} reagendado para ${br(o.dataSugerida)}.`));
     else if (o.acaoSugerida === 'recusar') setRecusa({ id, motivo: 'Caixa não comporta no período' });
   };
+  if (!al.previsoes.length && !vazio) return el; // sem pedidos (ex.: acabou de decidir o ultimo): some o cartao, fica o aviso
   return (
-    <div>
-      <div className="card df-briefing">
-        <div className="df-avatar"><Icon name="chat" size={22} /></div>
-        <div><b>Briefing do {NOME_DF} · {br(ds.params.dataBase)}</b><p>{c.briefing}</p></div>
-      </div>
-      <div className="grid cols-4" style={{ margin: '14px 0' }}>
-        <div className="kpi"><div className="label">Pedidos para decidir</div><div className="value">{al.previsoes.length}</div><div className="hint">{money(al.totalPrevisoes)}</div></div>
-        <div className="kpi"><div className="label">Caixa hoje · Posição diária</div><div className="value">{money(al.saldoHoje)}</div><div className="hint">{al.extrato.texto}{al.compromissosHoje ? ` · vencidos e hoje −${money(al.compromissosHoje)}` : ''} · piso {money(al.reserva)}</div></div>
-        <div className="kpi"><div className="label">Menor saldo da semana</div><div className="value">{money(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}</div><div className="hint">com os pedidos</div></div>
-        <div className="kpi"><div className="label">Vence hoje</div><div className="value">{al.venceHoje.length}</div><div className="hint">{money(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}</div></div>
-      </div>
-      {al.alertas.map((a) => <div key={a} className="alert warn">{a}</div>)}
-
+    <>
       <div className="card" style={{ marginBottom: 14 }}>
         <h2>Pedidos da equipe · orientação do {NOME_DF}</h2>
         {!al.previsoes.length && <p className="muted small">Nenhum pedido aguardando. Quando alguém pedir um pagamento ao Diretor Financeiro, ele aparece aqui já analisado.</p>}
@@ -202,6 +201,30 @@ export function CentralDF() {
         ); })}
       </div>
 
+      {reag && <Modal title={`Outra data para ${reag.id}`} onClose={() => setReag(null)}><Field label="Nova data" req><Input type="date" value={reag.data} onChange={(e) => setReag({ ...reag, data: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setReag(null)}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.decidirPrevisaoDF(reag.id, 'reagendar', { vencimento: reag.data }), toast, () => { setReag(null); toast('Pedido reagendado; o solicitante vê a nova data em Meus pedidos.'); })}>Reagendar</button></div></Modal>}
+      {recusa && <Modal title={`Recusar ${recusa.id}`} onClose={() => setRecusa(null)}><Field label="Motivo (o solicitante vê)" req full><Input autoFocus value={recusa.motivo} onChange={(e) => setRecusa({ ...recusa, motivo: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setRecusa(null)}>Cancelar</button><button className="btn danger" onClick={() => tentar(() => actions.decidirPrevisaoDF(recusa.id, 'recusar', { motivo: recusa.motivo }), toast, () => { setRecusa(null); toast('Pedido recusado.'); })}>Recusar</button></div></Modal>}
+      {el}
+    </>
+  );
+}
+
+export function CentralDF() {
+  const { ds } = useStore();
+  const c = centralDF(ds);
+  const al = c.alinhamento;
+  const max = Math.max(1, ...al.dias.map((d) => Math.abs(d.saldo)), ...al.dias.map((d) => Math.abs(d.saldoComPrevisoes)), al.reserva);
+  return (
+    <div>
+      <BriefingDF c={c} />
+      <div className="grid cols-4" style={{ margin: '14px 0' }}>
+        <div className="kpi"><div className="label">Pedidos para decidir</div><div className="value">{al.previsoes.length}</div><div className="hint">{money(al.totalPrevisoes)}</div></div>
+        <div className="kpi"><div className="label">Caixa hoje</div><div className="value">{money(al.saldoHoje)}</div><div className="hint">o mesmo da tela Caixa · {al.extrato.texto}{al.compromissosHoje ? ` · vencidos e hoje −${money(al.compromissosHoje)}` : ''} · piso {money(al.reserva)}</div></div>
+        <div className="kpi"><div className="label">Menor saldo da semana</div><div className="value">{money(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}</div><div className="hint">com os pedidos</div></div>
+        <div className="kpi"><div className="label">Vence hoje</div><div className="value">{al.venceHoje.length}</div><div className="hint">{money(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}</div></div>
+      </div>
+      {al.alertas.map((a) => <div key={a} className="alert warn">{a}</div>)}
+      <PedidosDF c={c} />
+
       <div className="card" style={{ marginBottom: 14 }}>
         <h2>Agenda de caixa · próximos 7 dias</h2>
         <div className="df-dias">{al.dias.map((d) => <div key={d.data} className={`df-dia ${d.abaixoReserva ? 'furo' : ''}`} title={`${br(d.data)}: entradas ${money(d.entradas)}, saídas ${money(d.saidas)}, pedidos ${money(d.previsoes)}`}>
@@ -221,9 +244,6 @@ export function CentralDF() {
           </div>
         ))}
       </div>
-      {reag && <Modal title={`Outra data para ${reag.id}`} onClose={() => setReag(null)}><Field label="Nova data" req><Input type="date" value={reag.data} onChange={(e) => setReag({ ...reag, data: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setReag(null)}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.decidirPrevisaoDF(reag.id, 'reagendar', { vencimento: reag.data }), toast, () => { setReag(null); toast('Pedido reagendado; o solicitante vê a nova data em Meus pedidos.'); })}>Reagendar</button></div></Modal>}
-      {recusa && <Modal title={`Recusar ${recusa.id}`} onClose={() => setRecusa(null)}><Field label="Motivo (o solicitante vê)" req full><Input autoFocus value={recusa.motivo} onChange={(e) => setRecusa({ ...recusa, motivo: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setRecusa(null)}>Cancelar</button><button className="btn danger" onClick={() => tentar(() => actions.decidirPrevisaoDF(recusa.id, 'recusar', { motivo: recusa.motivo }), toast, () => { setRecusa(null); toast('Pedido recusado.'); })}>Recusar</button></div></Modal>}
-      {el}
     </div>
   );
 }

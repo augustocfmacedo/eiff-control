@@ -150,7 +150,7 @@ export function defasagemExtrato(ds: Dataset): { ate?: string; dias: number; tex
   const hoje = ds.params.dataBase;
   const datas = posicaoBancaria(ds).map((p) => p.ultimaTransacao).filter((d): d is string => !!d).sort();
   const ate = datas.pop();
-  if (!ate) return { dias: Infinity, texto: 'sem extrato importado', alerta: 'Nenhum extrato importado: o caixa de hoje é só o saldo de abertura das contas. Importe o OFX na Tesouraria antes de decidir.' };
+  if (!ate) return { dias: Infinity, texto: 'sem extrato importado', alerta: 'Nenhum extrato importado: o caixa de hoje é a abertura das contas mais o que foi lançado como pago ou recebido, sem conferência com o banco. Importe o OFX na Tesouraria antes de decidir.' };
   const dias = Math.max(0, Math.round((Date.parse(`${hoje}T00:00:00Z`) - Date.parse(`${ate}T00:00:00Z`)) / 86_400_000));
   return { ate, dias, texto: `extrato até ${br(ate)}${dias > LIMITE_DEFASAGEM_DIAS ? ` (defasado ${dias} dias)` : ''}`, alerta: dias > LIMITE_DEFASAGEM_DIAS ? `Extrato defasado ${dias} dias (último movimento em ${br(ate)}): o saldo de hoje pode estar desatualizado. Importe o OFX na Tesouraria.` : undefined };
 }

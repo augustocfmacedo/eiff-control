@@ -4,6 +4,8 @@
 import { useMemo, useState } from 'react';
 import { addDays, calcLancamentos } from '../core/engine';
 import { DEPARTAMENTOS, livroCaixa, type LinhaCaixa } from '../core/caixa';
+import { centralDF } from '../core/cfo';
+import { BriefingDF, PedidosDF } from './DiretorFinanceiro';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Sparkline } from '../ui/charts';
 import { Badge, Empty, Field, KpiHero, KpiStrip, Modal, MoedaInput, PageHead, Select, money, tentar, useToast, type Tone } from '../ui/components';
@@ -36,6 +38,9 @@ export default function Caixa() {
   const livro = useMemo(() => livroCaixa(ds, ate, calcLancamentos(ds), { verBancos }), [ds, ate, verBancos]);
   const obras = useMemo(() => obrasVisiveis(usuario, ds.obras).filter((o) => o.status !== 'Cancelada' && o.status !== 'Concluída'), [usuario, ds.obras]);
   const linhas = useMemo(() => livro.linhas.filter((x) => (!dep || x.departamento === dep) && (!soAberto || x.situacao !== 'Pago')), [livro, dep, soAberto]);
+  // Diretor Financeiro dentro da Caixa: briefing do dia e pedidos da equipe para decidir (so para quem decide: ve bancos e aprova)
+  const diretoria = verBancos && pode(usuario, 'aprovar');
+  const central = useMemo(() => (diretoria ? centralDF(ds) : null), [ds, diretoria]);
   const podeLancar = pode(usuario, 'editar_lancamento');
   const podePagar = pode(usuario, 'liquidar');
   if (!verBancos) return <Empty titulo="Caixa restrito">O caixa mostra saldos e é restrito a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
@@ -101,6 +106,12 @@ export default function Caixa() {
         <button className="btn no-print" onClick={() => window.print()}>Imprimir</button>
       </PageHead>
       {el}
+
+      {central && <BriefingDF c={central} acoes={<>
+        <button className="btn sm" onClick={() => navegar('/diretor/conversa')}>Perguntar ao Diretor</button>
+        <button className="btn sm" onClick={() => navegar('/diretor')}>Abrir a Central</button>
+      </>} />}
+      {central && <PedidosDF c={central} vazio={false} />}
 
       <div className="hero-grid">
         <KpiHero label="Saldo hoje" value={money(livro.saldoHoje)} hint={livro.extratoAte ? `extrato até ${d(livro.extratoAte)} + o que já foi pago e recebido e ainda não está nele · o mesmo do Diretor Financeiro` : `abertura de ${money(livro.saldoAbertura)} em ${d(livro.marco)} + o que já foi pago e recebido · o mesmo do Diretor Financeiro`} tone={livro.saldoHoje < livro.reserva ? 'bad' : undefined}
