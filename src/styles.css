@@ -1280,3 +1280,7 @@ tr.arrastando td { opacity: 0.55; }
 .caixa-tabela th, .caixa-tabela td { padding-left: 7px; padding-right: 7px; }
 .caixa-tabela td .small { line-height: 1.35; }
 .caixa-filtros select { width: auto; min-width: 220px; }
+
+/* conversa do Diretor Financeiro dentro da Caixa */
+.caixa-conversa { margin-top: 14px; }
+.caixa-conversa .df { min-height: 340px; max-height: min(520px, calc(100vh - 260px)); }
