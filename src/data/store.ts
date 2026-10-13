@@ -64,9 +64,10 @@ import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATU
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
+import { aplicarTransicao, camposEditaveis, motivosRecusaEdicao, motivosRecusaTransicao, type DadosTransicao } from '../core/radar/estagioOportunidade';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
-import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
+import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTAGIOS_FECHADOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
 import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { lancamentoDoPedido } from './solicitante';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
@@ -2261,7 +2262,13 @@ export const actions = {
     return { id: idsRadar(state.ds.radar).novo('OPP'), empresaId, titulo: e ? `Estrutura metálica · ${e.nomeFantasia ?? e.razaoSocial}` : '', estagio: 'DETECTED', probabilidade: PROBABILIDADE_ESTAGIO.DETECTED, responsavelId: state.usuario.id, observacoes: '', criadoEm: agora(), atualizadoEm: agora() };
   },
 
-  /** Cria ou edita a oportunidade. Regra critica: ativa exige proxima acao (data + descricao ou tarefa aberta). */
+  /**
+   * Cria ou edita a oportunidade SEM mudar o estágio (CD-D3/E0, docs/commercial-director-1.0.md §19.6). A criação passa
+   * pela transição canônica (`aplicarTransicao`): nascer fechada exige o motivo em `motivoFechamento` e grava o instante.
+   * A edição recusa mudança de estágio (é `mudarEstagioRadar`), nunca grava estágio, instante nem motivo de fechamento,
+   * e em oportunidade ganha não muda valor, empresa, responsável nem data de fechamento (`motivosRecusaEdicao`).
+   * Regra crítica: ativa exige próxima ação (data + descrição ou tarefa aberta).
+   */
   salvarOportunidadeRadar(o: Oportunidade) {
     let ds = state.ds;
     exigir('radar');
@@ -2271,34 +2278,64 @@ export const actions = {
     if (!ESTAGIOS.includes(o.estagio)) throw new RegraDeNegocioError('Estágio inválido.');
     if (o.proximaAcaoEm && !o.proximaAcao?.trim()) throw new RegraDeNegocioError('Descreva a próxima ação.');
     const atual = r.oportunidades.find((x) => x.id === o.id);
-    const novo: Oportunidade = { ...o, titulo: o.titulo.trim(), probabilidade: o.probabilidade || PROBABILIDADE_ESTAGIO[o.estagio], atualizadoEm: agora() };
+    const t = agora();
+    let novo: Oportunidade;
+    if (!atual) {
+      const recusa = motivosRecusaTransicao(undefined, o.estagio, { motivo: o.motivoFechamento });
+      if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
+      novo = aplicarTransicao({ ...o, titulo: o.titulo.trim(), fechadoEm: undefined }, o.estagio, { motivo: o.motivoFechamento }, t);
+      if (!ESTAGIOS_FECHADOS.includes(o.estagio)) novo = { ...novo, probabilidade: o.probabilidade || PROBABILIDADE_ESTAGIO[o.estagio] };
+    } else {
+      if (o.estagio !== atual.estagio) throw new RegraDeNegocioError('Para mudar o estágio, use a mudança de estágio (com motivo quando exigido).');
+      const recusa = motivosRecusaEdicao(atual, o);
+      if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
+      novo = { ...camposEditaveis(atual, o), titulo: o.titulo.trim(), probabilidade: o.probabilidade || PROBABILIDADE_ESTAGIO[atual.estagio], atualizadoEm: t };
+    }
     exigirProximaAcao(novo, r.tarefas);
     const ids = idsRadar(r);
     let radar: RadarDataset = { ...r, oportunidades: atual ? r.oportunidades.map((x) => (x.id === o.id ? novo : x)) : [...r.oportunidades, novo] };
-    if (!atual || atual.estagio !== novo.estagio) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: atual?.estagio, para: novo.estagio, usuarioId: state.usuario.id, em: agora() }] };
+    if (!atual) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: undefined, para: novo.estagio, usuarioId: state.usuario.id, motivo: novo.motivoFechamento, em: t }] };
     radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
     ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_oportunidade' : 'radar_criar_oportunidade', 'radar_oportunidade', o.id, atual, novo);
     commit(ds);
     return novo;
   },
 
-  /** Muda o estagio registrando historico. WON/LOST exigem motivo; estagio ativo exige proxima acao. */
-  mudarEstagioRadar(id: string, para: Estagio, dados: { motivo?: string; proximaAcao?: string; proximaAcaoEm?: string; valorEstimado?: number } = {}) {
+  /**
+   * ÚNICA ação de mudança de estágio (CD-D3/E0). Valida e aplica pela transição canônica (`motivosRecusaTransicao` +
+   * `aplicarTransicao`): WON → WON não é transição nova; ganho, perda e reabertura de ganho exigem motivo; fechar grava o
+   * instante, encerra a próxima ação e cancela as tarefas abertas da oportunidade; reabrir limpa o instante. `campos`
+   * leva as demais edições do formulário no MESMO commit (nunca estágio, fechamento, id ou criação), para que nada
+   * grave depois por cima do fechamento. Estágio ativo exige próxima ação. Registra histórico e auditoria.
+   */
+  mudarEstagioRadar(id: string, para: Estagio, dados: DadosTransicao & { campos?: Oportunidade } = {}) {
     let ds = state.ds;
     exigir('radar');
     const r = ds.radar;
     const o = r.oportunidades.find((x) => x.id === id);
     if (!o) throw new RegraDeNegocioError('Oportunidade não encontrada.');
-    if (!ESTAGIOS.includes(para)) throw new RegraDeNegocioError('Estágio inválido.');
-    if ((para === 'WON' || para === 'LOST') && !dados.motivo?.trim()) throw new RegraDeNegocioError(`Informe o motivo para marcar como ${para === 'WON' ? 'ganha' : 'perdida'}.`);
-    const fechado = para === 'WON' || para === 'LOST';
-    const novo: Oportunidade = { ...o, estagio: para, probabilidade: PROBABILIDADE_ESTAGIO[para], valorEstimado: dados.valorEstimado ?? o.valorEstimado, proximaAcao: fechado ? undefined : dados.proximaAcao ?? o.proximaAcao, proximaAcaoEm: fechado ? undefined : dados.proximaAcaoEm ?? o.proximaAcaoEm, motivoFechamento: fechado ? dados.motivo : o.motivoFechamento, fechadoEm: fechado ? agora() : undefined, atualizadoEm: agora() };
+    const recusa = motivosRecusaTransicao(o, para, dados);
+    if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
+    const fecha = ESTAGIOS_FECHADOS.includes(para);
+    let base = o;
+    if (dados.campos) {
+      const c = dados.campos;
+      if (c.id !== id) throw new RegraDeNegocioError('Oportunidade não encontrada.');
+      if (!c.titulo.trim()) throw new RegraDeNegocioError('Título da oportunidade é obrigatório.');
+      if (!r.empresas.some((e) => e.id === c.empresaId)) throw new RegraDeNegocioError('Empresa não encontrada.');
+      if (!fecha && c.proximaAcaoEm && !c.proximaAcao?.trim()) throw new RegraDeNegocioError('Descreva a próxima ação.');
+      base = { ...camposEditaveis(o, c), titulo: c.titulo.trim() };
+    }
+    const t = agora();
+    const novo = aplicarTransicao(base, para, dados, t);
     exigirProximaAcao(novo, r.tarefas);
     const ids = idsRadar(r);
-    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo, em: agora() }] };
-    if (fechado) radar = { ...radar, tarefas: radar.tarefas.map((t) => (t.oportunidadeId === id && t.status === 'Aberta' ? { ...t, status: 'Cancelada' as const } : t)) };
+    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo?.trim(), em: t }] };
+    if (fecha) radar = { ...radar, tarefas: radar.tarefas.map((x) => (x.oportunidadeId === id && x.status === 'Aberta' ? { ...x, status: 'Cancelada' as const } : x)) };
     radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
-    ds = registrar({ ...ds, radar }, 'radar_mudar_estagio', 'radar_oportunidade', id, { estagio: o.estagio }, { estagio: para }, dados.motivo);
+    ds = registrar({ ...ds, radar }, 'radar_mudar_estagio', 'radar_oportunidade', id,
+      { estagio: o.estagio, fechadoEm: o.fechadoEm ?? null, valorEstimado: o.valorEstimado ?? null },
+      { estagio: para, fechadoEm: novo.fechadoEm ?? null, valorEstimado: novo.valorEstimado ?? null }, dados.motivo?.trim());
     commit(ds);
     return novo;
   },

@@ -27,3 +27,4 @@ export * from './commercialCadenceCommit';
 export * from './leadEngineIntake';
 export * from './leadEngineReview';
 export * from './donoConta';
+export * from './estagioOportunidade';

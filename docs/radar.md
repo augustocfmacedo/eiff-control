@@ -40,7 +40,11 @@ Código: tipos em `src/core/radar/types.ts`; regras puras em `normalizar.ts` (CN
   manual com CNPJ/domínio/razão social já existente é recusado.
 - **Supressão**: contato com do_not_contact/opt_out não aparece como decisor nas filas e não aceita atividade
   (exceto canal Indicação). INVALID_CONTACT em atividade marca o contato automaticamente.
-- **WON/LOST** exigem motivo e cancelam as tarefas abertas da oportunidade.
+- **WON/LOST** exigem motivo e cancelam as tarefas abertas da oportunidade. Desde a CD-D3/E0 a mudança de estágio
+  tem uma única ação (`mudarEstagioRadar`, regras em `src/core/radar/estagioOportunidade.ts`): fechar grava o
+  instante (`fechadoEm`) e encerra a próxima ação; WON → WON é recusado; reabrir um ganho exige motivo; oportunidade
+  ganha não muda valor, empresa, responsável nem data de fechamento (corrigir = reabrir com motivo); a edição comum não
+  muda estágio (docs/commercial-director-1.0.md §19.6).
 - **Nada é apagado**: empresas são inativadas ou mescladas; sinais e atividades são imutáveis; auditoria no app
   (`registrar`) e no banco (triggers `audit_row` em empresa, oportunidade, regras de score e supressões).
 
