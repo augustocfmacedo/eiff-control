@@ -50,7 +50,7 @@ export default function Caixa() {
   const alternarConversa = () => setConversa((v) => { try { sessionStorage.setItem(CHAVE_CONVERSA, v ? '0' : '1'); } catch { /* ignore */ } return !v; });
   const podeLancar = pode(usuario, 'editar_lancamento');
   const podePagar = pode(usuario, 'liquidar');
-  if (!verBancos) return <Empty titulo="Caixa restrito">O caixa mostra saldos e é restrito a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
+  if (!verBancos) return <Empty titulo="Caixa restrito">O caixa mostra saldos e é restrito ao Administrador.</Empty>;
 
   const deps = DEPARTAMENTOS.map((x) => x.id);
   const lancar = () => {

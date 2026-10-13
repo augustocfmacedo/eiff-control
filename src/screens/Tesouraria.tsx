@@ -108,7 +108,7 @@ export function Fluxo24() {
 
 export function PosicaoDiaria() {
   const { ds, usuario } = useStore();
-  if (!pode(usuario, 'ver_bancos')) return <Empty>Saldos bancários são restritos a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
+  if (!pode(usuario, 'ver_bancos')) return <Empty>Saldos bancários são restritos ao Administrador.</Empty>;
   const lancs = calcLancamentos(ds).filter((l) => l.oficial);
   const posicoes = posicaoBancaria(ds, lancs);
   const contas = posicoes.map((p) => {

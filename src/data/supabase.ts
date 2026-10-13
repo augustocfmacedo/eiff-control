@@ -22,8 +22,11 @@ import { carregarInbox, persistirInbox } from './inbox.supabase';
 import { datasetSolicitante, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
 import { hojeLocal } from '../core/engine';
 
-const URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
-const KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
+// URL e chave publica vem de src/data/ambiente.ts (importado so pelo main.tsx): este modulo nao le import.meta.env, para o
+// servidor poder reaproveitar a carga (carregarComoServidor). Sem a configuracao (testes, servidor) o modulo fica em modo local.
+const CONFIG = (globalThis as { __EIFF_SUPABASE__?: { url?: string; chave?: string } }).__EIFF_SUPABASE__;
+const URL = CONFIG?.url?.trim();
+const KEY = CONFIG?.chave?.trim();
 export const remotoAtivo = !!(URL && KEY);
 // Link do e-mail (convite ou "esqueci minha senha"): o Supabase volta ao site com #access_token=...&type=invite|recovery, ou
 // com #error=...&error_description=... quando o link expirou. Lido ANTES de criar o cliente, que consome o fragmento.
@@ -178,8 +181,12 @@ export function transacaoDoBanco(t: Row, ctx: { contasInv: Map<string, string>; 
 
 const CORPORATIVOS: Papel[] = ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria', 'Compras'];
 
+// No servidor (funcao Netlify), carregarComoServidor troca o cliente do navegador por um cliente de servico, so durante a carga.
+let servidor: { cliente: SupabaseClient; userId: string } | null = null;
+const cliente = (): SupabaseClient | null => servidor?.cliente ?? supabase;
+
 async function sel(tabela: string, colunas = '*', filtro?: (q: any) => any): Promise<Row[]> {
-  let q = supabase!.from(tabela).select(colunas);
+  let q = cliente()!.from(tabela).select(colunas);
   if (filtro) q = filtro(q);
   const { data, error } = await q;
   falha(`ler ${tabela}`, error);
@@ -190,7 +197,7 @@ async function sel(tabela: string, colunas = '*', filtro?: (q: any) => any): Pro
 async function selTodos(tabela: string, ordem: string, comId = true): Promise<Row[]> {
   const out: Row[] = [];
   for (let de = 0; ; de += 1000) {
-    let q = supabase!.from(tabela).select('*').order(ordem);
+    let q = cliente()!.from(tabela).select('*').order(ordem);
     if (comId) q = q.order('id'); // tabelas de chave composta nao tem id
     const { data, error } = await q.range(de, de + 999);
     falha(`ler ${tabela}`, error);
@@ -208,17 +215,28 @@ async function selTodos(tabela: string, ordem: string, comId = true): Promise<Ro
 // ---------------------------------------------------------------------------------------------------------------------
 async function porta<T>(nome: string, args?: Record<string, unknown>): Promise<T> {
   if (!supabase) throw new RemotoError('Supabase não configurado.');
-  const { data, error } = await supabase.rpc(nome, args);
+  const { data, error } = await cliente()!.rpc(nome, args);
   falha(nome, error);
   return data as T;
 }
+/**
+ * Servidor (funcao Netlify): carrega o Dataset da organizacao do perfil `userId` com um cliente de SERVICO (sem RLS), para
+ * rodar o motor no servidor e devolver so o resultado (ex.: o veredito do Diretor Financeiro ao Solicitante, sem numeros).
+ * Nunca usar no navegador.
+ */
+export async function carregarComoServidor(c: SupabaseClient, userId: string): Promise<{ ds: Dataset; usuario: Usuario }> {
+  if (servidor) throw new RemotoError('carga de servidor já em andamento');
+  servidor = { cliente: c, userId };
+  try { return await carregarRemoto(); } finally { servidor = null; }
+}
+
 export const contextoSolicitante = () => porta<ContextoSolicitante>('df_contexto');
 export const meusPedidosSolicitante = () => porta<PedidoSolicitante[]>('df_meus_pedidos');
 export const registrarPedidoSolicitante = (p: NovoPedidoSolicitante) => porta<PedidoSolicitante>('df_registrar_pedido', { p });
 
 export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario }> {
-  if (!supabase) throw new RemotoError('Supabase não configurado.');
-  const sessao = await sessaoAtual();
+  if (!cliente()) throw new RemotoError('Supabase não configurado.');
+  const sessao = servidor ? { userId: servidor.userId, email: '' } : await sessaoAtual();
   if (!sessao) throw new RemotoError('Sem sessão.');
 
   const [perfis, orgs, companies] = await Promise.all([sel('profile'), sel('organization'), sel('company')]);

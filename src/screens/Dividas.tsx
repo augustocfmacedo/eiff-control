@@ -8,7 +8,7 @@ export default function Dividas() {
   const { ds, usuario } = useStore();
   const { toast, el } = useToast();
   const [edit, setEdit] = useState<Divida | null>(null);
-  if (!pode(usuario, 'ver_bancos')) return <Empty>Dívidas são visíveis a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
+  if (!pode(usuario, 'ver_bancos')) return <Empty>Dívidas são visíveis só ao Administrador.</Empty>;
   const lista = ds.dividas.filter((d) => incluirRegistro(d.registro, ds.params));
   const ativas = lista.filter((d) => d.status === 'Ativa');
   const db = ds.params.dataBase;
