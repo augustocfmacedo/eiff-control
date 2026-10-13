@@ -142,5 +142,11 @@ jobs:
       - name: PostgreSQL Smoke (CD-D5 dono da conta)
         run: node scripts/pg-smoke-dono-conta.mjs
 
+      # scripts/pg-smoke-solicitante.mjs aplica a fila INTEIRA num PGlite descartável e prova o papel Solicitante (0066/0067):
+      # não lê nenhuma tabela (cada uma do schema public e do storage), não grava lançamento nem auditoria, não se promove,
+      # só usa as três portas df_* (pedido PED-nnnn idempotente, só os próprios pedidos) e os demais papéis ficam iguais.
+      - name: PostgreSQL Smoke (papel Solicitante)
+        run: node scripts/pg-smoke-solicitante.mjs
+
       - name: Full Migration Preflight
         run: node scripts/pg-preflight-central.mjs --ordem-corrigida

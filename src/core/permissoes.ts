@@ -35,11 +35,14 @@ export type Acao =
   | 'radar_config'
   | 'radar_dono'
   | 'inbox'
-  | 'inbox_config';
+  | 'inbox_config'
+  | 'pedir_pagamento';
 
 export const MATRIZ: Record<Acao, Papel[]> = {
   ver_bancos: ['Administrador', 'Diretoria', 'Financeiro', 'Contabilidade', 'Auditoria'],
   editar_lancamento: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras'],
+  // pedido de pagamento ao Diretor Financeiro: quem lanca e o Solicitante (que so faz isso; no banco, so pelas portas df_*)
+  pedir_pagamento: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Solicitante'],
   liquidar: ['Administrador', 'Financeiro'],
   conciliar: ['Administrador', 'Financeiro'],
   aprovar: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra'],
