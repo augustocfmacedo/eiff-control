@@ -22,14 +22,14 @@ const REGRAS_GERAIS = [
 ];
 
 const PAPEIS_PERMISSOES: Record<Papel, string> = {
-  Administrador: 'tudo, inclusive usuários e parâmetros',
-  Diretoria: 'aprovar (etapa Diretoria), editar obras e ETC, parâmetros, reabrir período, ver bancos e auditoria; não liquida nem concilia',
-  Financeiro: 'lançar, liquidar, conciliar, aprovar (etapa Financeiro), fechar período, cadastros, ver bancos',
+  Administrador: 'tudo, inclusive usuários e parâmetros; é o ÚNICO que vê saldo, bancos, extrato, a tela Caixa e o parecer do Diretor Financeiro',
+  Diretoria: 'aprovar (etapa Diretoria), editar obras e ETC, parâmetros, reabrir período, ver auditoria; não vê bancos nem caixa, não liquida nem concilia',
+  Financeiro: 'lançar, liquidar, aprovar (etapa Financeiro), fechar período, cadastros; não vê bancos nem caixa',
   'Gestor de obra': 'editar obras e serviços, lançar custos da obra, aprovar (etapa Gestor), comprar, orçar, apontar produção; não vê bancos',
   Engenharia: 'orçar, lista de materiais, ordens e apontamentos, comprar, lançar; não aprova nem vê bancos',
   Compras: 'pedidos de compra, estoque, lançar; não aprova',
-  Contabilidade: 'ver bancos, DRE, auditoria, comentar; não lança nem aprova',
-  Auditoria: 'somente leitura de bancos e auditoria',
+  Contabilidade: 'DRE, auditoria, comentar; não vê bancos nem caixa, não lança nem aprova',
+  Auditoria: 'somente leitura da auditoria; não vê bancos nem caixa',
   Solicitante: 'somente a conversa com o Diretor Financeiro: pedir pagamentos e acompanhar os próprios pedidos; não vê saldo nem outras telas',
 };
 

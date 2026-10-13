@@ -32,7 +32,7 @@ const CONTA_B = 'PILOTO · Banco B';
 const OBRA = 'OB-PILOTO-01';
 const AUD = { criadoEm: FIXTURE_GERADA_EM, criadoPor: 'piloto', atualizadoEm: FIXTURE_GERADA_EM, atualizadoPor: 'piloto', versao: 1 };
 
-export const USUARIO_FINANCEIRO: Usuario = { id: 'u-piloto-fin', nome: 'PILOTO · Financeiro', email: 'piloto-fin@teste.invalid', papel: 'Financeiro', obras: '*', ativo: true };
+export const USUARIO_FINANCEIRO: Usuario = { id: 'u-piloto-fin', nome: 'PILOTO · Financeiro', email: 'piloto-fin@teste.invalid', papel: 'Administrador', obras: '*', ativo: true }; // quem ve o caixa: so o Administrador desde 13/10/2026
 export const USUARIO_OBRA: Usuario = { id: 'u-piloto-obra', nome: 'PILOTO · Gestor de obra', email: 'piloto-obra@teste.invalid', papel: 'Gestor de obra', obras: [OBRA], ativo: true };
 
 function contas(): ContaFinanceira[] {

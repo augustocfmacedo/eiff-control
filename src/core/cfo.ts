@@ -317,13 +317,43 @@ export function redigirPrevisoes(ds: Dataset, usuario: Usuario): string {
 }
 export const AJUDA_DF = ['Sou o Diretor Financeiro virtual. Posso:', '- Dizer se um pagamento cabe no caixa e quando: "preciso pagar um frete de R$ 500 amanhã".', '- Mostrar o caixa projetado: "como está o caixa?"', '- Listar o que vence: "o que vence essa semana?"', '- Registrar a previsão do pagamento para o alinhamento diário com a Diretoria.', 'Os números vêm do motor do sistema (lançamentos, extrato, reserva e alçadas); nada é pago por aqui.'].join('\n');
 
-export interface RespostaDF { texto: string; pedido?: PedidoInterpretado; parecer?: Parecer; sugestoes?: string[] }
+export interface RespostaDF { texto: string; pedido?: PedidoInterpretado; parecer?: Parecer; veredicto?: VeredictoDF; sugestoes?: string[] }
 export const AJUDA_EQUIPE = ['Sou o Diretor Financeiro virtual. Me diga o que precisa pagar, quanto, para quando e para quem: eu anoto, confiro a possibilidade com a Diretoria e te aviso o que foi decidido.', '- Exemplo: "preciso pagar um frete de R$ 500 amanhã para a Transportadora X, obra Smart Fit".', '- "Meus pedidos" mostra o andamento do que você já pediu.', 'Nada é pago por aqui: o pagamento só acontece depois da validação da Diretoria.'].join('\n');
 /** Resposta para a EQUIPE: sem saldo, reserva ou parecer; so o pedido anotado e o andamento. O parecer vai junto (escondido) para a Diretoria. */
 export function redigirParecerEquipe(pedido: PedidoInterpretado, usuario: Usuario): string {
   const nome = usuario.nome.split(' ')[0];
   const partes = [`**${fmt(pedido.valor!)}** para ${br(pedido.vencimento)}`, pedido.categoria ? pedido.categoria.toLowerCase() : null, pedido.codigoObra ? `obra ${pedido.codigoObra}` : null, pedido.contraparte ? `para ${pedido.contraparte}` : null].filter(Boolean).join(' · ');
   return [`Anotei, ${nome}: ${partes}.`, 'Confirmando, eu levo ao alinhamento diário com a Diretoria, que decide a data e libera o pagamento. Você acompanha em "Meus pedidos" e eu te aviso o que foi decidido.', pedido.contraparte ? null : 'Se souber para quem é o pagamento, toque em "Ajustar" e informe: agiliza a decisão.'].filter(Boolean).join('\n');
+}
+/**
+ * Veredito para quem NAO ve caixa (Solicitante e demais papeis sem ver_bancos): o parecer reduzido a decisao e datas. Nenhum
+ * valor de saldo, reserva ou menor saldo sai daqui (teste garante). No modo remoto do Solicitante e calculado no servidor
+ * (/api/diretor-financeiro, acao "veredicto"), que tem o caixa; aqui so a forma e o texto.
+ */
+export interface VeredictoDF { decisao: DecisaoDF; vencimento: string; dataSugerida?: string; precisaAprovacao: boolean }
+export const veredictoDe = (p: Parecer): VeredictoDF => ({ decisao: p.decisao, vencimento: p.vencimento, ...(p.dataSugerida ? { dataSugerida: p.dataSugerida } : {}), precisaAprovacao: p.precisaAprovacao });
+/** Corpo da acao "veredicto" do servidor: so valor, data e (opcionais) obra e categoria; qualquer outra coisa e recusada. */
+export function validarPedidoVeredicto(c: unknown): { valor: number; vencimento: string; codigoObra?: string; categoria?: string } | string {
+  if (!c || typeof c !== 'object') return 'pedido inválido';
+  const o = c as Record<string, unknown>;
+  if (!Object.keys(o).every((k) => ['valor', 'vencimento', 'codigoObra', 'categoria'].includes(k))) return 'campos não permitidos';
+  if (typeof o.valor !== 'number' || !Number.isFinite(o.valor) || o.valor <= 0 || o.valor > 1e9) return 'valor inválido';
+  if (typeof o.vencimento !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.vencimento)) return 'data inválida';
+  for (const k of ['codigoObra', 'categoria'] as const) if (o[k] !== undefined && (typeof o[k] !== 'string' || (o[k] as string).length > 80)) return `${k} inválido`;
+  return { valor: Math.round(o.valor * 100) / 100, vencimento: o.vencimento, ...(o.codigoObra ? { codigoObra: o.codigoObra as string } : {}), ...(o.categoria ? { categoria: o.categoria as string } : {}) };
+}
+/** Data que o botao de encaminhar usa: a sugerida quando a pedida aperta o caixa. */
+export const dataDoVeredicto = (v: VeredictoDF) => (v.decisao === 'reagendar' && v.dataSugerida ? v.dataSugerida : v.vencimento);
+export function redigirVeredictoEquipe(v: VeredictoDF, pedido: PedidoInterpretado, usuario: Usuario): string {
+  const nome = usuario.nome.split(' ')[0];
+  const partes = [`**${fmt(pedido.valor!)}**`, pedido.categoria ? pedido.categoria.toLowerCase() : null, pedido.codigoObra ? `obra ${pedido.codigoObra}` : null, pedido.contraparte ? `para ${pedido.contraparte}` : null].filter(Boolean).join(' · ');
+  const alcada = v.precisaAprovacao ? ' Pelo valor, ele também passa pela aprovação da Diretoria.' : '';
+  const veredito =
+    v.decisao === 'liberar' ? `Conferi com o nosso nível de segurança de caixa: **pode ser programado para ${br(v.vencimento)}**.${alcada}`
+    : v.decisao === 'reagendar' && v.dataSugerida ? `Conferi com o nosso nível de segurança de caixa: em ${br(v.vencimento)} fica apertado, mas **pode ser programado a partir de ${br(v.dataSugerida)}**.${alcada}`
+    : v.decisao === 'atencao' ? `Conferi com o nosso nível de segurança de caixa: nessa data ele passa do nosso limite de segurança, então **depende da avaliação da Diretoria**.`
+    : `Conferi com o nosso nível de segurança de caixa: neste momento o caixa **não comporta esse pagamento**; encaminho para a **avaliação da Diretoria**, que te responde.`;
+  return [`${nome}, recebi: ${partes}.`, veredito, 'Confirmando, o pedido vai para a Diretoria com essa análise. Você acompanha em "Meus pedidos".', pedido.contraparte ? null : 'Se souber para quem é o pagamento, toque em "Ajustar" e informe: agiliza a decisão.'].filter(Boolean).join('\n');
 }
 export type StatusPedidoDF = 'aguardando' | 'programado' | 'em_aprovacao' | 'reagendado' | 'recusado' | 'pago';
 /** Andamento de um pedido feito ao DF, lido do proprio lancamento (status + rastros nas observacoes). */
@@ -348,7 +378,11 @@ export function redigirMeusPedidos(ds: Dataset, usuario: Usuario): string {
  * coisa que nao seja exatamente `true` (inclusive undefined vindo de chamada nao tipada) fecha o caixa.
  * Quem nao ve caixa tambem NAO recebe o `parecer` no retorno: saldo e reserva nao viajam no objeto.
  */
-export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpretado, veCaixa: boolean): RespostaDF {
+/**
+ * `veredictoExterno` (so para quem nao ve caixa): o veredito ja calculado no servidor (Solicitante no modo remoto, que nao tem
+ * o caixa no aparelho); `null` = servidor indisponivel (responde so com o pedido anotado); ausente = calcula com o `ds` local.
+ */
+export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpretado, veCaixa: boolean, veredictoExterno?: VeredictoDF | null): RespostaDF {
   const mostrar = veCaixa === true;
   const sugestoesEquipe = ['Preciso pagar um frete de R$ 500 amanhã', 'Meus pedidos'];
   if (pedido.intencao === 'ajuda' || pedido.intencao === 'outro') return { texto: (pedido.intencao === 'outro' ? 'Não entendi como um pedido de pagamento. ' : '') + (mostrar ? AJUDA_DF : AJUDA_EQUIPE), sugestoes: mostrar ? ['Como está o caixa?', 'O que vence essa semana?', 'Preciso pagar um frete de R$ 500 amanhã'] : sugestoesEquipe };
@@ -360,9 +394,14 @@ export function responderDF(ds: Dataset, usuario: Usuario, pedido: PedidoInterpr
     const perguntas = pedido.faltando.map((f) => (f === 'valor' ? 'qual o valor' : 'para que dia')).join(' e ');
     return { texto: `Entendi o pedido${pedido.categoria ? ` de **${pedido.categoria}**` : ''}${pedido.codigoObra ? ` na obra **${pedido.codigoObra}**` : ''}. Só me diga ${perguntas}.`, pedido };
   }
+  // o parecer carrega saldo, reserva e menor saldo: nao vai no retorno de quem nao ve caixa, so o veredito (decisao e datas)
+  if (!mostrar) {
+    if (veredictoExterno === null) return { texto: redigirParecerEquipe(pedido, usuario), pedido };
+    const veredicto = veredictoExterno ?? veredictoDe(analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria }));
+    return { texto: redigirVeredictoEquipe(veredicto, pedido, usuario), pedido, veredicto };
+  }
   const parecer = analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria });
-  // o parecer carrega saldo, reserva e menor saldo: nao vai no retorno de quem nao ve caixa
-  return mostrar ? { texto: redigirParecer(parecer, pedido, usuario), pedido, parecer } : { texto: redigirParecerEquipe(pedido, usuario), pedido };
+  return { texto: redigirParecer(parecer, pedido, usuario), pedido, parecer };
 }
 
 // ---------------------------------------------------------------------------

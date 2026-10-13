@@ -771,8 +771,10 @@ export const actions = {
     const l = this.novoLancamento({
       categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
       status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
-      observacoes: state.usuario.papel === 'Solicitante'
-        ? `Pedido de ${state.usuario.nome} pelo Diretor Financeiro virtual (perfil Solicitante). Aguarda o alinhamento diário da Diretoria.`
+      // quem nao ve caixa nao tem o caixa completo no aparelho: o resumo do parecer sairia com numeros errados (a Diretoria ve o
+      // parecer completo na Caixa/Central, calculado na hora)
+      observacoes: state.usuario.papel === 'Solicitante' || !pode(state.usuario, 'ver_bancos')
+        ? `Pedido de ${state.usuario.nome} pelo Diretor Financeiro virtual (perfil ${state.usuario.papel}). Aguarda o alinhamento diário da Diretoria.`
         : `Previsão registrada pelo Diretor Financeiro virtual a pedido de ${state.usuario.nome} (${state.usuario.papel}). Parecer: ${resumoParecer(p.parecer)}. Aguarda alinhamento diário.`,
     });
     if (state.usuario.papel !== 'Solicitante') return this.salvarLancamento(l).lancamento;

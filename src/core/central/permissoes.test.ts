@@ -54,10 +54,11 @@ describe('a matriz é a do EIFF Control', () => {
     }
   });
   it('a mesma intenção cobre permissões diferentes — é por isso que a intenção não autoriza', () => {
-    // Auditoria le o caixa (ver_bancos) mas nao registra previsao (editar_lancamento) nem liquida
+    // so o Administrador le o caixa (ver_bancos, decisao de 13/10/2026); Auditoria nao le caixa, nao registra previsao nem liquida
     const auditoria = usuario('Auditoria');
     const ctx = { identidade: resolvida, usuario: auditoria, contexto: 'INTERNAL' as const };
-    expect(autorizar({ ...propor('FINANCE_CONSULTA_CAIXA'), ...ctx }).autorizado).toBe(true);
+    expect(autorizar({ ...propor('FINANCE_CONSULTA_CAIXA'), ...ctx }).autorizado).toBe(false);
+    expect(autorizar({ ...propor('FINANCE_CONSULTA_CAIXA'), identidade: resolvida, usuario: usuario('Administrador'), contexto: 'INTERNAL' as const }).autorizado).toBe(true);
     expect(autorizar({ ...propor('FINANCE_REGISTRAR_PREVISAO'), ...ctx }).autorizado).toBe(false);
     expect(autorizar({ ...propor('FINANCE_LIQUIDAR'), ...ctx }).autorizado).toBe(false);
     // e o contrario: Compras registra previsao, mas nao le o caixa

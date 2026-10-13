@@ -1,3 +1,5 @@
+// primeiro: configura o Supabase do app antes de qualquer modulo de dados ser avaliado
+import './data/ambiente';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';

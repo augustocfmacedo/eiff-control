@@ -90,10 +90,10 @@ describe('cenário 1: "quanto temos de caixa hoje?"', () => {
   const PERGUNTA = 'Quanto temos de caixa hoje?';
 
   it('quem TEM ver_bancos recebe os números do motor, pela ação de leitura do catálogo', async () => {
-    const a = await umAtendimento(payload(PERGUNTA), [identidade({ usuarioId: 'u-fin' })]);
+    const a = await umAtendimento(payload(PERGUNTA), [identidade({ usuarioId: 'u-admin' })]);
     expect(a.contexto).toBe('INTERNAL');
     expect(a.identidade.verificada).toBe(true);
-    expect(a.usuario).toMatchObject({ id: 'u-fin', papel: 'Financeiro', veCaixa: true });
+    expect(a.usuario).toMatchObject({ id: 'u-admin', papel: 'Administrador', veCaixa: true });
     expect(a.decisao.intent).toBe('FINANCE');
     expect(a.decisao.targetAgent).toBe('FINANCE_AGENT');
     expect(a.decisao.requiresHuman).toBe(false);
@@ -185,7 +185,7 @@ describe('cenário 2: "preciso pagar um frete de R$ 5.000 amanhã"', () => {
     expect(rascunhosDF()).toBe(antesDF);
   });
 
-  it('a EQUIPE recebe o pedido anotado, sem caixa e sem parecer, e nada é gravado', async () => {
+  it('a EQUIPE recebe o veredito do Diretor, sem caixa e sem parecer, e nada é gravado', async () => {
     const antes = lancamentos();
     const a = await umAtendimento(payload(PEDIDO), [identidade({ usuarioId: 'u-obra' })]);
     expect(a.usuario?.veCaixa).toBe(false);
@@ -193,7 +193,7 @@ describe('cenário 2: "preciso pagar um frete de R$ 5.000 amanhã"', () => {
     const parecer = analisarPagamento(getState().ds, { valor: 5000, vencimento: addDays(getState().ds.params.dataBase, 1) });
     // o unico valor que pode aparecer e o que a PROPRIA pessoa pediu
     for (const n of numerosDoParecer(parecer).filter((n) => n !== fmt(5000))) expect(serializado).not.toContain(n);
-    expect(a.resposta.texto).toMatch(/Anotei/i);
+    expect(a.resposta.texto).toMatch(/nível de segurança de caixa/i);
     expect(lancamentos()).toBe(antes);
   });
 

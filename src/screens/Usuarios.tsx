@@ -10,14 +10,14 @@ import { Badge, Empty, Field, Modal, Select, useToast } from '../ui/components';
 import { Tabela, type Coluna } from '../ui/Tabela';
 
 const O_QUE_FAZ: Record<Papel, string> = {
-  Administrador: 'tudo, inclusive usuários e parâmetros',
-  Diretoria: 'aprova, vê caixa e bancos, decide os pedidos do Diretor Financeiro',
-  Financeiro: 'lança, liquida, concilia, vê caixa e bancos',
+  Administrador: 'tudo, inclusive usuários, parâmetros e o caixa (só ele vê saldo, bancos e a análise de pagamentos)',
+  Diretoria: 'aprova e edita obras e parâmetros; não vê caixa nem bancos',
+  Financeiro: 'lança e liquida títulos; não vê caixa nem bancos',
   'Gestor de obra': 'obras escolhidas: serviços, custos, compras, produção; não vê bancos',
   Engenharia: 'obras escolhidas: orçamentos, materiais, produção; não vê bancos',
   Compras: 'pedidos de compra, estoque e lançamentos; não aprova',
-  Contabilidade: 'consulta caixa, bancos, DRE e auditoria',
-  Auditoria: 'só leitura de bancos e auditoria',
+  Contabilidade: 'consulta DRE e auditoria; não vê caixa nem bancos',
+  Auditoria: 'só leitura da auditoria; não vê caixa nem bancos',
   Solicitante: 'SÓ a conversa com o Diretor Financeiro para pedir pagamentos',
 };
 const dia = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('pt-BR') : '');

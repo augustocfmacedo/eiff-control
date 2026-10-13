@@ -79,7 +79,7 @@ describe('jornada: compromisso de obra acima da alçada', () => {
   });
 
   it('extrato importado deduplica e concilia N:1 com tolerância', () => {
-    u('u-fin');
+    u('u-admin'); // importar e conciliar extrato: so o Administrador desde 13/10/2026
     const linhas = [
       { data: '2026-09-25', historico: 'TED GERDAU PED-001', documento: 'PED-001', debito: 100000, credito: 0 },
       { data: '2026-09-26', historico: 'TED GERDAU PED-001', documento: 'PED-001', debito: 80000, credito: 0 },
@@ -155,7 +155,7 @@ describe('extrato OFX: dedup por FITID e lançar a partir da transação', () =>
   it('importa uma vez por FITID mesmo com períodos sobrepostos', () => {
     u('u-admin');
     actions.restaurarPlanilha();
-    u('u-fin');
+    u('u-admin'); // importar extrato: so o Administrador
     const linhas = [
       { data: '2026-09-03', historico: 'TARIFA PACOTE SERVICOS', documento: '', debito: 89.9, credito: 0, idExterno: 'F1' },
       { data: '2026-09-03', historico: 'PIX RECEBIDO INVEST MARKET NF 47', documento: 'NF 47', debito: 0, credito: 150076.25, idExterno: 'F2' },
@@ -165,7 +165,7 @@ describe('extrato OFX: dedup por FITID e lançar a partir da transação', () =>
     expect(getState().ds.transacoes.find((t) => t.idExterno === 'F1')!.origem).toBe('ofx');
   });
   it('cria lançamento realizado, liquidado e conciliado a partir da tarifa', () => {
-    u('u-fin');
+    u('u-admin'); // lancar a partir do extrato: so o Administrador
     const t = getState().ds.transacoes.find((x) => x.idExterno === 'F1')!;
     expect(() => actions.lancarTransacao(t.id, { categoria: 'Medições de obras', contraparte: 'Banco', descricao: 'x' })).toThrow(/Saída/);
     const l = actions.lancarTransacao(t.id, { categoria: 'Juros e tarifas bancárias', contraparte: 'Banco', descricao: 'Tarifa pacote' });
@@ -217,6 +217,10 @@ describe('validações do lançamento', () => {
   it('auditoria bloqueada para escrita', () => {
     u('u-audit');
     expect(pode(getState().usuario, 'editar_lancamento')).toBe(false);
+    // desde 13/10/2026 so o Administrador ve caixa e bancos (Auditoria, Contabilidade, Financeiro e Diretoria nao)
+    expect(pode(getState().usuario, 'ver_bancos')).toBe(false);
+    for (const id of ['u-fin', 'u-contab', 'u-augusto']) { u(id); expect(pode(getState().usuario, 'ver_bancos'), id).toBe(false); }
+    u('u-admin');
     expect(pode(getState().usuario, 'ver_bancos')).toBe(true);
     u('u-eng');
     expect(pode(getState().usuario, 'ver_bancos')).toBe(false);

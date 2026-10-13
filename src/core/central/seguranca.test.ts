@@ -405,6 +405,8 @@ describe('ameaça 7: dado financeiro não autorizado', () => {
     expect(pode(gestor, 'editar_lancamento')).toBe(true);
     expect(pode(gestor, 'ver_bancos')).toBe(false);
     actions.trocarUsuario('u-fin');
+    expect(pode(getState().usuario, 'ver_bancos')).toBe(false); // so o Administrador ve banco desde 13/10/2026
+    actions.trocarUsuario('u-admin');
     expect(pode(getState().usuario, 'ver_bancos')).toBe(true);
   });
   it('sem ver_bancos, consulta de caixa e de vencimentos não devolve número nenhum', () => {
@@ -417,13 +419,22 @@ describe('ameaça 7: dado financeiro não autorizado', () => {
       expect(r.parecer).toBeUndefined();
     }
   });
-  it('sem ver_bancos, o pedido de pagamento devolve só o pedido anotado: nem saldo, nem reserva, nem alçada no texto', () => {
+  it('sem ver_bancos, o pedido de pagamento devolve só o VEREDITO (decisão e datas): nem saldo, nem reserva, nem alçada no texto', () => {
     actions.trocarUsuario('u-obra');
     const { ds, usuario } = getState();
     const pedido = interpretarPedido('preciso pagar um frete de R$ 500 amanhã para a Transportadora X', catalogoDe(ds));
     const r = responderDF(ds, usuario, pedido, false);
-    expect(r.texto).toMatch(/Anotei/);
+    expect(r.texto).toMatch(/recebi/);
+    expect(r.texto).toMatch(/nível de segurança de caixa/);
     expect(r.texto).not.toMatch(/saldo|reserva|menor saldo|alçada/i);
+    // o unico valor em reais no texto e o que a propria pessoa pediu
+    const valores = r.texto.match(/R\$\s?[\d.,]*\d/g) ?? [];
+    expect(valores.length).toBeGreaterThan(0);
+    expect(valores.every((v) => v.replace(/\s/g, ' ') === 'R$ 500,00')).toBe(true);
+    expect(Object.keys(r.veredicto ?? {}).every((k) => ['decisao', 'vencimento', 'dataSugerida', 'precisaAprovacao'].includes(k))).toBe(true);
+    expect(r.parecer).toBeUndefined();
+    // servidor indisponivel (veredito null): volta a responder so com o pedido anotado
+    expect(responderDF(ds, usuario, pedido, false, null).texto).toMatch(/Anotei/);
   });
   it('FRONTEIRA FECHADA: sem ver_bancos o parecer não viaja no objeto — nem saldo, nem reserva saem de responderDF', () => {
     actions.trocarUsuario('u-obra');
