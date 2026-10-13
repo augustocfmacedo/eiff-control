@@ -12,7 +12,7 @@ import { navegar } from '../ui/router';
 
 const d = (s?: string) => (s ? s.split('-').reverse().join('/') : '—');
 const dCurta = (s: string) => s.split('-').reverse().slice(0, 2).join('/');
-const TOM: Record<LinhaCaixa['situacao'], Tone> = { Pago: 'ok', Previsto: 'info', Vencido: 'bad', 'Em aprovação': 'warn', Rascunho: 'muted' };
+const TOM: Record<LinhaCaixa['situacao'], Tone> = { Pago: 'ok', Previsto: 'info', Vencido: 'bad', 'Em aprovação': 'warn', Rascunho: 'muted', Extrato: 'warn' };
 const HORIZONTES = [{ value: '30', label: 'Próximos 30 dias' }, { value: '60', label: 'Próximos 60 dias' }, { value: '90', label: 'Próximos 90 dias' }, { value: '365', label: 'Próximos 12 meses' }];
 
 interface Rascunho { data: string; descricao: string; departamento: string; codigoObra: string; entra: number; sai: number; pago: boolean }
@@ -68,7 +68,7 @@ export default function Caixa() {
     { titulo: 'Saldo', num: true, largura: 110 },
   ];
   // clique na linha: previsto abre a edicao rapida; pago (ou quem nao edita) abre o lancamento completo
-  const abrir = (x: LinhaCaixa) => (x.situacao !== 'Pago' && podeLancar ? editar(x) : navegar(`/lancamentos/${x.lancamentoId}`));
+  const abrir = (x: LinhaCaixa) => (x.situacao === 'Extrato' ? navegar('/conciliacao') : x.situacao !== 'Pago' && podeLancar ? editar(x) : navegar(`/lancamentos/${x.lancamentoId}`));
   const linha = (x: LinhaCaixa) => (
     <>
       <td title={x.situacao === 'Vencido' ? `venceu em ${d(x.data)}` : undefined} className={x.situacao === 'Vencido' ? 'neg' : ''}>{dCurta(x.data)}</td>
@@ -103,7 +103,7 @@ export default function Caixa() {
       {el}
 
       <div className="hero-grid">
-        <KpiHero label="Saldo hoje" value={money(livro.saldoHoje)} hint={`abertura de ${money(livro.saldoAbertura)} em ${d(livro.marco)} + o que já foi pago e recebido`} tone={livro.saldoHoje < livro.reserva ? 'bad' : undefined}
+        <KpiHero label="Saldo hoje" value={money(livro.saldoHoje)} hint={livro.extratoAte ? `extrato até ${d(livro.extratoAte)} + o que já foi pago e recebido e ainda não está nele · o mesmo do Diretor Financeiro` : `abertura de ${money(livro.saldoAbertura)} em ${d(livro.marco)} + o que já foi pago e recebido · o mesmo do Diretor Financeiro`} tone={livro.saldoHoje < livro.reserva ? 'bad' : undefined}
           secundarios={[
             { label: 'No banco (extrato)', value: livro.extratoAte ? money(livro.saldoBanco) : 'sem extrato' },
             { label: 'Daqui a 7 dias', value: money(livro.previsto7), tone: livro.previsto7 < livro.reserva ? 'neg' : undefined },
