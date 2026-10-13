@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { addDays, calcLancamentos } from '../core/engine';
 import { DEPARTAMENTOS, livroCaixa, type LinhaCaixa } from '../core/caixa';
 import { centralDF } from '../core/cfo';
-import { BriefingDF, PedidosDF } from './DiretorFinanceiro';
+import { BriefingDF, ConversaDF, PedidosDF } from './DiretorFinanceiro';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { Sparkline } from '../ui/charts';
 import { Badge, Empty, Field, KpiHero, KpiStrip, Modal, MoedaInput, PageHead, Select, money, tentar, useToast, type Tone } from '../ui/components';
@@ -41,6 +41,9 @@ export default function Caixa() {
   // Diretor Financeiro dentro da Caixa: briefing do dia e pedidos da equipe para decidir (so para quem decide: ve bancos e aprova)
   const diretoria = verBancos && pode(usuario, 'aprovar');
   const central = useMemo(() => (diretoria ? centralDF(ds) : null), [ds, diretoria]);
+  const CHAVE_CONVERSA = 'eiff-control:caixa:conversa';
+  const [conversa, setConversa] = useState(() => { try { return sessionStorage.getItem(CHAVE_CONVERSA) === '1'; } catch { return false; } });
+  const alternarConversa = () => setConversa((v) => { try { sessionStorage.setItem(CHAVE_CONVERSA, v ? '0' : '1'); } catch { /* ignore */ } return !v; });
   const podeLancar = pode(usuario, 'editar_lancamento');
   const podePagar = pode(usuario, 'liquidar');
   if (!verBancos) return <Empty titulo="Caixa restrito">O caixa mostra saldos e é restrito a Financeiro, Diretoria, Contabilidade e Auditoria.</Empty>;
@@ -108,9 +111,10 @@ export default function Caixa() {
       {el}
 
       {central && <BriefingDF c={central} acoes={<>
-        <button className="btn sm" onClick={() => navegar('/diretor/conversa')}>Perguntar ao Diretor</button>
+        <button className={`btn sm${conversa ? ' primary' : ''}`} aria-expanded={conversa} onClick={alternarConversa}>{conversa ? 'Fechar a conversa' : 'Perguntar ao Diretor'}</button>
         <button className="btn sm" onClick={() => navegar('/diretor')}>Abrir a Central</button>
       </>} />}
+      {central && conversa && <div className="card df-card-chat caixa-conversa"><ConversaDF key={usuario.id} veCaixa /></div>}
       {central && <PedidosDF c={central} vazio={false} />}
 
       <div className="hero-grid">

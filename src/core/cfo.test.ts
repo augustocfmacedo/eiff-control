@@ -126,6 +126,10 @@ describe('Diretor Financeiro: parecer, previsão e alinhamento', () => {
     const l = actions.registrarPrevisaoDF(prev);
     expect(l.status).toBe('Rascunho'); expect(l.origem).toBe('diretor-financeiro'); expect(l.valorBruto).toBe(300); expect(l.vencimento).toBe(r.parecer!.dataSugerida ?? addDays(hoje, 1));
     expect(previsoesDF(getState().ds).some((x) => x.id === l.id)).toBe(true);
+    // clique repetido / conversa recarregada: o mesmo pedido ainda aguardando decisao nao vira um segundo lancamento
+    const qtd = getState().ds.lancamentos.length;
+    expect(actions.registrarPrevisaoDF(prev).id).toBe(l.id);
+    expect(getState().ds.lancamentos).toHaveLength(qtd);
     const al = alinhamentoDoDia(getState().ds, 40);
     expect(al.previsoes.some((p) => p.lancamento.id === l.id)).toBe(true);
     const dia = al.dias.find((d) => d.data === l.vencimento)!;

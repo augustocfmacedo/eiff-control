@@ -30,7 +30,8 @@ export function ConversaDF({ veCaixa }: { veCaixa: boolean }) {
   const [ia, setIa] = useState<'desconhecido' | 'ok' | 'indisponivel'>(modo === 'remoto' ? 'desconhecido' : 'indisponivel');
   const [ajuste, setAjuste] = useState<{ idx: number; valor: number; vencimento: string; categoria: string; codigoObra: string; contraparte: string; descricao: string } | null>(null);
   const fim = useRef<HTMLDivElement>(null);
-  useEffect(() => { fim.current?.scrollIntoView({ block: 'end' }); try { sessionStorage.setItem(chave, JSON.stringify(msgs.slice(-30))); } catch { /* ignore */ } }, [msgs, chave]);
+  // rola so a area das mensagens (nunca a pagina): a conversa tambem vive dentro da tela Caixa
+  useEffect(() => { const box = fim.current?.parentElement; if (box) box.scrollTop = box.scrollHeight; try { sessionStorage.setItem(chave, JSON.stringify(msgs.slice(-30))); } catch { /* ignore */ } }, [msgs, chave]);
   const catalogo = catalogoDe(ds);
   const podeRegistrar = pode(usuario, 'editar_lancamento');
   const ultimoPedidoIncompleto = () => [...msgs].reverse().find((m) => m.papel === 'assistente' && m.pedido?.intencao === 'pagamento' && m.pedido.faltando.length && !m.registrado)?.pedido;
@@ -257,14 +258,14 @@ export default function DiretorFinanceiro({ aba0 }: { aba0?: string }) {
   if (!diretoria) return (
     <>
       <PageHead title={`${NOME_DF} virtual`} subtitle="Peça um pagamento, informe quanto, para quando e para quem. O Diretor confere com a Diretoria e te avisa a decisão." />
-      <div className="df-equipe"><div className="card df-card-chat"><ConversaDF veCaixa={veCaixa} /></div><MeusPedidosDF /></div>
+      <div className="df-equipe"><div className="card df-card-chat"><ConversaDF key={usuario.id} veCaixa={veCaixa} /></div><MeusPedidosDF /></div>
     </>
   );
   return (
     <>
       <PageHead title={`${NOME_DF} virtual · Central`} subtitle="O Diretor escuta a equipe, analisa cada pedido contra o caixa e a reserva e traz aqui a orientação. Você decide; nada é pago sem isso." />
       <Tabs value={aba} onChange={setAba} items={[{ id: 'central', label: `Central (${pendentes})` }, { id: 'conversa', label: 'Conversar com o Diretor' }]} />
-      {aba === 'central' ? <CentralDF /> : <div className="card df-card-chat"><ConversaDF veCaixa /></div>}
+      {aba === 'central' ? <CentralDF /> : <div className="card df-card-chat"><ConversaDF key={usuario.id} veCaixa /></div>}
     </>
   );
 }
