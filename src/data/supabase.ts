@@ -25,6 +25,14 @@ import { hojeLocal } from '../core/engine';
 const URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
 const KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
 export const remotoAtivo = !!(URL && KEY);
+// Link do e-mail (convite ou "esqueci minha senha"): o Supabase volta ao site com #access_token=...&type=invite|recovery, ou
+// com #error=...&error_description=... quando o link expirou. Lido ANTES de criar o cliente, que consome o fragmento.
+const FRAGMENTO = typeof window !== 'undefined' ? window.location.hash : '';
+const TIPO_LINK = /[#&]type=(invite|recovery)(?![a-z])/.exec(FRAGMENTO)?.[1] as 'invite' | 'recovery' | undefined;
+export const linkDeSenha: 'invite' | 'recovery' | null = TIPO_LINK ?? null;
+export const erroDoLink: string | null = /[#&]error_description=([^&]+)/.test(FRAGMENTO) ? 'O link do e-mail expirou ou já foi usado. Use "Esqueci minha senha" para receber um novo.' : null;
+
+if (erroDoLink && typeof window !== 'undefined') window.history.replaceState(null, '', `${window.location.pathname}#/`); // tira o erro da barra
 export const supabase: SupabaseClient | null = remotoAtivo ? createClient(URL!, KEY!) : null;
 
  
@@ -57,6 +65,21 @@ export async function tokenSessao(): Promise<string | null> {
   if (!supabase) return null;
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
+}
+
+/** Cria/troca a senha de quem entrou pelo link do e-mail (convite ou recuperacao). */
+export async function definirSenhaRemota(senha: string): Promise<void> {
+  if (!supabase) throw new RemotoError('Supabase não configurado.');
+  const { error } = await supabase.auth.updateUser({ password: senha });
+  if (error) throw new RemotoError(/should be different/i.test(error.message) ? 'A nova senha precisa ser diferente da anterior.' : /weak|at least/i.test(error.message) ? 'Senha fraca: use ao menos 8 caracteres, misturando letras e números.' : error.message);
+}
+
+/** "Esqueci minha senha": o Supabase manda o link de nova senha (se o e-mail existir; a resposta nao revela). */
+export async function pedirNovaSenhaRemota(email: string): Promise<void> {
+  if (!supabase) throw new RemotoError('Supabase não configurado.');
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/` });
+  if (error && !/rate limit/i.test(error.message)) throw new RemotoError(error.message);
+  if (error) throw new RemotoError('Muitos pedidos seguidos: espere alguns minutos e tente de novo.');
 }
 
 export async function logout(): Promise<void> {

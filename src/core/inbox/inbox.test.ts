@@ -301,7 +301,7 @@ describe('seed e higiene', () => {
     const tela = fs.readFileSync(path.join(process.cwd(), 'src/screens/Inbox.tsx'), 'utf8');
     for (const proibido of ['fetch(', '/api/', 'anthropic', 'META_WHATSAPP', 'OCTADESK']) expect(tela).not.toContain(proibido);
     // Octopus Router: o provedor LLM e as portas do servidor nunca entram em codigo do navegador (nem pelo index do modulo)
-    for (const f of ['src/core/inbox/index.ts', 'src/data/store.ts', 'src/data/supabase.ts', 'src/data/inbox.supabase.ts', 'src/screens/Inbox.tsx', 'src/screens/InboxConfig.tsx', 'src/App.tsx']) {
+    for (const f of ['src/core/inbox/index.ts', 'src/data/store.ts', 'src/data/supabase.ts', 'src/data/inbox.supabase.ts', 'src/screens/Inbox.tsx', 'src/screens/InboxConfig.tsx', 'src/App.tsx', 'src/screens/Usuarios.tsx', 'src/core/usuarios.ts']) {
       const s = fs.readFileSync(path.join(process.cwd(), f), 'utf8');
       expect(s, f).not.toMatch(/inteligenciaLlm|roteamentoPorta|ANTHROPIC/);
     }

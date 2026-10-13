@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { Alocacao, CategoriaFuncao, Cenario, ContaFinanceira, FuncaoColaborador, LocalTrabalho, Params, PlanoConta, TipoLancamento } from '../core/types';
 import { conflitosAlocacao, localDoColaborador } from '../core/equipe';
 import { actions, pode, useStore } from '../data/store';
+import { GestaoUsuarios } from './Usuarios';
 import { Badge, Field, Input, Modal, Money, NumberInput, PageHead, Select, Tabs, data, money, tentar, useToast } from '../ui/components';
 
 const GRUPOS_FLUXO = ['Receitas Operacionais', 'Outras Entradas', 'Financiamento e Capital', 'Custos Diretos de Obras', 'Despesas com Pessoal', 'Despesas Administrativas', 'Despesas Comerciais', 'Despesas Operacionais', 'Tributos', 'Serviço da Dívida', 'Investimentos', 'Outras Saídas'];
@@ -9,7 +10,7 @@ const GRUPOS_DRE = ['Receita Operacional', 'Deduções da Receita', 'Outras Rece
 const CLASSES = ['Operacional', 'Custo direto', 'Despesa indireta', 'Tributo', 'Financeiro', 'Financiamento', 'Investimento', 'Capital', 'Não operacional'];
 
 export default function Cadastros({ aba0 }: { aba0?: string }) {
-  const { ds, usuario } = useStore();
+  const { ds, usuario, modo } = useStore();
   const { toast, el } = useToast();
   const [aba, setAba] = useState<'plano' | 'contas' | 'funcoes' | 'alocacoes' | 'parametros' | 'usuarios' | 'dados'>((aba0 as 'plano') ?? 'plano');
   const [funcao, setFuncao] = useState<FuncaoColaborador | null>(null);
@@ -115,15 +116,17 @@ export default function Cadastros({ aba0 }: { aba0?: string }) {
         </div>
       )}
 
+      {aba === 'usuarios' && modo === 'remoto' && pode(usuario, 'administrar') && <GestaoUsuarios />}
       {aba === 'usuarios' && (
-        <div className="card">
-          <p className="small muted">Usuários e escopos demonstrativos (DEC-02 pendente). Na versão Supabase, o login usa auth + MFA para Administrador, Diretoria e Financeiro, e o escopo é aplicado por RLS.</p>
+        <div className="card" style={modo === 'remoto' && pode(usuario, 'administrar') ? { marginTop: 14 } : undefined}>
+          {modo !== 'remoto' && <p className="small muted">Usuários e escopos de demonstração. Com o sistema ligado ao banco, o Administrador convida e gerencia os usuários de verdade aqui.</p>}
+          {modo !== 'remoto' && <>
           <table><thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Escopo de obras</th><th>Ativo</th><th></th></tr></thead><tbody>
             {ds.usuarios.map((u) => <tr key={u.id}><td><b>{u.nome}</b></td><td>{u.email}</td><td><Badge tone="info">{u.papel}</Badge></td><td className="small">{u.obras === '*' ? 'Todas as empresas/obras autorizadas' : u.obras.join(', ') || 'nenhuma'}</td><td>{u.ativo ? 'Sim' : 'Não'}</td><td>{u.id !== usuario.id && <button className="btn sm" onClick={() => actions.trocarUsuario(u.id)}>Entrar como</button>}</td></tr>)}
-          </tbody></table>
-          <h3 style={{ marginTop: 16 }}>Matriz resumida (seção 7 do blueprint)</h3>
+          </tbody></table></>}
+          <h3 style={{ marginTop: modo !== 'remoto' ? 16 : 0 }}>Matriz resumida de permissões</h3>
           <table className="small"><thead><tr><th>Ação</th><th>Papéis</th></tr></thead><tbody>
-            {[['Ver saldos e transações bancárias', 'Administrador, Diretoria, Financeiro, Contabilidade, Auditoria'], ['Criar/editar lançamentos', 'Administrador, Diretoria, Financeiro, Gestor de obra, Engenharia, Compras'], ['Liquidar e conciliar', 'Administrador, Financeiro'], ['Aprovar (por etapa da alçada)', 'Gestor de obra → Financeiro → Diretoria'], ['Atualizar execução física / ETC', 'Gestor de obra, Engenharia, Financeiro'], ['Fechar período / reabrir', 'Financeiro / Diretoria'], ['Plano de contas, contas, parâmetros', 'Administrador, Financeiro (parâmetros também Diretoria)'], ['Auditoria', 'Somente leitura, temporário, registrado']].map(([a, p]) => <tr key={a}><td>{a}</td><td>{p}</td></tr>)}
+            {[['Pedir pagamento pelo Diretor Financeiro', 'Administrador, Diretoria, Financeiro, Gestor de obra, Engenharia, Compras e Solicitante (que só faz isso)'], ['Ver saldos e transações bancárias', 'Administrador, Diretoria, Financeiro, Contabilidade, Auditoria'], ['Criar/editar lançamentos', 'Administrador, Diretoria, Financeiro, Gestor de obra, Engenharia, Compras'], ['Liquidar e conciliar', 'Administrador, Financeiro'], ['Aprovar (por etapa da alçada)', 'Gestor de obra → Financeiro → Diretoria'], ['Atualizar execução física / ETC', 'Gestor de obra, Engenharia, Financeiro'], ['Fechar período / reabrir', 'Financeiro / Diretoria'], ['Plano de contas, contas, parâmetros', 'Administrador, Financeiro (parâmetros também Diretoria)'], ['Auditoria', 'Somente leitura, temporário, registrado']].map(([a, p]) => <tr key={a}><td>{a}</td><td>{p}</td></tr>)}
           </tbody></table>
         </div>
       )}
