@@ -116,6 +116,8 @@ Motor de contexto de comunicação, reutilizável para qualquer conta, contato, 
   que ficou inativo = DONO_INATIVO (o vínculo fica, nada é limpo). O dono não é o responsável da oportunidade, da
   tarefa nem o derivado pela fila, e a Commercial Queue não o usa para ordenar. Importação, Lead Engine e mescla não
   definem nem herdam dono. Detalhes em `docs/commercial-director-1.0.md` §19.3.
+  Na tela (CD-D5.1): linha "Dono da conta" na ficha da empresa (definir, trocar, remover; só leitura sem a permissão
+  `radar`) e, na carteira, coluna "Dono", filtro por dono ou "Sem dono" e o indicador "Sem dono" (§19.4).
 
 ## Telas
 
