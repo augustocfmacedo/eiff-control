@@ -87,10 +87,8 @@ describe('CD-D5 · persistência e caminhos que não tocam o dono', () => {
   const h = { orgId: 'org', atorId: 'perfil-ator', uuid: (v?: string) => v ?? null, perfil: (u?: string) => (u ? `perfil-${u}` : null) };
   const ref = (_: string, id?: string) => id ?? null;
 
-  it('radar_company.commercial_owner_id ida e volta; sem dono vira null; id sem tradução vai cru (o banco recusa)', () => {
-    expect(linhaDb('empresas', emp('a', { commercialOwnerId: 'u-ana' }), ref, h as never).commercial_owner_id).toBe('perfil-u-ana');
-    expect(linhaDb('empresas', emp('a'), ref, h as never).commercial_owner_id).toBeNull();
-    expect(linhaDb('empresas', emp('a', { commercialOwnerId: 'x' }), ref, { ...h, perfil: () => null } as never).commercial_owner_id).toBe('x');
+  it('CD-D5.2: commercial_owner_id é lido do banco, mas NUNCA vai na escrita genérica (só pela RPC governada)', () => {
+    for (const e of [emp('a', { commercialOwnerId: 'u-ana' }), emp('a'), emp('a', { commercialOwnerId: 'x' })]) expect(linhaDb('empresas', e, ref, h as never)).not.toHaveProperty('commercial_owner_id');
     expect((linhaApp('empresas', { id: 'a', legal_name: 'A', active: true, commercial_owner_id: 'p-1' }) as Empresa).commercialOwnerId).toBe('p-1');
     expect((linhaApp('empresas', { id: 'a', legal_name: 'A', active: true, commercial_owner_id: null }) as Empresa).commercialOwnerId).toBeUndefined();
   });
