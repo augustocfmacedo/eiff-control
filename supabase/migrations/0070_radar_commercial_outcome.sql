@@ -12,8 +12,13 @@
 -- Quem escreve: só o banco. GANHO e ESTORNO nascem do gatilho em radar_opportunity, na MESMA transação da mudança de
 -- estágio (se o evento falhar, a mudança de estágio falha junto); COMPLEMENTO só pela RPC radar_complementar_valor_ganho
 -- (Administrador ou Diretoria). O livro é append-only: UPDATE, DELETE e TRUNCATE recusados para qualquer papel.
--- O instante do evento é o do banco (clock_timestamp(): o relógio real, crescente mesmo dentro de uma transação, para que
--- GANHO → ESTORNO → novo GANHO numa só transação não empatem) — a hora do aparelho não decide o mês. Sem backfill: oportunidade ganha
+-- O instante do evento é do banco, nunca do aparelho, e passa pela GUARDA TEMPORAL (radar_desfecho_instante): os eventos de
+-- uma mesma oportunidade são serializados pela trava da linha da oportunidade (sempre adquirida ANTES da linha do ganho, em
+-- todos os caminhos: GANHO, ESTORNO_GANHO e COMPLEMENTO_VALOR) e cada novo evento recebe um instante ESTRITAMENTE maior que o
+-- último da oportunidade, em microssegundos: o relógio (clock_timestamp()) quando ele está à frente; o último + 1 µs quando o
+-- relógio empatou ou recuou no máximo 1 s (ajuste fino) e isso não muda o mês comercial em São Paulo. Recuo maior que 1 s, ou
+-- deslocamento que levaria o evento para outro mês comercial, é RECUSADO: a transação inteira (inclusive a mudança de estágio)
+-- é desfeita e o histórico fica como está. clock_timestamp() sozinho não garante instantes distintos. Sem backfill: oportunidade ganha
 -- antes desta migration não ganha evento fabricado (produção tinha 0 oportunidades ao planejar a E3).
 -- Funções com search_path = pg_catalog, pg_temp e referências qualificadas (mesmo hardening da 0068 e da 0069).
 
@@ -63,14 +68,44 @@ create unique index radar_commercial_outcome_complemento_unico on public.radar_c
 create index radar_commercial_outcome_org_idx on public.radar_commercial_outcome (organization_id, occurred_at);
 create index radar_commercial_outcome_opp_idx on public.radar_commercial_outcome (opportunity_id, occurred_at);
 
+-- ---------------------------------------------------------------------------------------- guarda temporal
+-- Decide o instante do próximo evento de uma oportunidade a partir do relógio do banco e do último evento dela. Critério:
+--   * sem evento anterior, ou relógio à frente do último: o próprio relógio;
+--   * relógio igual ao último ou até 1 s atrás dele (regressão imaterial: empate de microssegundo, ajuste fino de NTP):
+--     último + 1 µs, DESDE QUE o evento continue no mesmo mês comercial (America/Sao_Paulo) que o relógio indica;
+--   * relógio mais de 1 s atrás do último (regressão material) ou deslocamento que mudaria o mês comercial: recusa
+--     explícita — nada é deslocado artificialmente para outro mês e a transação é desfeita.
+create or replace function public.radar_desfecho_instante(p_relogio timestamptz, p_ultimo timestamptz) returns timestamptz
+language plpgsql stable
+set search_path = pg_catalog, pg_temp as $$
+declare v_proximo timestamptz;
+begin
+  if p_relogio is null then raise exception 'desfecho: relógio do banco indisponível'; end if;
+  if p_ultimo is null or p_relogio > p_ultimo then return p_relogio; end if;
+  if p_ultimo - p_relogio > interval '1 second' then
+    raise exception 'desfecho: o relógio do banco está % atrás do último evento desta oportunidade; nada foi gravado (tente de novo em instantes)', p_ultimo - p_relogio;
+  end if;
+  v_proximo := p_ultimo + interval '1 microsecond';
+  if pg_catalog.to_char(v_proximo at time zone 'America/Sao_Paulo', 'YYYY-MM') <> pg_catalog.to_char(p_relogio at time zone 'America/Sao_Paulo', 'YYYY-MM') then
+    raise exception 'desfecho: ordenar este evento depois do último o levaria para outro mês comercial; nada foi gravado (tente de novo em instantes)';
+  end if;
+  return v_proximo;
+end $$;
+
 -- coerência de cada evento no INSERT (defesa em profundidade: só funções do banco inserem)
 create or replace function public.radar_commercial_outcome_coerencia() returns trigger language plpgsql
 set search_path = pg_catalog, pg_temp as $$
-declare v_g public.radar_commercial_outcome%rowtype;
+declare v_g public.radar_commercial_outcome%rowtype; v_ultimo timestamptz;
 begin
+  -- serialização por oportunidade: a trava da linha da oportunidade vem primeiro (o UPDATE de estágio já a tem; o complemento
+  -- a toma antes da linha do ganho), então dois eventos da mesma oportunidade nunca se gravam em paralelo
+  perform 1 from public.radar_opportunity o where o.id = new.opportunity_id for no key update;
   if not exists (select 1 from public.radar_opportunity o where o.id = new.opportunity_id and o.organization_id = new.organization_id) then
     raise exception 'desfecho: oportunidade e organização do evento não conferem';
   end if;
+  -- guarda temporal: o instante é do banco, estritamente depois do último evento da oportunidade (o informado é ignorado)
+  select pg_catalog.max(e.occurred_at) into v_ultimo from public.radar_commercial_outcome e where e.opportunity_id = new.opportunity_id;
+  new.occurred_at := public.radar_desfecho_instante(pg_catalog.clock_timestamp(), v_ultimo);
   if new.event_type = 'GANHO' then
     -- o ganho congela a empresa da oportunidade naquele instante; estorno e complemento herdam a do ganho
     if not exists (select 1 from public.radar_opportunity o where o.id = new.opportunity_id and o.company_id = new.company_id) then
@@ -190,9 +225,9 @@ begin
     -- ganho anterior à 0070 não tem evento: sem backfill, a reabertura não fabrica estorno
     if v_ganho.id is not null then
       insert into public.radar_commercial_outcome (organization_id, opportunity_id, company_id, event_type, won_event_id, amount,
-        occurred_at, from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
+        from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
       values (v_ganho.organization_id, v_ganho.opportunity_id, v_ganho.company_id, 'ESTORNO_GANHO', v_ganho.id, null,
-        pg_catalog.clock_timestamp(), old.stage, new.stage, v_ganho.owner_id, v_ganho.account_owner_id, v_ator, pg_catalog.btrim(new.stage_reason), 'trigger')
+        old.stage, new.stage, v_ganho.owner_id, v_ganho.account_owner_id, v_ator, pg_catalog.btrim(new.stage_reason), 'trigger')
       returning id into v_id;
       insert into public.audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
       values (v_ganho.organization_id, v_ator, 'radar_desfecho_estorno', 'radar_desfecho', v_id::text,
@@ -204,9 +239,9 @@ begin
   if new.stage = 'WON' then
     select c.commercial_owner_id into v_dono from public.radar_company c where c.id = new.company_id;
     insert into public.radar_commercial_outcome (organization_id, opportunity_id, company_id, event_type, won_event_id, amount,
-      occurred_at, from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
+      from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
     values (new.organization_id, new.id, new.company_id, 'GANHO', null, new.won_amount,
-      pg_catalog.clock_timestamp(), case when tg_op = 'UPDATE' then old.stage end, new.stage, new.owner_id, v_dono, v_ator,
+      case when tg_op = 'UPDATE' then old.stage end, new.stage, new.owner_id, v_dono, v_ator,
       pg_catalog.btrim(new.stage_reason), 'trigger')
     returning id into v_id;
     insert into public.audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
@@ -225,11 +260,13 @@ revoke all on function public.radar_opportunity_desfecho() from public, anon, au
 revoke all on function public.radar_opportunity_ganho_travado() from public, anon, authenticated, service_role;
 revoke all on function public.radar_commercial_outcome_coerencia() from public, anon, authenticated, service_role;
 revoke all on function public.radar_commercial_outcome_imutavel() from public, anon, authenticated, service_role;
+revoke all on function public.radar_desfecho_instante(timestamptz, timestamptz) from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------------------- complemento governado
 -- Completa um ganho registrado SEM valor (D3-B: o realizado do mês do ganho é corrigido; nada é apagado). Ator =
 -- auth.uid() com perfil ativo Administrador ou Diretoria; organização do perfil; motivo de 3 a 500; valor positivo com
--- até 2 casas e no máximo R$ 1 trilhão; um complemento por ganho (trava da linha do ganho + índice único).
+-- até 2 casas e no máximo R$ 1 trilhão; um complemento por ganho (trava da oportunidade e depois da linha do ganho — a mesma
+-- ordem do gatilho — + índice único).
 create or replace function public.radar_complementar_valor_ganho(p_ganho uuid, p_valor numeric, p_motivo text) returns jsonb
 language plpgsql security definer
 set search_path = pg_catalog, pg_temp as $$
@@ -249,16 +286,19 @@ begin
   if pg_catalog.char_length(v_motivo) not between 3 and 500 then raise exception 'desfecho: informe o motivo (3 a 500 caracteres)'; end if;
   if p_valor is null or p_valor <= 0 or p_valor <> pg_catalog.round(p_valor, 2) then raise exception 'desfecho: valor positivo em reais com no máximo 2 casas'; end if;
   if p_valor > 1000000000000 then raise exception 'desfecho: valor acima do máximo (R$ 1.000.000.000.000,00)'; end if;
-  select * into v_g from public.radar_commercial_outcome g where g.id = p_ganho for update;
+  select * into v_g from public.radar_commercial_outcome g where g.id = p_ganho;
   if v_g.id is null or v_g.organization_id is distinct from v_org or v_g.event_type <> 'GANHO' then raise exception 'desfecho: ganho não encontrado'; end if;
+  -- mesma ordem de travas de todos os caminhos (oportunidade → ganho): sem deadlock com reabertura/ganho concorrentes
+  perform 1 from public.radar_opportunity o where o.id = v_g.opportunity_id for no key update;
+  select * into v_g from public.radar_commercial_outcome g where g.id = p_ganho for update;
   if v_g.amount is not null then raise exception 'desfecho: o ganho já tem valor confirmado'; end if;
   if exists (select 1 from public.radar_commercial_outcome c where c.won_event_id = v_g.id and c.event_type = 'COMPLEMENTO_VALOR') then
     raise exception 'desfecho: o ganho já foi complementado';
   end if;
   insert into public.radar_commercial_outcome (organization_id, opportunity_id, company_id, event_type, won_event_id, amount,
-    occurred_at, from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
+    from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
   values (v_g.organization_id, v_g.opportunity_id, v_g.company_id, 'COMPLEMENTO_VALOR', v_g.id, p_valor,
-    pg_catalog.clock_timestamp(), null, null, v_g.owner_id, v_g.account_owner_id, v_ator, v_motivo, 'rpc')
+    null, null, v_g.owner_id, v_g.account_owner_id, v_ator, v_motivo, 'rpc')
   returning id into v_id;
   insert into public.audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
   values (v_org, v_ator, 'radar_complementar_valor_ganho', 'radar_desfecho', v_id::text,

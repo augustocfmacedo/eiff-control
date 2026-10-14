@@ -12,6 +12,7 @@ drop function if exists public.radar_opportunity_ganho_travado();
 drop table if exists public.radar_commercial_outcome;
 drop function if exists public.radar_commercial_outcome_imutavel();
 drop function if exists public.radar_commercial_outcome_coerencia();
+drop function if exists public.radar_desfecho_instante(timestamptz, timestamptz);
 alter table public.radar_opportunity drop constraint if exists radar_opportunity_stage_reason_tamanho;
 alter table public.radar_opportunity drop column if exists stage_reason;
 alter table public.radar_opportunity drop constraint if exists radar_opportunity_won_amount_so_ganha;

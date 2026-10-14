@@ -28,8 +28,8 @@ E1 mudou.
   UPDATE serializa e a segunda já vê WON); um estorno e um complemento por ganho (índices únicos parciais); o gatilho de
   coerência recusa GANHO com ganho vigente e evento que não cite o ganho original da mesma oportunidade e organização.
 - **Reabrir e ganhar de novo** funciona: GANHO → ESTORNO → GANHO, o vigente é o mais recente.
-- **Instante do evento** = relógio do banco (`clock_timestamp()`: cresce mesmo dentro de uma transação, então GANHO →
-  ESTORNO → novo GANHO não empatam). A hora do aparelho não decide o mês. `closed_at` continua sendo o que o app grava.
+- **Instante do evento** = do banco, pela **guarda temporal** (seção abaixo): estritamente maior que o último evento da
+  mesma oportunidade, em microssegundos. A hora do aparelho não decide o mês. `closed_at` continua sendo o que o app grava.
 - **Oportunidade ganha travada** (gatilho `radar_opportunity_ganho_travado`, para qualquer papel): valor fechado, valor
   estimado, empresa, organização, data de fechamento e responsável (se havia) não mudam enquanto ganha; corrigir = reabrir
   com motivo. Fora de WON o valor fechado é limpo pelo banco; CHECKs: `won_amount` > 0, ≤ R$ 1 trilhão e só em WON.
@@ -68,6 +68,29 @@ E1 mudou.
   todas as fórmulas seguem iguais (os 34 testes da E1 passam sem mudança). Virada de mês em São Paulo testada com
   microssegundos.
 
+## Guarda temporal (14/10/2026, antes de aplicar a 0070)
+
+O gate em PostgreSQL 17.6 real mostrou que `clock_timestamp()` **não** garante instantes distintos (resolução de 1 µs;
+em 20.000 chamadas seguidas, ~19.000 empates) e que um relógio que **recua** (passo de NTP) poderia pôr um novo GANHO antes
+do ESTORNO anterior — o motor E1 acusaria GANHO_REPETIDO. A 0070 passou a ter uma guarda transacional:
+
+- **Serialização por oportunidade, sempre na mesma ordem de travas: oportunidade → ganho.** O gatilho de coerência do livro
+  (`radar_commercial_outcome_coerencia`, roda em TODO evento: GANHO, ESTORNO_GANHO e COMPLEMENTO_VALOR) trava a linha da
+  oportunidade (`FOR NO KEY UPDATE`; no UPDATE de estágio ela já está travada). A RPC de complemento trava a oportunidade
+  ANTES da linha do ganho (antes travava só o ganho, e o fazia antes de conferir a organização). Com uma ordem única não há
+  deadlock: rajada mista de 8 sessões (complemento × reabrir × ganhar no mesmo ganho) passou sem nenhum.
+- **Instante** = `radar_desfecho_instante(relógio, último)` (função do banco, `search_path` fixo, sem EXECUTE para papéis
+  da API), aplicada no INSERT — o instante informado é ignorado. Critério adotado:
+  - sem evento anterior, ou relógio à frente do último: o próprio relógio;
+  - relógio igual ao último ou **até 1 s** atrás (regressão imaterial: empate de microssegundo, ajuste fino): **último + 1 µs**,
+    desde que o evento continue no **mesmo mês comercial (America/Sao_Paulo)** que o relógio indica;
+  - relógio **mais de 1 s** atrás (regressão material) ou deslocamento que levaria o evento a **outro mês comercial**: **recusa
+    explícita** ("o relógio do banco está … atrás do último evento desta oportunidade; nada foi gravado") e a transação
+    inteira é desfeita — inclusive a mudança de estágio. Nada é empurrado artificialmente para outro mês; o histórico fica
+    intacto e a operação pode ser repetida quando o relógio voltar a andar.
+- Nada muda em evento já gravado nem nas fórmulas do E1. O modo local (espelho em `src/core/radar/desfechos.ts`) segue com
+  +1 ms sobre o último, sem relógio de servidor.
+
 ## Isolamento entre organizações (verificação final, 14/10/2026)
 
 Achado: as FKs `radar_opportunity.company_id → radar_company` e `owner_id → profile` não conferem organização, o PostgreSQL
@@ -99,8 +122,9 @@ do GANHO. Provado no smoke (bloco R, 12 provas, inclusive tentativa do dono do b
 
 | Prova | Resultado |
 |---|---|
-| `npm run smoke:desfechos` (fila inteira 0001..0070 em PGlite, novo passo do Quality Gate) | 105 ok, 0 falhas |
-| Preflight `--ordem-corrigida` | 69 migrations, 0 erros |
+| `npm run smoke:desfechos` (fila inteira em PGlite, passo do Quality Gate; bloco T = guarda temporal) | 120 ok, 0 falhas |
+| Preflight `--ordem-corrigida` | 72 migrations, 0 erros |
+| Gate em PostgreSQL 17.6 real (14/10/2026, versão com a guarda; ordem numérica × ordem de produção com a 0073; concorrência com sessões independentes; relógio avançando, empatando e recuando; virada do mês em SP; atomicidade; isolamento; motor E1 sobre o livro gerado) | 41 ok, 0 falhas |
 | `src/data/radar.desfechos.integracao.test.ts` — app → banco → app com `carregarRadar`/`persistirRadar` reais, RLS de produção (inclui GANHO → ESTORNO → GANHO numa só transação) | 4 ok |
 | `src/core/radar/desfechos.test.ts` — espelho do gatilho + integração com o motor E1 (D3-A, D3-B, linha do banco, microssegundos no mesmo ms, virada de mês em SP) | 16 ok |
 | `src/data/radar.desfechos.store.test.ts` — formulário → store, permissões, livro indisponível (WON bloqueado), motivo novo, guardas de fonte | 11 ok |
@@ -108,13 +132,15 @@ do GANHO. Provado no smoke (bloco R, 12 provas, inclusive tentativa do dono do b
 
 ## Riscos e itens de gate
 
-1. **Concorrência real** (duas sessões ao mesmo tempo) não roda no PGlite. A garantia é a trava de linha do UPDATE de
-   `radar_opportunity` (a segunda transação espera e reavalia, vendo WON) + o índice único do estorno/complemento + o gatilho
-   de coerência. Como na 0068, **rodar o teste de duas sessões num PostgreSQL real antes de aplicar a 0070**.
+1. **Concorrência real** não roda no PGlite: foi provada em PostgreSQL 17.6 real (gate de 14/10/2026, refeito na versão com
+   a guarda temporal). A garantia é a trava da linha da oportunidade (tomada primeiro por todo evento) + os índices únicos do
+   estorno/complemento + o gatilho de coerência.
 2. **Mudança de comportamento da E0**: o valor digitado ao marcar como ganha deixa de ir para o estimado e vai para o valor
    fechado. Pedido explícito da E3 ("não usar `estimated_value` como valor de venda"), mas é divergência do que a E0 gravava.
 3. **Instante do evento ≠ `closed_at`** quando o aparelho estava com a hora errada ou sincronizou depois (fila offline): o
    livro usa a hora do banco. Na virada do mês pode cair no mês seguinte ao que a tela mostra como fechamento.
+   **Relógio do banco recuando mais de 1 s** (ou a menos de 1 µs da virada do mês) recusa a mudança de estágio/complemento
+   daquela oportunidade até o relógio passar do último evento — decisão consciente: recusar em vez de datar errado.
 4. **Apagar oportunidade com eventos** passa a falhar (FK restrict) — intencional; o app não apaga oportunidades hoje.
 5. **Achado fora da E3** (registrado como tarefa separada): `current_org`, `has_role` e outras funções da 0003, e o
    `audit_row` da 0001, são security definer sem `search_path` fixo e podem ser desviadas por tabela temporária de mesmo
