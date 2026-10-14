@@ -13,6 +13,14 @@ export interface PortasWidget {
   validar(token: string): Promise<ValidacaoTokenWidget>;
   carregar(perfilId: string): Promise<{ ds: Dataset; usuario: Usuario }>;
   agora(): Date;
+  /** diagnóstico: etapa e primeira linha do erro (o servidor sanitiza antes de registrar; nunca vai ao cliente) */
+  registrar?(etapa: 'validar' | 'carregar' | 'resumo', erro: unknown): void;
+}
+
+/** Primeira linha do erro, sem token, sem cabeçalho de autorização, no máximo 200 caracteres — para o log do servidor. */
+export function erroParaLog(erro: unknown): string {
+  const texto = erro instanceof Error ? `${erro.name}: ${erro.message}` : String(erro);
+  return texto.split('\n')[0].replace(/eiffw_[0-9a-f]+/gi, 'eiffw_***').replace(/bearer\s+\S+/gi, 'Bearer ***').slice(0, 200);
 }
 export interface RespostaWidget { status: number; corpo: ResumoWidgetCaixa | { erro: ErroWidget; mensagem: string } }
 
@@ -40,19 +48,23 @@ export async function tratarWidgetCaixa(req: { metodo: string; autorizacao: stri
   if (!token) return falha('token_ausente');
   if (!FORMATO_TOKEN_WIDGET.test(token)) return falha('token_invalido');
   let v: ValidacaoTokenWidget;
-  try { v = await portas.validar(token); } catch { return falha('indisponivel'); }
+  try { v = await portas.validar(token); } catch (e) { portas.registrar?.('validar', e); return falha('indisponivel'); }
   if (!v.ok) {
     const erro = ERROS_DA_RPC[v.erro];
+    if (!erro) portas.registrar?.('validar', new Error(`resposta inesperada da validação: ${v.erro}`));
     return falha(erro ?? 'indisponivel'); // somente_servidor ou outro inesperado: configuração errada, nunca detalhe ao cliente
   }
+  let carga: { ds: Dataset; usuario: Usuario };
+  try { carga = await portas.carregar(v.perfilId); } catch (e) { portas.registrar?.('carregar', e); return falha('indisponivel'); }
   try {
-    const { ds, usuario } = await portas.carregar(v.perfilId);
+    const { ds, usuario } = carga;
     // segunda barreira, no app: a MATRIZ é a fonte do "quem vê o caixa" (a RPC espelha com o papel Administrador)
     if (!usuario.ativo || !pode(usuario, 'ver_bancos')) return falha('sem_permissao');
     const agora = portas.agora();
     const dsHoje: Dataset = { ...ds, params: { ...ds.params, dataBase: ds.params.dataBaseAutomatica === false ? ds.params.dataBase : hojeEmSaoPaulo(agora) } };
     return { status: 200, corpo: resumoWidgetCaixa(dsHoje, agora) };
-  } catch {
+  } catch (e) {
+    portas.registrar?.('resumo', e);
     return falha('indisponivel');
   }
 }

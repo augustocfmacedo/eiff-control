@@ -2,9 +2,9 @@
 // em src/core/widgetServidor.ts (handler puro, testado); aqui só o ambiente: SUPABASE_SERVICE_ROLE_KEY (só no painel do
 // Netlify, nunca VITE_, nunca no navegador ou em log) valida o token pela RPC server-only widget_token_validar (0069) e
 // carrega o dataset como o Diretor Financeiro já faz (carregarComoServidor). O token nunca é registrado em log.
-import { createClient } from '@supabase/supabase-js';
-import { tratarWidgetCaixa, type ValidacaoTokenWidget } from '../../src/core/widgetServidor';
+import { erroParaLog, tratarWidgetCaixa, type ValidacaoTokenWidget } from '../../src/core/widgetServidor';
 import { carregarComoServidor } from '../../src/data/supabase';
+import { clienteServidor } from '../../src/data/clienteServidor';
 
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -24,8 +24,9 @@ export default async (req: Request): Promise<Response> => {
       const v = (await resp.json()) as { ok?: boolean; erro?: string; perfil_id?: string; token_id?: string; nome?: string };
       return (v.ok && v.perfil_id ? { ok: true, perfilId: v.perfil_id, tokenId: v.token_id ?? '', nome: v.nome ?? '' } : { ok: false, erro: v.erro ?? 'desconhecido' }) as ValidacaoTokenWidget;
     },
-    carregar: (perfilId) => carregarComoServidor(createClient(url, servico, { auth: { persistSession: false, autoRefreshToken: false } }), perfilId),
+    carregar: (perfilId) => carregarComoServidor(clienteServidor(url, servico), perfilId),
     agora: () => new Date(),
+    registrar: (etapa, erro) => console.error('widget-caixa', etapa, erroParaLog(erro)),
   }).catch((e) => {
     console.error('widget-caixa', String((e as Error).message ?? e).split('\n')[0].slice(0, 160));
     return { status: 503, corpo: { erro: 'indisponivel', mensagem: 'Não foi possível montar o resumo agora.' } };
