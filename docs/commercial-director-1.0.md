@@ -877,3 +877,48 @@ sem mudança de banco, sem metas.
   desfechos da E3 congela a empresa do ganho).
 - **Provas**: `src/data/radar.oportunidade.e0.test.ts` (fluxo real do formulário, WON → WON, reabertura, campos
   travados, criação já fechada, perda, estágios ativos, permissão, regras puras e guarda de fonte do formulário).
+
+### 19.7 CD-D3 / E1 — motor de cálculo da meta comercial (13/10/2026)
+
+Núcleo puro em `src/core/radar/metaComercial.ts` (exportado por `src/core/radar`), versão `VERSAO_REGRAS_META` =
+`CD-D3-1.0`. Sem banco, sem tela, sem migration: a E2 grava as metas e a E3 grava o livro de desfechos; os dois só
+alimentam este motor. Autoridade das medidas: `META_COMERCIAL` (acrescentada ao contrato neutro `commercialMetrics.ts`).
+
+- **Entradas**: versões de meta (`VersaoMetaComercial`: mês `AAAA-MM`, RECEITA_GANHA, BRL, escopo ORGANIZACAO, valor ou
+  `null` = retirada, versão, motivo, quem e quando) e eventos do livro de desfechos (`EventoDesfecho`: GANHO com o valor
+  fechado confirmado ou sem valor, ESTORNO_GANHO e COMPLEMENTO_VALOR apontando para o ganho em `ganhoId`). O motor nunca
+  lê a oportunidade (estágio, `valorEstimado`, probabilidade): estimativa não é venda realizada. Receita ganha comercial
+  e faturamento financeiro são medidas separadas — nada do financeiro entra aqui (teste prende os imports).
+- **Tempo**: mês comercial pelo fuso `America/Sao_Paulo` (`mesComercialDe`, `inicioDoMes`, `fimDoMes` = início do
+  seguinte); instante sem fuso explícito é inválido (nunca o fuso da máquina); data civil e `AAAA-MM` são lidos como
+  estão. O instante de referência (`agora`) é sempre explícito e define mês corrente/encerrado/futuro e o "visto até":
+  eventos e versões posteriores a ele não existem para a apuração.
+- **Meta**: vigente = maior versão definida até `agora`; em mês encerrado, versão criada depois do fim do mês é
+  ignorada e sinalizada (D3-C). Sem meta, retirada ou com valor inválido → `DADO_INSUFICIENTE`. Nada é sobrescrito.
+  `motivosRecusaNovaMeta` (mês corrente ou futuro, valor positivo com até 2 casas ou `null`, motivo de 3 a 500) e
+  `proximaVersaoMeta` ficam prontos para a E2.
+- **Livro de desfechos** (`lerLivroDesfechos`): ordem determinística (instante, tipo, id); cada id conta uma vez
+  (repetido ou repetido com conteúdo diferente = inconsistência, vale o primeiro); GANHO com outro ganho ativo da mesma
+  oportunidade não conta (sem dupla contagem); ESTORNO precisa do ganho ativo que cita, da mesma oportunidade e depois
+  dele; COMPLEMENTO só em ganho sem valor, uma vez, com valor, depois do ganho. Tudo que é descartado vira
+  inconsistência com código de catálogo fechado.
+- **Apuração do mês** (`apurarMetaComercial`): ganho conta no mês em que ocorreu; estorno no mês em que ocorreu, com o
+  valor do ganho que estorna e o mês desse ganho (D3-A); complemento retifica o MÊS DO GANHO e aparece em
+  `retificacoes` com quando ocorreu (D3-B) — a apuração vista antes do complemento mostra o mês incompleto, depois dele
+  completo. Medidas: meta, ganhos, ganhos sem valor, valor dos ganhos, estornos, estornos sem valor, valor dos estornos,
+  realizado confirmado (ganhos − estornos com valor conhecido, pode ser negativo), realizado exato (só `DISPONIVEL` sem
+  ganho/estorno sem valor), atingimento (razão realizado ÷ meta; a amostra mínima de 30 não se aplica), falta para a
+  meta e excedente. Sem meta válida ou com realizado incompleto, atingimento/falta/excedente são `DADO_INSUFICIENTE`;
+  mês futuro é `NAO_APLICAVEL`.
+- **Dinheiro**: centavos inteiros (`lerValor`: texto do banco ou número; ausente nunca é zero; zero explícito é valor
+  confirmado; negativo, texto com vírgula ou fora do inteiro seguro é inválido; mais de 2 casas arredonda meio para
+  cima na terceira casa, sobre o texto decimal); reais só na saída.
+- **Alertas** (catálogo fechado, só fatos, sem ritmo — D3-D): META_AUSENTE e META_RETIRADA (mês corrente ou futuro),
+  META_INCONSISTENTE, GANHOS_SEM_VALOR, ESTORNOS_SEM_VALOR, ESTORNO_NO_MES, RETIFICACAO_POR_COMPLEMENTO, META_ATINGIDA,
+  META_NAO_ATINGIDA (só mês encerrado e completo) e EVENTOS_INCONSISTENTES; cada um com as evidências (ids).
+- **Provas**: `src/core/radar/metaComercial.test.ts` (virada de mês em São Paulo × UTC e de ano; meta ausente,
+  retirada, versionada e vista no tempo; ganho com e sem valor; zero explícito; complemento posterior; estorno em outro
+  mês; repetidos e dupla contagem; ordem de chegada irrelevante; abaixo, igual e acima da meta; centavos e
+  arredondamento; alertas; entrada congelada; guardas de fonte sem relógio, sem estimativa e sem financeiro).
+- **Para a E2/E3**: a E3 precisa gravar o GANHO com o valor fechado confirmado (D3-F) e o ESTORNO na reabertura, sempre
+  com `ganhoId`; o COMPLEMENTO_VALOR é a única forma de completar um ganho sem valor. Os instantes vão com fuso.

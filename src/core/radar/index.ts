@@ -28,3 +28,4 @@ export * from './leadEngineIntake';
 export * from './leadEngineReview';
 export * from './donoConta';
 export * from './estagioOportunidade';
+export * from './metaComercial';

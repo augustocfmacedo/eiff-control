@@ -16,7 +16,7 @@ export const UNIDADES_MEDIDA = ['CONTAS', 'CONTATOS', 'OPORTUNIDADES', 'REGISTRO
 export type UnidadeMedida = (typeof UNIDADES_MEDIDA)[number];
 
 /** A autoridade que DEFINE o número. A medida nunca recalcula regra de outra autoridade: chama a função dela. */
-export const AUTORIDADES_MEDIDA = ['RADAR', 'COMMERCIAL_QUEUE', 'ACTION_PLAN', 'CADENCIA', 'CONTATOS', 'COBERTURA', 'HISTORICO_CONTATO', 'COMUNICACAO', 'LEAD_ENGINE', 'INBOX'] as const;
+export const AUTORIDADES_MEDIDA = ['RADAR', 'COMMERCIAL_QUEUE', 'ACTION_PLAN', 'CADENCIA', 'CONTATOS', 'COBERTURA', 'HISTORICO_CONTATO', 'COMUNICACAO', 'LEAD_ENGINE', 'INBOX', 'META_COMERCIAL'] as const;
 export type AutoridadeMedida = (typeof AUTORIDADES_MEDIDA)[number];
 
 export interface MedidaComercial {
