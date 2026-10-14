@@ -2,7 +2,7 @@
 // fornecedor), projeta o caixa dia a dia com o motor (engine.ts), emite o parecer deterministico (libera, reagenda,
 // atencao, nao recomendado) com a alcada exigida, monta a previsao de lancamento e o alinhamento diario da Diretoria.
 // A IA (funcao Netlify /api/diretor-financeiro) so ajuda a INTERPRETAR o texto; os numeros e a decisao vem daqui.
-import type { Dataset, Lancamento, Papel, Usuario } from './types';
+import type { AlteracaoPedido, Dataset, Lancamento, Papel, StatusAlteracaoPedido, Usuario } from './types';
 import { addDays, caixaHoje, calcLancamentos, etapasExigidas, mapaPlano, posicaoBancaria, reservaVinculadaTotal, type LancamentoCalc } from './engine';
 
 export const ORIGEM_DF = 'diretor-financeiro';
@@ -414,8 +414,59 @@ export function orientacaoDF(p: Parecer): { titulo: string; detalhe: string; aca
   if (p.decisao === 'atencao') return { titulo: 'Só com seu aval: consome a reserva', detalhe: `Cabe no caixa (${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}), mas o menor saldo em 30 dias fica em ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}, e não há data em 30 dias em que caiba.`, acaoSugerida: 'avaliar' };
   return { titulo: 'Não recomendo: caixa ficaria negativo', detalhe: `Saldo na data ${fmt(p.saldoNaData)} → ${fmt(p.saldoDepois)}; menor saldo em 30 dias ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}). Vencidos: ${fmt(p.vencidos)}. Se for inadiável, precisa de entrada nova ou adiamento de outro pagamento.`, acaoSugerida: 'recusar' };
 }
+// ---------------------------------------------------------------------------------------------------------------------
+// Alteracao de valor de um pedido (0071): quem pediu solicita, com motivo; o titulo so muda quando a Diretoria aceita.
+// ---------------------------------------------------------------------------------------------------------------------
+export const alteracoesDoPedido = (ds: Dataset, id: string): AlteracaoPedido[] => (ds.alteracoesPedido ?? []).filter((a) => a.lancamentoId === id).sort((a, b) => b.solicitadoEm.localeCompare(a.solicitadoEm));
+export const alteracaoPendente = (ds: Dataset, id: string) => (ds.alteracoesPedido ?? []).find((a) => a.lancamentoId === id && a.status === 'PENDENTE');
+export const ultimaAlteracao = (ds: Dataset, id: string): AlteracaoPedido | undefined => alteracoesDoPedido(ds, id)[0];
+export const ROTULO_ALTERACAO: Record<StatusAlteracaoPedido, string> = { PENDENTE: 'alteração de valor em análise', ACEITA: 'alteração de valor aceita', RECUSADA: 'alteração de valor recusada', CANCELADA: 'alteração cancelada' };
+
+/** Por que este pedido NAO pode ter o valor alterado agora (null = pode). Mesmas regras de df_pedir_alteracao no banco. */
+export function bloqueioAlteracao(ds: Dataset, l: Lancamento): string | null {
+  if (l.origem !== ORIGEM_DF) return 'Só pedidos feitos ao Diretor Financeiro.';
+  if (l.excluidoEm) return 'Pedido excluído.';
+  if (l.status === 'Realizado') return 'Pedido já foi pago.';
+  if (l.status === 'Cancelado') return 'Pedido não foi aprovado: faça um pedido novo.';
+  if (ds.liquidacoes.some((q) => q.lancamentoId === l.id)) return 'Pedido já tem pagamento registrado: fale com a Diretoria.';
+  if (alteracaoPendente(ds, l.id)) return 'Já há uma alteração deste pedido em análise pela Diretoria.';
+  return null;
+}
+export function validarAlteracao(l: Lancamento, valor: number, motivo: string): string[] {
+  const erros: string[] = [];
+  if (!(valor > 0) || valor > 1e9) erros.push('Novo valor deve ser positivo.');
+  else if (Math.round(valor * 100) === Math.round(l.valorBruto * 100)) erros.push('O novo valor é igual ao atual.');
+  if (motivo.trim().length < 3) erros.push('Explique o motivo da alteração.');
+  return erros;
+}
+
+export interface AnaliseAlteracao { titulo: string; detalhe: string; tom: 'ok' | 'info' | 'warn' | 'bad'; diferenca: number }
+/**
+ * O que a alteracao faz com o caixa, para a Diretoria decidir. Pedido ainda aguardando (rascunho, fora do caixa): analisa o
+ * pedido inteiro com o novo valor. Pedido ja programado (ja no caixa): analisa so a DIFERENCA na data do pedido.
+ */
+export function analisarAlteracao(ds: Dataset, a: AlteracaoPedido, l: Lancamento): AnaliseAlteracao {
+  const diferenca = arred(a.valorNovo - l.valorBruto);
+  const alcada = l.status === 'Rascunho' ? '' : ' Ao aceitar, o pedido passa pelas alçadas normais com o novo valor.';
+  if (diferenca <= 0 && l.status !== 'Rascunho') return { titulo: `Reduz o pagamento em ${fmt(-diferenca)}`, detalhe: `O caixa melhora: sai ${fmt(a.valorNovo)} em vez de ${fmt(l.valorBruto)} em ${br(l.vencimento)}.`, tom: 'ok', diferenca };
+  const p = analisarPagamento(ds, { valor: l.status === 'Rascunho' ? a.valorNovo : diferenca, vencimento: l.vencimento, codigoObra: l.codigoObra || undefined, categoria: l.categoria });
+  const base = l.status === 'Rascunho' ? `Com ${fmt(a.valorNovo)} em ${br(p.vencimento)}` : `A diferença de ${fmt(diferenca)} em ${br(p.vencimento)}`;
+  if (p.decisao === 'liberar') return { titulo: 'Cabe no caixa', detalhe: `${base}, o menor saldo em 30 dias fica em ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), acima do piso de ${fmt(p.reserva)}.${alcada}`, tom: 'ok', diferenca };
+  if (p.decisao === 'reagendar') return { titulo: `Aperta o caixa em ${br(p.vencimento)}`, detalhe: `${base}, o menor saldo em 30 dias cai para ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}; caberia a partir de ${br(p.dataSugerida)}.${alcada}`, tom: 'info', diferenca };
+  if (p.decisao === 'atencao') return { titulo: 'Só com seu aval: consome a reserva', detalhe: `${base}, o menor saldo em 30 dias fica em ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}), abaixo da reserva de ${fmt(p.reserva)}.${alcada}`, tom: 'warn', diferenca };
+  return { titulo: 'Não recomendo: caixa ficaria negativo', detalhe: `${base}, o saldo cai para ${fmt(p.saldoDepois)} e o menor saldo em 30 dias para ${fmt(p.menorSaldoDepois)} (${br(p.menorSaldoDia)}).`, tom: 'bad', diferenca };
+}
+export interface AlteracaoParaDecidir { alteracao: AlteracaoPedido; lancamento: Lancamento; analise: AnaliseAlteracao }
+/** Alteracoes pendentes com o pedido e a analise, a mais antiga antes. */
+export function alteracoesParaDecidir(ds: Dataset): AlteracaoParaDecidir[] {
+  return (ds.alteracoesPedido ?? []).filter((a) => a.status === 'PENDENTE').sort((a, b) => a.solicitadoEm.localeCompare(b.solicitadoEm)).flatMap((a) => {
+    const l = ds.lancamentos.find((x) => x.id === a.lancamentoId);
+    return l ? [{ alteracao: a, lancamento: l, analise: analisarAlteracao(ds, a, l) }] : [];
+  });
+}
+
 export interface PedidoDecidido { lancamento: Lancamento; status: StatusPedidoDF; decididoEm: string; motivo?: string }
-export interface CentralDF { alinhamento: Alinhamento; orientacoes: Map<string, ReturnType<typeof orientacaoDF>>; decididas: PedidoDecidido[]; briefing: string; contagem: { programar: number; reagendar: number; avaliar: number; recusar: number } }
+export interface CentralDF { alinhamento: Alinhamento; orientacoes: Map<string, ReturnType<typeof orientacaoDF>>; decididas: PedidoDecidido[]; briefing: string; contagem: { programar: number; reagendar: number; avaliar: number; recusar: number }; alteracoes: AlteracaoParaDecidir[] }
 /** Tudo que a Diretoria precisa para decidir: alinhamento, orientacao por pedido, briefing falado e o historico recente. */
 export function centralDF(ds: Dataset, dias = 14): CentralDF {
   const al = alinhamentoDoDia(ds);
@@ -425,14 +476,16 @@ export function centralDF(ds: Dataset, dias = 14): CentralDF {
   const limite = addDays(ds.params.dataBase, -dias);
   const decididas: PedidoDecidido[] = ds.lancamentos.filter((l) => l.origem === ORIGEM_DF && l.status !== 'Rascunho' && !l.excluidoEm && l.atualizadoEm.slice(0, 10) >= limite).sort((a, b) => b.atualizadoEm.localeCompare(a.atualizadoEm)).map((l) => ({ lancamento: l, status: statusPedidoDF(l), decididoEm: l.atualizadoEm, motivo: l.motivoCancelamento?.replace(/^Recusada no alinhamento diário: /, '') }));
   const n = al.previsoes.length;
+  const alteracoes = alteracoesParaDecidir(ds);
   const linhas = [
     `${n ? `${n} pedido(s) da equipe aguardam sua decisão, ${fmt(al.totalPrevisoes)} no total.` : 'Nenhum pedido da equipe aguardando decisão.'}`,
+    alteracoes.length ? `${alteracoes.length} pedido(s) de alteração de valor esperam sua validação.` : '',
     `Caixa hoje ${fmt(al.saldoHoje)} (${origemCaixa(ds)})${al.compromissosHoje ? `, com ${fmt(al.compromissosHoje)} vencidos ou vencendo hoje ainda a pagar` : ''}; menor saldo da semana com os pedidos ${fmt(Math.min(...al.dias.map((d) => d.saldoComPrevisoes)))}; piso ${fmt(al.reserva)}.`,
     n ? `Minha orientação: ${[contagem.programar ? `programar ${contagem.programar}` : null, contagem.reagendar ? `reagendar ${contagem.reagendar}` : null, contagem.avaliar ? `${contagem.avaliar} depende(m) do seu aval (reserva)` : null, contagem.recusar ? `${contagem.recusar} não recomendado(s)` : null].filter(Boolean).join(', ')}.` : '',
     al.venceHoje.length ? `Vence hoje: ${al.venceHoje.length} pagamento(s), ${fmt(al.venceHoje.reduce((s, l) => s + l.saldoAberto, 0))}.` : 'Nada vence hoje.',
     ...al.alertas.map((a) => `Atenção: ${a}`),
   ].filter(Boolean);
-  return { alinhamento: al, orientacoes, decididas, briefing: linhas.join(' '), contagem };
+  return { alinhamento: al, orientacoes, decididas, briefing: linhas.join(' '), contagem, alteracoes };
 }
 /** Junta o complemento ("500 reais", "amanhã") ao pedido anterior que ficou incompleto. */
 export function completarPedido(anterior: PedidoInterpretado, complemento: PedidoInterpretado): PedidoInterpretado {

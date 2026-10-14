@@ -815,4 +815,22 @@ export interface Dataset {
   radar: RadarDataset; // EIFF Radar (src/core/radar)
   /** EIFF Inbox (src/core/inbox). Opcional: datasets antigos e o remoto sem persistencia nao trazem o slice; o store normaliza. */
   inbox?: InboxDataset;
+  /** Alteracoes de valor pedidas pela equipe nos pedidos ao Diretor Financeiro (payment_change_request, 0071). Opcional: datasets antigos nao trazem. */
+  alteracoesPedido?: AlteracaoPedido[];
+}
+
+export type StatusAlteracaoPedido = 'PENDENTE' | 'ACEITA' | 'RECUSADA' | 'CANCELADA';
+/** Pedido de alteracao de valor de um pedido de pagamento ao Diretor Financeiro: o titulo so muda quando a Diretoria aceita. */
+export interface AlteracaoPedido {
+  id: string;
+  lancamentoId: string; // codigo do pedido (PED-/PAG-)
+  solicitadoPor: string; // nome
+  solicitadoEm: string;
+  valorAnterior: number;
+  valorNovo: number;
+  motivo: string;
+  status: StatusAlteracaoPedido;
+  decididoPor?: string;
+  decididoEm?: string;
+  motivoDecisao?: string;
 }

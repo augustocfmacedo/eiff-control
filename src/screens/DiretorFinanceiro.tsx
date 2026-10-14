@@ -3,11 +3,11 @@
 // impacto no caixa, alcada), o briefing do dia, a agenda da semana e o historico; e a conversa completa com numeros.
 // Toda analise e deterministica (src/core/cfo.ts); a IA (opcional) so interpreta o texto.
 import React, { useEffect, useRef, useState } from 'react';
-import { NOME_DF, ROTULO_STATUS_DF, analisarPagamento, dataDoVeredicto, type VeredictoDF, br, catalogoDe, centralDF, completarPedido, type CentralDF as DadosCentralDF, fmt, interpretacaoDaIa, interpretarPedido, meusPedidosDF, montarPrevisao, responderDF, statusPedidoDF, type Parecer, type PedidoInterpretado } from '../core/cfo';
+import { NOME_DF, ROTULO_ALTERACAO, ROTULO_STATUS_DF, analisarPagamento, bloqueioAlteracao, ultimaAlteracao, type StatusPedidoDF, dataDoVeredicto, type VeredictoDF, br, catalogoDe, centralDF, completarPedido, type CentralDF as DadosCentralDF, fmt, interpretacaoDaIa, interpretarPedido, meusPedidosDF, montarPrevisao, responderDF, statusPedidoDF, type Parecer, type PedidoInterpretado } from '../core/cfo';
 import { addDays } from '../core/engine';
 import { actions, pode, useStore } from '../data/store';
 import { tokenSessao } from '../data/supabase';
-import { Badge, Field, Input, Modal, PageHead, Select, Tabs, money, tentar, useToast } from '../ui/components';
+import { Badge, Field, Input, Modal, MoedaInput, PageHead, Select, Tabs, money, tentar, useToast } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { registrarAcao } from '../data/telemetria';
 
@@ -162,25 +162,86 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
   );
 }
 
-/** Andamento dos pedidos do proprio usuario (equipe), sem dados de caixa. */
+/** Grupos de situacao do "Meus pedidos" (filtro por chip). */
+const GRUPOS_PEDIDO: { id: 'todos' | 'aguardando' | 'validados' | 'pagos' | 'recusados'; rotulo: string; status: StatusPedidoDF[] }[] = [
+  { id: 'todos', rotulo: 'Todos', status: ['aguardando', 'reagendado', 'programado', 'em_aprovacao', 'pago', 'recusado'] },
+  { id: 'aguardando', rotulo: 'Aguardando', status: ['aguardando', 'reagendado'] },
+  { id: 'validados', rotulo: 'Validados', status: ['programado', 'em_aprovacao'] },
+  { id: 'pagos', rotulo: 'Pagos', status: ['pago'] },
+  { id: 'recusados', rotulo: 'Não aprovados', status: ['recusado'] },
+];
+type GrupoPedido = (typeof GRUPOS_PEDIDO)[number];
+const TOM_ALTERACAO: Record<string, 'ok' | 'info' | 'warn' | 'bad' | 'muted'> = { PENDENTE: 'warn', ACEITA: 'ok', RECUSADA: 'bad', CANCELADA: 'muted' };
+
+/** Andamento dos pedidos do proprio usuario (equipe), sem dados de caixa: situacao de cada um e alteracao de valor. */
 export function MeusPedidosDF() {
   const { ds, usuario, modo } = useStore();
+  const { toast, el } = useToast();
   const solicitante = usuario.papel === 'Solicitante' && modo === 'remoto';
   const [atualizando, setAtualizando] = useState(false);
+  const [grupo, setGrupo] = useState<GrupoPedido['id']>('todos');
+  const [alterar, setAlterar] = useState<{ id: string; valor: number; motivo: string } | null>(null);
+  const [enviando, setEnviando] = useState(false);
   const atualizar = () => { setAtualizando(true); actions.atualizarPedidosSolicitante().catch(() => undefined).finally(() => setAtualizando(false)); };
   // o Solicitante nao recebe atualizacao automatica dos dados: relê a lista a cada minuto enquanto a tela esta aberta
   useEffect(() => { if (!solicitante) return; const t = window.setInterval(() => { void actions.atualizarPedidosSolicitante().catch(() => undefined); }, 60_000); return () => window.clearInterval(t); }, [solicitante]);
-  const meus = meusPedidosDF(ds, usuario).slice(0, 20);
+  const todos = meusPedidosDF(ds, usuario);
+  const doGrupo = (g: GrupoPedido) => todos.filter((l) => g.status.includes(statusPedidoDF(l)));
+  const ativo = GRUPOS_PEDIDO.find((g) => g.id === grupo) ?? GRUPOS_PEDIDO[0];
+  const lista = doGrupo(ativo).slice(0, 100);
+  const pedidoAlterar = alterar ? todos.find((l) => l.id === alterar.id) : undefined;
+  const enviar = async () => {
+    if (!alterar) return;
+    setEnviando(true);
+    try { await actions.pedirAlteracaoValorDF(alterar.id, alterar.valor, alterar.motivo); setAlterar(null); toast('Alteração enviada à Diretoria. O valor muda quando ela aceitar.'); }
+    catch (e) { toast((e as Error).message); }
+    finally { setEnviando(false); }
+  };
+  const cancelar = async (id: string) => { try { await actions.cancelarAlteracaoValorDF(id); toast('Alteração cancelada: o pedido segue com o valor atual.'); } catch (e) { toast((e as Error).message); } };
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}><h2 style={{ margin: 0 }}>Meus pedidos</h2>{solicitante && <button className="btn sm" onClick={atualizar} disabled={atualizando}>{atualizando ? 'Atualizando…' : 'Atualizar'}</button>}</div>
-      {!meus.length && <p className="muted small">Nenhum pedido ainda. Fale com o Diretor Financeiro ao lado.</p>}
-      {meus.map((l) => { const s = statusPedidoDF(l); return (
+      {!todos.length && <p className="muted small">Nenhum pedido ainda. Fale com o Diretor Financeiro ao lado.</p>}
+      {!!todos.length && (
+        <div className="df-filtros" role="group" aria-label="Filtrar pedidos por situação">
+          {GRUPOS_PEDIDO.map((g) => (
+            <button key={g.id} className={`btn sm${grupo === g.id ? ' primary' : ''}`} aria-pressed={grupo === g.id} onClick={() => setGrupo(g.id)}>
+              {g.rotulo} <span className="df-filtro-n">{doGrupo(g).length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {!!todos.length && <p className="small muted" style={{ margin: '6px 0 4px' }}>{lista.length} pedido(s) · {money(lista.reduce((t, l) => t + l.valorBruto, 0))}</p>}
+      {!!todos.length && !lista.length && <p className="muted small">Nenhum pedido nesta situação.</p>}
+      {lista.map((l) => { const s = statusPedidoDF(l); const alt = ultimaAlteracao(ds, l.id); const bloqueio = bloqueioAlteracao(ds, l); return (
         <div key={l.id} className="df-prev">
-          <div><b>{l.descricao}</b> <span className="muted small">{l.id}{l.codigoObra ? ` · ${l.codigoObra}` : ''}{l.contraparte !== 'A definir' ? ` · ${l.contraparte}` : ''}</span><div className="small muted">{money(l.valorBruto)} · {br(l.vencimento)}{s === 'recusado' && l.motivoCancelamento ? ` · ${l.motivoCancelamento.replace(/^Recusada no alinhamento diário: /, '')}` : ''}</div></div>
-          <Badge tone={TOM_STATUS[s]}>{ROTULO_STATUS_DF[s]}</Badge>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <b>{l.descricao}</b> <span className="muted small">{l.id}{l.codigoObra ? ` · ${l.codigoObra}` : ''}{l.contraparte !== 'A definir' ? ` · ${l.contraparte}` : ''}</span>
+            <div className="small muted">{money(l.valorBruto)} · {br(l.vencimento)}{l.criadoEm ? ` · pedido em ${br(l.criadoEm.slice(0, 10))}` : ''}{s === 'recusado' && l.motivoCancelamento ? ` · ${l.motivoCancelamento.replace(/^Recusada no alinhamento diário: /, '')}` : ''}</div>
+            {alt && (
+              <div className="small df-alteracao">
+                <Badge tone={TOM_ALTERACAO[alt.status]}>{ROTULO_ALTERACAO[alt.status]}</Badge>{' '}
+                {money(alt.valorAnterior)} → <b>{money(alt.valorNovo)}</b>
+                {alt.status === 'RECUSADA' && alt.motivoDecisao ? <> · {alt.motivoDecisao}</> : null}
+                {alt.status === 'PENDENTE' && <> <button className="btn sm" onClick={() => void cancelar(alt.id)}>Cancelar alteração</button></>}
+              </div>
+            )}
+          </div>
+          <div className="df-prev-acoes">
+            <Badge tone={TOM_STATUS[s]}>{ROTULO_STATUS_DF[s]}</Badge>
+            {!bloqueio && <button className="btn sm" onClick={() => setAlterar({ id: l.id, valor: l.valorBruto, motivo: '' })}>Alterar valor</button>}
+          </div>
         </div>
       ); })}
+      {alterar && pedidoAlterar && (
+        <Modal title={`Alterar valor de ${pedidoAlterar.id}`} onClose={() => setAlterar(null)}>
+          <p className="small muted" style={{ marginTop: 0 }}>{pedidoAlterar.descricao} · valor atual <b>{money(pedidoAlterar.valorBruto)}</b> · {br(pedidoAlterar.vencimento)}. A Diretoria valida a alteração; até lá vale o valor atual.</p>
+          <Field label="Novo valor" req><MoedaInput autoFocus value={alterar.valor} onChange={(v) => setAlterar({ ...alterar, valor: v })} /></Field>
+          <Field label="Motivo da alteração" req full><Input value={alterar.motivo} maxLength={500} placeholder="ex.: orçamento final veio maior, frete incluído" onChange={(e) => setAlterar({ ...alterar, motivo: e.target.value })} /></Field>
+          <div className="foot"><button className="btn" onClick={() => setAlterar(null)}>Cancelar</button><button className="btn primary" disabled={enviando || alterar.motivo.trim().length < 3 || !(alterar.valor > 0) || alterar.valor === pedidoAlterar.valorBruto} onClick={() => void enviar()}>{enviando ? 'Enviando…' : 'Enviar à Diretoria'}</button></div>
+        </Modal>
+      )}
+      {el}
     </div>
   );
 }
@@ -204,16 +265,38 @@ export function PedidosDF({ c, vazio = true }: { c: DadosCentralDF; vazio?: bool
   const al = c.alinhamento;
   const [reag, setReag] = useState<{ id: string; data: string } | null>(null);
   const [recusa, setRecusa] = useState<{ id: string; motivo: string } | null>(null);
+  const [recusaAlt, setRecusaAlt] = useState<{ id: string; motivo: string } | null>(null);
   const podeDecidir = pode(usuario, 'aprovar');
   const seguir = (id: string, o: DadosCentralDF['orientacoes'] extends Map<string, infer V> ? V : never) => {
     if (o.acaoSugerida === 'programar') tentar(() => actions.decidirPrevisaoDF(id, 'programar'), toast, () => toast(`${id} programado.`));
     else if (o.acaoSugerida === 'reagendar' && o.dataSugerida) tentar(() => actions.decidirPrevisaoDF(id, 'reagendar', { vencimento: o.dataSugerida }), toast, () => toast(`${id} reagendado para ${br(o.dataSugerida)}.`));
     else if (o.acaoSugerida === 'recusar') setRecusa({ id, motivo: 'Caixa não comporta no período' });
   };
-  if (!al.previsoes.length && !vazio) return el; // sem pedidos (ex.: acabou de decidir o ultimo): some o cartao, fica o aviso
+  if (!al.previsoes.length && !c.alteracoes.length && !vazio) return el; // sem pedidos (ex.: acabou de decidir o ultimo): some o cartao, fica o aviso
   return (
     <>
-      <div className="card" style={{ marginBottom: 14 }}>
+      {!!c.alteracoes.length && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <h2>Alterações de valor pedidas pela equipe</h2>
+          <p className="small muted" style={{ marginTop: 0 }}>O pedido segue com o valor atual até você aceitar. Aceitar grava o novo valor; pedido já programado volta a passar pelas alçadas.</p>
+          {c.alteracoes.map(({ alteracao: a, lancamento: l, analise }) => (
+            <div key={a.id} className="df-alteracao-card">
+              <div className="df-pedido-cab">
+                <div><b>{l.descricao}</b> <span className="muted small">{l.id} · {l.categoria}{l.codigoObra ? ` · ${l.codigoObra}` : ''} · {l.contraparte}</span>
+                  <div className="small muted"><b>{a.solicitadoPor}</b> pede {money(a.valorAnterior)} → <b>{money(a.valorNovo)}</b> ({analise.diferenca >= 0 ? '+' : '−'}{money(Math.abs(analise.diferenca))}) para {br(l.vencimento)} · pedido {ROTULO_STATUS_DF[statusPedidoDF(l)]}</div>
+                  <div className="small">Motivo: {a.motivo}</div></div>
+                <Badge tone={analise.tom}>{analise.titulo}</Badge>
+              </div>
+              <div className="df-orientacao">{analise.detalhe}</div>
+              {podeDecidir && <div className="actions">
+                <button className="btn primary sm" onClick={() => tentar(() => actions.decidirAlteracaoValorDF(a.id, 'aceitar'), toast, () => toast(`${l.id}: novo valor ${money(a.valorNovo)} gravado.`))}>Aceitar {money(a.valorNovo)}</button>
+                <button className="btn sm danger" onClick={() => setRecusaAlt({ id: a.id, motivo: '' })}>Recusar</button>
+              </div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {(!!al.previsoes.length || vazio) && <div className="card" style={{ marginBottom: 14 }}>
         <h2>Pedidos da equipe · orientação do {NOME_DF}</h2>
         {!al.previsoes.length && <p className="muted small">Nenhum pedido aguardando. Quando alguém pedir um pagamento ao Diretor Financeiro, ele aparece aqui já analisado.</p>}
         {al.previsoes.map(({ lancamento: l, parecerAtual: p, solicitante, diasEsperando }) => { const o = c.orientacoes.get(l.id)!; return (
@@ -231,9 +314,10 @@ export function PedidosDF({ c, vazio = true }: { c: DadosCentralDF; vazio?: bool
             </div>}
           </div>
         ); })}
-      </div>
+      </div>}
 
       {reag && <Modal title={`Outra data para ${reag.id}`} onClose={() => setReag(null)}><Field label="Nova data" req><Input type="date" value={reag.data} onChange={(e) => setReag({ ...reag, data: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setReag(null)}>Cancelar</button><button className="btn primary" onClick={() => tentar(() => actions.decidirPrevisaoDF(reag.id, 'reagendar', { vencimento: reag.data }), toast, () => { setReag(null); toast('Pedido reagendado; o solicitante vê a nova data em Meus pedidos.'); })}>Reagendar</button></div></Modal>}
+      {recusaAlt && <Modal title="Recusar alteração de valor" onClose={() => setRecusaAlt(null)}><Field label="Motivo (o solicitante vê)" req full><Input autoFocus value={recusaAlt.motivo} onChange={(e) => setRecusaAlt({ ...recusaAlt, motivo: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setRecusaAlt(null)}>Cancelar</button><button className="btn danger" disabled={recusaAlt.motivo.trim().length < 3} onClick={() => tentar(() => actions.decidirAlteracaoValorDF(recusaAlt.id, 'recusar', recusaAlt.motivo), toast, () => { setRecusaAlt(null); toast('Alteração recusada; o pedido segue com o valor atual.'); })}>Recusar</button></div></Modal>}
       {recusa && <Modal title={`Recusar ${recusa.id}`} onClose={() => setRecusa(null)}><Field label="Motivo (o solicitante vê)" req full><Input autoFocus value={recusa.motivo} onChange={(e) => setRecusa({ ...recusa, motivo: e.target.value })} /></Field><div className="foot"><button className="btn" onClick={() => setRecusa(null)}>Cancelar</button><button className="btn danger" onClick={() => tentar(() => actions.decidirPrevisaoDF(recusa.id, 'recusar', { motivo: recusa.motivo }), toast, () => { setRecusa(null); toast('Pedido recusado.'); })}>Recusar</button></div></Modal>}
       {el}
     </>
