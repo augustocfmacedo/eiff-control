@@ -19,7 +19,13 @@ Os mesmos números da tela **Caixa** e do Diretor Financeiro — nada é recalcu
 "Semana" é o que **ainda** entra e sai (os pagos de hoje já estão no caixa de hoje). Recebimento vencido aparece marcado,
 fora do saldo, como na Caixa. Rascunho e em aprovação não aparecem. Tocar no widget abre `#/caixa`.
 
-## Widget de pedidos da equipe (Parameter = `pedidos`)
+## Widget de pedidos da equipe (script próprio EIFF Pedidos)
+
+A pedido do Augusto (14/10/2026) o widget de pedidos ganhou **script próprio**, sem nada do caixa
+(`scriptWidgetPedidos` em `src/core/widgetScriptablePedidos.ts`, botão "Copiar script dos pedidos"). Usa a mesma chave do
+Keychain do script do caixa, então o token já guardado vale para os dois. O Parameter `pedidos` no script do caixa continua
+funcionando (compatibilidade), mas o caminho recomendado é o script separado.
+
 
 Pedido do Augusto em 14/10/2026: ver na tela de início o que a equipe está pedindo ao Diretor Financeiro. Mesmo script,
 mesmo token, mesma porta (`GET /api/widget-caixa?visao=pedidos`), sem migration. `resumoWidgetPedidos`
