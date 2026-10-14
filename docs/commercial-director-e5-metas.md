@@ -85,6 +85,7 @@ fechava antes de registrar o progresso. A defesa definitiva é no banco:
   idempotente (nunca duplica); intenção recusada (versão velha, conteúdo diferente) sai do diário e vira aviso. As
   pendências dos outros módulos continuam no mecanismo de sempre.
 - `definirMetaConfirmada` também compara a versão do banco com a do app antes de chamar a ação (desatualizada = nem envia).
+- **Ajustes finais**: (1) o envio só acontece depois de o IndexedDB CONFIRMAR a gravação do diário (`guardarIntencoesMeta` devolve `true` só com a transação completa); sem confirmação, nada vai ao banco, a sincronização fica em "erro" recuperável ("Tentar de novo") e a fila nunca fica rejeitada para sempre (`sincronizar` encadeia com `catch`). (2) Na reabertura, a intenção só sai do diário quando o banco confirma ou numa recusa DEFINITIVA (`recusaDefinitivaMeta`: SQLSTATE 23514 regra, 23505 outro conteúdo, 40001 versão desatualizada, 42501 "sem permissão"); rede, sessão expirada/não autenticada, perfil inativo e erro sem código mantêm a intenção, na ordem. (3) O app nunca chama a RPC antiga da 0068: intenção incompleta é recusada antes de sair (`comIntencao`), e registro LEGADO guardado offline ganha intenção DETERMINÍSTICA e versão base = versão − 1 — se outra sessão mudou a meta, a pré-condição recusa e o valor antigo não volta.
 
 Provas: `npm run smoke:meta-intencao` (PGlite, fila inteira até a 0074, no Quality Gate, 24 ok); gate em
 **PostgreSQL 17.6 real** descartável (ordem de produção …0073 → 0070 → 0074; mesma intenção em duas sessões 20/20,

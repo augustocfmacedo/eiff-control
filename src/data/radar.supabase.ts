@@ -4,6 +4,7 @@
 import { contentSpecPersistivel, type ContentSpec } from '../core/radar/comunicacao';
 import type { OperacaoVibeLedger, RadarDataset } from '../core/radar/types';
 import type { EventoDesfecho, VersaoMetaComercial } from '../core/radar/metaComercial';
+import { comIntencao } from './metaConfirmada';
 
 
 type Row = Record<string, any>;
@@ -156,16 +157,14 @@ async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComerci
 }
 
 /**
- * CD-D3/E5 (0074) — a chamada de uma versão de meta: com a intenção (identificador estável + versão base), a RPC
- * idempotente radar_definir_meta_comercial_intencao; sem ela (versão criada antes desta entrega e guardada offline), a
- * RPC da 0068.
+ * CD-D3/E5 (0074) — a chamada de uma versão de meta: SEMPRE a RPC idempotente radar_definir_meta_comercial_intencao.
+ * Intenção incompleta é recusada antes de sair; registro legado (sem intenção) ganha intenção determinística e a versão
+ * base de quando foi criado (`comIntencao`). A RPC antiga da 0068 não é chamada pelo app.
  */
 export function chamadaDaMeta(m: VersaoMetaComercial & { intencao?: string; versaoBase?: number }): [string, Row] {
-  const p_valor = m.valor === null || m.valor === undefined || m.valor === '' ? null : Number(m.valor);
-  const base = { p_mes: `${m.mes}-01`, p_valor, p_motivo: m.motivo.trim() };
-  return m.intencao && typeof m.versaoBase === 'number'
-    ? ['radar_definir_meta_comercial_intencao', { p_intencao: m.intencao, ...base, p_versao_base: m.versaoBase }]
-    : ['radar_definir_meta_comercial', base];
+  const x = comIntencao(m);
+  const p_valor = x.valor === null || x.valor === undefined || x.valor === '' ? null : Number(x.valor);
+  return ['radar_definir_meta_comercial_intencao', { p_intencao: x.intencao, p_mes: `${x.mes}-01`, p_valor, p_motivo: x.motivo.trim(), p_versao_base: x.versaoBase }];
 }
 
 /** Mapeamentos expostos para scripts de carga (mesmas regras da persistencia do app). */

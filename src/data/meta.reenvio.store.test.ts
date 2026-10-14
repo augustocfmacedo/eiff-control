@@ -9,6 +9,7 @@ import type { Dataset } from '../core/types';
 import type { VersaoMetaComercial } from '../core/radar';
 
 const sim = vi.hoisted(() => ({
+  diarioFalha: false, diarioRecusa: false,
   chamadas: [] as { metasEnviadas: string[]; empresasNaBase: number; empresasNoEnvio: number }[],
   /** o que fazer na próxima chamada: 'ok' | 'falha_depois' (regra/conflito) | 'rede_depois' (sem rede) */
   roteiro: [] as ('ok' | 'falha_depois' | 'rede_depois')[],
@@ -43,7 +44,7 @@ vi.mock('./offline', () => ({
   guardarCache: async () => undefined,
   lerCache: async () => null,
   guardarPendente: async (p: typeof sim.pendente) => { sim.pendente = JSON.parse(JSON.stringify(p)); },
-  guardarIntencoesMeta: async (d: unknown) => { sim.diario = JSON.parse(JSON.stringify(d)); },
+  guardarIntencoesMeta: async (d: unknown) => { if (sim.diarioFalha) throw new Error('IndexedDB indisponível'); if (sim.diarioRecusa) return false; sim.diario = JSON.parse(JSON.stringify(d)); return true; },
   lerIntencoesMeta: async () => (sim.diario ? JSON.parse(JSON.stringify(sim.diario)) : null),
   apagarIntencoesMeta: async () => { sim.diario = null; },
   lerPendente: async () => (sim.pendente ? JSON.parse(JSON.stringify(sim.pendente)) : undefined),
@@ -58,7 +59,7 @@ const enviadas = () => sim.chamadas.flatMap((c) => c.metasEnviadas);
 const novaEmpresa = (nome: string) => actions.salvarEmpresaRadar({ ...actions.novaEmpresaRadar(), razaoSocial: nome, uf: 'GO' });
 
 beforeEach(async () => {
-  sim.chamadas.length = 0; sim.roteiro.length = 0; sim.pendente = null; sim.diario = null;
+  sim.chamadas.length = 0; sim.roteiro.length = 0; sim.pendente = null; sim.diario = null; sim.diarioFalha = false; sim.diarioRecusa = false;
   sim.remoto = { ...JSON.parse(JSON.stringify(seed)), radar: { ...JSON.parse(JSON.stringify(seed)).radar, metasComerciais: [], desfechos: [] } };
   await inicializar();
   await actions.recarregar();

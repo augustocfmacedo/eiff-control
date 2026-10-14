@@ -40,7 +40,8 @@ export const guardarCache = (c: Omit<Cache, 'em'>) => gravar('cache', { ...c, em
  * outros módulos seguem no mecanismo de `pendente`.
  */
 export interface DiarioIntencoesMeta { usuarioId: string; intencoes: unknown[]; em: string }
-export const guardarIntencoesMeta = (d: Omit<DiarioIntencoesMeta, 'em'>) => gravar('intencoesMeta', { ...d, em: new Date().toISOString() });
+/** Devolve `true` SÓ quando o IndexedDB confirmou a gravação (transação completa); sem IndexedDB ou com erro, `false`. */
+export const guardarIntencoesMeta = (d: Omit<DiarioIntencoesMeta, 'em'>): Promise<boolean> => gravar('intencoesMeta', { ...d, em: new Date().toISOString() });
 export const lerIntencoesMeta = () => ler<DiarioIntencoesMeta>('intencoesMeta');
 export const apagarIntencoesMeta = () => apagar('intencoesMeta');
 export const lerCache = () => ler<Cache>('cache');

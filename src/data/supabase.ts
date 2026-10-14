@@ -609,7 +609,7 @@ export async function aplicarIntencaoMeta(m: VersaoMetaComercial & { intencao?: 
   if (!supabase) throw new Error('banco não configurado');
   const [rpc, args] = chamadaDaMeta(m);
   const { data, error } = await supabase.rpc(rpc, args);
-  if (error) throw new Error(`rpc ${rpc}: ${error.message}`);
+  if (error) throw Object.assign(new Error(`rpc ${rpc}: ${error.message}`), { code: error.code });
   return data;
 }
 
