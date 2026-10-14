@@ -14,6 +14,7 @@
     "smoke:inbox": "node scripts/pg-smoke-inbox.mjs",
     "smoke:fin-reset": "node scripts/pg-smoke-fin-reset.mjs",
     "smoke:dono-conta": "node scripts/pg-smoke-dono-conta.mjs",
+    "smoke:meta-comercial": "node scripts/pg-smoke-meta-comercial.mjs",
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
