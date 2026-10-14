@@ -510,6 +510,10 @@ const uuidOuNulo = (v?: string) => (v && UUID.test(v) ? v : null);
 
 /** CD-D5.2: acoes de dono da conta que a RPC radar_definir_dono_conta ja audita no banco (o app nao duplica). */
 export const ACOES_DONO_RPC: ReadonlySet<string> = new Set(['radar_definir_dono_conta', 'radar_remover_dono_conta']);
+/** CD-D3/E2: ações de meta comercial que a RPC radar_definir_meta_comercial já audita no banco. */
+export const ACOES_META_RPC: ReadonlySet<string> = new Set(['radar_definir_meta_comercial', 'radar_retirar_meta_comercial']);
+/** Ações cuja auditoria o banco grava na mesma transação da mudança (o app não reenvia). */
+export const ACOES_AUDITADAS_PELA_RPC: ReadonlySet<string> = new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC]);
 
 /** Motivo da mudanca de dono mais recente da empresa (id do app) entre as entradas de auditoria desta sincronizacao. */
 export function motivoDonoDaAuditoria(entradas: readonly Auditoria[], empresaId: string): string | undefined {
@@ -1084,7 +1088,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
 
   // auditoria da aplicacao (o banco tambem grava a sua por trigger); a mudanca de dono da conta ja foi auditada pela
   // RPC radar_definir_dono_conta na mesma transacao da mudanca, entao nao duplica aqui
-  const aGravar = novas.filter((a) => !ACOES_DONO_RPC.has(a.acao));
+  const aGravar = novas.filter((a) => !ACOES_AUDITADAS_PELA_RPC.has(a.acao));
   if (aGravar.length) {
     const { error } = await sb.from('audit_log').insert(aGravar.map((a) => ({ organization_id: r.orgId, occurred_at: a.ts, actor_id: atorId, action: a.acao, entity_type: a.entidade, entity_id: a.entidadeId, before_data: a.antes ?? null, after_data: a.depois ?? null, reason: a.motivo ?? null, source: 'app' })));
     if (error && !/policy/i.test(error.message)) falha('auditoria', error);

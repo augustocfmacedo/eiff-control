@@ -142,6 +142,13 @@ jobs:
       - name: PostgreSQL Smoke (CD-D5 dono da conta)
         run: node scripts/pg-smoke-dono-conta.mjs
 
+      # scripts/pg-smoke-meta-comercial.mjs aplica a 0068 (CD-D3/E2, metas comerciais) num PGlite descartável e prova a RPC
+      # governada (papel, organização do perfil, motivo, só mês corrente/futuro em São Paulo, valor com até 2 casas, versão
+      # e auditoria na mesma transação), retirada, histórico imutável, RLS por organização, escrita direta negada e o
+      # rollback exato versionado. Sai com código 1 se qualquer prova falhar.
+      - name: PostgreSQL Smoke (CD-D3 metas comerciais)
+        run: node scripts/pg-smoke-meta-comercial.mjs
+
       # scripts/pg-smoke-solicitante.mjs aplica a fila INTEIRA num PGlite descartável e prova o papel Solicitante (0066/0067):
       # não lê nenhuma tabela (cada uma do schema public e do storage), não grava lançamento nem auditoria, não se promove,
       # só usa as três portas df_* (pedido PED-nnnn idempotente, só os próprios pedidos) e os demais papéis ficam iguais.

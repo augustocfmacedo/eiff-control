@@ -66,6 +66,7 @@ import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTas
 import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
 import { aplicarTransicao, camposEditaveis, motivosRecusaEdicao, motivosRecusaTransicao, type DadosTransicao } from '../core/radar/estagioOportunidade';
 import { ESTAGIOS_FECHADOS } from '../core/radar/types';
+import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, type VersaoMetaComercial } from '../core/radar/metaComercial';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
@@ -163,7 +164,7 @@ function carregar(): State {
   } catch {
     ds = base;
   }
-  ds = garantirInbox(garantirPadroesRadar(ds), 'local');
+  ds = comMetasLocais(garantirInbox(garantirPadroesRadar(ds), 'local'));
   let usuario = ds.usuarios[0];
   try {
     const uid = localStorage.getItem(USER_KEY);
@@ -341,7 +342,7 @@ const seq = (prefix: string, ids: string[]): string => {
 const REMETENTE_CIDADE_PADRAO = 'Goiânia';
 
 function idsRadar(r: RadarDataset): Ids {
-  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte].map((x) => x.id));
+  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte, ...(r.metasComerciais ?? [])].map((x) => x.id));
   const contagem: Record<string, number> = {};
   return {
     novo: (p) => { let k = (contagem[p] ?? usados.size) + 1; let id = `${p}-${String(k).padStart(5, '0')}`; while (usados.has(id)) id = `${p}-${String(++k).padStart(5, '0')}`; contagem[p] = k; usados.add(id); return id; },
@@ -385,6 +386,14 @@ function exigirProximaAcao(o: Oportunidade, tarefas: TarefaRadar[]) {
  * Garante o slice do Inbox. Modo local sem slice: exemplo (seed ficticio). Modo remoto: o slice vem das tabelas
  * inbox_* (migration 0056) — sem elas, vazio. Nenhum exemplo entra em producao: `inboxCarregarExemplo` so no modo local.
  */
+/**
+ * CD-D3/E2: no modo local não há banco, então as metas comerciais vivem no próprio dataset (lista vazia quando ausente).
+ * No modo remoto a lista vem do banco; ausente lá significa "tabela indisponível" (banco sem a 0068), e a ação recusa.
+ */
+function comMetasLocais(ds: Dataset): Dataset {
+  return ds.radar && !ds.radar.metasComerciais ? { ...ds, radar: { ...ds.radar, metasComerciais: [] } } : ds;
+}
+
 export function garantirInbox(ds: Dataset, modo: 'local' | 'remoto'): Dataset {
   if (ds.inbox && Array.isArray(ds.inbox.threads) && Array.isArray(ds.inbox.atribuicoes) && ds.inbox.configuracao) {
     const c = ds.inbox.configuracao;
@@ -2090,6 +2099,43 @@ export const actions = {
     return atualizada;
   },
 
+  /**
+   * CD-D3/E2 — define (valor) ou retira (`null`) a meta comercial de receita ganha do mês (`AAAA-MM`), consolidada da
+   * organização (docs/commercial-director-1.0.md §19.8). Permissão `radar_config` (Administrador e Diretoria). As
+   * validações são as do motor da E1 (`motivosRecusaNovaMeta`: só mês corrente ou futuro no fuso de São Paulo, valor
+   * positivo com até 2 casas, motivo de 3 a 500); retirar exige meta vigente; mesmo valor da vigente não cria versão.
+   * Cada mudança é uma VERSÃO NOVA (nada é sobrescrito). No banco, só pela RPC radar_definir_meta_comercial
+   * (`persistirRadar`), que repete as guardas, recalcula a versão sob trava e audita na mesma transação. Banco sem a 0068
+   * (`metasComerciais` ausente): recusa em vez de gravar só no navegador.
+   */
+  definirMetaComercialRadar(mes: string, valor: number | null, motivo: string): VersaoMetaComercial {
+    let ds = state.ds;
+    exigir('radar_config');
+    const r = ds.radar;
+    const metas = r.metasComerciais;
+    if (!metas) throw new RegraDeNegocioError('Metas comerciais ainda não estão disponíveis neste banco.');
+    const t = agora();
+    const recusa = motivosRecusaNovaMeta({ mes, valor, motivo, agora: t });
+    if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
+    const vigente = metaVigenteDoMes(metas, mes, t);
+    if (valor === null && vigente.estado !== 'VIGENTE') throw new RegraDeNegocioError('Não há meta vigente para retirar neste mês.');
+    if (valor !== null && vigente.estado === 'VIGENTE') {
+      const l = lerValor(valor);
+      if (l.estado === 'VALIDO' && l.centavos === vigente.centavos) return vigente.versao!; // mesmo valor: nada a versionar
+    }
+    const anteriores = metas.filter((m) => m.mes === mes);
+    const ultima = anteriores.reduce<VersaoMetaComercial | undefined>((u, m) => (!u || m.versao > u.versao ? m : u), undefined);
+    const nova: VersaoMetaComercial = {
+      id: idsRadar(r).novo('META'), mes, metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor, versao: proximaVersaoMeta(metas, mes),
+      ...(ultima ? { substituiId: ultima.id } : {}), motivo: motivo.trim(), definidaPor: state.usuario.id, definidaEm: t,
+    };
+    const radar: RadarDataset = { ...r, metasComerciais: [...metas, nova] };
+    ds = registrar({ ...ds, radar }, valor === null ? 'radar_retirar_meta_comercial' : 'radar_definir_meta_comercial', 'radar_meta_comercial', nova.id,
+      ultima ? { versao: ultima.versao, valor: ultima.valor ?? null } : undefined, { mes, versao: nova.versao, valor: nova.valor ?? null }, nova.motivo);
+    commit(ds);
+    return nova;
+  },
+
   inativarEmpresaRadar(id: string, motivo: string) {
     let ds = state.ds;
     exigir('radar');
@@ -3285,7 +3331,7 @@ export const actions = {
 
   restaurarPlanilha() {
     exigir('administrar');
-    const ds = garantirInbox(garantirPadroesRadar(clone(seed) as unknown as Dataset), 'local');
+    const ds = comMetasLocais(garantirInbox(garantirPadroesRadar(clone(seed) as unknown as Dataset), 'local'));
     commit(registrar(ds, 'restaurar_seed', 'dataset', 'seed'));
   },
   // -------------------------------------------------------------------------
