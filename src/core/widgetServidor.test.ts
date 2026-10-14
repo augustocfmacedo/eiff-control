@@ -1,6 +1,6 @@
 // Widgets do iPad: /api/widget-caixa com banco e rede simulados. A ordem importa: formato → RPC server-only → MATRIZ → carga.
 import { describe, expect, it, vi } from 'vitest';
-import { hojeEmSaoPaulo, tratarWidgetCaixa, type PortasWidget, type ValidacaoTokenWidget } from './widgetServidor';
+import { erroParaLog, hojeEmSaoPaulo, tratarWidgetCaixa, type PortasWidget, type ValidacaoTokenWidget } from './widgetServidor';
 import type { Dataset, Usuario } from './types';
 import { actions, getState } from '../data/store';
 
@@ -79,5 +79,27 @@ describe('/api/widget-caixa', () => {
   it('dia em São Paulo', () => {
     expect(hojeEmSaoPaulo(new Date('2026-10-14T02:59:59Z'))).toBe('2026-10-13');
     expect(hojeEmSaoPaulo(new Date('2026-10-14T03:00:00Z'))).toBe('2026-10-14');
+  });
+});
+
+describe('diagnóstico no log do servidor', () => {
+  it('registra a etapa e a primeira linha do erro, nunca o token', async () => {
+    const registros: [string, string][] = [];
+    const { p } = portas();
+    const comFalha: PortasWidget = { ...p, carregar: async () => { throw new Error(`ler profile: falhou com ${TOKEN}\nlinha 2 com Bearer abc.def`); }, registrar: (etapa, e) => registros.push([etapa, erroParaLog(e)]) };
+    const r = await tratarWidgetCaixa(get(`Bearer ${TOKEN}`), comFalha);
+    expect(r.status).toBe(503);
+    expect(registros).toEqual([['carregar', 'Error: ler profile: falhou com eiffw_***']]);
+    expect(JSON.stringify(r.corpo)).not.toContain('ler profile');
+  });
+  it('resposta inesperada da validação também é registrada', async () => {
+    const registros: string[] = [];
+    const { p } = portas({ validar: { ok: false, erro: 'somente_servidor' } });
+    await tratarWidgetCaixa(get(`Bearer ${TOKEN}`), { ...p, registrar: (etapa, e) => registros.push(`${etapa}: ${erroParaLog(e)}`) });
+    expect(registros).toEqual(['validar: Error: resposta inesperada da validação: somente_servidor']);
+  });
+  it('erroParaLog limita o tamanho e mascara Bearer', () => {
+    expect(erroParaLog(new Error('x'.repeat(500))).length).toBe(200);
+    expect(erroParaLog('falha Bearer segredo123 fim')).toBe('falha Bearer *** fim');
   });
 });

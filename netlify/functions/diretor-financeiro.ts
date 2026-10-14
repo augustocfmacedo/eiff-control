@@ -1,9 +1,9 @@
 // Diretor Financeiro virtual: a IA so INTERPRETA a mensagem (valor, data, categoria, obra, fornecedor, intencao) e devolve
 // JSON; nenhum numero de caixa passa por aqui e nada e gravado. O parecer e feito pelo motor no app (src/core/cfo.ts).
 // Chave ANTHROPIC_API_KEY so no painel do Netlify; modelo ANTHROPIC_CFO_MODEL (padrao claude-sonnet-5). Sessao do Supabase validada.
-import { createClient } from '@supabase/supabase-js';
 import { ESQUEMA_INTERPRETACAO, PROMPT_DF_V1, analisarPagamento, promptInterpretacao, validarPedidoVeredicto, veredictoDe, type CatalogoDF } from '../../src/core/cfo';
 import { carregarComoServidor } from '../../src/data/supabase';
+import { clienteServidor } from '../../src/data/clienteServidor';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
@@ -39,7 +39,7 @@ export default async (req: Request): Promise<Response> => {
     const quem = (await user.json()) as { id?: string };
     if (!quem.id) return json({ erro: 'nao_autenticado' }, 401);
     try {
-      const { ds } = await carregarComoServidor(createClient(url, servico, { auth: { persistSession: false, autoRefreshToken: false } }), quem.id);
+      const { ds } = await carregarComoServidor(clienteServidor(url, servico), quem.id);
       const hoje = hojeSP();
       const dsHoje = { ...ds, params: { ...ds.params, dataBase: ds.params.dataBaseAutomatica === false ? ds.params.dataBase : hoje } };
       const veredicto = veredictoDe(analisarPagamento(dsHoje, { ...pedido, vencimento: pedido.vencimento < dsHoje.params.dataBase ? dsHoje.params.dataBase : pedido.vencimento }));
