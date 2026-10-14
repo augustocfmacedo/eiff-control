@@ -4,6 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { CHAVE_KEYCHAIN_WIDGET, scriptWidgetCaixa } from './widgetScriptable';
 import { scriptWidgetPedidos } from './widgetScriptablePedidos';
+import { MINUTOS_ATUALIZACAO_WIDGET, scriptWidgetPagamentos } from './widgetScriptablePagamentos';
+import type { ResumoWidgetPagamentos } from './widgetPagamentos';
 import type { ResumoWidgetCaixa } from './widgetCaixa';
 import type { ResumoWidgetPedidos } from './widgetPedidos';
 
@@ -51,6 +53,7 @@ async function rodar(c: Cenario) {
     ListWidget: function ListWidget() { const w = elemento(); return w; },
     DrawContext: function DrawContext() { return elemento(); },
     Path: function Path() { return elemento(); },
+    LinearGradient: function LinearGradient() { return elemento(); },
     Point: function Point(x: number, y: number) { if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('ponto inválido'); return { x, y }; },
     Rect: function Rect(x: number, y: number, w: number, h: number) { return { x, y, w, h }; },
     Size: function Size(w: number, h: number) { return { w, h }; },
@@ -249,6 +252,71 @@ describe('script PRÓPRIO dos pedidos (sem a parte do caixa)', () => {
   it('no app: prévia grande e remover o token', async () => {
     const previa = await rodar({ script: SP, runsInWidget: false, token: TOKEN, respostasAlerta: [2], resposta: { status: 200, corpo: PEDIDOS } });
     expect(previa.apresentou).toBe('presentLarge');
+    const rem = await rodar({ script: SP, runsInWidget: false, token: TOKEN, respostasAlerta: [5] });
+    expect(rem.keychain.size).toBe(0);
+  });
+});
+
+const PAGAMENTOS: ResumoWidgetPagamentos = {
+  versao: 1, visao: 'pagamentos', geradoEm: '2026-10-14T12:00:00.000Z', hoje: '2026-10-14',
+  itens: [
+    { id: 'A:aberto', descricao: 'Conta atrasada', para: 'Enel', departamento: 'Administrativo', valor: 1500, vencimento: '2026-10-10', status: 'atrasado', diasAtraso: 4 },
+    { id: 'B:aberto', descricao: 'Folha quinzenal', para: 'Equipe', departamento: 'Pessoal', valor: 5000, vencimento: '2026-10-14', status: 'a_pagar', diasAtraso: 0 },
+    { id: 'C:aberto', descricao: 'Compra de parafusos', para: 'Ciser', departamento: 'Obra', valor: 800, vencimento: '2026-10-14', status: 'aprovacao', diasAtraso: 0 },
+    { id: 'D:pago', descricao: 'Aluguel do galpão', para: 'Imobiliária', departamento: 'Administrativo', valor: 12000, vencimento: '2026-10-14', status: 'pago', diasAtraso: 0 },
+  ],
+  quantidade: { atrasado: 1, a_pagar: 1, aprovacao: 1, pago: 1 },
+  valor: { atrasado: 1500, a_pagar: 5000, aprovacao: 800, pago: 12000 },
+  total: 18500, falta: 6500, progresso: 0.649, caixaHoje: 41988.93, caixaAposPagar: 35488.93, minimo: 20000, abaixoDoMinimo: false,
+};
+
+describe('script PRÓPRIO dos pagamentos do dia (EIFF Pagamentos)', () => {
+  const SP = scriptWidgetPagamentos('https://eiffcontrol.com.br');
+  it('só pede a visão pagamentos, usa o mesmo token do Keychain e pede atualização a cada 15 minutos', () => {
+    expect(MINUTOS_ATUALIZACAO_WIDGET).toBe(15);
+    expect(SP).toContain('const MINUTOS = 15;');
+    expect(SP).not.toContain('__EIFF_');
+    expect(SP).toContain(`const CHAVE = '${CHAVE_KEYCHAIN_WIDGET}';`);
+    expect(SP).toContain("new Request(BASE + '/api/widget-caixa?visao=pagamentos')");
+    expect(SP).not.toMatch(/eiffw_[0-9a-f]{64}/);
+    expect(() => scriptWidgetPagamentos('http://eiffcontrol.com.br')).toThrow();
+  });
+  for (const familia of ['small', 'medium', 'large', 'extraLarge', 'accessoryRectangular', 'accessoryInline', 'accessoryCircular']) {
+    it(`widget ${familia}: pagamentos do dia com o total e a próxima atualização em 15 min`, async () => {
+      const antes = Date.now();
+      const r = await rodar({ script: SP, runsInWidget: true, familia, token: TOKEN, resposta: { status: 200, corpo: PAGAMENTOS } });
+      expect(r.requisicoes.map((x) => x.url)).toEqual(['https://eiffcontrol.com.br/api/widget-caixa?visao=pagamentos']);
+      const proxima = (r.widget as { refreshAfterDate: Date }).refreshAfterDate.getTime();
+      expect(proxima - antes).toBeGreaterThanOrEqual(15 * 60 * 1000 - 50);
+      expect(proxima - antes).toBeLessThanOrEqual(15 * 60 * 1000 + 5000);
+      expect((r.widget as { url: string }).url).toBe('https://eiffcontrol.com.br/#/caixa');
+      const tudo = r.textos.join(' | ');
+      if (familia === 'accessoryInline') expect(tudo).toBe('Pagar hoje R$ 6.500 · pago R$ 12 mil');
+      else if (familia === 'accessoryCircular') expect(tudo).toBe('1/3');
+      else if (familia === 'accessoryRectangular') { expect(tudo).toContain('Pagamentos 14/10 · R$ 18,5 mil'); expect(tudo).toContain('Falta R$ 6.500 (2)'); expect(tudo).toContain('1 atrasado'); }
+      else if (familia === 'small') { expect(tudo).toContain('R$ 6.500'); expect(tudo).toContain('1 de 3 pagos'); expect(tudo).toContain('1 atrasado'); }
+      else { expect(tudo).toContain('R$ 18.500,00'); expect(tudo).toContain('R$ 6.500,00'); expect(tudo).toContain('ATRASADO 4D'); expect(tudo).toContain('A PAGAR'); expect(tudo).toContain('Pagamentos de hoje · qua, 14/10'); expect(tudo).toContain('3 pagamentos · 1 pago |'); }
+      if (familia === 'large' || familia === 'extraLarge') { expect(tudo).toContain('APROVAÇÃO'); expect(tudo).toContain('PAGO'); expect(tudo).toContain('Aluguel do galpão'); expect(tudo).toContain('R$ 35.489'); expect(tudo).toContain('Enel · Administrativo'); }
+      expect(r.arquivos.has('/cache/eiff-pagamentos-resumo.json')).toBe(true);
+    });
+  }
+  it('dia sem pagamentos', async () => {
+    const vazio: ResumoWidgetPagamentos = { ...PAGAMENTOS, itens: [], quantidade: { atrasado: 0, a_pagar: 0, aprovacao: 0, pago: 0 }, valor: { atrasado: 0, a_pagar: 0, aprovacao: 0, pago: 0 }, total: 0, falta: 0, progresso: 1 };
+    expect((await rodar({ script: SP, runsInWidget: true, familia: 'large', token: TOKEN, resposta: { status: 200, corpo: vazio } })).textos).toContain('Nenhum pagamento vence hoje.');
+    expect((await rodar({ script: SP, runsInWidget: true, familia: 'accessoryInline', token: TOKEN, resposta: { status: 200, corpo: vazio } })).textos).toEqual(['Sem pagamentos hoje']);
+  });
+  it('resposta de outra visão é recusada; 401 apaga o guardado; sem rede mostra o último marcado; sem token pede configuração', async () => {
+    expect((await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, resposta: { status: 200, corpo: RESUMO } })).textos).toContain('Pagamentos indisponíveis');
+    const negado = await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, arquivos: { 'eiff-pagamentos-resumo.json': PAGAMENTOS }, resposta: { status: 401, corpo: { erro: 'token_revogado', mensagem: 'Este aparelho foi revogado.' } } });
+    expect(negado.textos).toContain('Acesso do widget recusado');
+    expect(negado.arquivos.has('/cache/eiff-pagamentos-resumo.json')).toBe(false);
+    const semRede = await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, arquivos: { 'eiff-pagamentos-resumo.json': PAGAMENTOS }, resposta: 'sem_rede' });
+    expect(semRede.textos.some((t) => t.startsWith('sem conexão'))).toBe(true);
+    expect((await rodar({ script: SP, runsInWidget: true, familia: 'small', token: null })).textos).toContain('Configure o token');
+  });
+  it('no app: prévia extra grande e remover o token', async () => {
+    const previa = await rodar({ script: SP, runsInWidget: false, token: TOKEN, respostasAlerta: [3], resposta: { status: 200, corpo: PAGAMENTOS } });
+    expect(previa.apresentou).toBe('presentExtraLarge');
     const rem = await rodar({ script: SP, runsInWidget: false, token: TOKEN, respostasAlerta: [5] });
     expect(rem.keychain.size).toBe(0);
   });
