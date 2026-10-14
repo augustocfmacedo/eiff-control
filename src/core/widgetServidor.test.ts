@@ -103,3 +103,29 @@ describe('diagnóstico no log do servidor', () => {
     expect(erroParaLog('falha Bearer segredo123 fim')).toBe('falha Bearer *** fim');
   });
 });
+
+describe('visão pedidos (?visao=pedidos)', () => {
+  it('visão desconhecida: 400 sem consultar o banco', async () => {
+    const { p, validar } = portas();
+    const r = await tratarWidgetCaixa({ metodo: 'GET', autorizacao: `Bearer ${TOKEN}`, visao: 'extrato' }, p);
+    expect([r.status, (r.corpo as { erro: string }).erro]).toEqual([400, 'visao_invalida']);
+    expect(validar).not.toHaveBeenCalled();
+  });
+  it('Administrador (vê bancos e aprova) recebe os pedidos da Central', async () => {
+    const r = await tratarWidgetCaixa({ metodo: 'GET', autorizacao: `Bearer ${TOKEN}`, visao: 'pedidos' }, portas().p);
+    expect(r.status).toBe(200);
+    const corpo = r.corpo as { visao: string; pendentes: unknown[]; contagem: object };
+    expect(corpo.visao).toBe('pedidos');
+    expect(Array.isArray(corpo.pendentes)).toBe(true);
+  });
+  it('sem a visão (ou vazia) continua sendo o caixa', async () => {
+    for (const visao of [undefined, null, '']) {
+      const r = await tratarWidgetCaixa({ metodo: 'GET', autorizacao: `Bearer ${TOKEN}`, visao }, portas().p);
+      expect((r.corpo as { visao?: string; curva?: number[] }).curva?.length).toBe(31);
+    }
+  });
+  it('quem não vê bancos não recebe pedidos', async () => {
+    const r = await tratarWidgetCaixa({ metodo: 'GET', autorizacao: `Bearer ${TOKEN}`, visao: 'pedidos' }, portas({ usuario: { ...ADM, papel: 'Diretoria' } }).p);
+    expect(r.status).toBe(403);
+  });
+});
