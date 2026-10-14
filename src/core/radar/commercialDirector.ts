@@ -477,6 +477,9 @@ const MOTIVO_SEM_METAS = 'metas comerciais não carregadas neste contexto: meta 
 const MOTIVO_SEM_LIVRO = 'livro de desfechos não carregado neste contexto: livro indisponível não é ausência de vendas';
 /** Códigos de alerta do motor que falam da meta (somem quando as metas não foram carregadas). */
 const ALERTAS_DA_META: readonly AlertaMeta['codigo'][] = ['META_AUSENTE', 'META_RETIRADA', 'META_INCONSISTENTE', 'META_ATINGIDA', 'META_NAO_ATINGIDA'];
+/** Os únicos alertas que só dependem da DEFINIÇÃO da meta; todos os outros dependem do livro (somem sem livro carregado:
+ * sem livro não há "meta atingida/não atingida", nem ganho, estorno ou complemento a apontar). */
+const ALERTAS_SO_DA_DEFINICAO: readonly AlertaMeta['codigo'][] = ['META_AUSENTE', 'META_RETIRADA', 'META_INCONSISTENTE'];
 /** Só para obter as DEFINIÇÕES das medidas do motor quando não há instante (nenhum número sai daqui). */
 const MES_SO_DEFINICOES = '2000-01';
 const AGORA_SO_DEFINICOES = '2000-01-15T12:00:00Z';
@@ -510,7 +513,8 @@ function blocoMetaComercial(radar: RadarDataset, opcoes: OpcoesSnapshotCD): Bloc
   const medidas: BlocoMetaComercialCD['medidas'] = {
     ...a.medidas,
     retificacoes: futuro ? naoAplicavel(defRetificacoes, 'o mês ainda não começou') : disponivel(defRetificacoes, a.retificacoes.length, a.ganhos.length),
-    eventosInconsistentes: disponivel(defInconsistentes, a.inconsistencias.eventos.length, (radar.desfechos ?? []).length),
+    // sem base: o motor não devolve quantos eventos considerou até o instante, e recontar seria recriar a leitura dele
+    eventosInconsistentes: disponivel(defInconsistentes, a.inconsistencias.eventos.length),
   };
   // indisponível não vira zero: a medida que depende do que não foi carregado sai DADO_INSUFICIENTE (o NAO_APLICAVEL
   // de mês futuro continua valendo)
@@ -523,7 +527,7 @@ function blocoMetaComercial(radar: RadarDataset, opcoes: OpcoesSnapshotCD): Bloc
     ...(temMetas ? { metaVigente: { estado: a.meta.estado, ...(a.meta.versao ? { id: a.meta.versao.id, versao: a.meta.versao.versao } : {}) } } : {}),
     medidas,
     retificacoes: a.retificacoes,
-    alertas: temMetas ? a.alertas : a.alertas.filter((x) => !ALERTAS_DA_META.includes(x.codigo)),
+    alertas: a.alertas.filter((x) => (temMetas || !ALERTAS_DA_META.includes(x.codigo)) && (temLivro || ALERTAS_SO_DA_DEFINICAO.includes(x.codigo))),
     inconsistencias: { metas: temMetas ? a.inconsistencias.metas : [], eventos: a.inconsistencias.eventos },
   };
 }

@@ -155,6 +155,34 @@ describe('CD-1.3 · indisponível ≠ vazio ≠ zero', () => {
     }
   });
 
+  it('mês encerrado com meta válida e livro NÃO carregado: nenhum falso "meta não atingida"; só alertas da definição da meta', () => {
+    const r: RadarDataset = { ...mundoCD13(), desfechos: undefined };
+    // o perigo: o E1 alimentado com zero eventos diria que setembro não atingiu a meta
+    expect(e1({ ...r, desfechos: [] }, '2026-09').alertas.map((x) => x.codigo)).toContain('META_NAO_ATINGIDA');
+    const set = bloco(r, { mesComercial: '2026-09' });
+    expect(set.alertas).toEqual([]);
+    expect([set.medidas.atingimento.estado, set.medidas.realizado.estado, set.medidas.faltaParaMeta.estado]).toEqual(['DADO_INSUFICIENTE', 'DADO_INSUFICIENTE', 'DADO_INSUFICIENTE']);
+    expect(valor(set.medidas.meta)).toBe(100000);
+    // alertas que só dependem da definição da meta continuam
+    const semMetaOut: RadarDataset = { ...r, metasComerciais: METAS_CD13.filter((m) => m.mes !== '2026-10') };
+    expect(bloco(semMetaOut).alertas.map((x) => x.codigo)).toEqual(['META_AUSENTE']);
+    expect(bloco(r, { mesComercial: '2026-12' }).alertas.map((x) => x.codigo)).toEqual(['META_RETIRADA']);
+    // meta inconsistente também é da definição
+    const duplicada: RadarDataset = { ...r, metasComerciais: [...METAS_CD13, meta('MS1b', '2026-09', '90000.00', 1, '2026-09-02T12:00:00.000Z')] };
+    expect(bloco(duplicada, { mesComercial: '2026-09' }).alertas.map((x) => x.codigo)).toEqual(['META_INCONSISTENTE']);
+  });
+
+  it('livro carregado e realmente vazio: alertas e medidas exatamente como o E1 os dá (inclusive "meta não atingida")', () => {
+    const r: RadarDataset = { ...mundoCD13(), desfechos: [] };
+    const set = bloco(r, { mesComercial: '2026-09' });
+    const a = e1(r, '2026-09');
+    expect(set.alertas).toEqual(a.alertas);
+    expect(set.alertas.map((x) => x.codigo)).toContain('META_NAO_ATINGIDA');
+    const { retificacoes, eventosInconsistentes, ...doMotor } = set.medidas;
+    expect(doMotor).toEqual(a.medidas);
+    expect([valor(retificacoes), valor(eventosInconsistentes)]).toEqual([0, 0]);
+  });
+
   it('mês comercial inválido é recusado', () => {
     expect(() => bloco(mundoCD13(), { mesComercial: '2026-13' })).toThrow(/mês comercial inválido/);
   });
@@ -221,6 +249,23 @@ describe('CD-1.3 · regras de negócio', () => {
     expect(valor(nov.atingimento)).toBeCloseTo(-0.0003, 12);
   });
 
+  it('eventos inconsistentes: só os do E1 até o instante de referência, sem base (eventos futuros não entram)', () => {
+    const futuros: EventoDesfecho[] = [
+      ganho('GF', 'OF', 'E1', '2026-11-20T12:00:00Z', '1000.00'), // válido, mas depois de agoraIso
+      { ...G1, ocorridoEm: '2026-11-21T12:00:00Z' }, // id repetido, no futuro
+      estorno('XF', ganho('NAO_EXISTE', 'OZ', 'E1', '2026-11-22T12:00:00Z'), '2026-11-22T12:00:00Z'), // estorno sem ganho, no futuro
+    ];
+    const r: RadarDataset = { ...mundoCD13(), desfechos: [...DESFECHOS_CD13, ...futuros] };
+    const m = bloco(r).medidas.eventosInconsistentes;
+    expect(m).toMatchObject({ estado: 'DISPONIVEL', valor: e1(r, '2026-10').inconsistencias.eventos.length });
+    expect(m.valor).toBe(0);
+    expect(m.base).toBeUndefined();
+    expect(bloco(r)).toEqual(bloco()); // nada do futuro muda o retrato de hoje
+    const comInconsistente: RadarDataset = { ...r, desfechos: [...(r.desfechos as EventoDesfecho[]), { ...G1 }] };
+    expect(bloco(comInconsistente).medidas.eventosInconsistentes).toMatchObject({ estado: 'DISPONIVEL', valor: 1 });
+    expect(bloco(comInconsistente).medidas.eventosInconsistentes.base).toBeUndefined();
+  });
+
   it('eventos inconsistentes não contam duas vezes e viram alerta e medida', () => {
     const r: RadarDataset = { ...mundoCD13(), desfechos: [...DESFECHOS_CD13, { ...G1 }, ganho('GX', 'O2', 'E1', '2026-10-08T12:00:00Z', '1.00')] };
     const b = bloco(r);
@@ -263,7 +308,7 @@ describe('CD-1.3 · contrato, determinismo e autoridade única', () => {
       expect(CODIGO_CD, proibido).not.toContain(proibido);
     // o bloco só lê do dataset as metas e o livro (as empresas não filtram receita)
     const corpo = CODIGO_CD.slice(CODIGO_CD.indexOf('function blocoMetaComercial'), CODIGO_CD.indexOf('export function medidasDoSnapshotCD'));
-    expect([...corpo.matchAll(/radar\.(\w+)/g)].map((m) => m[1]).sort()).toEqual(['desfechos', 'desfechos', 'desfechos', 'metasComerciais', 'metasComerciais']);
+    expect([...corpo.matchAll(/radar\.(\w+)/g)].map((m) => m[1]).sort()).toEqual(['desfechos', 'desfechos', 'metasComerciais', 'metasComerciais']);
   });
 
   it('fixtures coerentes: as metas e o livro do mundo de teste são as do arquivo de fixture', () => {

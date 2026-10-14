@@ -56,7 +56,7 @@ as duas últimas são contagens do que o E1 já devolve.
 | `faltaParaMeta` | `meta.faltaParaMeta` | BRL | valor faltante (zero quando atingida) |
 | `excedente` | `meta.excedente` | BRL | valor excedente (zero quando não atingida) |
 | `retificacoes` | `meta.retificacoes` | EVENTOS | ganhos do mês com valor complementado depois; base = ganhos do mês |
-| `eventosInconsistentes` | `meta.eventosInconsistentes` | EVENTOS | eventos do livro desconsiderados pelo E1; base = eventos do livro |
+| `eventosInconsistentes` | `meta.eventosInconsistentes` | EVENTOS | eventos do livro, até o instante de referência, desconsiderados pelo E1; **sem base** (o E1 não devolve quantos eventos considerou e recontar seria recriar a leitura dele; eventos posteriores a `agoraIso` não entram) |
 
 `EVENTOS` entrou no catálogo `UNIDADES_MEDIDA` (`commercialMetrics.ts`), sem mudar nenhuma outra unidade ou regra.
 
@@ -66,7 +66,10 @@ as duas últimas são contagens do que o E1 já devolve.
   "meta retirada (versão N)".
 - **Livro indisponível ≠ livro vazio**: `desfechos` ausente (tabela não carregada) → toda medida do livro sai
   `DADO_INSUFICIENTE` ("livro de desfechos não carregado neste contexto: livro indisponível não é ausência de vendas");
-  `desfechos: []` → zero eventos, medidas `DISPONIVEL` 0.
+  `desfechos: []` → zero eventos, medidas `DISPONIVEL` 0 e os alertas do E1 exatamente como ele os dá. Sem livro carregado,
+  só sobrevivem os alertas da DEFINIÇÃO da meta (`META_AUSENTE`, `META_RETIRADA`, `META_INCONSISTENTE`): nunca
+  `META_ATINGIDA`/`META_NAO_ATINGIDA` (num mês encerrado com meta válida o E1, alimentado com zero eventos, diria "não
+  atingida" — falso alarme) nem alertas de ganho, estorno ou complemento.
 - **Metas indisponíveis** (`metasComerciais` ausente) → `meta`, `atingimento`, `faltaParaMeta` e `excedente` saem
   `DADO_INSUFICIENTE`, os alertas de meta somem (não se afirma "meta ausente" sem ter lido as metas) e o realizado continua.
 - Mês futuro continua `NAO_APLICAVEL`, como no E1.
@@ -91,7 +94,7 @@ o motor financeiro, e o bloco só lê `radar.metasComerciais` e `radar.desfechos
 
 | Prova | Resultado |
 |---|---|
-| `src/core/radar/commercialDirector.metaComercial.test.ts` | 30 ok |
+| `src/core/radar/commercialDirector.metaComercial.test.ts` | 33 ok (hardening: alertas sem livro e base dos eventos inconsistentes) |
 | Paridade exata com o E1 em 5 meses (encerrado sem meta, encerrado com complemento retroativo, corrente com meta versionada e estorno de outro mês, futuro, futuro com meta retirada): medidas, alertas, retificações e inconsistências **iguais** ao `apurarMetaComercial` | ok |
 | CD-1.2 preservado: todos os blocos iguais ao golden gerado com o código do CD-1.2 | ok |
 | Testes do CD-1.x existentes (versão passou a CD-1.3 nas três asserções que fixavam CD-1.2) | ok |
