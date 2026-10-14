@@ -68,6 +68,31 @@ confirmado · meta vigente e nenhuma venda · parcial · atingida. Indisponível
 | Suíte completa, type-check, lint e build | ok |
 | Evidência visual (componente real com o CSS do app, 12 quadros: estados, detalhes, iPad, celular, formulário) | anexada ao PR |
 
+## Idempotência por intenção (E5-REL-01, migration 0074)
+
+Duas janelas sobravam depois do PR #71 original: a RPC fazia COMMIT e o cliente perdia a resposta (rede), ou o app
+fechava antes de registrar o progresso. A defesa definitiva é no banco:
+
+- **Identificador estável por intenção**: a ação canônica gera `intencao` (UUID) e `versaoBase` (a versão vigente em que
+  a decisão se apoiou) ANTES do primeiro envio; `persistirMetas` chama `radar_definir_meta_comercial_intencao` (0074),
+  que, sob trava da intenção: devolve o **resultado original** se a intenção já foi executada (sem versão nova, mesmo que
+  outra sessão tenha mudado a meta depois); **recusa** o mesmo id com conteúdo diferente; para intenção nova exige
+  **versão base = vigente** (decisão sobre dado desatualizado não substitui em silêncio uma posterior) e aplica pela RPC
+  da 0068 (papel, mês, valor, motivo, versão, auditoria). Registro `radar_commercial_goal_intent` imutável, só leitura
+  para a API. A 0068 e a 0070 não mudaram.
+- **Diário local antes do envio** (`offline.ts`, chave `intencoesMeta`): a intenção é gravada no IndexedDB antes de
+  ir ao banco e sai dele quando o banco a aceita. Na reabertura, `carregarComPendentes` reaplica o diário pela RPC
+  idempotente (nunca duplica); intenção recusada (versão velha, conteúdo diferente) sai do diário e vira aviso. As
+  pendências dos outros módulos continuam no mecanismo de sempre.
+- `definirMetaConfirmada` também compara a versão do banco com a do app antes de chamar a ação (desatualizada = nem envia).
+
+Provas: `npm run smoke:meta-intencao` (PGlite, fila inteira até a 0074, no Quality Gate, 24 ok); gate em
+**PostgreSQL 17.6 real** descartável (ordem de produção …0073 → 0070 → 0074; mesma intenção em duas sessões 20/20,
+resposta perdida + outra sessão, conteúdo diferente concorrente, pré-condição concorrente 10/10, rajadas de 8 sessões
+5/5 + 5/5, integridade, zero deadlock: 12 ok); `src/data/meta.intencao.store.test.ts` (fila real do store: diário antes do
+envio, resposta perdida + outra sessão, reabertura, app fechado antes/depois da RPC, intenção velha recusada, nova
+decisão, falha posterior).
+
 ## Limitações
 
 - **Corrigido antes de publicar (bloqueador de release da E5)**: `persistirRemoto` grava na ordem escrita genérica →

@@ -34,4 +34,13 @@ export const guardarPendente = (p: Pendente) => gravar('pendente', p);
 export const lerPendente = () => ler<Pendente>('pendente');
 export const apagarPendente = () => apagar('pendente');
 export const guardarCache = (c: Omit<Cache, 'em'>) => gravar('cache', { ...c, em: new Date().toISOString() });
+/**
+ * CD-D3/E5 — diário das intenções de meta em voo: gravado ANTES do envio e limpo quando o banco confirma. Se o app fechar
+ * no meio, a reabertura reaplica cada intenção pela RPC idempotente da 0074 (nunca duplica). Só metas: as pendências dos
+ * outros módulos seguem no mecanismo de `pendente`.
+ */
+export interface DiarioIntencoesMeta { usuarioId: string; intencoes: unknown[]; em: string }
+export const guardarIntencoesMeta = (d: Omit<DiarioIntencoesMeta, 'em'>) => gravar('intencoesMeta', { ...d, em: new Date().toISOString() });
+export const lerIntencoesMeta = () => ler<DiarioIntencoesMeta>('intencoesMeta');
+export const apagarIntencoesMeta = () => apagar('intencoesMeta');
 export const lerCache = () => ler<Cache>('cache');

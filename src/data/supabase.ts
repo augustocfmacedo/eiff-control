@@ -17,7 +17,7 @@ import type {
 } from '../core/types';
 import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
-import { carregarRadar, metaDoBanco, persistirRadar } from './radar.supabase';
+import { carregarRadar, chamadaDaMeta, metaDoBanco, persistirRadar } from './radar.supabase';
 import type { VersaoMetaComercial } from '../core/radar/metaComercial';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
 import { datasetSolicitante, type AlteracaoJson, type AnexoJson, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
@@ -600,6 +600,18 @@ export async function urlFoto(f: { dataUrl?: string; caminho?: string }): Promis
 
 /** O provedor remoto ja carregou (refs prontas) e pode gravar. */
 export const remotoPronto = () => !!supabase && !!refs;
+
+/**
+ * CD-D3/E5 — reaplica UMA intenção de meta guardada no diário local (app fechado no meio do envio). A RPC da 0074 é
+ * idempotente: se a intenção já foi executada devolve o resultado original; se não, aplica com a pré-condição.
+ */
+export async function aplicarIntencaoMeta(m: VersaoMetaComercial & { intencao?: string; versaoBase?: number }): Promise<unknown> {
+  if (!supabase) throw new Error('banco não configurado');
+  const [rpc, args] = chamadaDaMeta(m);
+  const { data, error } = await supabase.rpc(rpc, args);
+  if (error) throw new Error(`rpc ${rpc}: ${error.message}`);
+  return data;
+}
 
 /** Avisos de progresso da sincronização (CD-D3/E5: metas aceitas pelo banco, para a retomada não reenviar). */
 export interface OpcoesPersistir { aoGravarMeta?: (m: VersaoMetaComercial) => void }

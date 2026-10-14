@@ -156,6 +156,13 @@ jobs:
       - name: PostgreSQL Smoke (CD-D3 livro de desfechos)
         run: node scripts/pg-smoke-desfechos.mjs
 
+      # scripts/pg-smoke-meta-intencao.mjs aplica a FILA INTEIRA (até a 0074) num PGlite descartável e prova a idempotência
+      # por intenção da meta comercial (E5-REL-01): reenvio devolve o resultado original sem versão nova (mesmo depois de
+      # outra sessão mudar a meta), mesmo id com conteúdo diferente recusado, pré-condição de versão vigente, nova decisão
+      # legítima, governança, isolamento, registro imutável e rollback exato. Concorrência real: gate em PostgreSQL 17.6.
+      - name: PostgreSQL Smoke (CD-D3 meta por intenção)
+        run: node scripts/pg-smoke-meta-intencao.mjs
+
       # scripts/pg-smoke-widget-token.mjs aplica a 0069 (widgets do iPad) num PGlite descartável e prova o token por aparelho:
       # só Administrador ativo cria, o segredo nunca fica em claro (só SHA-256), validação só para service_role com cada recusa
       # (revogado, vencido, perfil inativo, papel trocado), o cliente nunca lê o hash, escrita direta negada, imutabilidade,

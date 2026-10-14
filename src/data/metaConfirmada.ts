@@ -37,6 +37,13 @@ export interface PortasMetaConfirmada {
 }
 
 /**
+ * Versão de meta criada no app e ainda não confirmada: leva o identificador ESTÁVEL da intenção (gerado antes do
+ * primeiro envio) e a versão vigente em que a decisão se baseou. O banco (0074) reconhece a intenção: reenvio devolve o
+ * resultado original, conteúdo diferente é recusado e decisão sobre versão desatualizada também.
+ */
+export type VersaoMetaLocal = VersaoMetaComercial & { intencao?: string; versaoBase?: number };
+
+/**
  * A base sincronizada com uma versão de meta que o banco ACEITOU: daí em diante ela não é "nova" para `persistirMetas`
  * e nunca é reenviada na retomada (Tentar de novo, pendência offline). Só a lista de metas muda; o resto da base continua
  * como estava, e as alterações dos outros módulos seguem pendentes. Pura; devolve a mesma base se a versão já estiver lá.
@@ -61,6 +68,15 @@ export async function definirMetaConfirmada(p: PortasMetaConfirmada): Promise<Re
       return { ok: false, estado: 'recusada', mensagem: 'Há alterações ainda não confirmadas no banco. Resolva a sincronização antes de mudar a meta.' };
     // retrato do que já está gravado ANTES do pedido: a confirmação procura só versões novas a partir dele
     try { base = await p.lerPersistidas(); } catch (e) { return { ok: false, estado: 'recusada', mensagem: `Não deu para conferir as metas no banco agora; nada foi enviado. ${erro(e)}` }; }
+  }
+  if (p.remoto) {
+    // a decisão parte da versão vigente que o app mostra; se o banco já está em outra, nem envia (a 0074 recusaria)
+    const noBanco = base.reduce((m, v) => Math.max(m, v.versao), 0);
+    const noApp = p.versoesDoMes().reduce((m, v) => Math.max(m, v.versao), 0);
+    if (noBanco !== noApp) {
+      if (p.syncAtual().status === 'ok') { try { await p.recarregar(); } catch { /* a mensagem já pede conferência */ } }
+      return { ok: false, estado: 'desatualizada', mensagem: `A meta mudou em outra sessão: no banco está ${rotulo(ultima(base))}. Confira e tente de novo.` };
+    }
   }
   const antes = p.versoesDoMes().length;
   let local: VersaoMetaComercial;

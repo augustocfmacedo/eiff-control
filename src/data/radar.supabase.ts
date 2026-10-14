@@ -149,9 +149,23 @@ async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComerci
   const novas = depois.filter((m) => !ja.has(m.id)).sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : a.versao - b.versao));
   for (const m of novas) {
     if (!m.motivo?.trim()) throw new Error('meta comercial: versão sem motivo; nada foi gravado.');
-    await h.rpc('radar_definir_meta_comercial', { p_mes: `${m.mes}-01`, p_valor: m.valor === null || m.valor === undefined || m.valor === '' ? null : Number(m.valor), p_motivo: m.motivo.trim() });
+    const [rpc, args] = chamadaDaMeta(m);
+    await h.rpc(rpc, args);
     h.aoGravarMeta?.(m);
   }
+}
+
+/**
+ * CD-D3/E5 (0074) — a chamada de uma versão de meta: com a intenção (identificador estável + versão base), a RPC
+ * idempotente radar_definir_meta_comercial_intencao; sem ela (versão criada antes desta entrega e guardada offline), a
+ * RPC da 0068.
+ */
+export function chamadaDaMeta(m: VersaoMetaComercial & { intencao?: string; versaoBase?: number }): [string, Row] {
+  const p_valor = m.valor === null || m.valor === undefined || m.valor === '' ? null : Number(m.valor);
+  const base = { p_mes: `${m.mes}-01`, p_valor, p_motivo: m.motivo.trim() };
+  return m.intencao && typeof m.versaoBase === 'number'
+    ? ['radar_definir_meta_comercial_intencao', { p_intencao: m.intencao, ...base, p_versao_base: m.versaoBase }]
+    : ['radar_definir_meta_comercial', base];
 }
 
 /** Mapeamentos expostos para scripts de carga (mesmas regras da persistencia do app). */

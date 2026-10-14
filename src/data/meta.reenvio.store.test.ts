@@ -14,6 +14,7 @@ const sim = vi.hoisted(() => ({
   roteiro: [] as ('ok' | 'falha_depois' | 'rede_depois')[],
   pendente: null as null | { usuarioId: string; base: Dataset; ds: Dataset; em: string },
   remoto: null as null | Dataset,
+  diario: null as null | { usuarioId: string; intencoes: { id: string; intencao: string }[] },
 }));
 
 vi.mock('./supabase', async (original) => {
@@ -42,6 +43,9 @@ vi.mock('./offline', () => ({
   guardarCache: async () => undefined,
   lerCache: async () => null,
   guardarPendente: async (p: typeof sim.pendente) => { sim.pendente = JSON.parse(JSON.stringify(p)); },
+  guardarIntencoesMeta: async (d: unknown) => { sim.diario = JSON.parse(JSON.stringify(d)); },
+  lerIntencoesMeta: async () => (sim.diario ? JSON.parse(JSON.stringify(sim.diario)) : null),
+  apagarIntencoesMeta: async () => { sim.diario = null; },
   lerPendente: async () => (sim.pendente ? JSON.parse(JSON.stringify(sim.pendente)) : undefined),
 }));
 
@@ -54,7 +58,7 @@ const enviadas = () => sim.chamadas.flatMap((c) => c.metasEnviadas);
 const novaEmpresa = (nome: string) => actions.salvarEmpresaRadar({ ...actions.novaEmpresaRadar(), razaoSocial: nome, uf: 'GO' });
 
 beforeEach(async () => {
-  sim.chamadas.length = 0; sim.roteiro.length = 0; sim.pendente = null;
+  sim.chamadas.length = 0; sim.roteiro.length = 0; sim.pendente = null; sim.diario = null;
   sim.remoto = { ...JSON.parse(JSON.stringify(seed)), radar: { ...JSON.parse(JSON.stringify(seed)).radar, metasComerciais: [], desfechos: [] } };
   await inicializar();
   await actions.recarregar();

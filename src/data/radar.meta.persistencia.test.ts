@@ -77,7 +77,9 @@ describe('E2 · escrita só pela RPC', () => {
     const fonte = readFileSync('src/data/radar.supabase.ts', 'utf8');
     expect(fonte).not.toMatch(/tabela: 'radar_commercial_goal'/);
     expect(fonte.match(/'radar_commercial_goal'/g)).toHaveLength(1); // só a leitura em carregarRadar
-    expect(fonte).toContain("h.rpc('radar_definir_meta_comercial'");
+    expect(fonte).toContain("'radar_definir_meta_comercial_intencao'"); // E5-REL-01: com intenção, a RPC idempotente da 0074
+    expect(fonte).toContain("['radar_definir_meta_comercial', base]"); // sem intenção (versão antiga guardada offline), a da 0068
+    expect(fonte).toContain('await h.rpc(rpc, args);');
     const migration = readFileSync('supabase/migrations/0068_radar_commercial_goal.sql', 'utf8');
     expect(migration).toMatch(/grant select on radar_commercial_goal to authenticated;/);
     expect(migration).not.toMatch(/grant (insert|update|delete|all)[^;]*on radar_commercial_goal/i);
