@@ -96,6 +96,9 @@ try {
   // a 0071 redefine df_pedido_json (com a alteração de valor): reaplicada por cima da 0067, e também tem de ser idempotente
   await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0071_'))), 'utf8'));
   res.migrations.reaplicacao_0071 = 'ok';
+  // a 0072 redefine df_pedido_json e df_registrar_pedido (forma e dados de pagamento): reaplicada por último, idempotente
+  await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0072_'))), 'utf8'));
+  res.migrations.reaplicacao_0072 = 'ok';
 
   await db.exec('begin;');
   const org = await um(`select id from organization where code = 'EIFF'`);
@@ -234,6 +237,26 @@ try {
   const privAlt = await q(`select p, f, has_function_privilege(p, f, 'EXECUTE') pode from unnest(array['anon','authenticated']) p, unnest(array['df_pedir_alteracao(text,numeric,text)','df_cancelar_alteracao(uuid)','df_alteracao_json(payment_change_request)']) f`);
   const privErrado = privAlt.filter((x) => (x.p === 'anon' ? x.pode : x.f.startsWith('df_alteracao_json') ? x.pode : !x.pode)).map((x) => `${x.p} ${x.f} ${x.pode}`);
   prova('S pedido não aprovado não altera; anon não executa as portas novas', !!m9.erro && privErrado.length === 0, `${m9.erro} · ${privErrado.join(' · ')}`);
+
+  // ---- 0072: forma e dados de pagamento pela porta do Solicitante ----
+  const comPix = { ...pedido, valor: 120, descricao: 'Peça com PIX', formaPagamento: 'PIX', dadosPagamento: { pixTipo: 'CNPJ', pixChave: '11222333000181', favorecido: 'Oficina do Zé' } };
+  const t1 = await como(SOL, async () => um(`select df_registrar_pedido($1::jsonb)`, [JSON.stringify(comPix)]), { manter: true });
+  const t1Banco = (await q(`select payment_method, payment_details from financial_entry where code = $1`, [t1.valor?.codigo]))[0];
+  prova('T pedido com forma de pagamento: gravado no título e devolvido ao Solicitante',
+    !t1.erro && t1.valor?.formaPagamento === 'PIX' && t1.valor?.dadosPagamento?.pixChave === '11222333000181' && t1Banco?.payment_method === 'PIX' && t1Banco?.payment_details?.favorecido === 'Oficina do Zé',
+    t1.erro ?? JSON.stringify(t1Banco));
+  const ruins = [];
+  for (const [nome, extra] of [['forma inventada', { formaPagamento: 'Cheque', dadosPagamento: {} }], ['PIX sem chave', { formaPagamento: 'PIX', dadosPagamento: { pixTipo: 'CPF' } }], ['boleto curto', { formaPagamento: 'Boleto', dadosPagamento: { boletoLinha: '123' } }], ['transferência sem conta', { formaPagamento: 'Transferência', dadosPagamento: { banco: 'Itaú', agencia: '1', favorecido: 'X', documentoFavorecido: '1' } }]]) {
+    const r = await como(SOL, async () => um(`select df_registrar_pedido($1::jsonb)`, [JSON.stringify({ ...pedido, valor: 77, descricao: `ruim ${nome}`, ...extra })]));
+    if (!r.erro) ruins.push(`${nome} aceito`);
+  }
+  const semForma = await como(SOL, async () => um(`select df_registrar_pedido($1::jsonb)`, [JSON.stringify({ ...pedido, valor: 78, descricao: 'sem forma' })]));
+  const ck = await como(ADMIN, async () => q(`update financial_entry set payment_method = 'Cheque' where code = 'PAG-9001'`));
+  prova('U dados de pagamento incompletos ou forma fora do catálogo são recusados (porta e coluna); sem forma continua valendo',
+    ruins.length === 0 && !semForma.erro && semForma.valor?.formaPagamento === null && !!ck.erro, `${ruins.join(' · ')} · sem forma: ${semForma.erro ?? 'ok'} · coluna: ${ck.erro}`);
+  const meusT = await como(SOL, async () => um(`select df_meus_pedidos()`));
+  const p1t = (meusT.valor ?? []).find((x) => x.codigo === 'PED-0001');
+  prova('V df_meus_pedidos mantém a alteração da 0071 e traz a forma (0072)', ['ACEITA', 'CANCELADA'].includes(p1t?.alteracao?.status) && 'formaPagamento' in (p1t ?? {}), JSON.stringify({ alt: p1t?.alteracao?.status, forma: p1t?.formaPagamento }));
 
   // L. perfil inativo: nem as portas abrem
   await q(`update profile set active = false where id = $1`, [SOL2]);

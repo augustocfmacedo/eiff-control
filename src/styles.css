@@ -342,6 +342,11 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .df-dia b { font-variant-numeric: tabular-nums; }
 .df-prev { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .df-prev:first-of-type { border-top: 0; }
+.dados-pagamento { display: grid; gap: 6px; margin: 0; }
+.dados-pagamento > div { display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 10px; align-items: center; }
+.dados-pagamento dt { color: var(--muted); font-size: var(--text-xs, 12px); }
+.dados-pagamento dd { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; word-break: break-all; }
+@media (max-width: 520px) { .dados-pagamento > div { grid-template-columns: 1fr; gap: 2px; } }
 .df-prev-acoes { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .df-filtros { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .df-filtro-n { opacity: .7; font-variant-numeric: tabular-nums; margin-left: 2px; }

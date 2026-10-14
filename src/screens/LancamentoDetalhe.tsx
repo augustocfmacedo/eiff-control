@@ -3,6 +3,7 @@ import { calcLancamento } from '../core/engine';
 import { actions, pode, useStore } from '../data/store';
 import { Empty, Field, Input, Link, Modal, Money, NumberInput, PageHead, Select, StatusBadge, dataHora, money, pct, tentar, useToast } from '../ui/components';
 import { Timeline } from '../ui/Timeline';
+import { DadosPagamentoView } from '../ui/Pagamento';
 import { LancamentoForm } from './LancamentoForm';
 import { navegar } from '../ui/router';
 
@@ -78,6 +79,14 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
           {l.observacoes && <p className="muted small" style={{ marginTop: 8 }}>{l.observacoes}</p>}
         </div>
       </div>
+
+      {l.tipo === 'Saída' && !l.faturamentoDireto && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h2>Dados para pagamento</h2>
+          <DadosPagamentoView forma={l.formaPagamento} dados={l.dadosPagamento} />
+          {!l.formaPagamento && l.status !== 'Realizado' && l.status !== 'Cancelado' && <p className="small muted" style={{ margin: '6px 0 0' }}>Informe a forma e os dados em <b>Editar</b> para quem for pagar.</p>}
+        </div>
+      )}
 
       <div className="grid cols-2" style={{ marginTop: 16 }}>
         <div className="card">

@@ -49,6 +49,7 @@ import type {
 import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
 import { planejarMovimentacao } from '../core/extratos';
 import { planejarResetExtrato } from '../core/resetExtrato';
+import { normalizarDadosPagamento, validarDadosPagamento } from '../core/pagamento';
 import { ORIGEM_DF, bloqueioAlteracao, fmt as moeda, resumoParecer, validarAlteracao, type PrevisaoDF } from '../core/cfo';
 import { ORIGEM_CAIXA, categoriaDoCaixa, validarLinhaCaixa, type NovaLinhaCaixa } from '../core/caixa';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
@@ -592,6 +593,8 @@ export function validarLancamento(ds: Dataset, l: Lancamento): string[] {
   if (!(l.valorBruto > 0)) erros.push('Valor bruto deve ser positivo.');
   if (l.retencoes < 0 || l.desconto < 0 || l.multaJuros < 0) erros.push('Retenções, descontos e juros devem ser positivos.');
   if (l.probabilidade < 0 || l.probabilidade > 1) erros.push('Probabilidade deve estar entre 0% e 100%.');
+  // forma e dados de pagamento (0072): opcionais, mas quando informados tem de estar completos e validos; so para saidas
+  if (l.formaPagamento) { if (plano?.tipo === 'Entrada') erros.push('Forma de pagamento é só para saídas.'); else erros.push(...validarDadosPagamento(l.formaPagamento, l.dadosPagamento)); }
   if (l.status === 'Realizado' && (!l.realizacao || !(l.valorRealizado ?? 0))) erros.push('Realizado exige data e valor realizados (use Liquidar).');
   if (plano && (plano.grupoFluxo === 'Custos Diretos de Obras' || plano.grupoDre === 'Receita Operacional') && !l.codigoObra)
     erros.push('Custos diretos e receitas de obra exigem Código Obra.');
@@ -795,6 +798,7 @@ export const actions = {
     const l = this.novoLancamento({
       categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
       status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
+      ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: normalizarDadosPagamento(p.formaPagamento, p.dadosPagamento) } : {}),
       // quem nao ve caixa nao tem o caixa completo no aparelho: o resumo do parecer sairia com numeros errados (a Diretoria ve o
       // parecer completo na Caixa/Central, calculado na hora)
       observacoes: state.usuario.papel === 'Solicitante' || !pode(state.usuario, 'ver_bancos')
@@ -819,7 +823,9 @@ export const actions = {
     if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return this.registrarPrevisaoDF(p);
     if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor do pedido deve ser positivo.');
     if (!p.vencimento) throw new RegraDeNegocioError('Data do pedido é obrigatória.');
-    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120) });
+    const erros = validarDadosPagamento(p.formaPagamento, p.dadosPagamento);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: normalizarDadosPagamento(p.formaPagamento, p.dadosPagamento) } : {}) });
     await this.atualizarPedidosSolicitante();
     return state.ds.lancamentos.find((x) => x.id === r.codigo) ?? lancamentoDoPedido(r, state.usuario.nome);
   },
