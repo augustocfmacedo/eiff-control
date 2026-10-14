@@ -12,11 +12,19 @@
 --
 -- RLS: leitura para a organização (como as demais tabelas radar_*: current_org(), que desde a 0067 ignora o
 -- Solicitante); `authenticated` só tem SELECT; `anon` nada. UPDATE e DELETE recusados por gatilho para qualquer papel.
+--
+-- Hardening pré-merge: as três funções fixam `search_path = pg_catalog, pg_temp` (pg_temp explicitamente por último) e a
+-- RPC qualifica por schema tudo o que lê ou grava (public.profile, public.radar_commercial_goal, public.audit_log,
+-- public.role_kind, public.radar_mes_comercial_de; auth.uid já era qualificado). Como `public` não está no caminho, um nome
+-- sem schema não resolveria, e uma tabela temporária de mesmo nome (o papel `authenticated` tem TEMP no banco) não desvia
+-- nada. Valor máximo da meta = R$ 1.000.000.000.000,00 (1e14 centavos), o mesmo de VALOR_MAXIMO_META no motor da E1, com
+-- folga sobre o inteiro seguro do cálculo em centavos (9.007.199.254.740.991).
 
 -- mês comercial (dia 1) de um instante, no fuso de São Paulo — o mesmo de `mesComercialDe` no motor
 create or replace function radar_mes_comercial_de(p_instante timestamptz) returns date
 language sql stable
-as $$ select date_trunc('month', p_instante at time zone 'America/Sao_Paulo')::date $$;
+set search_path = pg_catalog, pg_temp
+as $$ select pg_catalog.date_trunc('month', p_instante at time zone 'America/Sao_Paulo')::date $$;
 
 create table radar_commercial_goal (
   id uuid primary key default gen_random_uuid(),
@@ -26,7 +34,8 @@ create table radar_commercial_goal (
   currency text not null default 'BRL' check (currency = 'BRL'),
   scope text not null default 'ORGANIZACAO' check (scope = 'ORGANIZACAO'),
   -- NULL = meta retirada nesta versão
-  amount numeric(18,2) check (amount is null or amount > 0),
+  -- teto alinhado ao motor (VALOR_MAXIMO_META): R$ 1 trilhão
+  amount numeric(18,2) check (amount is null or (amount > 0 and amount <= 1000000000000)),
   version integer not null check (version >= 1),
   supersedes_id uuid references radar_commercial_goal(id),
   reason text not null check (char_length(btrim(reason)) between 3 and 500),
@@ -38,7 +47,9 @@ create table radar_commercial_goal (
 create index radar_commercial_goal_mes_idx on radar_commercial_goal (organization_id, period_month);
 
 -- histórico imutável: nenhuma versão muda nem some, para nenhum papel
-create or replace function radar_commercial_goal_imutavel() returns trigger language plpgsql as $$
+create or replace function radar_commercial_goal_imutavel() returns trigger language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
 begin
   raise exception 'meta comercial: versões são imutáveis (crie uma nova versão)' using errcode = 'insufficient_privilege';
 end $$;
@@ -55,21 +66,21 @@ grant select on radar_commercial_goal to authenticated;
 create or replace function radar_definir_meta_comercial(p_mes date, p_valor numeric, p_motivo text) returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_ator uuid := auth.uid();
   v_org uuid;
-  v_papel role_kind;
+  v_papel public.role_kind;
   v_ativo boolean;
   v_motivo text := btrim(coalesce(p_motivo, ''));
-  v_atual radar_commercial_goal%rowtype;
-  v_nova radar_commercial_goal%rowtype;
+  v_atual public.radar_commercial_goal%rowtype;
+  v_nova public.radar_commercial_goal%rowtype;
 begin
   if v_ator is null then
     raise exception 'meta comercial: sessão não autenticada' using errcode = 'insufficient_privilege';
   end if;
-  select p.organization_id, p.role, p.active into v_org, v_papel, v_ativo from profile p where p.id = v_ator;
+  select p.organization_id, p.role, p.active into v_org, v_papel, v_ativo from public.profile p where p.id = v_ator;
   if not found or v_ativo is null or not v_ativo then
     raise exception 'meta comercial: usuário sem perfil ativo' using errcode = 'insufficient_privilege';
   end if;
@@ -82,17 +93,20 @@ begin
   if p_mes is null or extract(day from p_mes) <> 1 then
     raise exception 'meta comercial: mês inválido (use o dia 1 do mês)' using errcode = 'check_violation';
   end if;
-  if p_mes < radar_mes_comercial_de(now()) then
+  if p_mes < public.radar_mes_comercial_de(now()) then
     raise exception 'meta comercial: só o mês corrente ou meses futuros' using errcode = 'check_violation';
   end if;
-  if p_valor is not null and (p_valor <= 0 or p_valor <> round(p_valor, 2) or p_valor >= 10000000000000000) then
+  if p_valor is not null and (p_valor <= 0 or p_valor <> round(p_valor, 2)) then
     raise exception 'meta comercial: valor positivo em reais com no máximo 2 casas' using errcode = 'check_violation';
+  end if;
+  if p_valor > 1000000000000 then
+    raise exception 'meta comercial: valor acima do máximo (R$ 1.000.000.000.000,00)' using errcode = 'check_violation';
   end if;
 
   -- trava transacional por organização + mês: duas definições concorrentes nunca leem a mesma versão
-  perform pg_advisory_xact_lock(hashtextextended('radar_commercial_goal:' || v_org::text || ':' || p_mes::text, 0));
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('radar_commercial_goal:' || v_org::text || ':' || p_mes::text, 0));
 
-  select * into v_atual from radar_commercial_goal g
+  select * into v_atual from public.radar_commercial_goal g
     where g.organization_id = v_org and g.scope = 'ORGANIZACAO' and g.metric = 'RECEITA_GANHA' and g.currency = 'BRL' and g.period_month = p_mes
     order by g.version desc limit 1;
 
@@ -103,11 +117,11 @@ begin
     return jsonb_build_object('alterado', false, 'id', v_atual.id, 'versao', v_atual.version, 'mes', p_mes, 'valor', v_atual.amount);
   end if;
 
-  insert into radar_commercial_goal (organization_id, period_month, amount, version, supersedes_id, reason, created_by)
+  insert into public.radar_commercial_goal (organization_id, period_month, amount, version, supersedes_id, reason, created_by)
   values (v_org, p_mes, p_valor, coalesce(v_atual.version, 0) + 1, v_atual.id, v_motivo, v_ator)
   returning * into v_nova;
 
-  insert into audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
+  insert into public.audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
   values (
     v_org, v_ator,
     case when p_valor is null then 'radar_retirar_meta_comercial' else 'radar_definir_meta_comercial' end,

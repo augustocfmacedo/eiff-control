@@ -938,10 +938,21 @@ Persistência versionada e auditável das metas, usando o motor da E1. Sem tela 
 - **RPC `radar_definir_meta_comercial(p_mes, p_valor, p_motivo)`** (security definer, `search_path` fixo, EXECUTE só para
   `authenticated`): ator = `auth.uid()` com perfil ativo, papel Administrador ou Diretoria (papel ou situação nulos
   recusados); a organização vem do perfil, nunca do pedido; motivo 3 a 500; mês = dia 1, corrente ou futuro no fuso de
-  São Paulo (D3-C); valor positivo com até 2 casas e abaixo do limite de `numeric(18,2)`, ou NULL para retirar (exige meta
-  vigente); **trava transacional** `pg_advisory_xact_lock` por organização + mês antes de ler a última versão, e a unique
+  São Paulo (D3-C); valor positivo com até 2 casas e no máximo R$ 1.000.000.000.000,00 (o mesmo `VALOR_MAXIMO_META` do
+  motor, também no CHECK da tabela), ou NULL para retirar (exige meta vigente); **trava transacional** `pg_advisory_xact_lock` por organização + mês antes de ler a última versão, e a unique
   como última barreira; mesmo valor da vigente não cria versão; meta e `audit_log` (antes = versão anterior, depois =
   nova, motivo, `source = 'rpc'`) na mesma transação. Qualquer recusa levanta exceção e nada muda.
+- **Hardening pré-merge (13/10/2026)**: as três funções da 0068 fixam `search_path = pg_catalog, pg_temp` (pg_temp
+  explicitamente por último) e a RPC qualifica por schema tudo o que lê ou grava (`public.profile`,
+  `public.radar_commercial_goal`, `public.audit_log`, `public.role_kind`, `public.radar_mes_comercial_de`,
+  `pg_catalog.pg_advisory_xact_lock`; `auth.uid` já era). Com `public` fora do caminho, nome sem schema não resolve (falha
+  fechada), e tabela temporária de mesmo nome não desvia a execução — o papel `authenticated` tem TEMP no banco de
+  produção, embora não tenha CREATE em `public` (conferido em 13/10/2026: só `pg_database_owner` cria em `public`). O
+  smoke cria `profile`, `audit_log` e `radar_commercial_goal` temporárias, com um perfil falso de Administrador para um
+  usuário de Compras, e prova que a RPC recusa e grava só nas tabelas reais; o mesmo teste contra a versão anterior
+  (`search_path = public`, sem qualificação) mostra o desvio. Teto de valor alinhado: R$ 1 trilhão = 1e14 centavos, com
+  folga sobre o maior inteiro seguro do cálculo em centavos (9.007.199.254.740.991); o motor recusa definir acima e trata
+  versão gravada acima como inválida.
 - **Rollback exato** em `supabase/rollbacks/0068_radar_commercial_goal.rollback.sql`: a 0068 só cria objetos, então o
   rollback remove exatamente o que ela criou (RPC, tabela, gatilho, função de mês). **Remove também as metas gravadas** —
   se já houver metas reais, exportar antes. O smoke lê o próprio arquivo e prova que nada sobra e que as permissões das
@@ -964,8 +975,11 @@ Persistência versionada e auditável das metas, usando o motor da E1. Sem tela 
   dono do banco); integridade da tabela (versão repetida pela unique, versão 2 sem substituída, dia, valor, moeda) e
   rollback exato. Preflight com a fila inteira (0001..0068). Testes do app: `src/data/radar.meta.store.test.ts` e
   `src/data/radar.meta.persistencia.test.ts`.
-- **Limite conhecido**: concorrência real (duas transações ao mesmo tempo) não roda no PGlite, que tem uma conexão só; a
-  garantia é a trava transacional por organização + mês somada à unique.
+- **Limite conhecido (item do gate de implantação)**: concorrência real (duas sessões ao mesmo tempo) não roda no PGlite,
+  que tem uma conexão só, e esta máquina não tem PostgreSQL de verdade (Docker parado, sem imagem). A garantia é a trava
+  transacional por organização + mês (o smoke mostra a trava ativa em `pg_locks` até o fim da transação e prende a chave
+  no texto da migration) somada à unique da versão (testada com versão repetida). Antes de aplicar em produção, rodar o
+  teste de duas sessões num PostgreSQL real (por exemplo, um banco de branch do Supabase ou um container descartável).
 - **Implantação controlada** (cada passo com autorização própria): (1) merge; (2) publicar o build (código primeiro: sem a
   0068 o app carrega normalmente e a ação de meta recusa com mensagem; nenhuma tela usa a ação ainda); (3) conferência
   somente leitura (objetos da 0068 ausentes, número livre) e aplicar a 0068 numa transação com verificações internas;

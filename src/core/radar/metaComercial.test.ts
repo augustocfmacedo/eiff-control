@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  CODIGOS_ALERTA_META, apurarMetaComercial, ateDuasCasas, fimDoMes, inicioDoMes, lerLivroDesfechos, lerValor, mesComercialDe, metaVigenteDoMes,
+  CODIGOS_ALERTA_META, VALOR_MAXIMO_META_CENTAVOS, apurarMetaComercial, ateDuasCasas, fimDoMes, inicioDoMes, lerLivroDesfechos, lerValor, mesComercialDe, metaVigenteDoMes,
   motivosRecusaNovaMeta, proximaVersaoMeta, situacaoDoMes, type EventoDesfecho, type VersaoMetaComercial,
 } from './metaComercial';
 
@@ -107,6 +107,26 @@ describe('E1 · meta: ausente, retirada, versionada', () => {
     // virada: às 23:59 de 31/10 em São Paulo outubro ainda é corrente
     expect(motivosRecusaNovaMeta({ ...base, agora: '2026-11-01T02:59:00Z', mes: '2026-10', valor: 1 })).toEqual([]);
     expect(motivosRecusaNovaMeta({ ...base, agora: '2026-11-01T03:00:00Z', mes: '2026-10', valor: 1 })).toHaveLength(1);
+  });
+});
+
+describe('E2 · teto da meta alinhado ao banco', () => {
+  const agora = '2026-10-13T12:00:00Z';
+  const base = { motivo: 'plano comercial', agora, mes: '2026-11' };
+  it('R$ 1 trilhão é o máximo: aceito exato, recusado um centavo acima, com folga sobre o inteiro seguro', () => {
+    expect(VALOR_MAXIMO_META_CENTAVOS).toBe(100_000_000_000_000);
+    expect(VALOR_MAXIMO_META_CENTAVOS < Number.MAX_SAFE_INTEGER).toBe(true);
+    expect(motivosRecusaNovaMeta({ ...base, valor: '1000000000000.00' })).toEqual([]);
+    expect(motivosRecusaNovaMeta({ ...base, valor: 1_000_000_000_000 })).toEqual([]);
+    expect(motivosRecusaNovaMeta({ ...base, valor: '1000000000000.01' })[0]).toMatch(/máxima/);
+    expect(motivosRecusaNovaMeta({ ...base, valor: 9_000_000_000_000 })[0]).toMatch(/máxima/);
+    expect(motivosRecusaNovaMeta({ ...base, valor: '99999999999999999999' })[0]).toMatch(/positiva/); // fora do inteiro seguro
+  });
+  it('versão gravada acima do teto é inválida (nunca entra no cálculo); no teto, o cálculo é exato', () => {
+    expect(metaVigenteDoMes([meta('2026-11', '1000000000000.01', 1, '2026-10-10T12:00:00Z')], '2026-11', agora).estado).toBe('INVALIDA');
+    const a = apurarMetaComercial({ mes: '2026-10', agora: '2026-11-02T12:00:00Z', metas: [meta('2026-10', '1000000000000.00', 1, '2026-10-01T12:00:00Z')], eventos: [ganho('G1', 'O1', '2026-10-10T12:00:00Z', '999999999999.99')] });
+    expect(a.medidas.faltaParaMeta).toMatchObject({ estado: 'DISPONIVEL', valor: 0.01 });
+    expect(a.medidas.atingimento.valor).toBeCloseTo(0.99999999999999, 12);
   });
 });
 

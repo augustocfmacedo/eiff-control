@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { carregarRadar, metaDoBanco, persistirRadar, type HelpersRadar } from './radar.supabase';
 import { ACOES_AUDITADAS_PELA_RPC, ACOES_META_RPC } from './supabase';
-import { radarVazio, type RadarDataset, type VersaoMetaComercial } from '../core/radar';
+import { VALOR_MAXIMO_META, radarVazio, type RadarDataset, type VersaoMetaComercial } from '../core/radar';
 
 interface Chamada { op: string; tabela: string; row?: Record<string, unknown> }
 function helpers(linhas: Record<string, Record<string, unknown>[]> = {}, falhar: string[] = []): HelpersRadar & { chamadas: Chamada[] } {
@@ -81,6 +81,22 @@ describe('E2 · escrita só pela RPC', () => {
     const migration = readFileSync('supabase/migrations/0068_radar_commercial_goal.sql', 'utf8');
     expect(migration).toMatch(/grant select on radar_commercial_goal to authenticated;/);
     expect(migration).not.toMatch(/grant (insert|update|delete|all)[^;]*on radar_commercial_goal/i);
+  });
+
+  it('hardening: teto igual ao do motor, search_path seguro e referências qualificadas na RPC', () => {
+    const migration = readFileSync('supabase/migrations/0068_radar_commercial_goal.sql', 'utf8');
+    const teto = String(VALOR_MAXIMO_META);
+    expect(migration).toContain(`amount <= ${teto}`); // CHECK da tabela
+    expect(migration).toContain(`p_valor > ${teto}`); // RPC
+    expect(migration.match(/set search_path = pg_catalog, pg_temp/g)).toHaveLength(3);
+    expect(migration).not.toMatch(/set search_path = public/);
+    const rpc = migration.slice(migration.indexOf('create or replace function radar_definir_meta_comercial'), migration.indexOf('end $$;', migration.indexOf('create or replace function radar_definir_meta_comercial')));
+    for (const ref of rpc.matchAll(/\b(?:from|into|update|join)\s+([a-z_][\w.]*)/gi)) {
+      if (/^[vp]_/.test(ref[1])) continue; // "into v_…" é variável; "extract(day from p_…)" é parâmetro
+      expect(ref[1], `referência sem schema: ${ref[0]}`).toMatch(/^(public|auth|pg_catalog)\./);
+    }
+    expect(rpc).toContain('v_papel public.role_kind;');
+    expect(rpc).toContain('public.radar_commercial_goal%rowtype');
   });
 
   it('o rollback versionado remove exatamente o que a 0068 cria', () => {

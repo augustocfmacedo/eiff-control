@@ -12,9 +12,11 @@
 // O prelúdio recria só o que a 0068 assume do resto do schema: organization, profile (com o papel Solicitante da 0066),
 // audit_log, auth.uid() e current_org() como na 0067 (ignora o Solicitante).
 //
-// Limite conhecido: o PGlite tem uma conexão só, então a concorrência real não roda aqui. A prova é estrutural: a RPC
-// pega pg_advisory_xact_lock por organização + mês antes de ler a última versão, e a unique (…, period_month, version)
-// recusa uma versão repetida mesmo que duas transações cheguem juntas (testado com insert direto).
+// Limite conhecido (gate de implantação): o PGlite tem uma conexão só e nesta máquina não há PostgreSQL de verdade
+// (Docker parado, sem imagem local), então DUAS sessões simultâneas não rodam aqui. A prova é estrutural: a RPC pega
+// pg_advisory_xact_lock(organização + mês) antes de ler a última versão (a trava aparece em pg_locks até o fim da
+// transação), e a unique (…, period_month, version) recusa uma versão repetida mesmo que duas transações cheguem juntas
+// (testado com insert direto). O teste com duas sessões fica para um PostgreSQL real antes de aplicar em produção.
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
@@ -169,7 +171,8 @@ async function main() {
   await recusa('valor zero', RPC, [mesAtual, '0', 'tentativa'], 'valor positivo');
   await recusa('valor negativo', RPC, [mesAtual, '-1', 'tentativa'], 'valor positivo');
   await recusa('valor com 3 casas', RPC, [mesAtual, '1.005', 'tentativa'], 'no máximo 2 casas');
-  await recusa('valor acima do limite numeric(18,2)', RPC, [mesAtual, '10000000000000000', 'tentativa'], 'valor positivo');
+  await recusa('valor acima do teto (R$ 1 trilhão + 1 centavo)', RPC, [mesAtual, '1000000000000.01', 'tentativa'], 'acima do máximo');
+  await recusa('valor muito acima do teto', RPC, [mesAtual, '10000000000000000', 'tentativa'], 'acima do máximo');
   igual('nenhuma recusa criou versão', (await versoes(org, mesAtual)).length, nVersoes);
   igual('nenhuma recusa gerou auditoria', (await auditorias()) - nAudRecusas, 0);
 
@@ -222,6 +225,42 @@ async function main() {
   await recusa('valor zero é recusado pela tabela', "insert into radar_commercial_goal (organization_id, period_month, amount, version, reason, created_by) values ($1, '2030-01-01', 0, 1, 'zero', $2)", [org, adm], 'check');
   await recusa('métrica, moeda e escopo são fixos', "insert into radar_commercial_goal (organization_id, period_month, amount, version, reason, created_by, currency) values ($1, '2030-01-01', 1, 1, 'dolar', $2, 'USD')", [org, adm], 'check');
   igual('a RPC pega a trava transacional antes de ler a versão', /pg_advisory_xact_lock[\s\S]*order by g\.version desc/.test(SQL_0068), true);
+
+  console.log('\nteto de valor alinhado ao motor (VALOR_MAXIMO_META = R$ 1.000.000.000.000,00)');
+  await comoAutor(adm);
+  const mesTeto = await valor("select (radar_mes_comercial_de(now()) + interval '7 month')::date::text");
+  const teto = (await db.query(RPC, [mesTeto, '1000000000000.00', 'teto exato'])).rows[0].r;
+  igual('o teto exato é aceito', [teto.alterado, Number(teto.valor)], [true, 1000000000000]);
+  await recusa('a tabela recusa acima do teto mesmo em gravação direta', "insert into radar_commercial_goal (organization_id, period_month, amount, version, reason, created_by) values ($1, '2031-01-01', 1000000000000.01, 1, 'acima', $2)", [org, adm], 'check');
+
+  console.log('\nsearch_path seguro e tabelas temporárias de mesmo nome');
+  const caminhos = (await db.query("select proname, array_to_string(proconfig, ';') as c, prosecdef from pg_proc where proname in ('radar_definir_meta_comercial','radar_mes_comercial_de','radar_commercial_goal_imutavel') order by proname")).rows;
+  igual('as três funções fixam search_path = pg_catalog, pg_temp (pg_temp por último)', caminhos.map((x) => [x.proname, x.c]), [['radar_commercial_goal_imutavel', 'search_path=pg_catalog, pg_temp'], ['radar_definir_meta_comercial', 'search_path=pg_catalog, pg_temp'], ['radar_mes_comercial_de', 'search_path=pg_catalog, pg_temp']]);
+  igual('só a RPC é security definer', caminhos.filter((x) => x.prosecdef).map((x) => x.proname), ['radar_definir_meta_comercial']);
+  const compras = await perfil('Compras (sombra)', 'Compras');
+  // a sessão cria tabelas temporárias com os MESMOS nomes que a RPC usa (o papel authenticated tem TEMP no banco)
+  await db.exec(`create temp table profile (id uuid, organization_id uuid, name text, role public.role_kind, active boolean);
+    create temp table audit_log (like public.audit_log including defaults);
+    create temp table radar_commercial_goal (like public.radar_commercial_goal);`);
+  await db.query("insert into pg_temp.profile values ($1, $2, 'Sombra', 'Administrador', true)", [compras, org]);
+  await comoAutor(compras);
+  await recusa('perfil falso em tabela temporária não promove o Compras a Administrador', RPC, [mesTeto, '5', 'tentativa pela sombra'], 'sem permissão');
+  await comoAutor(adm);
+  const antesSombra = await valor('select count(*)::int from public.radar_commercial_goal');
+  const audAntesSombra = await valor("select count(*)::int from public.audit_log where entity_type = 'radar_meta_comercial'");
+  const viaSombra = (await db.query(RPC, [mesTeto, '7', 'gravação com sombras presentes'])).rows[0].r;
+  igual('com as sombras presentes a RPC grava nas tabelas reais (public)', [viaSombra.alterado, (await valor('select count(*)::int from public.radar_commercial_goal')) - antesSombra, (await valor("select count(*)::int from public.audit_log where entity_type = 'radar_meta_comercial'")) - audAntesSombra], [true, 1, 1]);
+  igual('as tabelas temporárias não recebem nada', [await valor('select count(*)::int from pg_temp.radar_commercial_goal'), await valor('select count(*)::int from pg_temp.audit_log')], [0, 0]);
+  await db.exec('drop table pg_temp.profile, pg_temp.audit_log, pg_temp.radar_commercial_goal;');
+
+  console.log('\nconcorrência: trava transacional (o PGlite tem uma conexão só; ver o limite no cabeçalho)');
+  // no PGlite o pid da trava vem nulo (modo de usuário único); com uma sessão só, toda trava listada é desta transação
+  const travas = async () => valor("select count(*)::int from pg_locks where locktype = 'advisory' and granted");
+  const travasAntes = await travas();
+  const mesTrava = await valor("select (radar_mes_comercial_de(now()) + interval '9 month')::date::text"); // mês ainda não travado nesta transação
+  await db.query(RPC, [mesTrava, '8', 'prova da trava']);
+  igual('a RPC deixa uma trava consultiva de transação ativa até o fim da transação', (await travas()) - travasAntes >= 1, true);
+  igual('a chave da trava é organização + mês (texto da migration)', /pg_advisory_xact_lock\(pg_catalog\.hashtextextended\('radar_commercial_goal:' \|\| v_org::text \|\| ':' \|\| p_mes::text, 0\)\)/.test(SQL_0068), true);
 
   console.log('\nrollback EXATO da 0068 (supabase/rollbacks/0068_radar_commercial_goal.rollback.sql)');
   await db.exec(ROLLBACK_0068);

@@ -22,6 +22,13 @@ export const MOEDA_META = 'BRL';
 export const ESCOPO_META = 'ORGANIZACAO';
 export const MOTIVO_META_MIN = 3;
 export const MOTIVO_META_MAX = 500;
+/**
+ * Maior meta aceita: R$ 1.000.000.000.000,00 (1e14 centavos). O mesmo teto vale no banco (CHECK e RPC da 0068), e fica
+ * com folga sobre o maior inteiro seguro em centavos (9.007.199.254.740.991), então meta, diferença e razão nunca perdem
+ * precisão no cálculo.
+ */
+export const VALOR_MAXIMO_META = 1_000_000_000_000;
+export const VALOR_MAXIMO_META_CENTAVOS = VALOR_MAXIMO_META * 100;
 
 /** Mês comercial, `AAAA-MM`, no fuso America/Sao_Paulo. */
 export type MesComercial = string;
@@ -214,7 +221,7 @@ export function metaVigenteDoMes(metas: readonly VersaoMetaComercial[], mes: Mes
   }
   const leitura = lerValor(vigente.valor);
   if (leitura.estado === 'AUSENTE') return { estado: 'RETIRADA', versao: vigente, inconsistencias };
-  if (leitura.estado === 'INVALIDO' || leitura.centavos <= 0) {
+  if (leitura.estado === 'INVALIDO' || leitura.centavos <= 0 || leitura.centavos > VALOR_MAXIMO_META_CENTAVOS) {
     inconsistencias.push({ codigo: 'META_VALOR_INVALIDO', metaId: vigente.id, detalhe: `valor ${String(vigente.valor)} não é uma meta positiva em BRL` });
     return { estado: 'INVALIDA', versao: vigente, inconsistencias };
   }
@@ -239,6 +246,7 @@ export function motivosRecusaNovaMeta(p: { mes: string; valor: ValorBRL; motivo?
     const l = lerValor(p.valor);
     if (l.estado !== 'VALIDO' || l.centavos <= 0) motivos.push('Informe uma meta positiva em reais (ou retire a meta).');
     else if (!ateDuasCasas(p.valor)) motivos.push('A meta aceita no máximo 2 casas decimais.');
+    else if (l.centavos > VALOR_MAXIMO_META_CENTAVOS) motivos.push('A meta máxima é R$ 1.000.000.000.000,00.');
   }
   const n = (p.motivo ?? '').trim().length;
   if (n < MOTIVO_META_MIN || n > MOTIVO_META_MAX) motivos.push(`Informe o motivo (${MOTIVO_META_MIN} a ${MOTIVO_META_MAX} caracteres).`);
