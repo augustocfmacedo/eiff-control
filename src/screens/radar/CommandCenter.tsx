@@ -11,17 +11,29 @@ import { CoberturaDecisores } from './Cobertura';
 import LeadEngineCandidatos from './LeadEngineCandidatos';
 import { FILTRO_VAZIO, contadoresRevisao, filtrarRevisao, metricasPiloto, type FiltroRevisao } from '../../core/radar/leadEngineRevisao';
 import { SignalPilot } from './SignalPilot';
+import { FormMetaComercial, PainelMetaComercial } from './MetasResultados';
+import { edicaoMeta, mesesDoSeletor } from './metaResultadoVisao';
 
 type Aba = 'visao' | 'alertas' | 'regras' | 'decisores' | 'estrategias' | 'importacoes' | 'candidatos' | 'revisao' | 'duplicatas' | 'supressoes' | 'vibe' | 'signal';
 
 export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
-  const { ds, usuario } = useStore();
+  const { ds, usuario, sync } = useStore();
   const { toast, el } = useToast();
   const hoje = ds.params.dataBase;
   const r = ds.radar;
   // D-6: os indicadores da visão geral vêm do snapshot canônico do CD-1 e a lista operacional, da Commercial Queue
   // (o snapshot só corta a fila, na ordem dela). A tela não calcula métrica: mostra a medida ou "—" com o motivo.
-  const cd = snapshotComercialCD(r, hoje, { limiteReferencias: 5 });
+  // CD-D3/E5: UM instante de referência para o retrato inteiro, capturado uma vez (e de novo só em "Atualizar" ou depois
+  // de salvar a meta); o mês comercial do bloco metaComercial é o escolhido ou o do instante, em São Paulo.
+  const [agoraIso, setAgoraIso] = useState(() => new Date().toISOString());
+  const [mesMeta, setMesMeta] = useState<string | undefined>();
+  const [formMeta, setFormMeta] = useState<null | 'definir' | 'retirar'>(null);
+  const [avisoMeta, setAvisoMeta] = useState<{ tom: 'ok' | 'warn' | 'bad'; texto: string } | undefined>();
+  const cd = snapshotComercialCD(r, hoje, { limiteReferencias: 5, agoraIso, ...(mesMeta ? { mesComercial: mesMeta } : {}) });
+  const blocoMeta = cd.metaComercial;
+  const versoesMeta = (r.metasComerciais ?? []).filter((m) => m.mes === blocoMeta.mes).sort((a, b) => b.versao - a.versao);
+  const edicao = edicaoMeta(usuario, blocoMeta);
+  const avisoSync = sync.status === 'erro' || sync.status === 'pendente' ? { tom: 'warn' as const, texto: 'Há alterações ainda não confirmadas no banco: o retrato pode não ser o gravado.' } : undefined;
   const mostrar = (m: MedidaComercial) => (m.estado === 'DISPONIVEL' ? m.valor : '—');
   const porque = (m: MedidaComercial) => (m.estado === 'DISPONIVEL' ? undefined : m.motivoInsuficiencia);
   const eco = economiaInteligencia(r);
@@ -54,6 +66,20 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         {podeAgir && <button className="btn" onClick={() => tentar(() => { const x = actions.recalcularScoresRadar(); toast(`${x.empresas} empresa(s) recalculada(s), ${x.mudaram} mudaram.`); }, toast)}>Recalcular scores</button>}
         <Link to="/radar/hoje" className="btn primary">Abrir a fila de hoje</Link>
       </PageHead>
+      <PainelMetaComercial bloco={blocoMeta} versoes={versoesMeta} meses={mesesDoSeletor(agoraIso)} agoraIso={agoraIso} edicao={edicao}
+        aviso={avisoMeta ?? avisoSync} onMes={(m) => { setMesMeta(m); setAvisoMeta(undefined); }} onAtualizar={() => { setAgoraIso(new Date().toISOString()); setAvisoMeta(undefined); }}
+        onDefinir={() => { setAvisoMeta(undefined); setFormMeta('definir'); }} onRetirar={() => { setAvisoMeta(undefined); setFormMeta('retirar'); }} />
+      {formMeta && blocoMeta.mes && (
+        <FormMetaComercial mes={blocoMeta.mes} modo={formMeta} agoraIso={agoraIso} onCancelar={() => { setFormMeta(null); setAgoraIso(new Date().toISOString()); }}
+          valorAtual={formMeta === 'definir' && blocoMeta.medidas.meta.estado === 'DISPONIVEL' ? blocoMeta.medidas.meta.valor : undefined}
+          onConfirmar={(valor, motivo) => actions.definirMetaComercialConfirmada(blocoMeta.mes!, valor, motivo)}
+          onConcluido={(res) => {
+            setFormMeta(null);
+            setAgoraIso(new Date().toISOString());
+            const texto = !res.mudou ? 'Mesmo valor da meta vigente: nenhuma versão nova.' : res.versao.valor === null ? `Meta retirada (versão ${res.versao.versao}).` : `Meta salva: versão ${res.versao.versao}.`;
+            setAvisoMeta({ tom: res.aviso ? 'warn' : 'ok', texto: res.aviso ? `${texto} ${res.aviso}` : texto });
+          }} />
+      )}
       <div className="hero-grid">
         <KpiHero label="Oportunidades ativas em contas ativas" value={mostrar(cd.funil.ativas)}
           sufixo={cd.funil.valorEstimadoAtivas.estado === 'DISPONIVEL' ? `valor estimado ${money(cd.funil.valorEstimadoAtivas.valor ?? 0, true)}` : 'sem valor estimado'}

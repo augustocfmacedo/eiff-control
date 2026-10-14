@@ -17,7 +17,8 @@ import type {
 } from '../core/types';
 import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
-import { carregarRadar, persistirRadar } from './radar.supabase';
+import { carregarRadar, metaDoBanco, persistirRadar } from './radar.supabase';
+import type { VersaoMetaComercial } from '../core/radar/metaComercial';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
 import { datasetSolicitante, type AlteracaoJson, type AnexoJson, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
 import { hojeLocal } from '../core/engine';
@@ -257,6 +258,17 @@ export async function urlAnexo(caminho: string): Promise<string | null> {
   const { data, error } = await supabase.storage.from(BUCKET_ANEXOS).createSignedUrl(caminho, 600);
   if (error) throw new RemotoError(`Não foi possível abrir o documento: ${error.message}`);
   return data?.signedUrl ?? null;
+}
+
+/**
+ * CD-D3/E5 — leitura direta (somente leitura, RLS do usuário) das versões PERSISTIDAS da meta comercial de um mês. É a
+ * prova usada por `definirMetaConfirmada` para afirmar "gravada" ou "não gravada" (o status da fila é global e não prova).
+ */
+export async function lerMetasComerciaisDoMes(mes: string): Promise<VersaoMetaComercial[]> {
+  if (!supabase) throw new Error('banco não configurado');
+  const { data, error } = await supabase.from('radar_commercial_goal').select('*').eq('period_month', `${mes}-01`);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((x) => metaDoBanco(x as Row));
 }
 
 export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario }> {
