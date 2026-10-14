@@ -3,7 +3,9 @@ import { CANAIS, CODIGOS_RESPOSTA, ESTAGIOS, FAIXAS_FUNCIONARIOS, FAIXAS_RECEITA
 import { RegraCadenciaCommitError, actions, useStore } from '../../data/store';
 import { MENSAGEM_AGENDADA_CM, TEXTO_CONFLITO_CADENCIA_CM, TITULO_CONFLITO_CADENCIA_CM, campoDaRecusaCadenciaCM, edicoesDoFormularioCM, reacaoDaRecusaCadenciaCM, validarFormularioAgendamentoCM, type AberturaAgendamentoCM, type CampoAgendamentoCM, type CamposAgendamentoCM, type ReacaoRecusaCadenciaCM } from './HojeCadencia';
 import { dryRunContatosCsv, relatorioDryRun, type DryRunContatos } from '../../core/radar/dryrun';
-import { Badge, Field, Input, Modal, NumberInput, Select, money, tentar, type Tone } from '../../ui/components';
+import { Badge, Field, Input, Modal, MoedaInput, NumberInput, Select, money, tentar, type Tone } from '../../ui/components';
+import { ganhosDaOportunidade } from '../../core/radar/desfechos';
+import { pode } from '../../core/permissoes';
 
 export const d = (s?: string) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '—');
 export const dh = (s?: string) => (s ? `${d(s)} ${s.length > 10 ? s.slice(11, 16) : ''}`.trim() : '—');
@@ -340,9 +342,9 @@ export function ConcluirTarefaForm({ tarefa, onClose, onErro, onOk }: { tarefa: 
  */
 export function gravarOportunidadeDoFormulario(inicial: Oportunidade, o: Oportunidade, motivo: string, existe: boolean): Oportunidade {
   if (existe && inicial.estagio !== o.estagio) {
-    return actions.mudarEstagioRadar(o.id, o.estagio, { motivo, proximaAcao: o.proximaAcao, proximaAcaoEm: o.proximaAcaoEm, valorEstimado: o.valorEstimado, campos: o });
+    return actions.mudarEstagioRadar(o.id, o.estagio, { motivo, proximaAcao: o.proximaAcao, proximaAcaoEm: o.proximaAcaoEm, valorEstimado: o.valorEstimado, ...(o.estagio === 'WON' && o.valorFechado !== undefined ? { valorFechado: o.valorFechado } : {}), campos: o });
   }
-  return actions.salvarOportunidadeRadar(existe ? o : { ...o, motivoFechamento: motivo.trim() || o.motivoFechamento });
+  return actions.salvarOportunidadeRadar(existe ? o : { ...o, motivoFechamento: motivo.trim() || o.motivoFechamento, valorFechado: o.estagio === 'WON' ? o.valorFechado : undefined });
 }
 
 /** Rótulo do motivo que o formulário pede, ou `undefined` quando não pede (fechar, ou reabrir um ganho). */
@@ -356,15 +358,22 @@ export function motivoPedidoNoFormulario(inicial: Pick<Oportunidade, 'estagio'>,
 }
 
 export function OportunidadeForm({ inicial, onClose, onErro, onOk }: FormProps<Oportunidade>) {
-  const { ds } = useStore();
+  const { ds, usuario } = useStore();
   const [o, setO] = useState(inicial);
   const [motivo, setMotivo] = useState('');
+  const [complemento, setComplemento] = useState({ valor: 0, motivo: '' });
   const up = (p: Partial<Oportunidade>) => setO({ ...o, ...p });
   const existe = ds.radar.oportunidades.some((x) => x.id === o.id);
   // ganha e mantida ganha: valor e responsável só mudam reabrindo com motivo; fechada não tem próxima ação
   const ganhaTravada = existe && inicial.estagio === 'WON' && o.estagio === 'WON';
   const fechada = o.estagio === 'WON' || o.estagio === 'LOST';
   const rotuloMotivo = motivoPedidoNoFormulario(inicial, o, existe);
+  // CD-D3/E3: valor fechado confirmado só ao marcar como ganha (vazio = ganho sem valor, sinalizado); nunca o estimado
+  const livro = ds.radar.desfechos;
+  const marcandoGanha = o.estagio === 'WON' && (!existe || inicial.estagio !== 'WON') && !!livro;
+  const ganhos = existe && livro ? ganhosDaOportunidade(livro, o.id) : [];
+  const vigente = ganhos.find((g) => g.vigente);
+  const completar = () => tentar(() => { actions.complementarValorGanhoRadar(vigente!.ganhoId, complemento.valor, complemento.motivo); onOk('Valor do ganho completado.'); }, onErro, onClose);
   const salvar = () => tentar(() => {
     gravarOportunidadeDoFormulario(inicial, o, motivo, existe);
     onOk('Oportunidade salva.');
@@ -382,6 +391,17 @@ export function OportunidadeForm({ inicial, onClose, onErro, onOk }: FormProps<O
         {!fechada && <Field label="Próxima ação" req hint="obrigatória em estágio ativo"><Input value={o.proximaAcao ?? ''} onChange={(ev) => up({ proximaAcao: ev.target.value || undefined })} placeholder="Ligar para confirmar o cronograma" /></Field>}
         {!fechada && <Field label="Quando" req><Input type="date" value={o.proximaAcaoEm?.slice(0, 10) ?? ''} onChange={(ev) => up({ proximaAcaoEm: ev.target.value || undefined })} /></Field>}
         {rotuloMotivo && <Field label={rotuloMotivo} req full><Input value={motivo} onChange={(ev) => setMotivo(ev.target.value)} /></Field>}
+        {marcandoGanha && <Field label="Valor fechado confirmado (R$)" hint="o valor do contrato fechado; vazio = ganho sem valor (fica sinalizado e pode ser completado depois). O valor estimado não é usado."><MoedaInput value={o.valorFechado ?? 0} onChange={(v) => up({ valorFechado: v > 0 ? v : undefined })} /></Field>}
+        {ganhaTravada && vigente && (
+          <Field label="Ganho no livro de desfechos" full hint={vigente.semValor ? 'ganho registrado sem valor: o realizado da meta fica incompleto até completar' : undefined}>
+            <div className="small">{vigente.semValor ? <Badge tone="warn">sem valor confirmado</Badge> : <><b>{money(vigente.valor ?? 0)}</b>{vigente.complementoId ? <span className="muted"> · completado depois do ganho</span> : null}</>}</div>
+          </Field>
+        )}
+        {ganhaTravada && vigente?.semValor && pode(usuario, 'radar_config') && <>
+          <Field label="Completar o valor (R$)"><MoedaInput value={complemento.valor} onChange={(v) => setComplemento({ ...complemento, valor: v })} /></Field>
+          <Field label="Motivo do complemento" req><Input value={complemento.motivo} onChange={(ev) => setComplemento({ ...complemento, motivo: ev.target.value })} placeholder="valor confirmado na nota fiscal" /></Field>
+          <div className="full"><button className="btn" onClick={completar}>Completar valor do ganho</button></div>
+        </>}
         <Field label="Observações" full><Input value={o.observacoes} onChange={(ev) => up({ observacoes: ev.target.value })} /></Field>
       </div>
       <div className="foot"><button className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" onClick={salvar}>Salvar</button></div>

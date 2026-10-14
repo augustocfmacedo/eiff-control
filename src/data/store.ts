@@ -65,6 +65,8 @@ import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRe
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
 import { aplicarTransicao, camposEditaveis, motivosRecusaEdicao, motivosRecusaTransicao, type DadosTransicao } from '../core/radar/estagioOportunidade';
+import { complementoDoGanho, eventosDaTransicao, motivosRecusaComplemento } from '../core/radar/desfechos';
+import type { EventoDesfecho } from '../core/radar/metaComercial';
 import { ESTAGIOS_FECHADOS } from '../core/radar/types';
 import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, type VersaoMetaComercial } from '../core/radar/metaComercial';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
@@ -342,7 +344,7 @@ const seq = (prefix: string, ids: string[]): string => {
 const REMETENTE_CIDADE_PADRAO = 'Goiânia';
 
 function idsRadar(r: RadarDataset): Ids {
-  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte, ...(r.metasComerciais ?? [])].map((x) => x.id));
+  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte, ...(r.metasComerciais ?? []), ...(r.desfechos ?? [])].map((x) => x.id));
   const contagem: Record<string, number> = {};
   return {
     novo: (p) => { let k = (contagem[p] ?? usados.size) + 1; let id = `${p}-${String(k).padStart(5, '0')}`; while (usados.has(id)) id = `${p}-${String(++k).padStart(5, '0')}`; contagem[p] = k; usados.add(id); return id; },
@@ -391,7 +393,26 @@ function exigirProximaAcao(o: Oportunidade, tarefas: TarefaRadar[]) {
  * No modo remoto a lista vem do banco; ausente lá significa "tabela indisponível" (banco sem a 0068), e a ação recusa.
  */
 function comMetasLocais(ds: Dataset): Dataset {
-  return ds.radar && !ds.radar.metasComerciais ? { ...ds, radar: { ...ds.radar, metasComerciais: [] } } : ds;
+  if (!ds.radar) return ds;
+  // CD-D3/E2 e E3: no modo local metas e livro de desfechos existem (vazios); no remoto vêm do banco ou ficam indisponíveis
+  return !ds.radar.metasComerciais || !ds.radar.desfechos ? { ...ds, radar: { ...ds.radar, metasComerciais: ds.radar.metasComerciais ?? [], desfechos: ds.radar.desfechos ?? [] } } : ds;
+}
+
+/**
+ * CD-D3/E3 — eventos de desfecho da transição. Modo REMOTO: nenhum (o gatilho da 0070 grava GANHO/ESTORNO na mesma
+ * transação do UPDATE, e a carga traz o livro). Modo LOCAL: o espelho do gatilho (`eventosDaTransicao`). Valor fechado
+ * informado com o livro indisponível (banco sem a 0070) é recusado em vez de se perder.
+ */
+function desfechosDaTransicao(r: RadarDataset, antes: Oportunidade | undefined, depois: Oportunidade, ids: Ids): EventoDesfecho[] | undefined {
+  if (!r.desfechos) {
+    if (depois.valorFechado !== undefined) throw new RegraDeNegocioError('O livro de desfechos ainda não está disponível neste banco: o valor fechado não seria gravado. Marque como ganha sem valor ou aguarde a atualização.');
+    return undefined;
+  }
+  if (state.modo === 'remoto') return r.desfechos;
+  const dono = r.empresas.find((e) => e.id === depois.empresaId)?.commercialOwnerId;
+  try {
+    return [...r.desfechos, ...eventosDaTransicao(antes, depois, r.desfechos, { agora: ids.agora, atorId: state.usuario.id, donoContaId: dono, novoId: () => ids.novo('DSF') })];
+  } catch (e) { throw new RegraDeNegocioError((e as Error).message); }
 }
 
 export function garantirInbox(ds: Dataset, modo: 'local' | 'remoto'): Dataset {
@@ -2136,6 +2157,27 @@ export const actions = {
     return nova;
   },
 
+  /**
+   * CD-D3/E3 — completa o valor de um ganho registrado SEM valor (D3-B: corrige o mês do ganho; nada é apagado). Mesmas
+   * regras da RPC radar_complementar_valor_ganho (Administrador e Diretoria = radar_config; um complemento por ganho;
+   * valor positivo com até 2 casas; motivo). No remoto a RPC é a autoridade e a recarga traz o evento do banco.
+   */
+  complementarValorGanhoRadar(ganhoId: string, valor: number, motivo: string): EventoDesfecho {
+    let ds = state.ds;
+    exigir('radar_config');
+    const r = ds.radar;
+    const livro = r.desfechos;
+    if (!livro) throw new RegraDeNegocioError('O livro de desfechos ainda não está disponível neste banco.');
+    const recusa = motivosRecusaComplemento(livro, ganhoId, valor, motivo);
+    if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
+    const ids = idsRadar(r);
+    const ev = complementoDoGanho(livro, ganhoId, valor, motivo, { agora: ids.agora, atorId: state.usuario.id, novoId: () => ids.novo('DSF') });
+    const radar: RadarDataset = { ...r, desfechos: [...livro, ev] };
+    ds = registrar({ ...ds, radar }, 'radar_complementar_valor_ganho', 'radar_desfecho', ev.id, { ganho: ganhoId, valor: null }, { ganho: ganhoId, valor }, ev.motivo);
+    commit(ds);
+    return ev;
+  },
+
   inativarEmpresaRadar(id: string, motivo: string) {
     let ds = state.ds;
     exigir('radar');
@@ -2332,9 +2374,9 @@ export const actions = {
     const t = agora();
     let novo: Oportunidade;
     if (!atual) {
-      const recusa = motivosRecusaTransicao(undefined, o.estagio, { motivo: o.motivoFechamento });
+      const recusa = motivosRecusaTransicao(undefined, o.estagio, { motivo: o.motivoFechamento, valorFechado: o.valorFechado });
       if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
-      novo = aplicarTransicao({ ...o, titulo: o.titulo.trim(), fechadoEm: undefined }, o.estagio, { motivo: o.motivoFechamento }, t);
+      novo = aplicarTransicao({ ...o, titulo: o.titulo.trim(), fechadoEm: undefined }, o.estagio, { motivo: o.motivoFechamento, valorFechado: o.valorFechado }, t);
       if (!ESTAGIOS_FECHADOS.includes(o.estagio)) novo = { ...novo, probabilidade: o.probabilidade || PROBABILIDADE_ESTAGIO[o.estagio] };
     } else {
       if (o.estagio !== atual.estagio) throw new RegraDeNegocioError('Para mudar o estágio, use a mudança de estágio (com motivo quando exigido).');
@@ -2345,7 +2387,7 @@ export const actions = {
     exigirProximaAcao(novo, r.tarefas);
     const ids = idsRadar(r);
     let radar: RadarDataset = { ...r, oportunidades: atual ? r.oportunidades.map((x) => (x.id === o.id ? novo : x)) : [...r.oportunidades, novo] };
-    if (!atual) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: undefined, para: novo.estagio, usuarioId: state.usuario.id, motivo: novo.motivoFechamento, em: t }] };
+    if (!atual) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: undefined, para: novo.estagio, usuarioId: state.usuario.id, motivo: novo.motivoFechamento, em: t }], desfechos: desfechosDaTransicao(radar, undefined, novo, ids) };
     radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
     ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_oportunidade' : 'radar_criar_oportunidade', 'radar_oportunidade', o.id, atual, novo);
     commit(ds);
@@ -2381,12 +2423,12 @@ export const actions = {
     const novo = aplicarTransicao(base, para, dados, t);
     exigirProximaAcao(novo, r.tarefas);
     const ids = idsRadar(r);
-    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo?.trim(), em: t }] };
+    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo?.trim(), em: t }], desfechos: desfechosDaTransicao(r, o, novo, ids) };
     if (fecha) radar = { ...radar, tarefas: radar.tarefas.map((x) => (x.oportunidadeId === id && x.status === 'Aberta' ? { ...x, status: 'Cancelada' as const } : x)) };
     radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
     ds = registrar({ ...ds, radar }, 'radar_mudar_estagio', 'radar_oportunidade', id,
-      { estagio: o.estagio, fechadoEm: o.fechadoEm ?? null, valorEstimado: o.valorEstimado ?? null },
-      { estagio: para, fechadoEm: novo.fechadoEm ?? null, valorEstimado: novo.valorEstimado ?? null }, dados.motivo?.trim());
+      { estagio: o.estagio, fechadoEm: o.fechadoEm ?? null, valorEstimado: o.valorEstimado ?? null, valorFechado: o.valorFechado ?? null },
+      { estagio: para, fechadoEm: novo.fechadoEm ?? null, valorEstimado: novo.valorEstimado ?? null, valorFechado: novo.valorFechado ?? null }, dados.motivo?.trim());
     commit(ds);
     return novo;
   },

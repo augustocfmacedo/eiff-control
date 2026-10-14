@@ -180,7 +180,7 @@ describe('CD-D5.2 · guardas de fonte', () => {
     expect(fonte('src/data/radar.supabase.ts')).toContain("h.rpc('radar_definir_dono_conta'");
     const sb = fonte('src/data/supabase.ts');
     expect(sb).toContain('novas.filter((a) => !ACOES_AUDITADAS_PELA_RPC.has(a.acao))');
-    expect(sb).toContain('new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC])');
+    expect(sb).toContain('new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC, ...ACOES_DESFECHO_RPC])');
     expect(sb).toContain('motivoDono: (empresaId) => motivoDonoDaAuditoria(novas, empresaId)');
   });
 });
