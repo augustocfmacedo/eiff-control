@@ -5,9 +5,12 @@
 import type { Dataset, Usuario } from './types';
 import { pode } from './permissoes';
 import { resumoWidgetCaixa, type ResumoWidgetCaixa } from './widgetCaixa';
+import { resumoWidgetPedidos, type ResumoWidgetPedidos } from './widgetPedidos';
 
 export const FORMATO_TOKEN_WIDGET = /^eiffw_[0-9a-f]{64}$/;
-export type ErroWidget = 'metodo' | 'token_ausente' | 'token_invalido' | 'token_revogado' | 'token_expirado' | 'perfil_inativo' | 'sem_permissao' | 'nao_configurado' | 'indisponivel';
+/** visões do widget: o caixa (padrão) e os pedidos da equipe ao Diretor Financeiro (exige também aprovar, como a Central) */
+export type VisaoWidget = 'caixa' | 'pedidos';
+export type ErroWidget = 'visao_invalida' | 'metodo' | 'token_ausente' | 'token_invalido' | 'token_revogado' | 'token_expirado' | 'perfil_inativo' | 'sem_permissao' | 'nao_configurado' | 'indisponivel';
 export type ValidacaoTokenWidget = { ok: true; perfilId: string; tokenId: string; nome: string } | { ok: false; erro: string };
 export interface PortasWidget {
   validar(token: string): Promise<ValidacaoTokenWidget>;
@@ -22,9 +25,10 @@ export function erroParaLog(erro: unknown): string {
   const texto = erro instanceof Error ? `${erro.name}: ${erro.message}` : String(erro);
   return texto.split('\n')[0].replace(/eiffw_[0-9a-f]+/gi, 'eiffw_***').replace(/bearer\s+\S+/gi, 'Bearer ***').slice(0, 200);
 }
-export interface RespostaWidget { status: number; corpo: ResumoWidgetCaixa | { erro: ErroWidget; mensagem: string } }
+export interface RespostaWidget { status: number; corpo: ResumoWidgetCaixa | ResumoWidgetPedidos | { erro: ErroWidget; mensagem: string } }
 
 export const MENSAGENS_WIDGET: Record<ErroWidget, string> = {
+  visao_invalida: 'Visão desconhecida: use caixa ou pedidos no parâmetro do widget.',
   metodo: 'Use GET.',
   token_ausente: 'Widget sem token. Gere um em EIFF Control › Caixa › Widgets do iPad.',
   token_invalido: 'Token não reconhecido. Gere um novo em Caixa › Widgets do iPad.',
@@ -36,14 +40,16 @@ export const MENSAGENS_WIDGET: Record<ErroWidget, string> = {
   indisponivel: 'Não foi possível montar o resumo agora. Tente de novo em instantes.',
 };
 const ERROS_DA_RPC: Partial<Record<string, ErroWidget>> = { token_invalido: 'token_invalido', token_revogado: 'token_revogado', token_expirado: 'token_expirado', perfil_inativo: 'perfil_inativo', sem_permissao: 'sem_permissao' };
-const STATUS: Record<ErroWidget, number> = { metodo: 405, token_ausente: 401, token_invalido: 401, token_revogado: 401, token_expirado: 401, perfil_inativo: 403, sem_permissao: 403, nao_configurado: 501, indisponivel: 503 };
+const STATUS: Record<ErroWidget, number> = { visao_invalida: 400, metodo: 405, token_ausente: 401, token_invalido: 401, token_revogado: 401, token_expirado: 401, perfil_inativo: 403, sem_permissao: 403, nao_configurado: 501, indisponivel: 503 };
 const falha = (erro: ErroWidget): RespostaWidget => ({ status: STATUS[erro], corpo: { erro, mensagem: MENSAGENS_WIDGET[erro] } });
 
 /** Data de hoje no fuso da empresa (o servidor roda em UTC). */
 export const hojeEmSaoPaulo = (agora: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora);
 
-export async function tratarWidgetCaixa(req: { metodo: string; autorizacao: string | null }, portas: PortasWidget): Promise<RespostaWidget> {
+export async function tratarWidgetCaixa(req: { metodo: string; autorizacao: string | null; visao?: string | null }, portas: PortasWidget): Promise<RespostaWidget> {
   if (req.metodo !== 'GET') return falha('metodo');
+  const visao = (req.visao ?? 'caixa') || 'caixa';
+  if (visao !== 'caixa' && visao !== 'pedidos') return falha('visao_invalida');
   const token = (req.autorizacao ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return falha('token_ausente');
   if (!FORMATO_TOKEN_WIDGET.test(token)) return falha('token_invalido');
@@ -60,9 +66,10 @@ export async function tratarWidgetCaixa(req: { metodo: string; autorizacao: stri
     const { ds, usuario } = carga;
     // segunda barreira, no app: a MATRIZ é a fonte do "quem vê o caixa" (a RPC espelha com o papel Administrador)
     if (!usuario.ativo || !pode(usuario, 'ver_bancos')) return falha('sem_permissao');
+    if (visao === 'pedidos' && !pode(usuario, 'aprovar')) return falha('sem_permissao');
     const agora = portas.agora();
     const dsHoje: Dataset = { ...ds, params: { ...ds.params, dataBase: ds.params.dataBaseAutomatica === false ? ds.params.dataBase : hojeEmSaoPaulo(agora) } };
-    return { status: 200, corpo: resumoWidgetCaixa(dsHoje, agora) };
+    return { status: 200, corpo: visao === 'pedidos' ? resumoWidgetPedidos(dsHoje, agora) : resumoWidgetCaixa(dsHoje, agora) };
   } catch (e) {
     portas.registrar?.('resumo', e);
     return falha('indisponivel');

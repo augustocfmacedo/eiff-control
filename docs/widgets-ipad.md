@@ -19,6 +19,29 @@ Os mesmos números da tela **Caixa** e do Diretor Financeiro — nada é recalcu
 "Semana" é o que **ainda** entra e sai (os pagos de hoje já estão no caixa de hoje). Recebimento vencido aparece marcado,
 fora do saldo, como na Caixa. Rascunho e em aprovação não aparecem. Tocar no widget abre `#/caixa`.
 
+## Widget de pedidos da equipe (Parameter = `pedidos`)
+
+Pedido do Augusto em 14/10/2026: ver na tela de início o que a equipe está pedindo ao Diretor Financeiro. Mesmo script,
+mesmo token, mesma porta (`GET /api/widget-caixa?visao=pedidos`), sem migration. `resumoWidgetPedidos`
+(`src/core/widgetPedidos.ts`) é leitura de `centralDF`: pedidos em rascunho de origem `diretor-financeiro` pelo vencimento,
+quem pediu, há quantos dias, "novo" (pedido de hoje), a orientação do Diretor (programar / reagendar para a data em que cabe /
+seu aval porque consome a reserva / não recomendado), a contagem por orientação, o total e os decididos dos últimos 3 dias.
+O servidor exige, além de ver o caixa, a permissão de aprovar (a mesma da Central).
+
+| Formato | Conteúdo |
+|---|---|
+| Pequeno | quantos aguardam, o total e o mais urgente com a orientação |
+| Médio | total e contagem por orientação + os 2 mais urgentes |
+| Grande / extra grande | até 6/8 pedidos + decididos recentes |
+| Tela de bloqueio | "2 pedidos · R$ 200.180", o primeiro com a orientação, ou o número no círculo |
+
+Tocar abre a Central do Diretor (`#/diretor`). **Aviso de pedido novo**: a cada atualização o script compara com os
+pedidos que já viu neste iPad e agenda uma notificação local ("Novo pedido de Tiago: Vale combustível · R$ 180,00 para
+14/10 · programar 14/10"), no máximo 3 e um resumo do restante; a primeira execução só memoriza; sem rede nunca avisa. O
+horário é o da atualização do widget, que o iOS decide (minutos, não segundos) — não é push. Para ativar: copiar o script de
+novo (Caixa › Widgets do iPad › Copiar script), colar por cima do **EIFF Caixa** no Scriptable (o token continua no
+Keychain), adicionar outro widget do Scriptable com `pedidos` em Parameter e permitir notificações do Scriptable.
+
 ## Segurança
 
 - **Token por aparelho, só leitura** (`widget_token`, migration 0069): nasce no banco (gerador criptográfico), aparece
@@ -49,6 +72,12 @@ fora do saldo, como na Caixa. Rascunho e em aprovação não aparecem. Tocar no 
 
 O iOS decide quando atualizar o widget (em geral a cada 15–30 minutos). Cada atualização carrega o caixa inteiro no
 servidor, como o Diretor Financeiro faz para o veredito.
+
+## Estado
+
+Em produção desde 14/10/2026: PR #55 (main a4ace64) e correção do Node 20 no PR #56 (main 68b9b37, deploy 6acefe47), 0069
+aplicada às 03:38 UTC. Funcionando no iPad do Augusto (widget extra grande do caixa). As funções Netlify criam o cliente do
+Supabase por `src/data/clienteServidor.ts`: no Node 20 o supabase-js recusa o createClient puro (sem WebSocket nativo).
 
 ## Implantação (cada passo com autorização própria)
 

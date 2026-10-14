@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { CHAVE_KEYCHAIN_WIDGET, scriptWidgetCaixa } from './widgetScriptable';
 import type { ResumoWidgetCaixa } from './widgetCaixa';
+import type { ResumoWidgetPedidos } from './widgetPedidos';
 
 const TOKEN = 'eiffw_' + 'c0de'.repeat(16);
 const RESUMO: ResumoWidgetCaixa = {
@@ -17,12 +18,14 @@ const RESUMO: ResumoWidgetCaixa = {
   proximos: [{ data: '2026-10-01', descricao: 'Aluguel do galpão', tipo: 'Saída', valor: 1200, vencido: true, foraDoSaldo: false }, { data: '2026-10-16', descricao: 'Medição Smart Fit', tipo: 'Entrada', valor: 77531.45, vencido: false, foraDoSaldo: false }],
 };
 
-interface Cenario { runsInWidget: boolean; familia?: string; token?: string | null; resposta?: { status: number; corpo: unknown } | 'sem_rede'; cache?: unknown; pasteboard?: string; respostasAlerta?: number[]; campos?: string[] }
+interface Cenario { parametro?: string; arquivos?: Record<string, unknown>; runsInWidget: boolean; familia?: string; token?: string | null; resposta?: { status: number; corpo: unknown } | 'sem_rede'; cache?: unknown; pasteboard?: string; respostasAlerta?: number[]; campos?: string[] }
 async function rodar(c: Cenario) {
   const textos: string[] = [];
   const requisicoes: { url: string; headers: Record<string, string> }[] = [];
   const keychain = new Map<string, string>(c.token ? [[CHAVE_KEYCHAIN_WIDGET, c.token]] : []);
   const arquivos = new Map<string, string>(c.cache ? [['/cache/eiff-caixa-resumo.json', JSON.stringify(c.cache)]] : []);
+  for (const [k, v] of Object.entries(c.arquivos ?? {})) arquivos.set(`/cache/${k}`, JSON.stringify(v));
+  const notificacoes: { title?: string; body?: string; openURL?: string }[] = [];
   const alertas: { title?: string }[] = [];
   const respostas = [...(c.respostasAlerta ?? [])];
   let pasteboard = c.pasteboard ?? '';
@@ -61,12 +64,14 @@ async function rodar(c: Cenario) {
     FileManager: { local: () => ({ cacheDirectory: () => '/cache', joinPath: (a: string, b: string) => `${a}/${b}`, fileExists: (p: string) => arquivos.has(p), readString: (p: string) => arquivos.get(p), writeString: (p: string, s: string) => { arquivos.set(p, s); }, remove: (p: string) => { arquivos.delete(p); } }) },
     Pasteboard: { paste: () => pasteboard, copy: (s: string) => { pasteboard = s; } },
     Alert: function Alert() { const a: Record<string, unknown> = { addAction() {}, addCancelAction() {}, addDestructiveAction() {}, addTextField() {}, addSecureTextField() {}, textFieldValue: (i: number) => c.campos?.[i] ?? '', presentAlert: async () => (respostas.length ? respostas.shift() : -1) }; alertas.push(a); return a; },
+    args: { widgetParameter: c.parametro ?? null },
+    Notification: function Notification() { const n: Record<string, unknown> = { schedule: async () => { notificacoes.push({ title: n.title as string, body: n.body as string, openURL: n.openURL as string }); } }; return n; },
     Script: { setWidget: (w: unknown) => { widget = w; }, complete: () => undefined, name: () => 'EIFF Caixa' },
   };
   const codigo = scriptWidgetCaixa('https://eiffcontrol.com.br');
   const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (...a: string[]) => (...v: unknown[]) => Promise<void>;
   await new AsyncFunction(...Object.keys(ambiente), codigo)(...Object.values(ambiente));
-  return { textos, requisicoes, keychain, arquivos, alertas, pasteboard, widget, apresentou };
+  return { textos, requisicoes, keychain, arquivos, alertas, pasteboard, widget, apresentou, notificacoes };
 }
 
 describe('script do Scriptable', () => {
@@ -140,7 +145,70 @@ describe('script do Scriptable', () => {
   });
 
   it('no app, remover o token', async () => {
-    const r = await rodar({ runsInWidget: false, token: TOKEN, respostasAlerta: [5] });
+    const r = await rodar({ runsInWidget: false, token: TOKEN, respostasAlerta: [7] });
     expect(r.keychain.size).toBe(0);
+  });
+});
+
+const PEDIDOS: ResumoWidgetPedidos = {
+  versao: 1, visao: 'pedidos', geradoEm: '2026-10-14T12:00:00.000Z', hoje: '2026-10-14',
+  pendentes: [
+    { id: 'PED-0001', descricao: 'Vale combustível', para: 'Posto', solicitante: 'Tiago', valor: 180, vencimento: '2026-10-14', pedidoEm: '2026-10-14T10:00:00Z', diasEsperando: 0, novo: true, acao: 'programar', orientacao: 'programar 14/10', dataSugerida: null },
+    { id: 'PED-0002', descricao: 'Compra grande de aço', para: 'Usina', solicitante: 'Yuri', valor: 200000, vencimento: '2026-10-15', pedidoEm: '2026-10-11T09:00:00Z', diasEsperando: 3, novo: false, acao: 'recusar', orientacao: 'não recomendado', dataSugerida: null },
+  ],
+  totalPendentes: 2, valorPendente: 200180, contagem: { programar: 1, reagendar: 0, avaliar: 0, recusar: 1 },
+  decididos: [{ id: 'PED-0003', descricao: 'Frete', solicitante: 'Tiago', valor: 500, status: 'programado', decididoEm: '2026-10-13T15:00:00Z' }],
+};
+
+describe('script do Scriptable · visão pedidos (Parameter = pedidos)', () => {
+  for (const familia of ['small', 'medium', 'large', 'extraLarge', 'accessoryRectangular', 'accessoryInline', 'accessoryCircular']) {
+    it(`widget ${familia}: pede ?visao=pedidos e mostra os pedidos`, async () => {
+      const r = await rodar({ runsInWidget: true, familia, parametro: ' Pedidos ', token: TOKEN, resposta: { status: 200, corpo: PEDIDOS } });
+      expect(r.requisicoes[0].url).toBe('https://eiffcontrol.com.br/api/widget-caixa?visao=pedidos');
+      const tudo = r.textos.join(' | ');
+      if (familia === 'accessoryInline') expect(tudo).toBe('EIFF: 2 pedidos · R$ 200.180');
+      else if (familia === 'accessoryCircular') expect(r.textos[0]).toBe('2');
+      else if (familia === 'small') { expect(tudo).toContain('aguardando · R$ 200.180'); expect(tudo).toContain('programar 14/10'); }
+      else expect(tudo).toContain('Tiago');
+      if (familia === 'large' || familia === 'extraLarge') { expect(tudo).toContain('Compra grande de aço'); expect(tudo).toContain('não recomendado'); expect(tudo).toContain('novo'); expect(tudo).toContain('programado · Frete'); }
+      expect(r.arquivos.has('/cache/eiff-pedidos-resumo.json')).toBe(true);
+      expect(r.arquivos.has('/cache/eiff-caixa-resumo.json')).toBe(false); // caches separados
+    });
+  }
+
+  it('sem parâmetro continua sendo o caixa', async () => {
+    const r = await rodar({ runsInWidget: true, familia: 'medium', token: TOKEN, resposta: { status: 200, corpo: RESUMO } });
+    expect(r.requisicoes[0].url).toBe('https://eiffcontrol.com.br/api/widget-caixa');
+  });
+
+  it('resposta do caixa na visão pedidos não é aceita (nunca mistura as visões)', async () => {
+    const r = await rodar({ runsInWidget: true, familia: 'medium', parametro: 'pedidos', token: TOKEN, resposta: { status: 200, corpo: RESUMO } });
+    expect(r.textos).toContain('Resumo indisponível');
+  });
+
+  it('primeira vez: só memoriza os pedidos, sem notificar', async () => {
+    const r = await rodar({ runsInWidget: true, familia: 'medium', parametro: 'pedidos', token: TOKEN, resposta: { status: 200, corpo: PEDIDOS } });
+    expect(r.notificacoes).toEqual([]);
+    expect(JSON.parse(r.arquivos.get('/cache/eiff-pedidos-vistos.json')!)).toEqual(['PED-0001', 'PED-0002']);
+  });
+
+  it('pedido que ainda não tinha visto: notificação com quem pediu, valor, data e orientação; abre a Central', async () => {
+    const r = await rodar({ runsInWidget: true, familia: 'medium', parametro: 'pedidos', token: TOKEN, arquivos: { 'eiff-pedidos-vistos.json': ['PED-0002'] }, resposta: { status: 200, corpo: PEDIDOS } });
+    expect(r.notificacoes).toEqual([{ title: 'Novo pedido de Tiago', body: 'Vale combustível · R$ 180,00 para 14/10 · programar 14/10', openURL: 'https://eiffcontrol.com.br/#/diretor' }]);
+    expect(JSON.parse(r.arquivos.get('/cache/eiff-pedidos-vistos.json')!).sort()).toEqual(['PED-0001', 'PED-0002']);
+  });
+
+  it('nada novo: nenhuma notificação; sem rede: nunca notifica', async () => {
+    const igual = await rodar({ runsInWidget: true, familia: 'medium', parametro: 'pedidos', token: TOKEN, arquivos: { 'eiff-pedidos-vistos.json': ['PED-0001', 'PED-0002'] }, resposta: { status: 200, corpo: PEDIDOS } });
+    expect(igual.notificacoes).toEqual([]);
+    const semRede = await rodar({ runsInWidget: true, familia: 'medium', parametro: 'pedidos', token: TOKEN, arquivos: { 'eiff-pedidos-vistos.json': [], 'eiff-pedidos-resumo.json': PEDIDOS }, resposta: 'sem_rede' });
+    expect(semRede.notificacoes).toEqual([]);
+    expect(semRede.textos.some((t) => t.startsWith('sem conexão'))).toBe(true);
+  });
+
+  it('no app: prévia de pedidos (grande)', async () => {
+    const r = await rodar({ runsInWidget: false, token: TOKEN, respostasAlerta: [5], resposta: { status: 200, corpo: PEDIDOS } });
+    expect(r.apresentou).toBe('presentLarge');
+    expect(r.requisicoes[0].url).toContain('?visao=pedidos');
   });
 });
