@@ -7,6 +7,7 @@ import { DEPARTAMENTOS, livroCaixa, type LinhaCaixa } from '../core/caixa';
 import { centralDF } from '../core/cfo';
 import { saudeCaixa, type Sinal } from '../core/saudeCaixa';
 import { BriefingDF, ConversaDF, PedidosDF } from './DiretorFinanceiro';
+import { WidgetsIpad } from './WidgetsIpad';
 import { actions, obrasVisiveis, pode, useStore } from '../data/store';
 import { GraficoSaldo } from '../ui/GraficoSaldo';
 import { Badge, Empty, Field, KpiHero, KpiStrip, Modal, MoedaInput, PageHead, Select, money, tentar, useToast, type Tone } from '../ui/components';
@@ -34,6 +35,7 @@ export default function Caixa() {
   const [edicao, setEdicao] = useState<Edicao | null>(null);
   const [estorno, setEstorno] = useState<{ id: string; motivo: string } | null>(null);
   const [exclusao, setExclusao] = useState<{ id: string; motivo: string } | null>(null);
+  const [widgets, setWidgets] = useState(false);
   const { toast, el } = useToast();
   const verBancos = pode(usuario, 'ver_bancos');
   const ate = addDays(hoje, Number(horizonte));
@@ -109,9 +111,11 @@ export default function Caixa() {
     <>
       <PageHead title="Caixa" subtitle={<>Do jeito da planilha: o que entra, o que sai e o saldo dia a dia. Começa no marco de {d(livro.marco)} com {money(livro.saldoAbertura)} de saldo inicial. Pago entra na data em que foi pago; previsto, no vencimento.</>}>
         <Select value={horizonte} onChange={setHorizonte} options={HORIZONTES} aria-label="Horizonte" />
+        <button className="btn no-print" onClick={() => setWidgets(true)}>Widgets do iPad</button>
         <button className="btn no-print" onClick={() => window.print()}>Imprimir</button>
       </PageHead>
       {el}
+      {widgets && <WidgetsIpad onClose={() => setWidgets(false)} toast={toast} />}
 
       {central && <BriefingDF c={central} acoes={<>
         <button className={`btn sm${conversa ? ' primary' : ''}`} aria-expanded={conversa} onClick={alternarConversa}>{conversa ? 'Fechar a conversa' : 'Perguntar ao Diretor'}</button>

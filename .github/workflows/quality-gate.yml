@@ -149,6 +149,13 @@ jobs:
       - name: PostgreSQL Smoke (CD-D3 metas comerciais)
         run: node scripts/pg-smoke-meta-comercial.mjs
 
+      # scripts/pg-smoke-widget-token.mjs aplica a 0069 (widgets do iPad) num PGlite descartável e prova o token por aparelho:
+      # só Administrador ativo cria, o segredo nunca fica em claro (só SHA-256), validação só para service_role com cada recusa
+      # (revogado, vencido, perfil inativo, papel trocado), o cliente nunca lê o hash, escrita direta negada, imutabilidade,
+      # search_path seguro contra tabelas temporárias e o rollback exato versionado. Sai com código 1 se qualquer prova falhar.
+      - name: PostgreSQL Smoke (widgets do iPad)
+        run: node scripts/pg-smoke-widget-token.mjs
+
       # scripts/pg-smoke-solicitante.mjs aplica a fila INTEIRA num PGlite descartável e prova o papel Solicitante (0066/0067):
       # não lê nenhuma tabela (cada uma do schema public e do storage), não grava lançamento nem auditoria, não se promove,
       # só usa as três portas df_* (pedido PED-nnnn idempotente, só os próprios pedidos) e os demais papéis ficam iguais.
