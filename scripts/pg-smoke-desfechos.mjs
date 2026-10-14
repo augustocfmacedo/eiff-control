@@ -273,6 +273,24 @@ try {
   const tempos = await q(`select event_type, to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') t from radar_commercial_outcome where opportunity_id = $1 order by occurred_at`, [oppT]);
   igual('na mesma transação: GANHO, ESTORNO, GANHO com instantes estritamente crescentes (µs)', [tempos.map((x) => x.event_type), tempos.every((x, i) => i === 0 || x.t > tempos[i - 1].t)], [['GANHO', 'ESTORNO_GANHO', 'GANHO'], true]);
 
+  console.log('\nR. isolamento entre organizações: empresa e responsável da mesma organização da oportunidade');
+  // a FK de company_id/owner_id não confere organização e o PostgreSQL valida FK sem RLS: sem a 0070 isto passava
+  await q(`update radar_company set commercial_owner_id = $2 where id = $1`, [empresaFora, ADM_FORA]);
+  const livroAntesR = await um(`select count(*)::int from radar_commercial_outcome`);
+  igual('Administrador de A não enxerga a empresa de B (RLS)', (await como(ADM, () => um(`select count(*)::int from radar_company where id = $1`, [empresaFora]))).valor, 0);
+  await recusa('criar oportunidade de A citando empresa de B', ADM, `insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by) values ($1, $2, 'Cruzada', 'NEGOTIATION', $3, $3)`, [org, empresaFora, ADM], 'empresa precisa ser da mesma organização');
+  const oppR = await novaOpp('Própria de A');
+  await recusa('trocar a empresa de uma oportunidade de A para a de B', ADM, `update radar_opportunity set company_id = $2 where id = $1`, [oppR, empresaFora], 'empresa precisa ser da mesma organização');
+  igual('…e a oportunidade continua com a empresa de A', await um(`select company_id from radar_opportunity where id = $1`, [oppR]), empresa);
+  await recusa('registrar GANHO numa oportunidade cruzada (criação já ganha com empresa de B)', ADM, `insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by, stage_reason) values ($1, $2, 'Cruzada ganha', 'WON', $3, $3, 'ganho cruzado')`, [org, empresaFora, ADM], 'empresa precisa ser da mesma organização');
+  await recusa('responsável de outra organização na criação', ADM, `insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by) values ($1, $2, 'Responsável de B', 'NEGOTIATION', $3, $4)`, [org, empresa, ADM_FORA, ADM], 'responsável precisa ser da mesma organização');
+  await recusa('trocar o responsável para alguém de outra organização', ADM, `update radar_opportunity set owner_id = $2 where id = $1`, [oppR, ADM_FORA], 'responsável precisa ser da mesma organização');
+  await recusa('GANHO com responsável de outra organização', ADM, `update radar_opportunity set stage = 'WON', owner_id = $2, stage_reason = 'ganho com responsável de fora' where id = $1`, [oppR, ADM_FORA], 'responsável precisa ser da mesma organização');
+  await recusa('nem o dono do banco cria oportunidade cruzada', 'DONO', `insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by, stage_reason) values ($1, $2, 'Cruzada pelo dono', 'WON', $3, $3, 'forçando')`, [org, empresaFora, ADM], 'empresa precisa ser da mesma organização');
+  await recusa('defesa no livro: GANHO com dono da conta de outra organização (dono do banco, direto)', 'DONO', `insert into radar_commercial_outcome (organization_id, opportunity_id, company_id, event_type, owner_id, account_owner_id, reason, source) values ($1, $2, $3, 'GANHO', $4, $5, 'forjado', 'trigger')`, [org, oppR, empresa, ADM, ADM_FORA], 'organização do evento');
+  igual('o gatilho não leu o dono comercial de B nem gravou nada cruzado', [await um(`select count(*)::int from radar_commercial_outcome`) - livroAntesR, await um(`select count(*)::int from radar_commercial_outcome where organization_id = $1 and (company_id = $2 or account_owner_id = $3 or owner_id = $3)`, [org, empresaFora, ADM_FORA])], [0, 0]);
+  igual('ganho legítimo em A continua funcionando e congela o dono de A', [(await ganhar(ADM, oppR, 10, 'ganho legítimo')).erro, await um(`select account_owner_id from radar_commercial_outcome where opportunity_id = $1`, [oppR])], [null, DONO_CONTA]);
+
   await db.exec('rollback;');
 
   console.log('\nP. rollback EXATO da 0070');

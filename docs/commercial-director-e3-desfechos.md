@@ -68,6 +68,17 @@ E1 mudou.
   todas as fórmulas seguem iguais (os 34 testes da E1 passam sem mudança). Virada de mês em São Paulo testada com
   microssegundos.
 
+## Isolamento entre organizações (verificação final, 14/10/2026)
+
+Achado: as FKs `radar_opportunity.company_id → radar_company` e `owner_id → profile` não conferem organização, o PostgreSQL
+valida FK sem RLS e a policy da oportunidade só confere a organização da própria linha. Antes da correção, um Administrador
+da organização A (que nem enxerga a empresa da B) conseguia **criar** e **alterar** oportunidade de A citando a empresa da B
+ou um responsável da B — e o gatilho privilegiado da 0070 gravava o GANHO no livro de A com a empresa e o **dono comercial da
+B**. Correção mínima na própria 0070 (nenhuma migration anterior alterada): o gatilho `radar_opportunity_desfecho`, agora em
+toda gravação da oportunidade (`after insert or update`), exige empresa e responsável da mesma organização ANTES de qualquer
+evento (falha = a gravação inteira é desfeita); a coerência do livro repete a regra para empresa, responsável e dono da conta
+do GANHO. Provado no smoke (bloco R, 12 provas, inclusive tentativa do dono do banco e o ganho legítimo seguindo normal).
+
 ## App
 
 - `RadarDataset.desfechos?` (ausente = livro indisponível no banco, nunca "sem ganho"); carga tolerante em `carregarRadar`
@@ -88,7 +99,7 @@ E1 mudou.
 
 | Prova | Resultado |
 |---|---|
-| `npm run smoke:desfechos` (fila inteira 0001..0070 em PGlite, novo passo do Quality Gate) | 93 ok, 0 falhas |
+| `npm run smoke:desfechos` (fila inteira 0001..0070 em PGlite, novo passo do Quality Gate) | 105 ok, 0 falhas |
 | Preflight `--ordem-corrigida` | 69 migrations, 0 erros |
 | `src/data/radar.desfechos.integracao.test.ts` — app → banco → app com `carregarRadar`/`persistirRadar` reais, RLS de produção (inclui GANHO → ESTORNO → GANHO numa só transação) | 4 ok |
 | `src/core/radar/desfechos.test.ts` — espelho do gatilho + integração com o motor E1 (D3-A, D3-B, linha do banco, microssegundos no mesmo ms, virada de mês em SP) | 16 ok |
@@ -112,8 +123,11 @@ E1 mudou.
 ## Plano de implantação (cada passo com autorização própria)
 
 1. `MERGE AUTORIZADO`.
-2. `PRODUCTION AUTORIZADA`: código primeiro. Sem a 0070 o app carrega normalmente, não envia `won_amount`, o campo de valor
-   fechado não aparece e marcar como ganha continua como antes (sem livro).
+2. `PRODUCTION AUTORIZADA`: código primeiro. Sem a 0070 o app carrega normalmente e não envia `won_amount` nem
+   `stage_reason`, mas **marcar como ganha (com ou sem valor), criar já ganha e reabrir/perder uma ganha ficam BLOQUEADOS**
+   com mensagem clara até a 0070 ser aplicada (o ganho ou o estorno não teriam onde ser registrados). As demais transições
+   e edições seguem normalmente. Produção tinha 0 oportunidades no pré-check, então o bloqueio não afeta trabalho em curso;
+   a janela entre publicar e aplicar a 0070 deve ser curta.
 3. Teste de concorrência com duas sessões num PostgreSQL real (gate, como na 0068).
 4. Conferência só de leitura (objetos ausentes, número livre, 0068/0069 íntegras) e aplicação da 0070 numa transação com
    verificações internas; smoke em produção só com recusas, sem criar eventos reais.

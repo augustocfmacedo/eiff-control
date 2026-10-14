@@ -76,6 +76,12 @@ begin
     if not exists (select 1 from public.radar_opportunity o where o.id = new.opportunity_id and o.company_id = new.company_id) then
       raise exception 'desfecho: a empresa do ganho precisa ser a da oportunidade';
     end if;
+    -- defesa em profundidade: empresa, responsável e dono da conta do ganho da MESMA organização do evento
+    if not exists (select 1 from public.radar_company c where c.id = new.company_id and c.organization_id = new.organization_id)
+       or (new.owner_id is not null and not exists (select 1 from public.profile p where p.id = new.owner_id and p.organization_id = new.organization_id))
+       or (new.account_owner_id is not null and not exists (select 1 from public.profile p where p.id = new.account_owner_id and p.organization_id = new.organization_id)) then
+      raise exception 'desfecho: empresa, responsável e dono da conta do ganho precisam ser da organização do evento';
+    end if;
     if exists (select 1 from public.radar_commercial_outcome g where g.opportunity_id = new.opportunity_id and g.event_type = 'GANHO'
                  and not exists (select 1 from public.radar_commercial_outcome e where e.won_event_id = g.id and e.event_type = 'ESTORNO_GANHO')) then
       raise exception 'desfecho: a oportunidade já tem um ganho vigente (reabra antes de ganhar de novo)';
@@ -165,6 +171,15 @@ begin
   if tg_relid is distinct from 'public.radar_opportunity'::regclass or tg_when <> 'AFTER' or tg_level <> 'ROW' then
     raise exception 'desfecho: gatilho fora da tabela de oportunidades';
   end if;
+  -- isolamento entre organizações: a FK de company_id/owner_id não confere organização e o PostgreSQL valida FK sem RLS,
+  -- então uma oportunidade da organização A podia citar empresa ou responsável da B (e o ganho leria o dono comercial
+  -- da B). Toda gravação de oportunidade exige empresa e responsável da MESMA organização, antes de qualquer evento.
+  if not exists (select 1 from public.radar_company c where c.id = new.company_id and c.organization_id = new.organization_id) then
+    raise exception 'oportunidade: a empresa precisa ser da mesma organização da oportunidade';
+  end if;
+  if new.owner_id is not null and not exists (select 1 from public.profile p where p.id = new.owner_id and p.organization_id = new.organization_id) then
+    raise exception 'oportunidade: o responsável precisa ser da mesma organização da oportunidade';
+  end if;
   if tg_op = 'UPDATE' and new.stage is not distinct from old.stage then return null; end if;
 
   if tg_op = 'UPDATE' and old.stage = 'WON' then
@@ -201,7 +216,7 @@ begin
   end if;
   return null;
 end $$;
-create trigger radar_opportunity_desfecho after insert or update of stage on public.radar_opportunity
+create trigger radar_opportunity_desfecho after insert or update on public.radar_opportunity
   for each row execute function public.radar_opportunity_desfecho();
 
 -- funções de gatilho não são chamáveis por ninguém: sem EXECUTE, nenhum usuário cria outro gatilho com elas (o gatilho
