@@ -3,6 +3,7 @@
 // insert nas imutaveis). Recebe os helpers do provider principal para nao criar ciclo de import.
 import { contentSpecPersistivel, type ContentSpec } from '../core/radar/comunicacao';
 import type { OperacaoVibeLedger, RadarDataset } from '../core/radar/types';
+import type { VersaoMetaComercial } from '../core/radar/metaComercial';
 
 
 type Row = Record<string, any>;
@@ -94,7 +95,30 @@ export async function carregarRadar(h: Pick<HelpersRadar, 'sel' | 'orgId'>): Pro
   ds.tiposResposta = tiposResposta.map((x) => ({ codigo: x.code, nome: x.name, sentimento: x.sentiment, ativo: !!x.active }));
   ds.configScore = configScore.map((x) => ({ chave: x.key, valor: Number(x.value) }));
   ds.pesosDecisionFit = pesosFit.map((x) => ({ chave: x.key, valor: Number(x.value) }));
+  // CD-D3/E2: metas comerciais (somente leitura; escrita só pela RPC). Banco sem a 0068: indisponível (undefined), nunca "sem meta".
+  ds.metasComerciais = await h.sel('radar_commercial_goal', 'created_at').then((linhas) => linhas.map(metaDoBanco)).catch(() => undefined);
   return ds;
+}
+
+/** Linha de radar_commercial_goal → versão de meta do motor (mês AAAA-MM; valor como veio do banco, null = retirada). */
+export function metaDoBanco(x: Row): VersaoMetaComercial {
+  return { id: String(x.id), mes: String(x.period_month).slice(0, 7), metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor: x.amount ?? null, versao: Number(x.version), ...(x.supersedes_id ? { substituiId: String(x.supersedes_id) } : {}), motivo: String(x.reason), definidaPor: String(x.created_by), definidaEm: String(x.created_at) };
+}
+
+/**
+ * CD-D3/E2 — cada versão de meta nova (criada pela ação do store desde a última sincronização) vira UMA chamada da RPC
+ * governada, na ordem de mês e versão. O banco é a autoridade: recalcula a versão sob trava, confere papel, organização,
+ * mês, valor e motivo e audita na mesma transação; a versão local é só a intenção (o número final é o do banco, que a
+ * recarga traz). Nunca há INSERT direto (authenticated não tem). Mesmo valor da vigente: a RPC não cria versão.
+ */
+async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComercial[] | undefined, depois: readonly VersaoMetaComercial[] | undefined): Promise<void> {
+  if (!depois) return;
+  const ja = new Set((antes ?? []).map((m) => m.id));
+  const novas = depois.filter((m) => !ja.has(m.id)).sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : a.versao - b.versao));
+  for (const m of novas) {
+    if (!m.motivo?.trim()) throw new Error('meta comercial: versão sem motivo; nada foi gravado.');
+    await h.rpc('radar_definir_meta_comercial', { p_mes: `${m.mes}-01`, p_valor: m.valor === null || m.valor === undefined || m.valor === '' ? null : Number(m.valor), p_motivo: m.motivo.trim() });
+  }
 }
 
 /** Mapeamentos expostos para scripts de carga (mesmas regras da persistencia do app). */
@@ -172,4 +196,5 @@ export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | unde
     if (igual((a.pesosDecisionFit ?? []).find((x) => x.chave === c.chave), c)) continue;
     await h.gravarComposta('radar_decision_fit_weight', { organization_id: h.orgId, key: c.chave }, { value: c.valor });
   }
+  await persistirMetas(h, a.metasComerciais, depois.metasComerciais);
 }

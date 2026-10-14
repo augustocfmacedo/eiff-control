@@ -922,3 +922,52 @@ alimentam este motor. Autoridade das medidas: `META_COMERCIAL` (acrescentada ao 
   arredondamento; alertas; entrada congelada; guardas de fonte sem relógio, sem estimativa e sem financeiro).
 - **Para a E2/E3**: a E3 precisa gravar o GANHO com o valor fechado confirmado (D3-F) e o ESTORNO na reabertura, sempre
   com `ganhoId`; o COMPLEMENTO_VALOR é a única forma de completar um ganho sem valor. Os instantes vão com fuso.
+
+### 19.8 CD-D3 / E2 — metas comerciais governadas (13/10/2026)
+
+Persistência versionada e auditável das metas, usando o motor da E1. Sem tela (a tela é a etapa D3-G).
+
+- **Migration 0068** (`supabase/migrations/0068_radar_commercial_goal.sql`, **não aplicada**): tabela
+  `radar_commercial_goal` — organização, mês (`period_month`, sempre dia 1), métrica `RECEITA_GANHA`, moeda `BRL`, escopo
+  `ORGANIZACAO` (fixos por CHECK), valor `numeric(18,2)` positivo ou NULL (= retirada), versão, versão substituída
+  (`supersedes_id`, obrigatória a partir da versão 2), motivo (3 a 500), autor e instante. Unique (organização, escopo,
+  métrica, moeda, mês, versão). Gatilhos recusam UPDATE, DELETE e TRUNCATE para qualquer papel: cada mudança é uma
+  versão nova. Função `radar_mes_comercial_de(timestamptz)` = mês no fuso de São Paulo (a mesma regra de
+  `mesComercialDe`). RLS: leitura para a organização por `current_org()` (que desde a 0067 ignora o Solicitante);
+  `authenticated` só SELECT, `anon` nada.
+- **RPC `radar_definir_meta_comercial(p_mes, p_valor, p_motivo)`** (security definer, `search_path` fixo, EXECUTE só para
+  `authenticated`): ator = `auth.uid()` com perfil ativo, papel Administrador ou Diretoria (papel ou situação nulos
+  recusados); a organização vem do perfil, nunca do pedido; motivo 3 a 500; mês = dia 1, corrente ou futuro no fuso de
+  São Paulo (D3-C); valor positivo com até 2 casas e abaixo do limite de `numeric(18,2)`, ou NULL para retirar (exige meta
+  vigente); **trava transacional** `pg_advisory_xact_lock` por organização + mês antes de ler a última versão, e a unique
+  como última barreira; mesmo valor da vigente não cria versão; meta e `audit_log` (antes = versão anterior, depois =
+  nova, motivo, `source = 'rpc'`) na mesma transação. Qualquer recusa levanta exceção e nada muda.
+- **Rollback exato** em `supabase/rollbacks/0068_radar_commercial_goal.rollback.sql`: a 0068 só cria objetos, então o
+  rollback remove exatamente o que ela criou (RPC, tabela, gatilho, função de mês). **Remove também as metas gravadas** —
+  se já houver metas reais, exportar antes. O smoke lê o próprio arquivo e prova que nada sobra e que as permissões das
+  tabelas existentes não mudam.
+- **App**: `RadarDataset.metasComerciais?` (versões do motor; **ausente = tabela indisponível**, nunca "sem meta"). A carga
+  (`carregarRadar`) lê `radar_commercial_goal` de forma tolerante: banco sem a 0068 deixa o campo ausente e o resto do
+  Radar carrega normalmente; modo local começa com lista vazia. Ação canônica `actions.definirMetaComercialRadar(mes,
+  valor | null, motivo)`: permissão `radar_config` (Administrador e Diretoria), validações da E1 (`motivosRecusaNovaMeta`,
+  `metaVigenteDoMes`, `proximaVersaoMeta`), retirar exige vigente, mesmo valor não versiona, nova versão com a anterior em
+  `substituiId`, auditoria com antes/depois e motivo; sem a tabela, recusa em vez de gravar só no navegador. A
+  persistência (`persistirRadar` → `persistirMetas`) manda cada versão nova pela RPC, em ordem de mês e versão; versão
+  sem motivo falha fechada; nunca há INSERT direto. A auditoria do app não reenvia as ações de meta
+  (`ACOES_AUDITADAS_PELA_RPC`). A versão local é a intenção: o número final é o do banco, que a recarga traz.
+- **Provas**: `scripts/pg-smoke-meta-comercial.mjs` (PGlite, no Quality Gate e em `npm run smoke:meta-comercial`): mês
+  em São Paulo × UTC e virada de ano; definição, revisão, versão substituída e auditoria; mesmo valor sem versão;
+  retirada e recusas de retirada; recusas sem mudança nem auditoria (sem sessão, inativo, sete papéis sem permissão,
+  papel e situação nulos, motivo vazio/curto/longo, mês passado, dia ≠ 1, valor zero/negativo/3 casas/acima do limite);
+  atomicidade; isolamento entre organizações (a de fora grava a dela; RLS por organização; Solicitante não lê); escrita
+  direta negada (insert, update, delete por `authenticated`; leitura e RPC por `anon`; update, delete e truncate até pelo
+  dono do banco); integridade da tabela (versão repetida pela unique, versão 2 sem substituída, dia, valor, moeda) e
+  rollback exato. Preflight com a fila inteira (0001..0068). Testes do app: `src/data/radar.meta.store.test.ts` e
+  `src/data/radar.meta.persistencia.test.ts`.
+- **Limite conhecido**: concorrência real (duas transações ao mesmo tempo) não roda no PGlite, que tem uma conexão só; a
+  garantia é a trava transacional por organização + mês somada à unique.
+- **Implantação controlada** (cada passo com autorização própria): (1) merge; (2) publicar o build (código primeiro: sem a
+  0068 o app carrega normalmente e a ação de meta recusa com mensagem; nenhuma tela usa a ação ainda); (3) conferência
+  somente leitura (objetos da 0068 ausentes, número livre) e aplicar a 0068 numa transação com verificações internas;
+  (4) smoke em produção só com recusas e leituras, em transação desfeita, sem consumir a sequência da auditoria.
+  Rollback: o arquivo versionado (banco primeiro), depois, se preciso, o deploy anterior.

@@ -179,7 +179,8 @@ describe('CD-D5.2 · guardas de fonte', () => {
   it('a mudança de dono vai pela RPC; a auditoria do app pula as ações que a RPC já audita', () => {
     expect(fonte('src/data/radar.supabase.ts')).toContain("h.rpc('radar_definir_dono_conta'");
     const sb = fonte('src/data/supabase.ts');
-    expect(sb).toContain('novas.filter((a) => !ACOES_DONO_RPC.has(a.acao))');
+    expect(sb).toContain('novas.filter((a) => !ACOES_AUDITADAS_PELA_RPC.has(a.acao))');
+    expect(sb).toContain('new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC])');
     expect(sb).toContain('motivoDono: (empresaId) => motivoDonoDaAuditoria(novas, empresaId)');
   });
 });
