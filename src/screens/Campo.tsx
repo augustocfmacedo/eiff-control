@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { CampoPagamentos } from './CampoPagamentos';
+import { resumoPagamentosCampo } from '../core/pagamentosCampo';
 import { carteiraObras } from '../core/engine';
 import { calcTarefas, locaisDoDia, resumoDiaCampo } from '../core/equipe';
 import CampoDiario from './CampoDiario';
@@ -71,6 +73,7 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
   const fab = resumoProducao(ds.ordens.filter((o) => visiveis.has(o.codigoObra)), 'Fabricação', hoje);
   const mon = resumoProducao(ds.ordens.filter((o) => visiveis.has(o.codigoObra)), 'Montagem', hoje);
   const ordens = [...fab.ordens, ...mon.ordens].filter((o) => o.status !== 'Concluída').sort((a, b) => ((a.dataNecessidade ?? '9') < (b.dataNecessidade ?? '9') ? -1 : 1));
+  const pagCampo = pode(usuario, 'ver_bancos') && pode(usuario, 'liquidar') ? resumoPagamentosCampo(ds, hojeBase) : { contagem: { atrasados: 0, semana: 0 } };
   const abrirDiario = (local: LocalTrabalho, codigoObra?: string) => navegar(`/campo/diario?local=${encodeURIComponent(local)}${codigoObra ? `&obra=${encodeURIComponent(codigoObra)}` : ''}`);
   const SeletorDia = () => (
     <div className="chips" style={{ marginBottom: 10 }}>
@@ -102,6 +105,12 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
   const Home = () => (
     <div>
       <p className="muted small">Olá, {usuario.nome.split(' ')[0]}.{sync.status === 'pendente' && <> <Badge tone="warn">offline · guardado no aparelho</Badge></>}{sync.status === 'erro' && <> <Badge tone="bad">não sincronizado</Badge></>}</p>
+      {pode(usuario, 'ver_bancos') && pode(usuario, 'liquidar') && (
+        <div className="bloco-campo">
+          <h3>Financeiro</h3>
+          {pode(usuario, 'ver_bancos') && pode(usuario, 'liquidar') && <button className={`btn grande${pagCampo.contagem.atrasados ? ' primary' : ''}`} onClick={() => navegar('/campo/pagamentos')}><span>Pagamentos<span className="sub">filtrar, pagar, editar e anexar comprovante</span></span><span className="small">{pagCampo.contagem.semana} na semana{pagCampo.contagem.atrasados ? <> <Badge tone="bad">{pagCampo.contagem.atrasados} atrasado(s)</Badge></> : null}</span></button>}
+        </div>
+      )}
       <SeletorDia />
       <div className="faixa-dia" aria-label="resumo do dia">
         <div><b>{resumo.fechados}/{resumo.locais}</b><span>diários fechados</span></div>
@@ -207,6 +216,7 @@ export default function Campo({ secao, query }: { secao?: string; query?: URLSea
       {secao === 'tarefas' && <Tarefas />}
       {secao === 'checklist' && <Checklist />}
       {secao === 'producao' && <Producao />}
+      {secao === 'pagamentos' && <CampoPagamentos toast={toast} />}
       {bloq && (
         <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && setBloq(null)}>
           <div className="modal">

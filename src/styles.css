@@ -380,6 +380,22 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .campo h2 { font-size: var(--text-xl, 20px); margin: 4px 0 10px; }
 .campo .bloco-campo { margin-bottom: 14px; }
 .campo .bloco-campo h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 14px 0 6px; }
+.pag-campo-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.pag-kpi { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.pag-kpi span { font-size: var(--text-xs, 12px); color: var(--muted); }
+.pag-kpi b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.pag-kpi small { color: var(--muted); }
+.pag-kpi.ruim b { color: var(--bad); }
+.pag-campo-filtros { display: flex; gap: 6px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
+.pag-campo-filtros .chip { white-space: nowrap; }
+.pag-cartao { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.pag-cartao.marcado { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+.pag-cartao input[type=checkbox] { width: 22px; height: 22px; min-height: 22px; margin-top: 2px; accent-color: var(--brand); flex: none; }
+.pag-cartao-corpo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; background: none; border: 0; padding: 0; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.pag-cartao-linha { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pag-cartao-linha > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.pag-campo-barra { position: sticky; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; margin: 8px -4px 0; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--brand); flex-wrap: wrap; }
+.pag-sub { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 14px 0 6px; }
 .campo .btn.grande { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; font-size: 16px; text-align: left; margin-bottom: 8px; min-height: 56px; }
 .campo .btn.grande .sub { display: block; font-size: 12.5px; color: var(--muted); font-weight: 500; margin-top: 2px; }
 .campo .btn.grande.primary .sub { color: inherit; opacity: 0.85; }

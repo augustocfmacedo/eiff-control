@@ -22,10 +22,10 @@ async function abrir(a: AnexoLancamento, aviso: (m: string) => void) {
   } catch (e) { aba?.close(); aviso((e as Error).message); }
 }
 
-export function DocumentosLancamento({ lancamento: l, aviso, compacto = false }: { lancamento: Lancamento; aviso: (m: string) => void; compacto?: boolean }) {
+export function DocumentosLancamento({ lancamento: l, aviso, compacto = false, tipoInicial }: { lancamento: Lancamento; aviso: (m: string) => void; compacto?: boolean; tipoInicial?: TipoAnexo }) {
   const { ds, usuario } = useStore();
   const tipos = tiposQuePodeAnexar(usuario, l);
-  const [tipo, setTipo] = useState<TipoAnexo>(tipos.includes('NOTA_FISCAL') ? 'NOTA_FISCAL' : tipos[0] ?? 'OUTRO');
+  const [tipo, setTipo] = useState<TipoAnexo>(tipoInicial && tipos.includes(tipoInicial) ? tipoInicial : tipos.includes('NOTA_FISCAL') ? 'NOTA_FISCAL' : tipos[0] ?? 'OUTRO');
   const [enviando, setEnviando] = useState(false);
   const [removendo, setRemovendo] = useState<{ id: string; motivo: string } | null>(null);
   const input = useRef<HTMLInputElement>(null);
