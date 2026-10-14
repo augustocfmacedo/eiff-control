@@ -1,77 +1,143 @@
 // CD-D3/E5 — salvar a meta só com confirmação do banco (src/data/metaConfirmada.ts) e o caminho real do store.
 //
-// Orquestrador com portas simuladas (o banco real e a RPC estão provados em scripts/pg-smoke-meta-comercial.mjs): sucesso
-// só depois de a versão voltar do banco; recusa do banco recarrega e devolve erro; sem rede = pendente; começar com
-// alterações não sincronizadas é recusado; nunca há sucesso falso. Depois, o store em modo local (ação canônica E2).
+// Banco simulado com DUAS coisas separadas, como no app: a fila global de sincronização (status ok/erro/pendente) e as
+// versões PERSISTIDAS da meta (o que a RPC gravou). A prova é sempre a leitura das persistidas — o status da fila nunca
+// basta: outra operação pode falhar depois de a meta ter sido gravada, a meta pode não ter sido gravada com a fila "ok",
+// e outra sessão pode mudar a meta. Depois, o store em modo local (ação canônica E2).
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { definirMetaConfirmada, type PortasMetaConfirmada, type SyncMeta } from './metaConfirmada';
 import { actions, getState } from './store';
 import { mesComercialDe, mesSeguinte, type VersaoMetaComercial } from '../core/radar';
 
-const versao = (p: Partial<VersaoMetaComercial> = {}): VersaoMetaComercial => ({
-  id: 'META-L', mes: '2026-10', metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor: 250000, versao: 1, motivo: 'meta aprovada', definidaPor: 'u1', definidaEm: '2026-10-14T18:00:00Z', ...p,
+const v = (versao: number, valor: VersaoMetaComercial['valor'], motivo: string, id = `uuid-${versao}`): VersaoMetaComercial => ({
+  id, mes: '2026-10', metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor, versao, motivo, definidaPor: 'u1', definidaEm: `2026-10-14T18:0${versao}:00Z`,
 });
 
-/** Banco simulado: o estado local, a fila de sincronização e o que o banco devolve na recarga. */
-function cenario(o: { remoto?: boolean; antes?: SyncMeta; depois?: SyncMeta; recusaLocal?: string; doBanco?: VersaoMetaComercial[]; falhaRecarga?: string; mesmoValor?: boolean } = {}) {
-  let locais: VersaoMetaComercial[] = [];
+/**
+ * `banco`: versões persistidas antes do pedido. `rpc`: o que a RPC da meta faz ao sincronizar ('grava' acrescenta a
+ * versão pedida; 'nao_grava' não acrescenta; 'outra_sessao' acrescenta uma versão de outra pessoa ANTES da nossa).
+ * `fila`: o status final da fila global (independente do que a RPC fez). `cache`: versões do mês que o app tem.
+ */
+function cenario(o: { banco?: VersaoMetaComercial[]; cache?: VersaoMetaComercial[]; pedido?: { valor: VersaoMetaComercial['valor']; motivo: string }; rpc?: 'grava' | 'nao_grava' | 'outra_sessao' | 'outra_sessao_depois'; fila?: SyncMeta; antes?: SyncMeta; falhaLeitura?: 'antes' | 'depois'; recusaLocal?: string } = {}) {
+  const banco = [...(o.banco ?? [])];
+  let cache = [...(o.cache ?? o.banco ?? [])];
+  const pedido = o.pedido ?? { valor: 250000, motivo: 'meta aprovada' };
   const chamadas: string[] = [];
+  let leituras = 0;
   const p: PortasMetaConfirmada = {
-    remoto: o.remoto ?? true,
+    remoto: true,
     syncAtual: () => o.antes ?? { status: 'ok' },
     definir: () => {
       chamadas.push('definir');
       if (o.recusaLocal) throw new Error(o.recusaLocal);
-      const v = versao();
-      if (!o.mesmoValor) locais = [...locais, v];
-      return v;
+      const vig = cache.reduce<VersaoMetaComercial | undefined>((u, x) => (!u || x.versao > u.versao ? x : u), undefined);
+      if (vig && vig.valor !== null && pedido.valor !== null && Number(vig.valor) === Number(pedido.valor)) return vig; // E2: mesmo valor não versiona (no cache)
+      const nova = v(cache.length + 1, pedido.valor, pedido.motivo, 'META-LOCAL');
+      cache = [...cache, nova];
+      return nova;
     },
-    aguardarSincronizacao: async () => { chamadas.push('aguardar'); return o.depois ?? { status: 'ok' }; },
-    recarregar: async () => { chamadas.push('recarregar'); if (o.falhaRecarga) throw new Error(o.falhaRecarga); locais = o.doBanco ?? []; },
-    versoesDoMes: () => locais,
+    aguardarSincronizacao: async () => {
+      chamadas.push('aguardar');
+      const prox = () => banco.reduce((m, x) => Math.max(m, x.versao), 0) + 1;
+      if (o.rpc === 'outra_sessao') banco.push(v(prox(), 999, 'outra pessoa'));
+      if (o.rpc === undefined || o.rpc === 'grava' || o.rpc === 'outra_sessao' || o.rpc === 'outra_sessao_depois') banco.push(v(prox(), String(pedido.valor === null ? '' : Number(pedido.valor).toFixed(2)) || null, pedido.motivo));
+      if (o.rpc === 'outra_sessao_depois') banco.push(v(prox(), '777.00', 'outra pessoa depois'));
+      return o.fila ?? { status: 'ok' };
+    },
+    recarregar: async () => { chamadas.push('recarregar'); cache = [...banco]; },
+    versoesDoMes: () => cache,
+    lerPersistidas: async () => {
+      leituras++; chamadas.push('ler');
+      if ((o.falhaLeitura === 'antes' && leituras === 1) || (o.falhaLeitura === 'depois' && leituras === 2)) throw new Error('rede caiu');
+      return [...banco];
+    },
   };
-  return { p, chamadas, locais: () => locais };
+  return { p, chamadas, banco, cache: () => cache };
 }
 
-describe('E5 · confirmação do banco antes de dizer "salvo"', () => {
-  it('sucesso: espera a sincronização, recarrega e devolve a versão PERSISTIDA (número do banco)', async () => {
-    const c = cenario({ doBanco: [versao({ id: 'uuid-1', versao: 7, valor: '250000.00' })] });
+describe('E5 · a prova é a versão persistida, nunca o status da fila', () => {
+  it('RPC da meta gravou e uma operação independente posterior falhou: a meta está CONFIRMADA (com aviso), sem recarga que apagaria a outra alteração', async () => {
+    const c = cenario({ rpc: 'grava', fila: { status: 'erro', msg: 'lançamento PAG-0200 alterado por outro usuário' } });
     const r = await definirMetaConfirmada(c.p);
-    expect(r).toEqual({ ok: true, mudou: true, versao: versao({ id: 'uuid-1', versao: 7, valor: '250000.00' }) });
-    expect(c.chamadas).toEqual(['definir', 'aguardar', 'recarregar']);
+    expect(r).toMatchObject({ ok: true, mudou: true, versao: { id: 'uuid-1', versao: 1, valor: '250000.00' } });
+    expect((r as { aviso?: string }).aviso).toMatch(/Outra alteração não foi sincronizada \(lançamento PAG-0200.*a meta está gravada/);
+    expect(c.chamadas).toEqual(['ler', 'definir', 'aguardar', 'ler']); // nenhuma recarga com a fila em erro
+    expect(c.banco.map((x) => x.versao)).toEqual([1]); // a meta permanece persistida
   });
 
-  it('banco recusou (RPC): recarrega (a versão local some) e devolve erro — sem sucesso falso', async () => {
-    const c = cenario({ depois: { status: 'erro', msg: 'meta comercial: mês encerrado' }, doBanco: [] });
-    const r = await definirMetaConfirmada(c.p);
-    expect(r).toEqual({ ok: false, estado: 'nao_confirmada', mensagem: 'O banco não confirmou a meta; nada foi gravado. meta comercial: mês encerrado' });
-    expect(c.chamadas).toEqual(['definir', 'aguardar', 'recarregar']);
-    expect(c.locais()).toEqual([]);
+  it('fila "ok" mas a meta não está no banco: NÃO GRAVADA, comprovado pela leitura (nunca sucesso pela fila)', async () => {
+    const r = await definirMetaConfirmada(cenario({ rpc: 'nao_grava', fila: { status: 'ok' } }).p);
+    expect(r).toEqual({ ok: false, estado: 'nao_gravada', mensagem: 'Conferido no banco: a meta NÃO foi gravada.' });
   });
 
-  it('sem rede: pendente, guardada no aparelho e explicitamente NÃO confirmada', async () => {
-    const r = await definirMetaConfirmada(cenario({ depois: { status: 'pendente' } }).p);
+  it('fila em erro e a meta não está no banco: não gravada, comprovado, com o erro da sincronização', async () => {
+    const c = cenario({ rpc: 'nao_grava', fila: { status: 'erro', msg: 'meta comercial: mês encerrado' } });
+    const r = await definirMetaConfirmada(c.p);
+    expect(r).toEqual({ ok: false, estado: 'nao_gravada', mensagem: 'Conferido no banco: a meta NÃO foi gravada. Erro da sincronização: meta comercial: mês encerrado' });
+    expect(c.chamadas).not.toContain('recarregar'); // a fila em erro fica para "Tentar de novo"/"Descartar" do app
+  });
+
+  it('sem leitura do banco depois da sincronização: INDETERMINADO — nunca "nada foi gravado"', async () => {
+    for (const fila of [{ status: 'ok' as const }, { status: 'erro' as const, msg: 'x' }]) {
+      const r = await definirMetaConfirmada(cenario({ fila, falhaLeitura: 'depois' }).p);
+      expect(r).toMatchObject({ ok: false, estado: 'indeterminado' });
+      expect((r as { mensagem: string }).mensagem).not.toMatch(/nada foi gravado|NÃO foi gravada/);
+      expect((r as { mensagem: string }).mensagem).toMatch(/Recarregue a tela e confira/);
+    }
+  });
+
+  it('sem leitura do banco ANTES de enviar: recusa sem enviar nada', async () => {
+    const c = cenario({ falhaLeitura: 'antes' });
+    expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: false, estado: 'recusada' });
+    expect(c.chamadas).toEqual(['ler']);
+  });
+
+  it('sem rede: pendente, explicitamente NÃO confirmada', async () => {
+    const r = await definirMetaConfirmada(cenario({ fila: { status: 'pendente' } }).p);
     expect(r).toMatchObject({ ok: false, estado: 'pendente' });
-    expect((r as { mensagem: string }).mensagem).toMatch(/NÃO foi confirmada/);
   });
 
-  it('a recarga não trouxe a versão (ou trouxe outra): não confirmada', async () => {
-    expect(await definirMetaConfirmada(cenario({ doBanco: [] }).p)).toMatchObject({ ok: false, estado: 'nao_confirmada' });
-    expect(await definirMetaConfirmada(cenario({ doBanco: [versao({ valor: '1.00' })] }).p)).toMatchObject({ ok: false, estado: 'nao_confirmada' });
-    expect(await definirMetaConfirmada(cenario({ doBanco: [versao({ motivo: 'outro motivo' })] }).p)).toMatchObject({ ok: false, estado: 'nao_confirmada' });
-    expect(await definirMetaConfirmada(cenario({ falhaRecarga: 'rede caiu' }).p)).toMatchObject({ ok: false, estado: 'nao_confirmada' });
+  it('outra sessão gravou antes da nossa: a nossa versão é confirmada pelo número do banco (v2), não pela local', async () => {
+    const r = await definirMetaConfirmada(cenario({ rpc: 'outra_sessao' }).p);
+    expect(r).toMatchObject({ ok: true, versao: { versao: 2, motivo: 'meta aprovada' } });
   });
 
-  it('retirada confirmada: valor nulo volta nulo do banco', async () => {
-    const c = cenario();
-    const locais: VersaoMetaComercial[] = [];
-    c.p.versoesDoMes = () => locais;
-    c.p.definir = () => { const v = versao({ valor: null, versao: 2 }); locais.push(v); return v; };
-    c.p.recarregar = async () => { locais.splice(0, locais.length, versao({ id: 'uuid-2', valor: null, versao: 2 })); };
-    expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: true, versao: { id: 'uuid-2', valor: null, versao: 2 } });
+  it('outra sessão mudou DEPOIS da nossa: confirmada, com aviso do que vale agora', async () => {
+    const r = await definirMetaConfirmada(cenario({ rpc: 'outra_sessao_depois' }).p);
+    expect(r).toMatchObject({ ok: true, versao: { versao: 1 } });
+    expect((r as { aviso?: string }).aviso).toMatch(/Outra sessão já mudou a meta depois: vale R\$ 777,00 \(versão 2\)/);
   });
 
-  it('com alterações ainda não confirmadas, não começa (uma falha descartaria trabalho de outra tela)', async () => {
+  it('retirada confirmada: valor nulo gravado e lido de volta', async () => {
+    const r = await definirMetaConfirmada(cenario({ banco: [v(1, '250000.00', 'meta aprovada')], pedido: { valor: null, motivo: 'meta suspensa' } }).p);
+    expect(r).toMatchObject({ ok: true, mudou: true, versao: { versao: 2, valor: null, motivo: 'meta suspensa' } });
+  });
+});
+
+describe('E5 · mesmo valor da vigente (sem versão nova) conferido no banco', () => {
+  it('cache e banco com o mesmo valor: confirmado sem versão nova (regra da E2), com a versão do banco', async () => {
+    const c = cenario({ banco: [v(1, '250000.00', 'meta aprovada')], pedido: { valor: 250000, motivo: 'mesmo valor' } });
+    const r = await definirMetaConfirmada(c.p);
+    expect(r).toEqual({ ok: true, mudou: false, versao: v(1, '250000.00', 'meta aprovada') });
+    expect(c.chamadas).toEqual(['ler', 'definir']); // nada enviado
+  });
+
+  it('outra sessão mudou a meta (cache desatualizado): DESATUALIZADA — nada é dado como confirmado; recarrega', async () => {
+    const c = cenario({ cache: [v(1, '250000.00', 'meta aprovada')], banco: [v(1, '250000.00', 'meta aprovada'), v(2, '300000.00', 'revisão da outra sessão')], pedido: { valor: 250000, motivo: 'mesmo valor' } });
+    const r = await definirMetaConfirmada(c.p);
+    expect(r).toEqual({ ok: false, estado: 'desatualizada', mensagem: 'A meta mudou em outra sessão: no banco está R$ 300.000,00 (versão 2). Confira e tente de novo.' });
+    expect(c.chamadas).toEqual(['ler', 'definir', 'recarregar']);
+    expect(c.cache().map((x) => x.versao)).toEqual([1, 2]);
+  });
+
+  it('outra sessão retirou a meta: desatualizada, com "meta retirada"', async () => {
+    const c = cenario({ cache: [v(1, '250000.00', 'meta aprovada')], banco: [v(1, '250000.00', 'meta aprovada'), v(2, null, 'retirada pela outra sessão')], pedido: { valor: 250000, motivo: 'mesmo valor' } });
+    expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: false, estado: 'desatualizada', mensagem: 'A meta mudou em outra sessão: no banco está meta retirada (versão 2). Confira e tente de novo.' });
+  });
+});
+
+describe('E5 · pré-condições e recusas', () => {
+  it('com alterações ainda não confirmadas, não começa', async () => {
     for (const antes of [{ status: 'erro' as const }, { status: 'pendente' as const }]) {
       const c = cenario({ antes });
       expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: false, estado: 'recusada' });
@@ -80,25 +146,20 @@ describe('E5 · confirmação do banco antes de dizer "salvo"', () => {
   });
 
   it('sincronização em andamento: espera terminar antes de começar', async () => {
-    const c = cenario({ antes: { status: 'enviando' }, doBanco: [versao()] });
+    const c = cenario({ antes: { status: 'enviando' } });
     expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: true });
-    expect(c.chamadas).toEqual(['aguardar', 'definir', 'aguardar', 'recarregar']);
+    expect(c.chamadas).toEqual(['aguardar', 'ler', 'definir', 'aguardar', 'ler', 'recarregar']);
   });
 
-  it('recusa da ação canônica (validação, permissão): erro, sem sincronizar', async () => {
+  it('recusa da ação canônica (validação, permissão): erro, nada enviado', async () => {
     const c = cenario({ recusaLocal: 'Informe o motivo (3 a 500 caracteres).' });
     expect(await definirMetaConfirmada(c.p)).toEqual({ ok: false, estado: 'recusada', mensagem: 'Informe o motivo (3 a 500 caracteres).' });
-    expect(c.chamadas).toEqual(['definir']);
+    expect(c.chamadas).toEqual(['ler', 'definir']);
   });
 
-  it('mesmo valor da vigente: nada a versionar, nada a sincronizar', async () => {
-    const c = cenario({ mesmoValor: true });
-    expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: true, mudou: false });
-    expect(c.chamadas).toEqual(['definir']);
-  });
-
-  it('modo local: a ação canônica basta (não há banco a confirmar)', async () => {
-    const c = cenario({ remoto: false });
+  it('modo local: a ação canônica basta (não há banco a conferir)', async () => {
+    const c = cenario();
+    c.p.remoto = false;
     expect(await definirMetaConfirmada(c.p)).toMatchObject({ ok: true, mudou: true });
     expect(c.chamadas).toEqual(['definir']);
   });

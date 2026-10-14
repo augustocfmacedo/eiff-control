@@ -39,9 +39,20 @@ confirmado · meta vigente e nenhuma venda · parcial · atingida. Indisponível
   2. chama a ação canônica (permissão `radar_config` = Administrador e Diretoria; mês corrente ou futuro em São Paulo;
      valor positivo com até 2 casas; motivo de 3 a 500; cada mudança é versão nova; retirar exige meta vigente; mesmo
      valor não versiona);
-  3. no remoto, espera a sincronização (RPC `radar_definir_meta_comercial`, que repete as guardas e audita), **recarrega
-     do banco** e devolve a versão persistida (número do banco), conferindo valor e motivo. Recusa do banco recarrega
-     (a versão local some) e mostra o erro; sem rede, "pendente — ainda NÃO confirmada".
+  3. no remoto, espera a sincronização (RPC `radar_definir_meta_comercial`, que repete as guardas e audita) e **confere
+     nas versões persistidas do mês** (leitura direta `lerMetasComerciaisDoMes`, RLS do usuário) — o status da fila de
+     sincronização é GLOBAL e nunca é usado como prova. Resultados:
+     - **confirmada**: a versão pedida (valor e motivo) está entre as versões gravadas depois do começo; devolve a do
+       banco (número do banco). Se outra operação da fila falhou, a meta continua confirmada, com aviso, e o app NÃO
+       recarrega (não apaga a outra alteração, que segue para "Tentar de novo"); se outra sessão mudou depois, avisa o
+       que vale agora;
+     - **não gravada**: a leitura mostra que a versão não existe (comprovado), com o erro da fila quando houver;
+     - **desatualizada**: o cache dizia "mesmo valor da vigente" (a E2 não cria versão), mas o banco tem outra meta
+       vigente (outra sessão mudou ou retirou): nada é dado como confirmado, o app recarrega e pede revisão. Com o mesmo
+       valor também no banco, confirma sem versão nova, com a versão do banco;
+     - **pendente**: sem rede, guardada no aparelho, ainda NÃO confirmada;
+     - **indeterminado**: não deu para ler o banco depois de enviar — pede recarga e conferência, nunca "nada foi gravado".
+     A recarga completa só acontece com a fila "ok".
 - A tela (`edicaoMeta`) só esconde o que não passaria: demais papéis do Radar veem em modo leitura ("Somente
   Administrador e Diretoria definem metas."), mês encerrado não edita, retirar só com meta vigente. Nenhuma versão
   anterior é editável; não há escrita direta na tabela nem RPC paralela.
@@ -53,7 +64,7 @@ confirmado · meta vigente e nenhuma venda · parcial · atingida. Indisponível
 | Prova | Resultado |
 |---|---|
 | `src/screens/radar/metaResultadoVisao.test.ts` — 11 estados, paridade tela × snapshot em todos, "—" com motivo, instante e seletor em São Paulo (virada de mês e ano), um instante por retrato, permissões, render estático dos estados, guardas (a tela não calcula nem escreve no banco) | 28 ok |
-| `src/data/metaConfirmada.test.ts` — confirmação do banco (sucesso, recusa, sem rede, recarga divergente, retirada, sincronização pendente/em andamento, mesmo valor, modo local) e o caminho real do store: criar v1, revisar v2, mesmo valor, retirar v3, recusas sem mudança, papéis | 14 ok |
+| `src/data/metaConfirmada.test.ts` — banco simulado que separa a fila global das versões persistidas: meta gravada com outra operação falhando depois (confirmada, sem recarga), fila "ok" sem a meta (não gravada), fila em erro sem a meta (não gravada), sem leitura (indeterminado), sem rede (pendente), outra sessão antes/depois, retirada; mesmo valor conferido no banco e cache desatualizado por outra sessão (alteração e retirada); pré-condições; e o caminho real do store (v1, v2, mesmo valor, v3, recusas, papéis) | 20 ok |
 | Suíte completa, type-check, lint e build | ok |
 | Evidência visual (componente real com o CSS do app, 12 quadros: estados, detalhes, iPad, celular, formulário) | anexada ao PR |
 

@@ -70,13 +70,14 @@ export default function RadarCommandCenter({ aba0 }: { aba0?: string }) {
         aviso={avisoMeta ?? avisoSync} onMes={(m) => { setMesMeta(m); setAvisoMeta(undefined); }} onAtualizar={() => { setAgoraIso(new Date().toISOString()); setAvisoMeta(undefined); }}
         onDefinir={() => { setAvisoMeta(undefined); setFormMeta('definir'); }} onRetirar={() => { setAvisoMeta(undefined); setFormMeta('retirar'); }} />
       {formMeta && blocoMeta.mes && (
-        <FormMetaComercial mes={blocoMeta.mes} modo={formMeta} agoraIso={agoraIso} onCancelar={() => setFormMeta(null)}
+        <FormMetaComercial mes={blocoMeta.mes} modo={formMeta} agoraIso={agoraIso} onCancelar={() => { setFormMeta(null); setAgoraIso(new Date().toISOString()); }}
           valorAtual={formMeta === 'definir' && blocoMeta.medidas.meta.estado === 'DISPONIVEL' ? blocoMeta.medidas.meta.valor : undefined}
           onConfirmar={(valor, motivo) => actions.definirMetaComercialConfirmada(blocoMeta.mes!, valor, motivo)}
           onConcluido={(res) => {
             setFormMeta(null);
             setAgoraIso(new Date().toISOString());
-            setAvisoMeta({ tom: 'ok', texto: !res.mudou ? 'Mesmo valor da meta vigente: nenhuma versão nova.' : res.versao.valor === null ? `Meta retirada (versão ${res.versao.versao}).` : `Meta salva: versão ${res.versao.versao}.` });
+            const texto = !res.mudou ? 'Mesmo valor da meta vigente: nenhuma versão nova.' : res.versao.valor === null ? `Meta retirada (versão ${res.versao.versao}).` : `Meta salva: versão ${res.versao.versao}.`;
+            setAvisoMeta({ tom: res.aviso ? 'warn' : 'ok', texto: res.aviso ? `${texto} ${res.aviso}` : texto });
           }} />
       )}
       <div className="hero-grid">
