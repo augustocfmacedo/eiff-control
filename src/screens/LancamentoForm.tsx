@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { calcLancamento, etapasExigidas, impactoLancamento } from '../core/engine';
 import type { Lancamento } from '../core/types';
 import { actions, obrasVisiveis, useStore, validarLancamento } from '../data/store';
+import { CamposPagamento } from '../ui/Pagamento';
 import { Field, Input, Modal, MoedaInput, NumberInput, Select, erroDoCampo, money, tentar } from '../ui/components';
 
 export function LancamentoForm({ inicial, onClose, onErro, onOk }: { inicial: Lancamento; onClose: () => void; onErro: (m: string) => void; onOk: (m: string) => void }) {
@@ -60,6 +61,7 @@ export function LancamentoForm({ inicial, onClose, onErro, onOk }: { inicial: La
         <Field label="Confiabilidade"><Select value={l.confiabilidade} onChange={(v) => up({ confiabilidade: v as Lancamento['confiabilidade'] })} options={['Confirmado', 'Provável', 'Estimado']} /></Field>
         <Field label="Probabilidade (%)" hint="Aplica-se a entradas futuras" erro={erro(/^Probabilidade/)}><NumberInput value={Math.round(l.probabilidade * 100)} onChange={(v) => up({ probabilidade: v / 100 })} min={0} max={100} /></Field>
         <Field label="Conta financeira" req erro={erro(/^Conta financeira/)}><Select value={l.contaFinanceira} onChange={(v) => up({ contaFinanceira: v })} options={ds.contas.filter((c) => c.ativa).map((c) => c.instituicao)} /></Field>
+        {calc.tipo !== 'Entrada' && !l.faturamentoDireto && <CamposPagamento forma={l.formaPagamento} dados={l.dadosPagamento} erros={erros} onChange={(formaPagamento, dadosPagamento) => up({ formaPagamento, dadosPagamento: formaPagamento ? dadosPagamento : undefined })} />}
         <Field label="Valor bruto" req erro={erro(/^Valor bruto/)}><MoedaInput value={l.valorBruto} onChange={(v) => up({ valorBruto: v })} /></Field>
         <Field label="Retenções / impostos" erro={erro(/^Retenções/)}><MoedaInput value={l.retencoes} onChange={(v) => up({ retencoes: v })} /></Field>
         <Field label="Desconto"><MoedaInput value={l.desconto} onChange={(v) => up({ desconto: v })} /></Field>

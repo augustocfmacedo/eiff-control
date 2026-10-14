@@ -5,6 +5,7 @@
 import seed from './seed.json';
 import type { AlteracaoPedido, Dataset, Lancamento, Obra, PlanoConta, StatusAlteracaoPedido, StatusLancamento, Usuario } from '../core/types';
 import { ORIGEM_DF } from '../core/cfo';
+import type { DadosPagamento, FormaPagamento } from '../core/pagamento';
 
 export interface ContextoSolicitante {
   perfil: { id: string; nome: string; email: string; papel: string };
@@ -16,6 +17,8 @@ export interface PedidoSolicitante {
   codigo: string; descricao: string; contraparte: string | null; categoria: string | null; codigoObra: string | null;
   valor: number; vencimento: string; status: StatusLancamento; motivoCancelamento: string | null; excluido: boolean; reagendado: boolean;
   criadoEm: string; atualizadoEm: string; repetido?: boolean;
+  /** forma e dados de pagamento (0072); ausentes antes da migration */
+  formaPagamento?: FormaPagamento | null; dadosPagamento?: DadosPagamento | null;
   /** ultima alteracao de valor pedida (0071); ausente antes da migration */
   alteracao?: AlteracaoJson | null;
 }
@@ -30,7 +33,7 @@ export function alteracaoDoJson(a: AlteracaoJson, autor = ''): AlteracaoPedido {
     motivo: a.motivo, status: a.status, decididoPor: a.decididoPor ?? undefined, decididoEm: a.decididoEm ?? undefined, motivoDecisao: a.motivoDecisao ?? undefined,
   };
 }
-export interface NovoPedidoSolicitante { valor: number; vencimento: string; categoria: string; codigoObra?: string; contraparte: string; descricao: string; observacoes?: string }
+export interface NovoPedidoSolicitante { valor: number; vencimento: string; categoria: string; codigoObra?: string; contraparte: string; descricao: string; observacoes?: string; formaPagamento?: FormaPagamento; dadosPagamento?: DadosPagamento }
 
 /** Esqueleto vazio do Dataset: a mesma forma da semente, com toda lista vazia (inclusive dentro do radar). */
 function esvaziar<T>(v: T): T {
@@ -56,6 +59,7 @@ export function lancamentoDoPedido(p: PedidoSolicitante, autor: string): Lancame
     observacoes: p.reagendado ? 'Reagendada no alinhamento diário.' : '', anexos: [], origem: ORIGEM_DF,
     criadoEm: p.criadoEm, criadoPor: autor, atualizadoEm: p.atualizadoEm, atualizadoPor: '', versao: 1,
     motivoCancelamento: p.motivoCancelamento ?? undefined, excluidoEm: p.excluido ? p.atualizadoEm : undefined,
+    ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: p.dadosPagamento ?? undefined } : {}),
   };
 }
 

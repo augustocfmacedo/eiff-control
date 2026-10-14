@@ -2,6 +2,7 @@
 // fornecedor), projeta o caixa dia a dia com o motor (engine.ts), emite o parecer deterministico (libera, reagenda,
 // atencao, nao recomendado) com a alcada exigida, monta a previsao de lancamento e o alinhamento diario da Diretoria.
 // A IA (funcao Netlify /api/diretor-financeiro) so ajuda a INTERPRETAR o texto; os numeros e a decisao vem daqui.
+import type { DadosPagamento, FormaPagamento } from './pagamento';
 import type { AlteracaoPedido, Dataset, Lancamento, Papel, StatusAlteracaoPedido, Usuario } from './types';
 import { addDays, caixaHoje, calcLancamentos, etapasExigidas, mapaPlano, posicaoBancaria, reservaVinculadaTotal, type LancamentoCalc } from './engine';
 
@@ -245,7 +246,7 @@ export const br = (iso?: string) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7
 // ---------------------------------------------------------------------------
 // Previsao (lancamento em rascunho, origem diretor-financeiro) e alinhamento diario
 // ---------------------------------------------------------------------------
-export interface PrevisaoDF { valor: number; vencimento: string; categoria: string; codigoObra?: string; contraparte: string; descricao: string; parecer: Parecer }
+export interface PrevisaoDF { valor: number; vencimento: string; categoria: string; codigoObra?: string; contraparte: string; descricao: string; parecer: Parecer; formaPagamento?: FormaPagamento; dadosPagamento?: DadosPagamento }
 /** Categoria padrao quando a interpretacao nao reconhece: custo de obra se ha obra, senao outros pagamentos. */
 export const categoriaPadrao = (codigoObra?: string) => (codigoObra ? 'Outros custos diretos' : 'Outros pagamentos');
 export function montarPrevisao(ds: Dataset, pedido: PedidoInterpretado, parecer: Parecer, data: string): Omit<PrevisaoDF, 'parecer'> & { parecer: Parecer } {

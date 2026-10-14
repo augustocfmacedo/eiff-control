@@ -9,6 +9,8 @@ import { actions, pode, useStore } from '../data/store';
 import { tokenSessao } from '../data/supabase';
 import { Badge, Field, Input, Modal, MoedaInput, PageHead, Select, Tabs, money, tentar, useToast } from '../ui/components';
 import { Icon } from '../ui/icons';
+import { CamposPagamento } from '../ui/Pagamento';
+import { resumoPagamento, validarDadosPagamento, type DadosPagamento, type FormaPagamento } from '../core/pagamento';
 import { registrarAcao } from '../data/telemetria';
 
 interface Msg { papel: 'usuario' | 'assistente'; texto: string; pedido?: PedidoInterpretado; parecer?: Parecer; veredicto?: VeredictoDF; registrado?: string; sugestoes?: string[]; origem?: 'ia' | 'local' }
@@ -29,7 +31,7 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
   const [texto, setTexto] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [ia, setIa] = useState<'desconhecido' | 'ok' | 'indisponivel'>(modo === 'remoto' ? 'desconhecido' : 'indisponivel');
-  const [ajuste, setAjuste] = useState<{ idx: number; valor: number; vencimento: string; categoria: string; codigoObra: string; contraparte: string; descricao: string } | null>(null);
+  const [ajuste, setAjuste] = useState<{ idx: number; valor: number; vencimento: string; categoria: string; codigoObra: string; contraparte: string; descricao: string; formaPagamento?: FormaPagamento; dadosPagamento?: DadosPagamento } | null>(null);
   const fim = useRef<HTMLDivElement>(null);
   // rola so a area das mensagens (nunca a pagina): a conversa tambem vive dentro da tela Caixa
   useEffect(() => { const box = fim.current?.parentElement; if (box) box.scrollTop = box.scrollHeight; try { sessionStorage.setItem(chave, JSON.stringify(msgs.slice(-30))); } catch { /* ignore */ } }, [msgs, chave]);
@@ -92,19 +94,22 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
     : `Pedido **${id}** encaminhado à Diretoria: ${fmt(valor)} para ${br(venc)}${forn !== 'A definir' ? `, ${forn}` : ''}. Te aviso quando for decidido; veja o andamento em "Meus pedidos".`;
   const registrar = (idx: number, data: string) => {
     const m = msgs[idx]; if (!m.pedido || (!m.parecer && !pedidoPronto(m))) return;
+    // equipe: antes de encaminhar, confere o pedido e informa COMO pagar (forma e dados viajam no titulo)
+    if (!veCaixa) { abrirAjuste(idx, data); return; }
     const prev = montarPrevisao(ds, m.pedido, parecerDe(m), data);
     void enviarPedido(prev, (id) => setMsgs((ms) => ms.map((x, i) => (i === idx ? { ...x, registrado: id } : x))));
   };
-  const abrirAjuste = (idx: number) => { const m = msgs[idx]; if (!m.pedido || (!m.parecer && !pedidoPronto(m))) return; const pa = parecerDe(m); const prev = montarPrevisao(ds, m.pedido, pa, veCaixa ? pa.dataSugerida ?? pa.vencimento : m.pedido.vencimento ?? pa.vencimento); setAjuste({ idx, valor: prev.valor, vencimento: prev.vencimento, categoria: prev.categoria, codigoObra: prev.codigoObra ?? '', contraparte: prev.contraparte === 'A definir' ? '' : prev.contraparte, descricao: prev.descricao }); };
+  const abrirAjuste = (idx: number, data?: string) => { const m = msgs[idx]; if (!m.pedido || (!m.parecer && !pedidoPronto(m))) return; const pa = parecerDe(m); const prev = montarPrevisao(ds, m.pedido, pa, data ?? (veCaixa ? pa.dataSugerida ?? pa.vencimento : m.pedido.vencimento ?? pa.vencimento)); setAjuste((a) => ({ idx, valor: prev.valor, vencimento: prev.vencimento, categoria: prev.categoria, codigoObra: prev.codigoObra ?? '', contraparte: prev.contraparte === 'A definir' ? '' : prev.contraparte, descricao: prev.descricao, formaPagamento: a?.idx === idx ? a.formaPagamento : undefined, dadosPagamento: a?.idx === idx ? a.dadosPagamento : undefined })); };
   const confirmarAjuste = () => {
     if (!ajuste) return;
     const m = msgs[ajuste.idx]; if (!m.pedido) return;
     const pedido: PedidoInterpretado = { ...m.pedido, valor: ajuste.valor, vencimento: ajuste.vencimento, categoria: ajuste.categoria, codigoObra: ajuste.codigoObra || undefined, contraparte: ajuste.contraparte || undefined, descricao: ajuste.descricao, faltando: [] };
     const parecer = analisarPagamento(ds, { valor: pedido.valor!, vencimento: pedido.vencimento, codigoObra: pedido.codigoObra, categoria: pedido.categoria });
-    const prev = montarPrevisao(ds, pedido, parecer, ajuste.vencimento);
+    const prev = { ...montarPrevisao(ds, pedido, parecer, ajuste.vencimento), ...(ajuste.formaPagamento ? { formaPagamento: ajuste.formaPagamento, dadosPagamento: ajuste.dadosPagamento } : {}) };
     const idx = ajuste.idx; setAjuste(null);
     void enviarPedido(prev, (id) => setMsgs((ms) => ms.map((x, i) => (i === idx ? { ...x, registrado: id } : x))));
   };
+  const errosPagamento = ajuste ? validarDadosPagamento(ajuste.formaPagamento, ajuste.dadosPagamento) : [];
   const tom = (p: Parecer) => (p.decisao === 'liberar' ? 'ok' : p.decisao === 'reagendar' ? 'info' : p.decisao === 'atencao' ? 'warn' : 'bad') as 'ok' | 'info' | 'warn' | 'bad';
   const sugestoesIniciais = veCaixa ? ['Preciso pagar um frete de R$ 500 amanhã', 'Como está o caixa?', 'O que vence essa semana?', 'Quais previsões estão pendentes?'] : ['Preciso agendar um pagamento', 'Preciso pagar um frete de R$ 500 amanhã para a Transportadora X', 'Meus pedidos'];
 
@@ -146,7 +151,7 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
         <Badge tone={ia === 'ok' ? 'ok' : 'muted'} title="A IA só interpreta o texto; os números vêm do motor do sistema">{ia === 'ok' ? 'IA + motor' : 'motor'}</Badge>
         {!!msgs.length && <button type="button" className="btn sm" onClick={() => setMsgs([])}>Limpar</button>}
       </form>
-      {ajuste && <Modal title={veCaixa ? 'Ajustar a previsão' : 'Ajustar o pedido'} onClose={() => setAjuste(null)}>
+      {ajuste && <Modal title={veCaixa ? 'Ajustar a previsão' : 'Conferir o pedido e como pagar'} onClose={() => setAjuste(null)}>
         <div className="form">
           <Field label="Valor (R$)" req><Input type="number" step="0.01" min={0} value={ajuste.valor} onChange={(e) => setAjuste({ ...ajuste, valor: Number(e.target.value) })} /></Field>
           <Field label="Data do pagamento" req><Input type="date" value={ajuste.vencimento} onChange={(e) => setAjuste({ ...ajuste, vencimento: e.target.value })} /></Field>
@@ -154,8 +159,9 @@ export function ConversaDF({ veCaixa, nova = false }: { veCaixa: boolean; nova?:
           <Field label="Obra"><Select value={ajuste.codigoObra} onChange={(v) => setAjuste({ ...ajuste, codigoObra: v })} allowEmpty="— sem obra —" options={ds.obras.map((o) => ({ value: o.codigo, label: `${o.codigo} · ${o.nome}` }))} /></Field>
           <Field label="Para quem (fornecedor)" hint="Ajuda a Diretoria a decidir"><Input value={ajuste.contraparte} onChange={(e) => setAjuste({ ...ajuste, contraparte: e.target.value })} /></Field>
           <Field label="Descrição" req full><Input value={ajuste.descricao} onChange={(e) => setAjuste({ ...ajuste, descricao: e.target.value })} /></Field>
+          <CamposPagamento forma={ajuste.formaPagamento} dados={ajuste.dadosPagamento} exigir={!veCaixa} erros={errosPagamento} onChange={(formaPagamento, dadosPagamento) => setAjuste({ ...ajuste, formaPagamento, dadosPagamento })} />
         </div>
-        <div className="foot"><button className="btn" onClick={() => setAjuste(null)}>Cancelar</button><button className="btn primary" onClick={confirmarAjuste}>{veCaixa ? 'Registrar previsão' : 'Encaminhar à Diretoria'}</button></div>
+        <div className="foot"><button className="btn" onClick={() => setAjuste(null)}>Cancelar</button><button className="btn primary" disabled={!veCaixa && (!ajuste.formaPagamento || errosPagamento.length > 0)} onClick={confirmarAjuste}>{veCaixa ? 'Registrar previsão' : 'Encaminhar à Diretoria'}</button></div>
       </Modal>}
       {el}
     </div>
@@ -218,6 +224,7 @@ export function MeusPedidosDF() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <b>{l.descricao}</b> <span className="muted small">{l.id}{l.codigoObra ? ` · ${l.codigoObra}` : ''}{l.contraparte !== 'A definir' ? ` · ${l.contraparte}` : ''}</span>
             <div className="small muted">{money(l.valorBruto)} · {br(l.vencimento)}{l.criadoEm ? ` · pedido em ${br(l.criadoEm.slice(0, 10))}` : ''}{s === 'recusado' && l.motivoCancelamento ? ` · ${l.motivoCancelamento.replace(/^Recusada no alinhamento diário: /, '')}` : ''}</div>
+            {l.formaPagamento && <div className="small muted">Pagamento: {resumoPagamento(l.formaPagamento, l.dadosPagamento)}</div>}
             {alt && (
               <div className="small df-alteracao">
                 <Badge tone={TOM_ALTERACAO[alt.status]}>{ROTULO_ALTERACAO[alt.status]}</Badge>{' '}
@@ -305,6 +312,7 @@ export function PedidosDF({ c, vazio = true }: { c: DadosCentralDF; vazio?: bool
               <div><b>{l.descricao}</b> <span className="muted small">{l.id} · {l.categoria}{l.codigoObra ? ` · ${l.codigoObra}` : ''} · {l.contraparte}</span><div className="small muted">Pedido de <b>{solicitante}</b>{diasEsperando ? ` há ${diasEsperando} dia(s)` : ' hoje'} · <b>{money(l.valorLiquidoPrevisto)}</b> para {br(l.vencimento)}{p.precisaAprovacao && <> · alçada {p.alcada.join(' → ')}</>}</div></div>
               <Badge tone={o.acaoSugerida === 'programar' ? 'ok' : o.acaoSugerida === 'reagendar' ? 'info' : o.acaoSugerida === 'avaliar' ? 'warn' : 'bad'}>{o.acaoSugerida === 'programar' ? 'programar' : o.acaoSugerida === 'reagendar' ? `reagendar → ${br(o.dataSugerida)}` : o.acaoSugerida === 'avaliar' ? 'seu aval' : 'não recomendado'}</Badge>
             </div>
+            {l.formaPagamento && <div className="small muted">Pagamento: {resumoPagamento(l.formaPagamento, l.dadosPagamento)}</div>}
             <div className="df-orientacao"><b>{o.titulo}.</b> {o.detalhe}</div>
             {podeDecidir && <div className="actions">
               {o.acaoSugerida !== 'avaliar' && <button className="btn primary sm" onClick={() => seguir(l.id, o)}>{o.acaoSugerida === 'programar' ? `Programar para ${br(l.vencimento)}` : o.acaoSugerida === 'reagendar' ? `Reagendar para ${br(o.dataSugerida)}` : 'Recusar'}</button>}
