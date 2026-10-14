@@ -93,6 +93,12 @@ try {
   // reaplicar a 0067 tem de ser inofensivo (create or replace / grants)
   await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0067_'))), 'utf8'));
   res.migrations.reaplicacao_0067 = 'ok';
+  // a 0071 redefine df_pedido_json (com a alteração de valor): reaplicada por cima da 0067, e também tem de ser idempotente
+  await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0071_'))), 'utf8'));
+  res.migrations.reaplicacao_0071 = 'ok';
+  // a 0072 redefine df_pedido_json e df_registrar_pedido (forma e dados de pagamento): reaplicada por último, idempotente
+  await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0072_'))), 'utf8'));
+  res.migrations.reaplicacao_0072 = 'ok';
 
   await db.exec('begin;');
   const org = await um(`select id from organization where code = 'EIFF'`);
@@ -180,6 +186,77 @@ try {
   const priv = await q(`select p, f, has_function_privilege(p, f, 'EXECUTE') pode from unnest(array['anon','authenticated']) p, unnest(array['df_contexto()','df_registrar_pedido(jsonb)','df_meus_pedidos()','df_pedido_json(financial_entry)']) f`);
   const errado = priv.filter((x) => (x.p === 'anon' ? x.pode : x.f.startsWith('df_pedido_json') ? x.pode : !x.pode)).map((x) => `${x.p} ${x.f} ${x.pode}`);
   prova('K privilégios: anon não executa nada; authenticated só as três portas', errado.length === 0, errado.join(' · '));
+
+  // ---- 0071: alteração de valor do pedido (porta df_pedir_alteracao, decisão pela Diretoria conferida pelo gatilho) ----
+  const pedirAlt = (uid, codigo, valor, motivo, manter = true) => como(uid, async () => um(`select df_pedir_alteracao($1, $2, $3)`, [codigo, valor, motivo]), { manter });
+  const m1 = await pedirAlt(SOL, 'PED-0001', 950, 'orçamento final com peça a mais');
+  const valorTitulo = await um(`select gross_amount::text from financial_entry where code = 'PED-0001'`);
+  prova('M Solicitante pede alteração do próprio pedido: PENDENTE, título continua com o valor antigo',
+    !m1.erro && m1.valor?.status === 'PENDENTE' && Number(m1.valor?.valorAnterior) === 800 && Number(m1.valor?.valorNovo) === 950 && valorTitulo === '800.00',
+    m1.erro ?? `${JSON.stringify(m1.valor)} · título ${valorTitulo}`);
+  const m2 = await pedirAlt(SOL, 'PED-0001', 950, 'repetido', false);
+  const m3 = await pedirAlt(SOL, 'PED-0001', 990, 'outra', false);
+  const m4 = await pedirAlt(SOL2, 'PED-0001', 990, 'não é meu', false);
+  const m5 = await pedirAlt(SOL, 'PED-0002', 300, 'igual', false);
+  const m6 = await pedirAlt(SOL, 'PED-0002', 310, ' ', false);
+  const m7 = await pedirAlt(SOL, 'PAG-9001', 10, 'pedido da casa', false);
+  prova('N regras da porta: repetido devolve o mesmo; outra pendente, pedido alheio, valor igual, sem motivo e lançamento comum recusados',
+    m2.valor?.repetido === true && !!m3.erro && !!m4.erro && !!m5.erro && !!m6.erro && !!m7.erro,
+    `rep ${m2.valor?.repetido ?? m2.erro} · outra ${m3.erro} · alheio ${m4.erro} · igual ${m5.erro} · motivo ${m6.erro} · casa ${m7.erro}`);
+  const solLe = await como(SOL, async () => um(`select count(*)::int from payment_change_request`));
+  const meusAlt = await como(SOL, async () => um(`select df_meus_pedidos()`));
+  const p1 = (meusAlt.valor ?? []).find((x) => x.codigo === 'PED-0001');
+  prova('O Solicitante não lê a tabela, mas vê a alteração no próprio pedido (df_meus_pedidos)', solLe.valor === 0 && p1?.alteracao?.status === 'PENDENTE' && Number(p1?.alteracao?.valorNovo) === 950,
+    `tabela ${solLe.valor ?? solLe.erro} · ${JSON.stringify(p1?.alteracao ?? null)}`);
+  const altId = m1.valor?.id;
+  const insDireto = await como(FIN, async () => q(`insert into payment_change_request (organization_id, entry_id, requested_by, previous_amount, new_amount, reason) select organization_id, id, $1, 1, 2, 'direto' from financial_entry where code = 'PAG-9001'`, [FIN]));
+  const delDireto = await como(ADMIN, async () => q(`delete from payment_change_request where id = $1`, [altId]));
+  const aindaExiste = await um(`select count(*)::int from payment_change_request where id = $1`, [altId]);
+  prova('P sem caminho direto: insert recusado (só pela porta) e nada é apagado', !!insDireto.erro && aindaExiste === 1, `insert: ${insDireto.erro} · delete: ${delDireto.erro ?? 'sem erro, 0 linhas'} · existe ${aindaExiste}`);
+  const semGravar = await como(FIN, async () => q(`update payment_change_request set status = 'ACEITA' where id = $1`, [altId]));
+  const solDecide = await como(SOL, async () => q(`update payment_change_request set status = 'ACEITA' where id = $1`, [altId]));
+  const mudaValor = await como(FIN, async () => q(`update payment_change_request set new_amount = 5 where id = $1`, [altId]));
+  const aceita = await como(FIN, async () => {
+    await q(`update financial_entry set gross_amount = 950 where code = 'PED-0001'`);
+    await q(`update payment_change_request set status = 'ACEITA' where id = $1`, [altId]);
+    return (await q(`select status, decided_by::text, decided_at is not null as em from payment_change_request where id = $1`, [altId]))[0];
+  }, { manter: true });
+  prova('Q decisão: aceitar sem gravar o valor no título é recusado; o pedido é imutável; Diretoria aceita e o gatilho grava quem e quando',
+    /novo valor no título/.test(semGravar.erro ?? '') && !!mudaValor.erro && aceita.valor?.status === 'ACEITA' && aceita.valor?.decided_by === FIN && aceita.valor?.em,
+    `sem gravar: ${semGravar.erro} · solicitante: ${solDecide.erro ?? 'sem erro, 0 linhas'} · muda valor: ${mudaValor.erro} · aceita: ${JSON.stringify(aceita.valor ?? aceita.erro)}`);
+  const redecide = await como(FIN, async () => q(`update payment_change_request set status = 'RECUSADA', decision_reason = 'mudei de ideia' where id = $1`, [altId]));
+  const m8 = await pedirAlt(SOL, 'PED-0001', 1000, 'mais um ajuste');
+  const recSem = await como(FIN, async () => q(`update payment_change_request set status = 'RECUSADA' where id = $1`, [m8.valor?.id]));
+  const cancOutro = await como(SOL2, async () => um(`select df_cancelar_alteracao($1)`, [m8.valor?.id]));
+  const canc = await como(SOL, async () => um(`select df_cancelar_alteracao($1)`, [m8.valor?.id]), { manter: true });
+  prova('R decidida não muda; recusa exige motivo; só quem pediu cancela',
+    !!redecide.erro && !!recSem.erro && !!cancOutro.erro && canc.valor?.status === 'CANCELADA',
+    `redecide ${redecide.erro} · recusa sem motivo ${recSem.erro} · outro cancela ${cancOutro.erro} · cancela ${canc.valor?.status ?? canc.erro}`);
+  await q(`update financial_entry set status = 'Cancelado', cancellation_reason = 'teste' where code = 'PED-0002'`);
+  const m9 = await pedirAlt(SOL, 'PED-0002', 400, 'depois de recusado', false);
+  const privAlt = await q(`select p, f, has_function_privilege(p, f, 'EXECUTE') pode from unnest(array['anon','authenticated']) p, unnest(array['df_pedir_alteracao(text,numeric,text)','df_cancelar_alteracao(uuid)','df_alteracao_json(payment_change_request)']) f`);
+  const privErrado = privAlt.filter((x) => (x.p === 'anon' ? x.pode : x.f.startsWith('df_alteracao_json') ? x.pode : !x.pode)).map((x) => `${x.p} ${x.f} ${x.pode}`);
+  prova('S pedido não aprovado não altera; anon não executa as portas novas', !!m9.erro && privErrado.length === 0, `${m9.erro} · ${privErrado.join(' · ')}`);
+
+  // ---- 0072: forma e dados de pagamento pela porta do Solicitante ----
+  const comPix = { ...pedido, valor: 120, descricao: 'Peça com PIX', formaPagamento: 'PIX', dadosPagamento: { pixTipo: 'CNPJ', pixChave: '11222333000181', favorecido: 'Oficina do Zé' } };
+  const t1 = await como(SOL, async () => um(`select df_registrar_pedido($1::jsonb)`, [JSON.stringify(comPix)]), { manter: true });
+  const t1Banco = (await q(`select payment_method, payment_details from financial_entry where code = $1`, [t1.valor?.codigo]))[0];
+  prova('T pedido com forma de pagamento: gravado no título e devolvido ao Solicitante',
+    !t1.erro && t1.valor?.formaPagamento === 'PIX' && t1.valor?.dadosPagamento?.pixChave === '11222333000181' && t1Banco?.payment_method === 'PIX' && t1Banco?.payment_details?.favorecido === 'Oficina do Zé',
+    t1.erro ?? JSON.stringify(t1Banco));
+  const ruins = [];
+  for (const [nome, extra] of [['forma inventada', { formaPagamento: 'Cheque', dadosPagamento: {} }], ['PIX sem chave', { formaPagamento: 'PIX', dadosPagamento: { pixTipo: 'CPF' } }], ['boleto curto', { formaPagamento: 'Boleto', dadosPagamento: { boletoLinha: '123' } }], ['transferência sem conta', { formaPagamento: 'Transferência', dadosPagamento: { banco: 'Itaú', agencia: '1', favorecido: 'X', documentoFavorecido: '1' } }]]) {
+    const r = await como(SOL, async () => um(`select df_registrar_pedido($1::jsonb)`, [JSON.stringify({ ...pedido, valor: 77, descricao: `ruim ${nome}`, ...extra })]));
+    if (!r.erro) ruins.push(`${nome} aceito`);
+  }
+  const semForma = await como(SOL, async () => um(`select df_registrar_pedido($1::jsonb)`, [JSON.stringify({ ...pedido, valor: 78, descricao: 'sem forma' })]));
+  const ck = await como(ADMIN, async () => q(`update financial_entry set payment_method = 'Cheque' where code = 'PAG-9001'`));
+  prova('U dados de pagamento incompletos ou forma fora do catálogo são recusados (porta e coluna); sem forma continua valendo',
+    ruins.length === 0 && !semForma.erro && semForma.valor?.formaPagamento === null && !!ck.erro, `${ruins.join(' · ')} · sem forma: ${semForma.erro ?? 'ok'} · coluna: ${ck.erro}`);
+  const meusT = await como(SOL, async () => um(`select df_meus_pedidos()`));
+  const p1t = (meusT.valor ?? []).find((x) => x.codigo === 'PED-0001');
+  prova('V df_meus_pedidos mantém a alteração da 0071 e traz a forma (0072)', ['ACEITA', 'CANCELADA'].includes(p1t?.alteracao?.status) && 'formaPagamento' in (p1t ?? {}), JSON.stringify({ alt: p1t?.alteracao?.status, forma: p1t?.formaPagamento }));
 
   // L. perfil inativo: nem as portas abrem
   await q(`update profile set active = false where id = $1`, [SOL2]);

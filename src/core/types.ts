@@ -1,6 +1,7 @@
 // Modelo de dominio do EIFF Control.
 // Espelha o catalogo de entidades do Blueprint Funcional v1 e preserva os campos da planilha.
 
+import type { DadosPagamento, FormaPagamento } from './pagamento';
 export type Cenario = 'Conservador' | 'Base' | 'Otimista';
 export type Registro = 'Real' | 'Exemplo';
 export type TipoLancamento = 'Entrada' | 'Saída';
@@ -225,6 +226,8 @@ export interface Lancamento {
   servicoId?: string;
   faturamentoDireto?: boolean; // compra paga pelo cliente direto ao fornecedor: abate o contrato global, nao passa pelo caixa nem pelo DRE da EIFF
   enviadoClienteEm?: string; // nota repassada ao cliente para faturamento direto (planilha: ENVIADO INVEST); vazio = nao enviada
+  formaPagamento?: FormaPagamento; // como pagar (payment_method, 0072): PIX, Boleto, Transferência, Cartão, Dinheiro
+  dadosPagamento?: DadosPagamento; // chave PIX, linha do boleto, conta para transferência (payment_details, 0072)
   contraparte: string;
   documento: string;
   descricao: string;
@@ -815,4 +818,22 @@ export interface Dataset {
   radar: RadarDataset; // EIFF Radar (src/core/radar)
   /** EIFF Inbox (src/core/inbox). Opcional: datasets antigos e o remoto sem persistencia nao trazem o slice; o store normaliza. */
   inbox?: InboxDataset;
+  /** Alteracoes de valor pedidas pela equipe nos pedidos ao Diretor Financeiro (payment_change_request, 0071). Opcional: datasets antigos nao trazem. */
+  alteracoesPedido?: AlteracaoPedido[];
+}
+
+export type StatusAlteracaoPedido = 'PENDENTE' | 'ACEITA' | 'RECUSADA' | 'CANCELADA';
+/** Pedido de alteracao de valor de um pedido de pagamento ao Diretor Financeiro: o titulo so muda quando a Diretoria aceita. */
+export interface AlteracaoPedido {
+  id: string;
+  lancamentoId: string; // codigo do pedido (PED-/PAG-)
+  solicitadoPor: string; // nome
+  solicitadoEm: string;
+  valorAnterior: number;
+  valorNovo: number;
+  motivo: string;
+  status: StatusAlteracaoPedido;
+  decididoPor?: string;
+  decididoEm?: string;
+  motivoDecisao?: string;
 }

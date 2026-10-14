@@ -28,6 +28,7 @@ import type {
   Dataset,
   Demanda,
   Divida,
+  AlteracaoPedido,
   Lancamento,
   Liquidacao,
   Medicao,
@@ -48,7 +49,8 @@ import type {
 import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
 import { planejarMovimentacao } from '../core/extratos';
 import { planejarResetExtrato } from '../core/resetExtrato';
-import { ORIGEM_DF, resumoParecer, type PrevisaoDF } from '../core/cfo';
+import { normalizarDadosPagamento, validarDadosPagamento } from '../core/pagamento';
+import { ORIGEM_DF, bloqueioAlteracao, fmt as moeda, resumoParecer, validarAlteracao, type PrevisaoDF } from '../core/cfo';
 import { ORIGEM_CAIXA, categoriaDoCaixa, validarLinhaCaixa, type NovaLinhaCaixa } from '../core/caixa';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
@@ -72,8 +74,8 @@ import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, t
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
-import { lancamentoDoPedido } from './solicitante';
+import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { alteracaoDoJson, alteracoesDosPedidos, lancamentoDoPedido } from './solicitante';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
 
@@ -330,6 +332,18 @@ export const getState = () => state;
 // Utilidades
 // ---------------------------------------------------------------------------
 const agora = () => new Date().toISOString();
+/**
+ * Alteracao de valor que veio da porta do banco (df_pedir_alteracao / df_cancelar_alteracao): entra no estado E na base ja
+ * sincronizada (o banco ja tem a linha; o diff nao deve tentar grava-la de novo, e a decisao seguinte precisa achar a PENDENTE).
+ */
+function incorporarAlteracao(a: AlteracaoPedido) {
+  const trocar = (ds: Dataset): Dataset => ({ ...ds, alteracoesPedido: [...(ds.alteracoesPedido ?? []).filter((x) => x.id !== a.id), a] });
+  if (baseSincronizada) baseSincronizada = trocar(baseSincronizada);
+  state = { ...state, ds: trocar(state.ds) };
+  persistir();
+  emit();
+}
+
 const seq = (prefix: string, ids: string[]): string => {
   let n = ids.length + 1;
   let id = `${prefix}-${String(n).padStart(4, '0')}`;
@@ -603,6 +617,8 @@ export function validarLancamento(ds: Dataset, l: Lancamento): string[] {
   if (!(l.valorBruto > 0)) erros.push('Valor bruto deve ser positivo.');
   if (l.retencoes < 0 || l.desconto < 0 || l.multaJuros < 0) erros.push('Retenções, descontos e juros devem ser positivos.');
   if (l.probabilidade < 0 || l.probabilidade > 1) erros.push('Probabilidade deve estar entre 0% e 100%.');
+  // forma e dados de pagamento (0072): opcionais, mas quando informados tem de estar completos e validos; so para saidas
+  if (l.formaPagamento) { if (plano?.tipo === 'Entrada') erros.push('Forma de pagamento é só para saídas.'); else erros.push(...validarDadosPagamento(l.formaPagamento, l.dadosPagamento)); }
   if (l.status === 'Realizado' && (!l.realizacao || !(l.valorRealizado ?? 0))) erros.push('Realizado exige data e valor realizados (use Liquidar).');
   if (plano && (plano.grupoFluxo === 'Custos Diretos de Obras' || plano.grupoDre === 'Receita Operacional') && !l.codigoObra)
     erros.push('Custos diretos e receitas de obra exigem Código Obra.');
@@ -806,6 +822,7 @@ export const actions = {
     const l = this.novoLancamento({
       categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
       status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
+      ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: normalizarDadosPagamento(p.formaPagamento, p.dadosPagamento) } : {}),
       // quem nao ve caixa nao tem o caixa completo no aparelho: o resumo do parecer sairia com numeros errados (a Diretoria ve o
       // parecer completo na Caixa/Central, calculado na hora)
       observacoes: state.usuario.papel === 'Solicitante' || !pode(state.usuario, 'ver_bancos')
@@ -830,7 +847,9 @@ export const actions = {
     if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return this.registrarPrevisaoDF(p);
     if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor do pedido deve ser positivo.');
     if (!p.vencimento) throw new RegraDeNegocioError('Data do pedido é obrigatória.');
-    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120) });
+    const erros = validarDadosPagamento(p.formaPagamento, p.dadosPagamento);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: normalizarDadosPagamento(p.formaPagamento, p.dadosPagamento) } : {}) });
     await this.atualizarPedidosSolicitante();
     return state.ds.lancamentos.find((x) => x.id === r.codigo) ?? lancamentoDoPedido(r, state.usuario.nome);
   },
@@ -839,11 +858,86 @@ export const actions = {
   async atualizarPedidosSolicitante() {
     if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return;
     const pedidos = await meusPedidosSolicitante();
-    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)) };
+    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)), alteracoesPedido: alteracoesDosPedidos(pedidos, state.usuario.nome) };
     baseSincronizada = ds;
     state = { ...state, ds };
     emit();
   },
+  /**
+   * Equipe: pede a alteracao de VALOR de um pedido proprio ao Diretor Financeiro (0071). O titulo NAO muda aqui: a alteracao
+   * fica PENDENTE ate a Diretoria aceitar (decidirAlteracaoValorDF). No modo remoto nasce pela porta df_pedir_alteracao, para
+   * todos os papeis (o Solicitante nao grava tabela nenhuma; os demais nao tem politica de INSERT nesta tabela).
+   */
+  async pedirAlteracaoValorDF(id: string, valor: number, motivo: string): Promise<AlteracaoPedido> {
+    exigir('pedir_pagamento');
+    const l = state.ds.lancamentos.find((x) => x.id === id);
+    if (!l || l.origem !== ORIGEM_DF || l.criadoPor !== state.usuario.nome) throw new RegraDeNegocioError('Pedido não encontrado entre os seus pedidos.');
+    const bloqueio = bloqueioAlteracao(state.ds, l);
+    if (bloqueio) throw new RegraDeNegocioError(bloqueio);
+    const v = Math.round(valor * 100) / 100;
+    const erros = validarAlteracao(l, v, motivo);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    if (state.modo === 'remoto') {
+      const r = await pedirAlteracaoRemota(id, v, motivo.trim());
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return alteracaoDoJson(r, state.usuario.nome); }
+      const a = alteracaoDoJson(r, state.usuario.nome);
+      incorporarAlteracao(a);
+      return a;
+    }
+    const a: AlteracaoPedido = { id: seq('ALT', (state.ds.alteracoesPedido ?? []).map((x) => x.id)), lancamentoId: id, solicitadoPor: state.usuario.nome, solicitadoEm: agora(), valorAnterior: l.valorBruto, valorNovo: v, motivo: motivo.trim(), status: 'PENDENTE' };
+    commit(registrar({ ...state.ds, alteracoesPedido: [...(state.ds.alteracoesPedido ?? []), a] }, 'pedir_alteracao_valor', 'lancamento', id, { valor: l.valorBruto }, { valor: v }, a.motivo));
+    return a;
+  },
+
+  /** Quem pediu desiste da alteracao ainda pendente. */
+  async cancelarAlteracaoValorDF(alteracaoId: string): Promise<void> {
+    const a = (state.ds.alteracoesPedido ?? []).find((x) => x.id === alteracaoId);
+    if (!a || a.solicitadoPor !== state.usuario.nome) throw new RegraDeNegocioError('Alteração não encontrada entre as suas.');
+    if (a.status !== 'PENDENTE') throw new RegraDeNegocioError('Alteração já decidida.');
+    if (state.modo === 'remoto') {
+      const r = await cancelarAlteracaoRemota(alteracaoId);
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return; }
+      incorporarAlteracao(alteracaoDoJson(r, state.usuario.nome));
+      return;
+    }
+    const c: AlteracaoPedido = { ...a, status: 'CANCELADA', decididoPor: state.usuario.nome, decididoEm: agora() };
+    commit(registrar({ ...state.ds, alteracoesPedido: (state.ds.alteracoesPedido ?? []).map((x) => (x.id === a.id ? c : x)) }, 'cancelar_alteracao_valor', 'lancamento', a.lancamentoId, a, c));
+  },
+
+  /**
+   * Diretoria decide a alteracao de valor. Aceitar grava o novo valor no titulo pelas regras normais (salvarLancamento: pedido
+   * ja programado volta a passar pelas alcadas com o novo valor; aprovacao pendente do valor antigo e devolvida) e marca ACEITA;
+   * recusar exige motivo, que o solicitante ve. O banco confere a decisao (gatilho da 0071).
+   */
+  decidirAlteracaoValorDF(alteracaoId: string, decisao: 'aceitar' | 'recusar', motivo = '') {
+    exigir('aprovar');
+    if (!PAPEIS_DECISAO_DF.includes(state.usuario.papel)) throw new RegraDeNegocioError(`Decisão de alteração de valor é da Diretoria: o perfil ${state.usuario.papel} não decide.`);
+    const a = (state.ds.alteracoesPedido ?? []).find((x) => x.id === alteracaoId);
+    if (!a) throw new RegraDeNegocioError('Alteração não encontrada.');
+    if (a.status !== 'PENDENTE') throw new RegraDeNegocioError('Alteração já decidida.');
+    if (a.solicitadoPor === state.usuario.nome && state.usuario.papel !== 'Administrador') throw new RegraDeNegocioError('Segregação de funções: quem pediu não decide a própria alteração.');
+    const l = state.ds.lancamentos.find((x) => x.id === a.lancamentoId);
+    if (!l) throw new RegraDeNegocioError('Pedido não encontrado.');
+    const decidida = (status: 'ACEITA' | 'RECUSADA', motivoDecisao?: string): AlteracaoPedido => ({ ...a, status, decididoPor: state.usuario.nome, decididoEm: agora(), motivoDecisao });
+    if (decisao === 'recusar') {
+      if (motivo.trim().length < 3) throw new RegraDeNegocioError('Informe o motivo da recusa (o solicitante vê).');
+      const r = decidida('RECUSADA', motivo.trim());
+      commit(registrar({ ...state.ds, alteracoesPedido: (state.ds.alteracoesPedido ?? []).map((x) => (x.id === a.id ? r : x)) }, 'recusar_alteracao_valor', 'lancamento', l.id, a, r, r.motivoDecisao));
+      return;
+    }
+    if (l.status === 'Realizado' || l.status === 'Cancelado' || l.excluidoEm || state.ds.liquidacoes.some((q) => q.lancamentoId === l.id)) {
+      throw new RegraDeNegocioError('O pedido mudou desde a alteração (pago, cancelado ou com pagamento registrado): recuse a alteração.');
+    }
+    const nota = `Valor alterado de ${moeda(a.valorAnterior)} para ${moeda(a.valorNovo)} a pedido de ${a.solicitadoPor} (${a.motivo}); aceito por ${state.usuario.nome} em ${agora().slice(0, 10).split('-').reverse().join('/')}.`;
+    if (l.status === 'Pendente') {
+      // a aprovacao em curso era do valor antigo: devolve, e salvarLancamento reabre a alcada com o novo valor
+      state = { ...state, ds: { ...state.ds, aprovacoes: state.ds.aprovacoes.map((x) => (x.entidadeId === l.id && x.status === 'Pendente' ? { ...x, status: 'Devolvido' as const } : x)) } };
+    }
+    this.salvarLancamento({ ...l, status: l.status === 'Pendente' ? 'Programado' : l.status, valorBruto: a.valorNovo, observacoes: `${l.observacoes}\n${nota}`.trim() });
+    const ac = decidida('ACEITA');
+    commit(registrar({ ...state.ds, alteracoesPedido: (state.ds.alteracoesPedido ?? []).map((x) => (x.id === a.id ? ac : x)) }, 'aceitar_alteracao_valor', 'lancamento', l.id, a, ac));
+  },
+
   /** Alinhamento diario (Diretoria/Financeiro): programar (vira lancamento oficial, alcadas normais), reagendar (segue rascunho) ou recusar (cancela com motivo). */
   decidirPrevisaoDF(id: string, decisao: 'programar' | 'reagendar' | 'recusar', dados: { vencimento?: string; motivo?: string } = {}) {
     exigir('aprovar');
