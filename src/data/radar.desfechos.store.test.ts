@@ -38,9 +38,9 @@ describe('E3 · valor fechado separado do estimado (E0 ajustado)', () => {
 
   it('valor fechado só ao marcar como ganha; valor inválido recusado', () => {
     expect(motivosRecusaTransicao({ estagio: 'QUALIFIED' }, 'PRICING', { valorFechado: 10 })).toEqual(['O valor fechado só é informado ao marcar como ganha.']);
-    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'ok', valorFechado: 0 })[0]).toMatch(/positivo/);
-    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'ok', valorFechado: 10.001 })[0]).toMatch(/2 casas/);
-    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'ok', valorFechado: 1e12 + 1 })[0]).toMatch(/máximo/);
+    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'motivo ok', valorFechado: 0 })[0]).toMatch(/positivo/);
+    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'motivo ok', valorFechado: 10.001 })[0]).toMatch(/2 casas/);
+    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'motivo ok', valorFechado: 1e12 + 1 })[0]).toMatch(/máximo/);
     const o = ativa();
     expect(() => formulario(o, 'WON', 'x', { valorFechado: 10.001 })).toThrow(RegraDeNegocioError);
     expect(livro(o.id)).toEqual([]);
@@ -106,15 +106,38 @@ describe('E3 · complemento governado (Administrador e Diretoria)', () => {
 });
 
 describe('E3 · livro indisponível (banco sem a 0070) e guardas de fonte', () => {
-  it('sem o livro, marcar ganha COM valor fechado é recusado (o valor não se perde em silêncio); sem valor segue', () => {
-    const r = radar();
+  it('código publicado / 0070 não aplicada: criar ganha, marcar como ganha (com ou sem valor) e reabrir ganha ficam bloqueados; nada muda', () => {
+    const livro = radar().desfechos ?? [];
+    const ganhaAntes = formulario(ativa(), 'WON', 'ganha antes do bloqueio', { valorFechado: 50 }); // ganha com o livro disponível
     try {
       (getState().ds.radar as { desfechos?: unknown }).desfechos = undefined;
       const o = ativa();
-      expect(() => formulario(o, 'WON', 'assinado', { valorFechado: 10 })).toThrow(/livro de desfechos ainda não está disponível/);
-      expect(formulario(opp(o.id), 'WON', 'assinado').estagio).toBe('WON');
+      const nAud = getState().ds.auditoria.length;
+      const nHist = radar().historicoEstagios.length;
+      expect(() => formulario(o, 'WON', 'assinado', { valorFechado: 10 })).toThrow(/bloqueado.*Nada foi alterado/);
+      expect(() => formulario(opp(o.id), 'WON', 'assinado sem valor')).toThrow(/bloqueado/); // nem a alternativa "sem valor"
+      const nova = { ...actions.novaOportunidadeRadar(empresa), titulo: 'Nasce ganha bloqueada', estagio: 'WON' as const };
+      expect(() => gravarOportunidadeDoFormulario(nova, nova, 'fechado na criação', false)).toThrow(/bloqueado/);
+      expect(() => formulario(opp(ganhaAntes.id), 'NEGOTIATION', 'reabrir sem livro', { proximaAcao: 'Rever', proximaAcaoEm: '2026-10-30' })).toThrow(/bloqueado/);
+      expect(() => formulario(opp(ganhaAntes.id), 'LOST', 'perder sem livro')).toThrow(/bloqueado/);
+      // nada mudou: estágios, histórico, auditoria e nenhuma oportunidade nova
+      expect([opp(o.id).estagio, opp(ganhaAntes.id).estagio, radar().historicoEstagios.length, getState().ds.auditoria.length, radar().oportunidades.some((x) => x.titulo === 'Nasce ganha bloqueada')]).toEqual(['NEGOTIATION', 'WON', nHist, nAud, false]);
+      // transições sem WON seguem normalmente
+      expect(formulario(opp(o.id), 'PRICING', '', { proximaAcao: 'Precificar', proximaAcaoEm: '2026-10-28' }).estagio).toBe('PRICING');
       expect(() => actions.complementarValorGanhoRadar('x', 1, 'motivo')).toThrow(/não está disponível/);
-    } finally { (getState().ds.radar as { desfechos?: unknown }).desfechos = r.desfechos ?? []; }
+    } finally { (getState().ds.radar as { desfechos?: unknown }).desfechos = livro; }
+  });
+
+  it('motivo para entrar/sair de WON: de 3 a 500 caracteres e NOVO (diferente do anterior), como o banco exige', () => {
+    expect(motivosRecusaTransicao({ estagio: 'PRICING' }, 'WON', { motivo: 'ok' })).toEqual(['O motivo precisa ter de 3 a 500 caracteres.']);
+    expect(motivosRecusaTransicao({ estagio: 'WON', motivoEstagio: 'contrato assinado' }, 'NEGOTIATION', { motivo: ' contrato assinado ' })).toEqual(['Informe o motivo desta mudança de estágio: ele é igual ao da mudança anterior.']);
+    const o = ativa();
+    const g = formulario(o, 'WON', 'contrato assinado', { valorFechado: 10 });
+    expect(g.motivoEstagio).toBe('contrato assinado');
+    expect(() => formulario(g, 'NEGOTIATION', 'contrato assinado', { proximaAcao: 'Rever', proximaAcaoEm: '2026-10-30' })).toThrow(/igual ao da mudança anterior/);
+    const r = formulario(opp(o.id), 'NEGOTIATION', 'cliente pediu revisão', { proximaAcao: 'Rever', proximaAcaoEm: '2026-10-30' });
+    expect(livro(o.id).map((e) => [e.tipo, e.motivo])).toEqual([['GANHO', 'contrato assinado'], ['ESTORNO_GANHO', 'cliente pediu revisão']]);
+    expect(actions.salvarOportunidadeRadar({ ...r, motivoEstagio: 'reescrito fora da transição' }).motivoEstagio).toBe('cliente pediu revisão');
   });
 
   it('no remoto o store nunca fabrica ganho nem estorno (o gatilho do banco grava)', () => {

@@ -82,13 +82,13 @@ try {
   const empresa = await um(`insert into radar_company (organization_id, legal_name, commercial_owner_id) values ($1, 'Conta Teste', $2) returning id`, [org, DONO_CONTA]);
   const empresa2 = await um(`insert into radar_company (organization_id, legal_name) values ($1, 'Outra Conta') returning id`, [org]);
   const empresaFora = await um(`insert into radar_company (organization_id, legal_name) values ($1, 'Conta de fora') returning id`, [outraOrg]);
-  const novaOpp = async (titulo, stage = 'NEGOTIATION', extra = {}) => um(`insert into radar_opportunity (organization_id, company_id, title, stage, estimated_value, owner_id, created_by, won_amount, close_reason)
-    values ($1, $2, $3, $4, 500000, $5, $5, $6, $7) returning id`, [extra.org ?? org, extra.empresa ?? empresa, titulo, stage, extra.owner ?? ADM, extra.won ?? null, extra.motivo ?? null]);
+  const novaOpp = async (titulo, stage = 'NEGOTIATION', extra = {}) => um(`insert into radar_opportunity (organization_id, company_id, title, stage, estimated_value, owner_id, created_by, won_amount, close_reason, stage_reason)
+    values ($1, $2, $3, $4, 500000, $5, $5, $6, $7, $7) returning id`, [extra.org ?? org, extra.empresa ?? empresa, titulo, stage, extra.owner ?? ADM, extra.won ?? null, extra.motivo ?? (stage === 'WON' ? 'criada ganha' : null)]);
   const eventos = (opp) => q(`select id, event_type, won_event_id, amount::text, occurred_at, from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source, organization_id, company_id
     from radar_commercial_outcome where opportunity_id = $1 order by occurred_at`, [opp]);
   const audits = (acao) => um(`select count(*)::int from audit_log where action = $1`, [acao]);
-  const ganhar = (uid, opp, valor, motivo = 'contrato assinado') => como(uid, () => q(`update radar_opportunity set stage = 'WON', won_amount = $2, close_reason = $3, closed_at = now(), next_action = null, next_action_at = null where id = $1`, [opp, valor, motivo]));
-  const reabrir = (uid, opp, para = 'NEGOTIATION') => como(uid, () => q(`update radar_opportunity set stage = $2, closed_at = null where id = $1`, [opp, para]));
+  const ganhar = (uid, opp, valor, motivo = 'contrato assinado') => como(uid, () => q(`update radar_opportunity set stage = 'WON', won_amount = $2, close_reason = $3, stage_reason = $3, closed_at = now(), next_action = null, next_action_at = null where id = $1`, [opp, valor, motivo]));
+  const reabrir = (uid, opp, para = 'NEGOTIATION', motivo = 'cliente pediu revisão') => como(uid, () => q(`update radar_opportunity set stage = $2, stage_reason = $3, closed_at = null where id = $1`, [opp, para, motivo]));
 
   console.log('A. objetos, hardening e permissões');
   const funcs = await q(`select proname, prosecdef, array_to_string(proconfig, ';') c from pg_proc where proname in ('radar_commercial_outcome_coerencia','radar_commercial_outcome_imutavel','radar_opportunity_ganho_travado','radar_opportunity_desfecho','radar_complementar_valor_ganho') order by 1`);
@@ -96,6 +96,8 @@ try {
   igual('só o gatilho dos desfechos e a RPC de complemento são security definer', funcs.filter((f) => f.prosecdef).map((f) => f.proname), ['radar_complementar_valor_ganho', 'radar_opportunity_desfecho']);
   igual('authenticated só lê o livro; anon nada', [await um(`select has_table_privilege('authenticated','public.radar_commercial_outcome','select')`), await um(`select has_table_privilege('authenticated','public.radar_commercial_outcome','insert') or has_table_privilege('authenticated','public.radar_commercial_outcome','update') or has_table_privilege('authenticated','public.radar_commercial_outcome','delete')`), await um(`select has_table_privilege('anon','public.radar_commercial_outcome','select')`)], [true, false, false]);
   igual('RPC de complemento: authenticated executa, anon não', [await um(`select has_function_privilege('authenticated','public.radar_complementar_valor_ganho(uuid, numeric, text)','execute')`), await um(`select has_function_privilege('anon','public.radar_complementar_valor_ganho(uuid, numeric, text)','execute')`)], [true, false]);
+  igual('funções de gatilho sem EXECUTE para ninguém (não servem para criar outro gatilho)', await um(`select bool_or(has_function_privilege(r, f, 'execute')) from unnest(array['public','anon','authenticated','service_role']) r, unnest(array['public.radar_opportunity_desfecho()','public.radar_opportunity_ganho_travado()','public.radar_commercial_outcome_coerencia()','public.radar_commercial_outcome_imutavel()']) f where r <> 'public'`), false);
+  igual('service_role também só lê o livro (nenhuma escrita direta, nem do servidor)', [await um(`select has_table_privilege('service_role','public.radar_commercial_outcome','select')`), await um(`select has_table_privilege('service_role','public.radar_commercial_outcome','insert') or has_table_privilege('service_role','public.radar_commercial_outcome','update') or has_table_privilege('service_role','public.radar_commercial_outcome','delete')`)], [true, false]);
   igual('RLS ligada no livro', await um(`select relrowsecurity from pg_class where oid = 'public.radar_commercial_outcome'::regclass`), true);
 
   console.log('\nB. GANHO ao entrar em WON, com tudo congelado');
@@ -127,6 +129,7 @@ try {
   ev = await eventos(opp1);
   igual('GANHO + ESTORNO_GANHO citando o ganho original', ev.map((e) => [e.event_type, e.won_event_id]), [['GANHO', null], ['ESTORNO_GANHO', g1Id]]);
   igual('estorno congela o mesmo responsável e dono do ganho; sem valor próprio (vale o do ganho)', [ev[1].owner_id, ev[1].account_owner_id, ev[1].amount, ev[1].from_stage, ev[1].to_stage, ev[1].actor_id], [ADM, DONO_CONTA, null, 'WON', 'NEGOTIATION', ADM]);
+  igual('o motivo da reabertura está no estorno e na auditoria do estorno', [ev[1].reason, await um(`select reason from audit_log where action = 'radar_desfecho_estorno' and entity_id = $1`, [ev[1].id])], ['cliente pediu revisão', 'cliente pediu revisão']);
   igual('ao sair de WON o valor fechado da oportunidade é limpo (fica no livro)', await um(`select won_amount from radar_opportunity where id = $1`, [opp1]), null);
 
   console.log('\nF. novo ganho depois de reabrir; LOST também estorna');
@@ -134,13 +137,13 @@ try {
   ev = await eventos(opp1);
   igual('GANHO, ESTORNO, GANHO — o segundo é o vigente', ev.map((e) => [e.event_type, e.amount]), [['GANHO', '1250000.50'], ['ESTORNO_GANHO', null], ['GANHO', '1300000.00']]);
   const g2Id = ev[2].id;
-  igual('ganha → perdida estorna o ganho vigente', (await como(ADM, () => q(`update radar_opportunity set stage = 'LOST', close_reason = 'cancelado pelo cliente' where id = $1`, [opp1]))).erro, null);
+  igual('ganha → perdida estorna o ganho vigente', (await como(ADM, () => q(`update radar_opportunity set stage = 'LOST', close_reason = 'cancelado pelo cliente', stage_reason = 'cancelado pelo cliente' where id = $1`, [opp1]))).erro, null);
   ev = await eventos(opp1);
   igual('estorno do segundo ganho', [ev.length, ev[3].event_type, ev[3].won_event_id, ev[3].to_stage], [4, 'ESTORNO_GANHO', g2Id, 'LOST']);
   igual('um estorno por ganho (índice único)', await um(`select count(*)::int from radar_commercial_outcome where won_event_id = $1 and event_type = 'ESTORNO_GANHO'`, [g1Id]), 1);
 
   console.log('\nG. criação já ganha');
-  const opp2 = await como(ADM, () => um(`insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by, won_amount, close_reason, closed_at) values ($1, $2, 'Nasce ganha', 'WON', $3, $3, 880000, 'fechado na criação', now()) returning id`, [org, empresa, ADM]));
+  const opp2 = await como(ADM, () => um(`insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by, won_amount, close_reason, stage_reason, closed_at) values ($1, $2, 'Nasce ganha', 'WON', $3, $3, 880000, 'fechado na criação', 'fechado na criação', now()) returning id`, [org, empresa, ADM]));
   igual('INSERT já como WON pelo authenticated', opp2.erro, null);
   ev = await eventos(opp2.valor);
   igual('GANHO sem estágio de origem', ev.map((e) => [e.event_type, e.amount, e.from_stage, e.to_stage]), [['GANHO', '880000.00', null, 'WON']]);
@@ -195,15 +198,15 @@ try {
   const oppFora = await novaOpp('De fora', 'NEGOTIATION', { org: outraOrg, empresa: empresaFora, owner: ADM_FORA });
   igual('ganho na outra organização fica nela', (await ganhar(ADM_FORA, oppFora, 10)).erro, null);
   igual('…e a EIFF continua sem ver', (await como(ADM, () => um(`select count(*)::int from radar_commercial_outcome where organization_id = $1`, [outraOrg]))).valor, 0);
-  const alheia = await como(ADM, () => q(`update radar_opportunity set stage = 'LOST' where id = $1 returning id`, [oppFora]));
+  const alheia = await como(ADM, () => q(`update radar_opportunity set stage = 'LOST', stage_reason = 'tentativa alheia' where id = $1 returning id`, [oppFora]));
   igual('Administrador da EIFF não alcança oportunidade de outra organização (RLS: 0 linhas) e nada é estornado', [alheia.valor?.length ?? alheia.erro, await um(`select stage from radar_opportunity where id = $1`, [oppFora]), await um(`select count(*)::int from radar_commercial_outcome where opportunity_id = $1`, [oppFora])], [0, 'WON', 1]);
 
   console.log('\nL. valor fechado só em oportunidade ganha');
   const opp5 = await novaOpp('Valor em aberta');
   await como(ADM, () => q(`update radar_opportunity set won_amount = 999 where id = $1`, [opp5]));
   igual('won_amount em oportunidade aberta é descartado pelo banco', await um(`select won_amount from radar_opportunity where id = $1`, [opp5]), null);
-  await recusa('won_amount zero recusado', ADM, `update radar_opportunity set stage = 'WON', won_amount = 0, close_reason = 'x' where id = $1`, [opp5], 'won_amount_valido');
-  await recusa('won_amount acima do teto recusado', ADM, `update radar_opportunity set stage = 'WON', won_amount = 1000000000000.01, close_reason = 'x' where id = $1`, [opp5], '');
+  await recusa('won_amount zero recusado', ADM, `update radar_opportunity set stage = 'WON', won_amount = 0, close_reason = 'x', stage_reason = 'motivo válido' where id = $1`, [opp5], 'won_amount_valido');
+  await recusa('won_amount acima do teto recusado', ADM, `update radar_opportunity set stage = 'WON', won_amount = 1000000000000.01, close_reason = 'x', stage_reason = 'motivo válido' where id = $1`, [opp5], '');
   igual('…e nenhum evento ficou', (await eventos(opp5)).length, 0);
 
   console.log('\nM. oportunidade com eventos não é apagada');
@@ -219,7 +222,7 @@ try {
   await q(`insert into pg_temp.profile values ($1, $2, 'Sombra', 'Administrador', true)`, [COMPRAS, org]);
   // a mudança de estágio roda como dono do banco: as funções auxiliares antigas (current_org/has_role, 0003) não fixam
   // search_path e a sombra de profile afetaria a RLS — achado fora da E3, registrado no PR. Aqui o alvo é o gatilho.
-  await q(`update radar_opportunity set stage = 'WON', close_reason = 'sem valor', closed_at = now() where id = $1`, [opp6]);
+  await q(`update radar_opportunity set stage = 'WON', close_reason = 'sem valor', stage_reason = 'sem valor', closed_at = now() where id = $1`, [opp6]);
   const g6 = (await q(`select id from public.radar_commercial_outcome where opportunity_id = $1`, [opp6]))[0].id;
   await recusa('perfil falso em tabela temporária não deixa o Compras complementar', COMPRAS, RPC, [g6, 10, 'tentativa'], 'sem permissão');
   igual('o gatilho da 0070 gravou no livro e na auditoria reais, nada nas temporárias; o dono da conta veio da radar_company real', [await um(`select count(*)::int from public.radar_commercial_outcome where opportunity_id = $1`, [opp6]), await um(`select account_owner_id from public.radar_commercial_outcome where opportunity_id = $1`, [opp6]), await um(`select count(*)::int from public.audit_log where action = 'radar_desfecho_ganho' and entity_id = $1`, [g6]), await um(`select count(*)::int from pg_temp.radar_commercial_outcome`), await um(`select count(*)::int from pg_temp.audit_log where action like 'radar_desfecho%'`)], [1, DONO_CONTA, 1, 0, 0]);
@@ -231,6 +234,44 @@ try {
   console.log('\nO. o contrato EventoDesfecho do motor E1 sai do livro sem tradução de regra');
   const livro = await q(`select id, event_type tipo, opportunity_id, company_id, to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') ocorrido, amount::text valor, won_event_id, owner_id, account_owner_id, reason, actor_id from radar_commercial_outcome where organization_id = $1 order by occurred_at`, [org]);
   igual('todo evento tem tipo do catálogo, instante com fuso e referência coerente', livro.every((e) => ['GANHO', 'ESTORNO_GANHO', 'COMPLEMENTO_VALOR'].includes(e.tipo) && /Z$/.test(e.ocorrido) && ((e.tipo === 'GANHO') === (e.won_event_id === null))), true);
+
+  console.log('\nQ. hardening pré-merge: responsável, motivo obrigatório, gatilho privilegiado, ordem no tempo');
+  // Q1 responsável travado inclusive de vazio para alguém
+  const oppSemDono = await um(`insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by, stage_reason, close_reason, closed_at) values ($1, $2, 'Ganha sem responsável', 'WON', null, $3, 'ganha sem responsável', 'ganha sem responsável', now()) returning id`, [org, empresa, ADM]);
+  await recusa('ganha: responsável não muda nem de vazio para alguém', ADM, `update radar_opportunity set owner_id = $2 where id = $1`, [oppSemDono, ADM], 'oportunidade ganha não muda');
+  // Q2 motivo obrigatório e NOVO para sair de WON (escrita direta)
+  const oppMot = await novaOpp('Motivo obrigatório');
+  await ganhar(ADM, oppMot, 100, 'ganho inicial');
+  const nEventos = (await eventos(oppMot)).length;
+  await recusa('reabrir só trocando o estágio (motivo antigo reaproveitado) é recusado', ADM, `update radar_opportunity set stage = 'NEGOTIATION' where id = $1`, [oppMot], 'motivo desta mudança');
+  await recusa('reabrir repetindo o motivo anterior é recusado', ADM, `update radar_opportunity set stage = 'NEGOTIATION', stage_reason = 'ganho inicial' where id = $1`, [oppMot], 'motivo desta mudança');
+  await recusa('reabrir com motivo vazio é recusado', ADM, `update radar_opportunity set stage = 'NEGOTIATION', stage_reason = '  ' where id = $1`, [oppMot], 'informe o motivo');
+  await recusa('nem o dono do banco reabre sem motivo novo', 'DONO', `update radar_opportunity set stage = 'LOST' where id = $1`, [oppMot], 'motivo desta mudança');
+  igual('…e nada mudou: continua ganha, sem estorno', [await um(`select stage from radar_opportunity where id = $1`, [oppMot]), (await eventos(oppMot)).length], ['WON', nEventos]);
+  igual('fora de uma transição o motivo não é editável (escrita direta é ignorada)', [(await como(ADM, () => q(`update radar_opportunity set stage_reason = 'reescrito' where id = $1`, [oppMot]))).erro, await um(`select stage_reason from radar_opportunity where id = $1`, [oppMot])], [null, 'ganho inicial']);
+  const oppSem = await novaOpp('Ganha sem motivo');
+  await recusa('marcar como ganha sem motivo é recusado', ADM, `update radar_opportunity set stage = 'WON' where id = $1`, [oppSem], 'informe o motivo');
+  await recusa('criar já ganha sem motivo é recusado', ADM, `insert into radar_opportunity (organization_id, company_id, title, stage, owner_id, created_by) values ($1, $2, 'Sem motivo', 'WON', $3, $3)`, [org, empresa, ADM], 'informe o motivo');
+  igual('…e nenhum ganho foi gravado', (await eventos(oppSem)).length, 0);
+  // Q3 gatilho privilegiado não serve fora da tabela real
+  const forjar = await como(ADM, async () => { await q(`create temp table radar_opportunity (like public.radar_opportunity)`); await q(`create trigger zz_forja after insert on pg_temp.radar_opportunity for each row execute function public.radar_opportunity_desfecho()`); });
+  igual('authenticated não cria gatilho com a função privilegiada (sem EXECUTE)', /permission denied/.test(forjar.erro ?? ''), true);
+  const forjar2 = await como(ADM, async () => { await q(`create temp table radar_opportunity (like public.radar_opportunity)`); await q(`create trigger zz_forja before insert on pg_temp.radar_opportunity for each row execute function public.radar_opportunity_ganho_travado()`); });
+  igual('nem com a função da trava', /permission denied/.test(forjar2.erro ?? ''), true);
+  const livroAntes = await um(`select count(*)::int from public.radar_commercial_outcome`);
+  await db.exec(`create temp table radar_opportunity (like public.radar_opportunity); create trigger zz_forja after insert on pg_temp.radar_opportunity for each row execute function public.radar_opportunity_desfecho();`);
+  await recusa('mesmo criado pelo dono do banco, o gatilho numa tabela de mesmo formato é recusado', 'DONO', `insert into pg_temp.radar_opportunity (id, organization_id, company_id, title, stage, probability, version, created_at, updated_at, stage_reason) values ($1, $2, $3, 'forjada', 'WON', 1, 1, now(), now(), 'forjando')`, [oppMot, org, empresa], 'gatilho fora da tabela');
+  await db.exec(`drop table pg_temp.radar_opportunity;`);
+  igual('nenhuma inserção indevida no livro', await um(`select count(*)::int from public.radar_commercial_outcome`), livroAntes);
+  { const n = 'spsr'; await db.exec('savepoint ' + n + '; set local role service_role;'); let erro = null; try { await q('insert into public.radar_commercial_outcome (organization_id, opportunity_id, company_id, event_type, reason, source) values ($1, $2, $3, ' + "'GANHO', 'forjado', 'rpc')", [org, oppSem, empresa]); } catch (e) { erro = so(e); } await db.exec('rollback to savepoint ' + n + '; reset role;');
+    igual('service_role não insere no livro', /permission denied/.test(erro ?? 'ACEITO'), true); }
+  // Q4 ordem no tempo: GANHO → ESTORNO → GANHO na MESMA transação saem com instantes estritamente crescentes (microssegundos)
+  const oppT = await novaOpp('Ordem no tempo');
+  await ganhar(ADM, oppT, 10, 'ganho 1');
+  await reabrir(ADM, oppT, 'NEGOTIATION', 'reabertura 1');
+  await ganhar(ADM, oppT, 20, 'ganho 2');
+  const tempos = await q(`select event_type, to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') t from radar_commercial_outcome where opportunity_id = $1 order by occurred_at`, [oppT]);
+  igual('na mesma transação: GANHO, ESTORNO, GANHO com instantes estritamente crescentes (µs)', [tempos.map((x) => x.event_type), tempos.every((x, i) => i === 0 || x.t > tempos[i - 1].t)], [['GANHO', 'ESTORNO_GANHO', 'GANHO'], true]);
 
   await db.exec('rollback;');
 

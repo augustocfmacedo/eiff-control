@@ -25,6 +25,12 @@ alter table public.radar_opportunity add constraint radar_opportunity_won_amount
   check (won_amount is null or stage = 'WON');
 comment on column public.radar_opportunity.won_amount is
   'CD-D3/E3: valor fechado confirmado ao marcar WON (vazio = ganho sem valor, sinalizado). Nunca copiado de estimated_value.';
+-- motivo da ÚLTIMA mudança de estágio: obrigatório (e novo) para entrar ou sair de WON; vai para o evento e a auditoria
+alter table public.radar_opportunity add column stage_reason text;
+alter table public.radar_opportunity add constraint radar_opportunity_stage_reason_tamanho
+  check (stage_reason is null or char_length(stage_reason) <= 500);
+comment on column public.radar_opportunity.stage_reason is
+  'CD-D3/E3: motivo da última mudança de estágio. Entrar ou sair de WON exige um motivo NOVO (3 a 500); fora de uma transição não muda.';
 
 -- ---------------------------------------------------------------------------------------- livro de desfechos
 create table public.radar_commercial_outcome (
@@ -41,14 +47,16 @@ create table public.radar_commercial_outcome (
   owner_id uuid,
   account_owner_id uuid,
   actor_id uuid,
-  reason text check (reason is null or char_length(reason) <= 500),
+  reason text not null,
   source text not null check (source in ('trigger', 'rpc')),
   created_at timestamptz not null default now(),
   constraint radar_commercial_outcome_ganho_ref check ((event_type = 'GANHO') = (won_event_id is null)),
   constraint radar_commercial_outcome_valor check (
     (event_type = 'GANHO')
     or (event_type = 'ESTORNO_GANHO' and amount is null)
-    or (event_type = 'COMPLEMENTO_VALOR' and amount is not null and reason is not null and char_length(btrim(reason)) >= 3))
+    or (event_type = 'COMPLEMENTO_VALOR' and amount is not null)),
+  -- todo evento tem justificativa: ganho e estorno levam o motivo da transição; complemento, o motivo da correção
+  constraint radar_commercial_outcome_motivo check (char_length(btrim(reason)) between 3 and 500)
 );
 create unique index radar_commercial_outcome_estorno_unico on public.radar_commercial_outcome (won_event_id) where event_type = 'ESTORNO_GANHO';
 create unique index radar_commercial_outcome_complemento_unico on public.radar_commercial_outcome (won_event_id) where event_type = 'COMPLEMENTO_VALOR';
@@ -98,24 +106,43 @@ create trigger radar_commercial_outcome_sem_truncate before truncate on public.r
 
 alter table public.radar_commercial_outcome enable row level security;
 create policy radar_commercial_outcome_select on public.radar_commercial_outcome for select using (organization_id = public.current_org());
-revoke all on public.radar_commercial_outcome from public, anon, authenticated;
-grant select on public.radar_commercial_outcome to authenticated;
+-- ninguém escreve direto, nem a chave de serviço do servidor: só as funções do banco (dono) inserem
+revoke all on public.radar_commercial_outcome from public, anon, authenticated, service_role;
+grant select on public.radar_commercial_outcome to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------------------- oportunidade ganha travada
 -- Valor fechado só existe em oportunidade ganha (sair de WON limpa). Ganha e mantida ganha: valor fechado, valor
--- estimado, empresa, responsável, organização e data de fechamento não mudam (corrigir = reabrir com motivo).
+-- estimado, empresa, responsável (inclusive de vazio para alguém), organização e data de fechamento não mudam
+-- (corrigir = reabrir com motivo). Entrar ou sair de WON exige um motivo NOVO em stage_reason: escrita direta que só
+-- troca o estágio (ou repete o motivo anterior) é recusada; fora de uma transição o motivo não muda.
 create or replace function public.radar_opportunity_ganho_travado() returns trigger language plpgsql
 set search_path = pg_catalog, pg_temp as $$
 begin
+  if tg_relid is distinct from 'public.radar_opportunity'::regclass then
+    raise exception 'desfecho: gatilho fora da tabela de oportunidades';
+  end if;
   if new.stage is distinct from 'WON' then new.won_amount := null; end if;
-  if tg_op = 'UPDATE' and old.stage = 'WON' and new.stage = 'WON' and (
-       new.won_amount is distinct from old.won_amount
-    or new.estimated_value is distinct from old.estimated_value
-    or new.company_id is distinct from old.company_id
-    or new.organization_id is distinct from old.organization_id
-    or new.closed_at is distinct from old.closed_at
-    or (old.owner_id is not null and new.owner_id is distinct from old.owner_id)) then
-    raise exception 'desfecho: oportunidade ganha não muda valor, empresa, responsável nem data de fechamento (reabra com motivo)';
+  if tg_op = 'UPDATE' and new.stage is not distinct from old.stage then
+    new.stage_reason := old.stage_reason;
+    if old.stage = 'WON' and (
+         new.won_amount is distinct from old.won_amount
+      or new.estimated_value is distinct from old.estimated_value
+      or new.company_id is distinct from old.company_id
+      or new.organization_id is distinct from old.organization_id
+      or new.closed_at is distinct from old.closed_at
+      or new.owner_id is distinct from old.owner_id) then
+      raise exception 'desfecho: oportunidade ganha não muda valor, empresa, responsável nem data de fechamento (reabra com motivo)';
+    end if;
+    return new;
+  end if;
+  -- transição (ou criação): entrar ou sair de WON exige motivo novo
+  if new.stage = 'WON' or (tg_op = 'UPDATE' and old.stage = 'WON') then
+    if pg_catalog.char_length(pg_catalog.btrim(coalesce(new.stage_reason, ''))) < 3 then
+      raise exception 'desfecho: informe o motivo (3 a 500 caracteres) para marcar como ganha ou reabrir uma ganha';
+    end if;
+    if tg_op = 'UPDATE' and new.stage_reason is not distinct from old.stage_reason then
+      raise exception 'desfecho: informe o motivo desta mudança de estágio (o motivo anterior não vale de novo)';
+    end if;
   end if;
   return new;
 end $$;
@@ -134,6 +161,10 @@ declare
   v_dono uuid;
   v_id uuid;
 begin
+  -- função privilegiada: só vale como gatilho da tabela real de oportunidades (nunca de uma tabela de mesmo formato)
+  if tg_relid is distinct from 'public.radar_opportunity'::regclass or tg_when <> 'AFTER' or tg_level <> 'ROW' then
+    raise exception 'desfecho: gatilho fora da tabela de oportunidades';
+  end if;
   if tg_op = 'UPDATE' and new.stage is not distinct from old.stage then return null; end if;
 
   if tg_op = 'UPDATE' and old.stage = 'WON' then
@@ -146,12 +177,12 @@ begin
       insert into public.radar_commercial_outcome (organization_id, opportunity_id, company_id, event_type, won_event_id, amount,
         occurred_at, from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
       values (v_ganho.organization_id, v_ganho.opportunity_id, v_ganho.company_id, 'ESTORNO_GANHO', v_ganho.id, null,
-        pg_catalog.clock_timestamp(), old.stage, new.stage, v_ganho.owner_id, v_ganho.account_owner_id, v_ator, null, 'trigger')
+        pg_catalog.clock_timestamp(), old.stage, new.stage, v_ganho.owner_id, v_ganho.account_owner_id, v_ator, pg_catalog.btrim(new.stage_reason), 'trigger')
       returning id into v_id;
       insert into public.audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
       values (v_ganho.organization_id, v_ator, 'radar_desfecho_estorno', 'radar_desfecho', v_id::text,
         pg_catalog.jsonb_build_object('ganho', v_ganho.id, 'estagio', old.stage),
-        pg_catalog.jsonb_build_object('estorno', v_id, 'oportunidade', new.id, 'estagio', new.stage), null, 'trigger');
+        pg_catalog.jsonb_build_object('estorno', v_id, 'oportunidade', new.id, 'estagio', new.stage), pg_catalog.btrim(new.stage_reason), 'trigger');
     end if;
   end if;
 
@@ -161,17 +192,24 @@ begin
       occurred_at, from_stage, to_stage, owner_id, account_owner_id, actor_id, reason, source)
     values (new.organization_id, new.id, new.company_id, 'GANHO', null, new.won_amount,
       pg_catalog.clock_timestamp(), case when tg_op = 'UPDATE' then old.stage end, new.stage, new.owner_id, v_dono, v_ator,
-      pg_catalog.left(new.close_reason, 500), 'trigger')
+      pg_catalog.btrim(new.stage_reason), 'trigger')
     returning id into v_id;
     insert into public.audit_log (organization_id, actor_id, action, entity_type, entity_id, before_data, after_data, reason, source)
     values (new.organization_id, v_ator, 'radar_desfecho_ganho', 'radar_desfecho', v_id::text, null,
       pg_catalog.jsonb_build_object('ganho', v_id, 'oportunidade', new.id, 'valor', new.won_amount, 'sem_valor', new.won_amount is null),
-      pg_catalog.left(new.close_reason, 500), 'trigger');
+      pg_catalog.btrim(new.stage_reason), 'trigger');
   end if;
   return null;
 end $$;
 create trigger radar_opportunity_desfecho after insert or update of stage on public.radar_opportunity
   for each row execute function public.radar_opportunity_desfecho();
+
+-- funções de gatilho não são chamáveis por ninguém: sem EXECUTE, nenhum usuário cria outro gatilho com elas (o gatilho
+-- já criado continua disparando; o PostgreSQL só confere EXECUTE no CREATE TRIGGER). A desfecho é security definer.
+revoke all on function public.radar_opportunity_desfecho() from public, anon, authenticated, service_role;
+revoke all on function public.radar_opportunity_ganho_travado() from public, anon, authenticated, service_role;
+revoke all on function public.radar_commercial_outcome_coerencia() from public, anon, authenticated, service_role;
+revoke all on function public.radar_commercial_outcome_imutavel() from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------------------- complemento governado
 -- Completa um ganho registrado SEM valor (D3-B: o realizado do mês do ganho é corrigido; nada é apagado). Ator =

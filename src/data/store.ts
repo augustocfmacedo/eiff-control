@@ -400,12 +400,15 @@ function comMetasLocais(ds: Dataset): Dataset {
 
 /**
  * CD-D3/E3 — eventos de desfecho da transição. Modo REMOTO: nenhum (o gatilho da 0070 grava GANHO/ESTORNO na mesma
- * transação do UPDATE, e a carga traz o livro). Modo LOCAL: o espelho do gatilho (`eventosDaTransicao`). Valor fechado
- * informado com o livro indisponível (banco sem a 0070) é recusado em vez de se perder.
+ * transação do UPDATE, e a carga traz o livro). Modo LOCAL: o espelho do gatilho (`eventosDaTransicao`). Livro
+ * indisponível (código publicado, banco ainda sem a 0070): criar ganha, marcar como ganha e reabrir uma ganha ficam
+ * BLOQUEADOS — o ganho ou o estorno se perderiam. Transições sem WON seguem normalmente.
  */
+export const MENSAGEM_LIVRO_INDISPONIVEL = 'Marcar como ganha ou reabrir uma oportunidade ganha está bloqueado: o banco ainda não tem o livro de desfechos, e o ganho ou o estorno não seriam registrados. Nada foi alterado.';
 function desfechosDaTransicao(r: RadarDataset, antes: Oportunidade | undefined, depois: Oportunidade, ids: Ids): EventoDesfecho[] | undefined {
   if (!r.desfechos) {
-    if (depois.valorFechado !== undefined) throw new RegraDeNegocioError('O livro de desfechos ainda não está disponível neste banco: o valor fechado não seria gravado. Marque como ganha sem valor ou aguarde a atualização.');
+    // código publicado antes da 0070: ganho ou estorno não teriam onde ficar registrados — bloqueia, nada muda
+    if (antes?.estagio === 'WON' || depois.estagio === 'WON') throw new RegraDeNegocioError(MENSAGEM_LIVRO_INDISPONIVEL);
     return undefined;
   }
   if (state.modo === 'remoto') return r.desfechos;

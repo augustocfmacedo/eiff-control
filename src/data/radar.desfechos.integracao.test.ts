@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 // @ts-expect-error — helper .mjs dos smokes (sem tipos)
 import { bancoComFila } from '../../scripts/lib/pgliteFila.mjs';
 import { carregarRadar, persistirRadar, type HelpersRadar } from './radar.supabase';
-import { aplicarTransicao, apurarMetaComercial, complementoDoGanho, type Oportunidade, type RadarDataset } from '../core/radar';
+import { aplicarTransicao, apurarMetaComercial, complementoDoGanho, instanteEmMicros, type Oportunidade, type RadarDataset } from '../core/radar';
 
 type Row = Record<string, unknown>;
 interface Banco { query: (sql: string, p?: unknown[]) => Promise<{ rows: Row[] }>; exec: (sql: string) => Promise<unknown> }
@@ -62,7 +62,9 @@ const trocar = (r: RadarDataset, o: Oportunidade): RadarDataset => ({ ...r, opor
 const agora = () => new Date().toISOString();
 
 beforeAll(async () => {
-  ({ db } = await bancoComFila(path.resolve('.')));
+  // timestamptz (OID 1184) como o PostgREST entrega: texto ISO com microssegundos e fuso ±hh:mm (nunca Date em ms)
+  const comoPostgrest = (v: string) => v.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+  ({ db } = await bancoComFila(path.resolve('.'), { parsers: { 1184: comoPostgrest } }));
   org = (await db.query(`select id from organization where code = 'EIFF'`)).rows[0].id as string;
   await db.query(`insert into profile (id, organization_id, name, email, role, active) values ($1, $3, 'Adm', 'adm@t', 'Administrador', true), ($2, $3, 'Dono', 'dono@t', 'Diretoria', true)`, [ADM, DONO, org]);
   empresa = (await db.query(`insert into radar_company (organization_id, legal_name, commercial_owner_id) values ($1, 'Conta Integração', $2) returning id`, [org, DONO])).rows[0].id as string;
@@ -128,6 +130,29 @@ describe('E3 · app → banco → app (modo remoto, RLS de produção)', () => {
     expect(aud).toBe(1);
   });
 
+  it('GANHO → ESTORNO → GANHO numa MESMA transação do banco: instantes em microssegundos, e o motor E1 lê na ordem real', async () => {
+    const r0 = await carregar();
+    const base = r0.oportunidades.find((x) => x.titulo === 'Galpão integração')!;
+    await comoAdm(async () => {
+      await db.exec('begin;');
+      await db.query(`update radar_opportunity set stage = 'WON', won_amount = 100, stage_reason = 'ganho rápido 1' where id = $1`, [base.id]);
+      await db.query(`update radar_opportunity set stage = 'NEGOTIATION', stage_reason = 'reabertura rápida' where id = $1`, [base.id]);
+      await db.query(`update radar_opportunity set stage = 'WON', won_amount = 200, stage_reason = 'ganho rápido 2' where id = $1`, [base.id]);
+      await db.exec('commit;');
+    });
+    const r = await carregar();
+    const ultimos = r.desfechos!.filter((e) => e.oportunidadeId === base.id).slice(-3);
+    expect(ultimos.map((e) => [e.tipo, e.motivo])).toEqual([['GANHO', 'ganho rápido 1'], ['ESTORNO_GANHO', 'reabertura rápida'], ['GANHO', 'ganho rápido 2']]);
+    // instantes estritamente crescentes (clock_timestamp). O PGlite (WASM) tem relógio de milissegundo; o PostgreSQL de
+    // produção grava microssegundos — o caso "mesmo milissegundo" está provado em desfechos.test.ts com o texto do PostgREST.
+    const us = ultimos.map((e) => instanteEmMicros(e.ocorridoEm)!);
+    expect(us.every((t, i) => i === 0 || t > us[i - 1])).toBe(true);
+    const ap = apurarMetaComercial({ metas: [], eventos: r.desfechos!, mes: ultimos[0].ocorridoEm.slice(0, 7), agora: new Date(Date.now() + 1000).toISOString() });
+    expect(ap.inconsistencias.eventos).toEqual([]);
+    const [g1, e1, g2] = ultimos;
+    expect(ap.ganhos.filter((g) => g.oportunidadeId === base.id).map((g) => [g.id, g.estornadoPor ?? null]).slice(-2)).toEqual([[g1.id, e1.id], [g2.id, null]]);
+  });
+
   it('código publicado antes da 0070 (livro indisponível): a oportunidade é gravada sem a coluna won_amount', async () => {
     const r = await carregar();
     const o = r.oportunidades[0];
@@ -135,5 +160,6 @@ describe('E3 · app → banco → app (modo remoto, RLS de produção)', () => {
     const semLivro: RadarDataset = { ...r, desfechos: undefined };
     await persistir({ ...r, desfechos: undefined }, trocar(semLivro, { ...o, titulo: `${o.titulo} (sem livro)` }));
     expect(gravacoes.find((g) => g.tabela === 'radar_opportunity')?.colunas).not.toContain('won_amount');
+    expect(gravacoes.find((g) => g.tabela === 'radar_opportunity')?.colunas).not.toContain('stage_reason');
   });
 });

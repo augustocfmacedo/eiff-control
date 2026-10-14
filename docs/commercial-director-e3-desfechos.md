@@ -45,6 +45,29 @@ E1 mudou.
 - **Rollback exato**: `supabase/rollbacks/0070_radar_commercial_outcome.rollback.sql` (apaga o livro e a coluna
   `won_amount`: exportar antes se já houver eventos reais).
 
+## Hardening pré-merge (14/10/2026)
+
+- **Livro indisponível = WON bloqueado** (código publicado, banco ainda sem a 0070): criar já ganha, marcar como ganha
+  (com ou sem valor) e reabrir/perder uma ganha são recusados no store com mensagem clara, sem mudar nada
+  (`MENSAGEM_LIVRO_INDISPONIVEL`). Não existe a alternativa "ganha sem valor" nesse estado. Transições sem WON seguem.
+- **Gatilho privilegiado**: EXECUTE revogado de `public`, `anon`, `authenticated` e `service_role` nas quatro funções de
+  gatilho (o PostgreSQL só confere EXECUTE no CREATE TRIGGER; o gatilho existente continua disparando), e as funções recusam
+  rodar fora de `public.radar_opportunity` (`tg_relid`; a dos desfechos também exige AFTER/ROW). Provado com tabela
+  temporária de mesmo formato: `authenticated` não consegue criar o gatilho, e nem o dono do banco consegue usá-lo noutra
+  tabela; nada entra no livro. O livro também ficou sem escrita para `service_role` (só SELECT).
+- **Responsável travado** inclusive de vazio para alguém enquanto ganha.
+- **Motivo obrigatório e novo** para entrar ou sair de WON: coluna `radar_opportunity.stage_reason` (motivo da última
+  mudança de estágio, 3 a 500). Escrita direta que só troca o estágio (reaproveitando o motivo anterior) ou repete o motivo
+  é recusada; fora de uma transição o motivo não muda. O motivo vai para o GANHO, o ESTORNO e as respectivas auditorias
+  (todo evento do livro passou a exigir motivo). No app: `Oportunidade.motivoEstagio`, gravado por `aplicarTransicao` e
+  validado em `motivosRecusaTransicao` (3 a 500, diferente do anterior).
+- **Ordem no tempo**: o PostgreSQL grava microssegundos e GANHO → ESTORNO → GANHO podem cair no mesmo milissegundo; com
+  milissegundos o motor E1 empatava e o desempate por tipo/id perdia a ordem real (reproduzido: o primeiro ganho virava
+  "repetido" e o estorno ficava sem ganho). Menor correção: `instanteEmMicros` só para ORDENAR e comparar no
+  `lerLivroDesfechos`; a fração além do milissegundo é truncada (nunca arredondada) em `instanteEmMs`; o mês comercial e
+  todas as fórmulas seguem iguais (os 34 testes da E1 passam sem mudança). Virada de mês em São Paulo testada com
+  microssegundos.
+
 ## App
 
 - `RadarDataset.desfechos?` (ausente = livro indisponível no banco, nunca "sem ganho"); carga tolerante em `carregarRadar`
@@ -65,12 +88,12 @@ E1 mudou.
 
 | Prova | Resultado |
 |---|---|
-| `npm run smoke:desfechos` (fila inteira 0001..0070 em PGlite, novo passo do Quality Gate) | 74 ok, 0 falhas |
+| `npm run smoke:desfechos` (fila inteira 0001..0070 em PGlite, novo passo do Quality Gate) | 93 ok, 0 falhas |
 | Preflight `--ordem-corrigida` | 69 migrations, 0 erros |
-| `src/data/radar.desfechos.integracao.test.ts` — app → banco → app com `carregarRadar`/`persistirRadar` reais, RLS de produção | 3 ok |
-| `src/core/radar/desfechos.test.ts` — espelho do gatilho + integração com o motor E1 (D3-A, D3-B, linha do banco) | 13 ok |
-| `src/data/radar.desfechos.store.test.ts` — formulário → store, permissões, livro indisponível, guardas de fonte | 10 ok |
-| Suíte completa | 156 arquivos, 2841 testes |
+| `src/data/radar.desfechos.integracao.test.ts` — app → banco → app com `carregarRadar`/`persistirRadar` reais, RLS de produção (inclui GANHO → ESTORNO → GANHO numa só transação) | 4 ok |
+| `src/core/radar/desfechos.test.ts` — espelho do gatilho + integração com o motor E1 (D3-A, D3-B, linha do banco, microssegundos no mesmo ms, virada de mês em SP) | 16 ok |
+| `src/data/radar.desfechos.store.test.ts` — formulário → store, permissões, livro indisponível (WON bloqueado), motivo novo, guardas de fonte | 11 ok |
+| Suíte completa | 156 arquivos, 2863 testes |
 
 ## Riscos e itens de gate
 

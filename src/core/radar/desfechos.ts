@@ -39,7 +39,8 @@ export function eventosDaTransicao(antes: Pick<Oportunidade, 'estagio'> | undefi
     const g = ganhoVigente(livro, depois.id);
     if (g) {
       novos.push({ id: ctx.novoId(), tipo: 'ESTORNO_GANHO', oportunidadeId: depois.id, empresaId: g.empresaId, ocorridoEm: instanteDepois(livro, depois.id, ctx.agora), ganhoId: g.id,
-        ...(g.responsavelId ? { responsavelId: g.responsavelId } : {}), ...(g.donoContaId ? { donoContaId: g.donoContaId } : {}), registradoPor: ctx.atorId });
+        ...(g.responsavelId ? { responsavelId: g.responsavelId } : {}), ...(g.donoContaId ? { donoContaId: g.donoContaId } : {}),
+        ...(depois.motivoEstagio ? { motivo: depois.motivoEstagio } : {}), registradoPor: ctx.atorId });
     }
   }
   if (depois.estagio === 'WON') {
@@ -48,7 +49,7 @@ export function eventosDaTransicao(antes: Pick<Oportunidade, 'estagio'> | undefi
     novos.push({ id: ctx.novoId(), tipo: 'GANHO', oportunidadeId: depois.id, empresaId: depois.empresaId, ocorridoEm: instanteDepois(todos, depois.id, ctx.agora),
       ...(depois.valorFechado !== undefined ? { valor: depois.valorFechado } : {}),
       ...(depois.responsavelId ? { responsavelId: depois.responsavelId } : {}), ...(ctx.donoContaId ? { donoContaId: ctx.donoContaId } : {}),
-      ...(depois.motivoFechamento ? { motivo: depois.motivoFechamento } : {}), registradoPor: ctx.atorId });
+      ...(depois.motivoEstagio ? { motivo: depois.motivoEstagio } : {}), registradoPor: ctx.atorId });
   }
   return novos;
 }

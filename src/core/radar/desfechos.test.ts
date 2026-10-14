@@ -2,7 +2,7 @@
 // provadas no banco por scripts/pg-smoke-desfechos.mjs; aqui, a lógica pura e o contrato EventoDesfecho.
 import { describe, expect, it } from 'vitest';
 import { complementoDoGanho, eventosDaTransicao, ganhoVigente, ganhosDaOportunidade, motivosRecusaComplemento } from './desfechos';
-import { apurarMetaComercial, lerLivroDesfechos, type EventoDesfecho, type VersaoMetaComercial } from './metaComercial';
+import { apurarMetaComercial, instanteEmMicros, instanteEmMs, lerLivroDesfechos, mesComercialDe, type EventoDesfecho, type VersaoMetaComercial } from './metaComercial';
 import { aplicarTransicao } from './estagioOportunidade';
 import type { Oportunidade } from './types';
 
@@ -117,6 +117,37 @@ describe('integração com o motor E1 (apurarMetaComercial) — o livro alimenta
     expect(depois.medidas.realizado).toMatchObject({ estado: 'DISPONIVEL', valor: 400000 });
     expect(depois.retificacoes.map((x) => x.mesDoComplemento)).toEqual(['2026-11']);
     expect(ganhosDaOportunidade([...a.livro, c], 'OPP-1')).toEqual([{ ganhoId: a.livro[0].id, ocorridoEm: '2026-10-30T15:00:00.000Z', valor: 400000, semValor: false, complementoId: c.id, vigente: true }]);
+  });
+
+  it('ordem real por microssegundo: GANHO → ESTORNO → GANHO no MESMO milissegundo (ids que, por ordem alfabética, inverteriam)', () => {
+    const doBanco: EventoDesfecho[] = [
+      { id: 'z-g1', tipo: 'GANHO', oportunidadeId: 'o', empresaId: 'e', ocorridoEm: '2026-10-14T15:00:00.123100+00:00', valor: '100' },
+      { id: 'a-e1', tipo: 'ESTORNO_GANHO', oportunidadeId: 'o', empresaId: 'e', ocorridoEm: '2026-10-14T15:00:00.1232+00:00', ganhoId: 'z-g1' },
+      { id: 'm-g2', tipo: 'GANHO', oportunidadeId: 'o', empresaId: 'e', ocorridoEm: '2026-10-14T15:00:00.1233+00:00', valor: '200' },
+    ];
+    for (const ordem of [doBanco, [...doBanco].reverse()]) {
+      const l = lerLivroDesfechos(ordem);
+      expect(l.inconsistencias).toEqual([]);
+      expect(l.ganhos.map((g) => [g.id, g.estornadoPor ?? null])).toEqual([['z-g1', 'a-e1'], ['m-g2', null]]);
+    }
+    const ap = apurarMetaComercial({ metas, eventos: doBanco, mes: '2026-10', agora: '2026-10-20T12:00:00.000Z' });
+    expect(ap.medidas.realizado).toMatchObject({ estado: 'DISPONIVEL', valor: 200 }); // +100 −100 +200
+  });
+
+  it('fração além do milissegundo é truncada (nunca arredondada); microssegundos só ordenam', () => {
+    expect(instanteEmMs('2026-10-14T15:00:00.1239+00:00')).toBe(Date.parse('2026-10-14T15:00:00.123Z'));
+    expect(instanteEmMicros('2026-10-14T15:00:00.1239+00:00')).toBe(Date.parse('2026-10-14T15:00:00.123Z') * 1000 + 900);
+    expect(instanteEmMicros('2026-10-14T15:00:00Z')).toBe(Date.parse('2026-10-14T15:00:00Z') * 1000);
+    expect(instanteEmMicros('2026-10-14 15:00:00')).toBeUndefined(); // sem fuso: inválido, como antes
+  });
+
+  it('virada de mês no fuso de São Paulo, com microssegundos: 23:59:59.9999 de 31/10 é outubro; 00:00:00.0001 de 01/11 é novembro', () => {
+    const g: EventoDesfecho = { id: 'g', tipo: 'GANHO', oportunidadeId: 'o', empresaId: 'e', ocorridoEm: '2026-11-01T02:59:59.999900+00:00', valor: '1000' };
+    const e: EventoDesfecho = { id: 'e', tipo: 'ESTORNO_GANHO', oportunidadeId: 'o', empresaId: 'e', ocorridoEm: '2026-11-01T03:00:00.000100+00:00', ganhoId: 'g' };
+    expect([mesComercialDe(g.ocorridoEm), mesComercialDe(e.ocorridoEm)]).toEqual(['2026-10', '2026-11']);
+    const out = apurarMetaComercial({ metas, eventos: [e, g], mes: '2026-10', agora: '2026-12-01T12:00:00.000Z' });
+    const nov = apurarMetaComercial({ metas, eventos: [e, g], mes: '2026-11', agora: '2026-12-01T12:00:00.000Z' });
+    expect([out.medidas.realizado, nov.medidas.realizado]).toMatchObject([{ estado: 'DISPONIVEL', valor: 1000 }, { estado: 'DISPONIVEL', valor: -1000 }]);
   });
 
   it('linha do banco (amount como texto, instante +00:00) entra no motor como veio', () => {

@@ -32,7 +32,7 @@ const ROTULO_CAMPO: Record<(typeof CAMPOS_TRAVADOS_GANHO)[number], string> = {
  * Motivos para recusar a transição de `atual` (ausente = criação) para `para`; lista vazia = pode.
  * WON → WON não é transição nova; fechar (ganho ou perda) e reabrir um ganho exigem motivo.
  */
-export function motivosRecusaTransicao(atual: Pick<Oportunidade, 'estagio'> | undefined, para: Estagio, dados: DadosTransicao = {}): string[] {
+export function motivosRecusaTransicao(atual: (Pick<Oportunidade, 'estagio'> & Partial<Pick<Oportunidade, 'motivoEstagio'>>) | undefined, para: Estagio, dados: DadosTransicao = {}): string[] {
   if (!ESTAGIOS.includes(para)) return ['Estágio inválido.'];
   if (atual && atual.estagio === para) {
     return [para === 'WON' ? 'A oportunidade já está ganha: marcar como ganha de novo não é uma nova transição.' : 'A oportunidade já está nesse estágio.'];
@@ -40,6 +40,11 @@ export function motivosRecusaTransicao(atual: Pick<Oportunidade, 'estagio'> | un
   const motivo = dados.motivo?.trim();
   if (fechado(para) && !motivo) return [`Informe o motivo para marcar como ${para === 'WON' ? 'ganha' : 'perdida'}.`];
   if (atual?.estagio === 'WON' && !motivo) return ['Informe o motivo para reabrir uma oportunidade ganha.'];
+  // CD-D3/E3: entrar ou sair de WON vira evento do livro de desfechos; o banco (0070) exige um motivo NOVO de 3 a 500
+  if (para === 'WON' || atual?.estagio === 'WON') {
+    if ((motivo ?? '').length < 3 || (motivo ?? '').length > 500) return ['O motivo precisa ter de 3 a 500 caracteres.'];
+    if (atual?.motivoEstagio?.trim() === motivo) return ['Informe o motivo desta mudança de estágio: ele é igual ao da mudança anterior.'];
+  }
   if (dados.valorFechado !== undefined) {
     if (para !== 'WON') return ['O valor fechado só é informado ao marcar como ganha.'];
     const l = lerValor(dados.valorFechado);
@@ -62,6 +67,7 @@ export function aplicarTransicao(atual: Oportunidade, para: Estagio, dados: Dado
     probabilidade: PROBABILIDADE_ESTAGIO[para],
     valorEstimado: dados.valorEstimado ?? atual.valorEstimado,
     valorFechado: para === 'WON' ? dados.valorFechado : undefined,
+    motivoEstagio: dados.motivo?.trim() || undefined,
     proximaAcao: fecha ? undefined : dados.proximaAcao ?? atual.proximaAcao,
     proximaAcaoEm: fecha ? undefined : dados.proximaAcaoEm ?? atual.proximaAcaoEm,
     motivoFechamento: fecha ? dados.motivo?.trim() : atual.motivoFechamento,
@@ -92,5 +98,5 @@ export function motivosRecusaEdicao(atual: Oportunidade, novo: Pick<Oportunidade
  * (ou, na mudança de estágio, de `aplicarTransicao`). `id` e criação também não vêm do formulário.
  */
 export function camposEditaveis(atual: Oportunidade, edicao: Oportunidade): Oportunidade {
-  return { ...edicao, id: atual.id, criadoEm: atual.criadoEm, estagio: atual.estagio, fechadoEm: atual.fechadoEm, motivoFechamento: atual.motivoFechamento, valorFechado: atual.valorFechado };
+  return { ...edicao, id: atual.id, criadoEm: atual.criadoEm, estagio: atual.estagio, fechadoEm: atual.fechadoEm, motivoFechamento: atual.motivoFechamento, valorFechado: atual.valorFechado, motivoEstagio: atual.motivoEstagio };
 }

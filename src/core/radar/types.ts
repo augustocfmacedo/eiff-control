@@ -179,6 +179,8 @@ export interface Oportunidade {
   proximaAcao?: string;
   proximaAcaoEm?: string;
   motivoFechamento?: string;
+  /** CD-D3/E3: motivo da ÚLTIMA mudança de estágio (stage_reason). Entrar ou sair de WON exige um motivo novo; vai para o livro de desfechos. */
+  motivoEstagio?: string;
   observacoes: string;
   criadoEm: string;
   atualizadoEm: string;

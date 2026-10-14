@@ -42,12 +42,13 @@ const ORDEM_CORRIGIDA = { '0014': ['0015_version_cols.sql'] };
 const SEMENTE = '0013';
 
 /**
- * Cria o PGlite e aplica a fila de `raiz/supabase/migrations` (cada migration numa transação). `antesDe(numero)` roda
+ * Cria o PGlite (com `parsers` opcionais por OID de tipo) e aplica a fila de `raiz/supabase/migrations` (cada migration numa transação). `antesDe(numero)` roda
  * antes de cada migration (ex.: tirar um retrato do schema antes da 0070). Devolve { db, aplicadas }.
  */
-export async function bancoComFila(raiz, { antesDe } = {}) {
+export async function bancoComFila(raiz, { antesDe, parsers } = {}) {
   const pastaMigrations = path.join(raiz, 'supabase', 'migrations');
-  const db = new PGlite({ extensions: { pgcrypto } });
+  // parsers: ex. devolver timestamptz como texto ISO com microssegundos, como o PostgREST
+  const db = new PGlite({ extensions: { pgcrypto }, ...(parsers ? { parsers } : {}) });
   await db.exec(PRELUDIO);
   const arquivos = fs.readdirSync(pastaMigrations).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
   const feitas = new Set();
