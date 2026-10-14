@@ -12,7 +12,7 @@
 export const ESTADOS_MEDIDA = ['DISPONIVEL', 'DADO_INSUFICIENTE', 'NAO_APLICAVEL'] as const;
 export type EstadoMedida = (typeof ESTADOS_MEDIDA)[number];
 
-export const UNIDADES_MEDIDA = ['CONTAS', 'CONTATOS', 'OPORTUNIDADES', 'REGISTROS_ESTAGIO', 'ATIVIDADES', 'TAREFAS', 'COMUNICACOES', 'CANDIDATOS', 'FONTES', 'THREADS', 'DUPLICATAS', 'SUPRESSOES', 'SINAIS', 'BRL', 'RAZAO'] as const;
+export const UNIDADES_MEDIDA = ['CONTAS', 'CONTATOS', 'OPORTUNIDADES', 'REGISTROS_ESTAGIO', 'ATIVIDADES', 'TAREFAS', 'COMUNICACOES', 'CANDIDATOS', 'FONTES', 'THREADS', 'DUPLICATAS', 'SUPRESSOES', 'SINAIS', 'BRL', 'RAZAO', 'EVENTOS'] as const;
 export type UnidadeMedida = (typeof UNIDADES_MEDIDA)[number];
 
 /** A autoridade que DEFINE o número. A medida nunca recalcula regra de outra autoridade: chama a função dela. */

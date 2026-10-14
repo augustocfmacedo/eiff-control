@@ -55,7 +55,7 @@ describe('CD-D5 · estado do dono (puro)', () => {
 
 describe('CD-D5 · medida base.contasSemDono no snapshot (CD-1.2)', () => {
   it('versão CD-1.2 e a CD-D4 preservada', () => {
-    expect(VERSAO_REGRAS_CD).toBe('CD-1.2');
+    expect(VERSAO_REGRAS_CD).toBe('CD-1.3'); // CD-1.3 (E4) acrescentou o bloco metaComercial; contasSemDono e o corte de 30 seguem iguais
     expect(AMOSTRA_MINIMA_TAXA).toBe(30);
   });
 
@@ -63,7 +63,7 @@ describe('CD-D5 · medida base.contasSemDono no snapshot (CD-1.2)', () => {
     const r = base([emp('sem'), emp('com', { commercialOwnerId: 'u-ana' }), emp('inativo', { commercialOwnerId: 'u-ivo' }), emp('mesclada', { mescladaEm: 'com' })]);
     const s = snapshotComercialCD(r, HOJE, { usuarios: USUARIOS });
     expect(s.base.contasSemDono).toMatchObject({ id: 'base.contasSemDono', estado: 'DISPONIVEL', valor: 2, base: 3, unidade: 'CONTAS' });
-    expect(s.versaoRegras).toBe('CD-1.2');
+    expect(s.versaoRegras).toBe('CD-1.3');
   });
 
   it('sem a lista de usuários: sem nenhum dono gravado ainda dá para contar; com dono gravado é DADO_INSUFICIENTE', () => {
