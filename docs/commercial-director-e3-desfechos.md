@@ -18,7 +18,11 @@ E1 mudou.
 `estimated_value` **nunca** vira valor de venda. O valor fechado é um campo próprio (`radar_opportunity.won_amount` /
 `Oportunidade.valorFechado`), informado só ao marcar como ganha.
 
-## Autoridade do banco (migration 0070, não aplicada)
+## Autoridade do banco (migration 0070, aplicada em produção em 14/10/2026)
+
+> Aplicada entre 18:03:13 e 18:03:18 UTC, arquivo `supabase/migrations/0070_radar_commercial_outcome.sql` da `main`
+> aefb81b (PR #67), SHA-256 `488841280a320e1d592100e7331971251aadeaa8573a169677a68fb23630863e`, numa única transação com
+> 28 verificações internas. Detalhes em "Plano de implantação", passo 4.
 
 - **Tabela** `radar_commercial_outcome` (append-only). Escrevem só:
   - o gatilho `radar_opportunity_desfecho` (AFTER INSERT/UPDATE OF stage, security definer), na **mesma transação** da
@@ -146,14 +150,26 @@ do GANHO. Provado no smoke (bloco R, 12 provas, inclusive tentativa do dono do b
    `audit_row` da 0001, são security definer sem `search_path` fixo e podem ser desviadas por tabela temporária de mesmo
    nome. Pela API do Supabase não há como criar tabela temporária, então o risco é baixo, mas merece endurecimento.
 
-## Plano de implantação (cada passo com autorização própria)
+## Plano de implantação (cada passo com autorização própria) — concluído em 14/10/2026
 
-1. `MERGE AUTORIZADO`.
-2. `PRODUCTION AUTORIZADA`: código primeiro. Sem a 0070 o app carrega normalmente e não envia `won_amount` nem
+1. `MERGE AUTORIZADO` — **concluído**: PR #61 (E3) e PR #67 (guarda temporal na 0070) mesclados; a `main` aefb81b tem a
+   versão aplicada da 0070.
+2. `PRODUCTION AUTORIZADA` — **concluído**: o código do #61 foi publicado junto com o PR #64 (deploy 6acfa635, `main`
+   28d10f6, publicação travada), antes da 0070, como previsto abaixo. Código primeiro. Sem a 0070 o app carrega normalmente e não envia `won_amount` nem
    `stage_reason`, mas **marcar como ganha (com ou sem valor), criar já ganha e reabrir/perder uma ganha ficam BLOQUEADOS**
    com mensagem clara até a 0070 ser aplicada (o ganho ou o estorno não teriam onde ser registrados). As demais transições
    e edições seguem normalmente. Produção tinha 0 oportunidades no pré-check, então o bloqueio não afeta trabalho em curso;
    a janela entre publicar e aplicar a 0070 deve ser curta.
-3. Teste de concorrência com duas sessões num PostgreSQL real (gate, como na 0068).
+3. Teste de concorrência com duas sessões num PostgreSQL real (gate, como na 0068) — **concluído**: gate em PostgreSQL
+   17.6 PASS (14/10/2026, refeito na versão com a guarda temporal; 41 ok, 0 falhas).
 4. Conferência só de leitura (objetos ausentes, número livre, 0068/0069 íntegras) e aplicação da 0070 numa transação com
-   verificações internas; smoke em produção só com recusas, sem criar eventos reais.
+   verificações internas; smoke em produção só com recusas, sem criar eventos reais — **concluído em 14/10/2026**:
+   - aplicada entre **18:03:13 e 18:03:18 UTC**, arquivo da `main` aefb81b (PR #67), SHA-256
+     `488841280a320e1d592100e7331971251aadeaa8573a169677a68fb23630863e`, numa **única transação com 28 verificações
+     internas**;
+   - pós-check: livro (`radar_commercial_outcome`) vazio, **49 itens de schema novos** e nenhum outro alterado, contagens das
+     tabelas e `audit_log` (máx. 1634) iguais aos de antes;
+   - smoke em produção: **12 recusas** em transação descartada (nenhum evento real criado);
+   - o app publicado (deploy 6acfa635, `main` 28d10f6, trava ativa) lê `radar_commercial_outcome` com **200**: o livro
+     está disponível e as transições de/para WON deixaram de ser bloqueadas (`MENSAGEM_LIVRO_INDISPONIVEL` só volta a
+     aparecer se o livro não puder ser lido).
