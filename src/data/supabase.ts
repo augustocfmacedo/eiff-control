@@ -19,7 +19,7 @@ import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
 import { carregarRadar, persistirRadar } from './radar.supabase';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
-import { datasetSolicitante, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
+import { datasetSolicitante, type AlteracaoJson, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
 import { hojeLocal } from '../core/engine';
 
 // URL e chave publica vem de src/data/ambiente.ts (importado so pelo main.tsx): este modulo nao le import.meta.env, para o
@@ -233,6 +233,9 @@ export async function carregarComoServidor(c: SupabaseClient, userId: string): P
 export const contextoSolicitante = () => porta<ContextoSolicitante>('df_contexto');
 export const meusPedidosSolicitante = () => porta<PedidoSolicitante[]>('df_meus_pedidos');
 export const registrarPedidoSolicitante = (p: NovoPedidoSolicitante) => porta<PedidoSolicitante>('df_registrar_pedido', { p });
+/** Alteracao de valor de um pedido proprio (0071), para qualquer papel que pede pagamento. */
+export const pedirAlteracaoRemota = (codigo: string, valor: number, motivo: string) => porta<AlteracaoJson>('df_pedir_alteracao', { p_codigo: codigo, p_valor: valor, p_motivo: motivo });
+export const cancelarAlteracaoRemota = (id: string) => porta<AlteracaoJson>('df_cancelar_alteracao', { p_id: id });
 
 export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario }> {
   if (!cliente()) throw new RemotoError('Supabase não configurado.');
@@ -289,7 +292,9 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const [estacaoRows, romaneioRows, stockItems, stockMovs] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number'), selTodos('stock_item', 'code'), selTodos('stock_movement', 'moved_on')]);
   const trainingRows = await selTodos('training_progress', 'completed_at');
   const fotoRows = await selTodos('field_photo', 'taken_at');
-  const [funcRows, alocRows, rateioRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on'), selTodos('entry_service_split', 'created_at')]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
+  const [funcRows, alocRows, rateioRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on'), selTodos('entry_service_split', 'created_at')]);
+  // alteracoes de valor dos pedidos ao Diretor Financeiro (0071): enquanto a migration nao estiver no banco, lista vazia
+  const alteracaoRows = await selTodos('payment_change_request', 'requested_at').catch(() => [] as Row[]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -484,6 +489,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     revisao: x.revision ?? undefined, liberadoEm: x.released_on ?? undefined, fabricadoQtd: Number(x.fabricated_qty ?? 0), expedidoQtd: Number(x.shipped_qty ?? 0), montadoQtd: Number(x.erected_qty ?? 0), observacoes: x.notes ?? '', atualizadoEm: x.updated_at,
   }));
   ds.avancos = avancosRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, data: x.measured_on, quantidade: Number(x.quantity), pct: x.pct === null || x.pct === undefined ? undefined : Number(x.pct), descricao: x.description ?? '', evidencia: x.evidence ?? undefined, responsavel: x.created_by ?? '', criadoEm: x.created_at }));
+  ds.alteracoesPedido = alteracaoRows.map((x) => ({ id: x.id, lancamentoId: r.lancsInv.get(x.entry_id) ?? '', solicitadoPor: nome(x.requested_by), solicitadoEm: x.requested_at, valorAnterior: Number(x.previous_amount), valorNovo: Number(x.new_amount), motivo: x.reason, status: x.status, decididoPor: x.decided_by ? nome(x.decided_by) : undefined, decididoEm: x.decided_at ?? undefined, motivoDecisao: x.decision_reason ?? undefined })).filter((a) => a.lancamentoId);
   ds.rateios = rateioRows.map((x) => ({ id: x.id, lancamentoId: r.lancsInv.get(x.entry_id) ?? '', codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, medicaoId: x.measurement_id ?? undefined, descricao: x.description ?? '', valor: Number(x.amount), criadoEm: x.created_at, criadoPor: x.created_by ?? '' }));
   ds.apontamentosEstacao = estacaoRows.map((x) => ({ id: x.id, data: x.log_date, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, linha: x.line, estacao: x.station, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], pecas: Number(x.pieces ?? 0), pesoKg: Number(x.weight_kg ?? 0), colaboradores: (x.workers ?? []) as { colaboradorId: string; horas: number }[], observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
@@ -928,6 +934,17 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     const { error } = await sb.from('assembly').delete().eq('id', r.conjuntos.get(c.id)!);
     falha('excluir conjunto', error);
     r.conjuntos.delete(c.id);
+  }
+
+  // alteracoes de valor dos pedidos (0071): o app so grava a DECISAO (nascem pela porta df_pedir_alteracao); o titulo ja foi
+  // gravado acima, e o gatilho confere que a aceita bate com o valor do titulo. RLS que filtra em silencio vira erro.
+  const altAntes = new Map((antes.alteracoesPedido ?? []).map((a) => [a.id, a]));
+  for (const a of depois.alteracoesPedido ?? []) {
+    const ant = altAntes.get(a.id);
+    if (!ant || ant.status !== 'PENDENTE' || a.status === 'PENDENTE' || a.status === 'CANCELADA') continue;
+    const { data, error } = await sb.from('payment_change_request').update({ status: a.status, decision_reason: a.motivoDecisao ?? null }).eq('id', a.id).eq('status', 'PENDENTE').select('id');
+    falha('decidir alteração de valor', error);
+    if (!data?.length) falha('decidir alteração de valor', { message: 'alteração não encontrada ou já decidida por outra pessoa' });
   }
 
   // rateio de faturamento por servico (leitura por etapa do mesmo titulo; insere novos, remove os que sairam)
