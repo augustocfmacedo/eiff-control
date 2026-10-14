@@ -601,7 +601,10 @@ export async function urlFoto(f: { dataUrl?: string; caminho?: string }): Promis
 /** O provedor remoto ja carregou (refs prontas) e pode gravar. */
 export const remotoPronto = () => !!supabase && !!refs;
 
-export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: string): Promise<void> {
+/** Avisos de progresso da sincronização (CD-D3/E5: metas aceitas pelo banco, para a retomada não reenviar). */
+export interface OpcoesPersistir { aoGravarMeta?: (m: VersaoMetaComercial) => void }
+
+export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: string, opcoes: OpcoesPersistir = {}): Promise<void> {
   if (!supabase || !refs) throw new RemotoError('Provider remoto não inicializado.');
   const r = refs;
   const sb = supabase;
@@ -1108,6 +1111,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     // CD-D5.2: operacao governada radar_definir_dono_conta, com o JWT do usuario (autoridade conferida no banco)
     rpc: async (nome, args) => { const { data, error } = await sb.rpc(nome, args); falha(`rpc ${nome}`, error); return data; },
     motivoDono: (empresaId) => motivoDonoDaAuditoria(novas, empresaId),
+    aoGravarMeta: opcoes.aoGravarMeta,
     inserir: async (tabela, rows) => { const { data, error } = await sb.from(tabela).insert(rows).select('id'); falha(`inserir ${tabela}`, error); return data ?? []; },
     gravarComposta: async (tabela, chave, row) => {
       let q = sb.from(tabela).update(row);

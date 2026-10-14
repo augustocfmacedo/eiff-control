@@ -76,7 +76,7 @@ import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, t
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { definirMetaConfirmada, type ResultadoMetaConfirmada } from './metaConfirmada';
+import { comMetaGravada, definirMetaConfirmada, type ResultadoMetaConfirmada } from './metaConfirmada';
 import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, enviarAnexoRemoto, removerAnexoRemoto, lerMetasComerciaisDoMes, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { alteracaoDoJson, alteracoesDosPedidos, anexoDoJson, anexosDosPedidos, lancamentoDoPedido } from './solicitante';
 import { extensaoDoMime, mimeDoArquivo, podeRemoverAnexo, tiposQuePodeAnexar, validarArquivoAnexo } from '../core/anexos';
@@ -212,17 +212,23 @@ function setSync(sync: SyncStatus) {
 function sincronizar(depois: Dataset) {
   fila = fila.then(async () => {
     const antes = baseSincronizada ?? depois;
+    // CD-D3/E5: o que o banco já aceitou nesta rodada (metas) entra na base na hora; se algo depois falhar, a retomada
+    // e a pendência offline partem dessa base e não reenviam a meta. O resto da base fica como estava (as alterações
+    // dos outros módulos continuam pendentes e voltam a ser enviadas).
+    let base = antes;
     setSync({ status: 'enviando' });
     try {
-      await persistirRemoto(antes, depois, state.usuario.id);
+      await persistirRemoto(antes, depois, state.usuario.id, { aoGravarMeta: (m) => { base = comMetaGravada(base, m); } });
       baseSincronizada = depois;
       await apagarPendente();
       state = { ...state, pendencias: false };
       setSync({ status: 'ok', em: new Date().toISOString() });
     } catch (e) {
+      if (base !== antes) baseSincronizada = base;
       if (ehErroDeRede(e)) {
-        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu) e volta a ser enviado sozinho
-        await guardarPendente({ usuarioId: state.usuario.id, base: antes, ds: depois, em: new Date().toISOString() });
+        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu, mais as metas já aceitas) e
+        // volta a ser enviado sozinho
+        await guardarPendente({ usuarioId: state.usuario.id, base, ds: depois, em: new Date().toISOString() });
         state = { ...state, pendencias: true };
         setSync({ status: 'pendente', msg: 'sem conexão: alterações guardadas neste aparelho', desde: state.sync.desde ?? new Date().toISOString() });
         agendarRetentativa();
@@ -243,11 +249,13 @@ async function carregarComPendentes(): Promise<{ ds: Dataset; usuario: Usuario; 
     let { ds: dsRemoto, usuario } = await carregarRemoto();
     const p = await lerPendente();
     if (p && p.usuarioId === usuario.id) {
-      try { await persistirRemoto(p.base, p.ds, usuario.id); await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
+      let baseP = p.base; // CD-D3/E5: metas aceitas nesta aplicação entram na base da pendência (nunca reenviadas)
+      try { await persistirRemoto(p.base, p.ds, usuario.id, { aoGravarMeta: (m) => { baseP = comMetaGravada(baseP, m); } }); await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
       catch (e) {
+        if (baseP !== p.base) await guardarPendente({ ...p, base: baseP });
         if (ehErroDeRede(e)) throw e;
         // conflito ou regra: mantem as alteracoes locais na tela e a pendencia guardada; o usuario decide entre tentar de novo e descartar
-        baseSincronizada = p.base; state = { ...state, pendencias: true };
+        baseSincronizada = baseP; state = { ...state, pendencias: true };
         return { ds: p.ds, usuario, offline: false, aviso: `alterações feitas offline não foram aplicadas: ${(e as Error).message}` };
       }
     }

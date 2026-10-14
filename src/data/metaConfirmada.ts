@@ -36,6 +36,17 @@ export interface PortasMetaConfirmada {
   lerPersistidas(): Promise<VersaoMetaComercial[]>;
 }
 
+/**
+ * A base sincronizada com uma versão de meta que o banco ACEITOU: daí em diante ela não é "nova" para `persistirMetas`
+ * e nunca é reenviada na retomada (Tentar de novo, pendência offline). Só a lista de metas muda; o resto da base continua
+ * como estava, e as alterações dos outros módulos seguem pendentes. Pura; devolve a mesma base se a versão já estiver lá.
+ */
+export function comMetaGravada<T extends { radar: { metasComerciais?: VersaoMetaComercial[] } }>(base: T, m: VersaoMetaComercial): T {
+  const metas = base.radar.metasComerciais ?? [];
+  if (metas.some((x) => x.id === m.id)) return base;
+  return { ...base, radar: { ...base.radar, metasComerciais: [...metas, m] } };
+}
+
 const centavos = (v: VersaoMetaComercial['valor']) => { const l = lerValor(v); return l.estado === 'VALIDO' ? l.centavos : l.estado === 'AUSENTE' ? null : NaN; };
 const mesmoValor = (a: VersaoMetaComercial['valor'], b: VersaoMetaComercial['valor']) => Object.is(centavos(a), centavos(b));
 const ultima = (vs: readonly VersaoMetaComercial[]) => vs.reduce<VersaoMetaComercial | undefined>((u, v) => (!u || v.versao > u.versao ? v : u), undefined);

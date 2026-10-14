@@ -70,6 +70,17 @@ confirmado · meta vigente e nenhuma venda · parcial · atingida. Indisponível
 
 ## Limitações
 
+- **Corrigido antes de publicar (bloqueador de release da E5)**: `persistirRemoto` grava na ordem escrita genérica →
+  `persistirRadar` (… `persistirMetas`, `persistirDesfechos`) → Inbox → auditoria, e a fila só avançava a base
+  sincronizada quando a rodada inteira dava certo. Com a meta aceita e uma operação POSTERIOR falhando, "Tentar de novo"
+  e a pendência offline reenviavam a mesma intenção — e, com outra sessão tendo mudado a meta no meio, a RPC criava uma
+  versão nova com o valor ANTIGO. Agora `persistirMetas` avisa `aoGravarMeta` logo depois de cada RPC aceita;
+  `sincronizar` e `carregarComPendentes` põem a versão na base (`comMetaGravada`: só a lista de metas muda) e a
+  pendência offline é regravada com ela. A retomada não a reenvia; as alterações dos outros módulos continuam pendentes.
+  Provas: `src/data/radar.meta.reenvio.test.ts` (banco simulado com a regra da RPC: o defeito reproduzido e a correção)
+  e `src/data/meta.reenvio.store.test.ts` (fila real do store: Tentar de novo, várias retomadas, meta nova depois da
+  falha, pendência offline e reabertura) — os 5 testes do store falham no código anterior.
+
 - O teste de confirmação usa um banco simulado nas portas; a RPC real e a recarga já são provadas pelo
   `smoke:meta-comercial` (E2) e pela integração da E3. A primeira confirmação com o banco de produção acontece na
   validação depois da publicação.

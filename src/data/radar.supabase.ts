@@ -24,6 +24,11 @@ export interface HelpersRadar {
   motivoDono: (empresaId: string) => string | undefined;
   /** CD-D3/E3: o banco tem o livro de desfechos (0070)? Sem ele a coluna won_amount não existe e não é enviada. */
   desfechos?: boolean;
+  /**
+   * CD-D3/E5: avisado logo depois de cada RPC de meta que o banco ACEITOU (antes do que vier depois na rodada). O store
+   * põe a versão na base sincronizada e na pendência offline, para que a retomada nunca reenvie a mesma intenção.
+   */
+  aoGravarMeta?: (m: VersaoMetaComercial) => void;
 }
 
 type Chave = keyof RadarDataset;
@@ -135,6 +140,8 @@ export function metaDoBanco(x: Row): VersaoMetaComercial {
  * governada, na ordem de mês e versão. O banco é a autoridade: recalcula a versão sob trava, confere papel, organização,
  * mês, valor e motivo e audita na mesma transação; a versão local é só a intenção (o número final é o do banco, que a
  * recarga traz). Nunca há INSERT direto (authenticated não tem). Mesmo valor da vigente: a RPC não cria versão.
+ * Cada versão aceita é avisada em `h.aoGravarMeta` na hora: se algo POSTERIOR da rodada falhar, a retomada não a
+ * reenvia (um reenvio, com outra sessão tendo mudado a meta no meio, recriaria o valor antigo sobre o mais novo).
  */
 async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComercial[] | undefined, depois: readonly VersaoMetaComercial[] | undefined): Promise<void> {
   if (!depois) return;
@@ -143,6 +150,7 @@ async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComerci
   for (const m of novas) {
     if (!m.motivo?.trim()) throw new Error('meta comercial: versão sem motivo; nada foi gravado.');
     await h.rpc('radar_definir_meta_comercial', { p_mes: `${m.mes}-01`, p_valor: m.valor === null || m.valor === undefined || m.valor === '' ? null : Number(m.valor), p_motivo: m.motivo.trim() });
+    h.aoGravarMeta?.(m);
   }
 }
 
