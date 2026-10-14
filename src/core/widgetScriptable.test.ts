@@ -3,6 +3,7 @@
 // mostra os números certos e trata token ausente, token recusado e falta de rede.
 import { describe, expect, it } from 'vitest';
 import { CHAVE_KEYCHAIN_WIDGET, scriptWidgetCaixa } from './widgetScriptable';
+import { scriptWidgetPedidos } from './widgetScriptablePedidos';
 import type { ResumoWidgetCaixa } from './widgetCaixa';
 import type { ResumoWidgetPedidos } from './widgetPedidos';
 
@@ -18,7 +19,7 @@ const RESUMO: ResumoWidgetCaixa = {
   proximos: [{ data: '2026-10-01', descricao: 'Aluguel do galpão', tipo: 'Saída', valor: 1200, vencido: true, foraDoSaldo: false }, { data: '2026-10-16', descricao: 'Medição Smart Fit', tipo: 'Entrada', valor: 77531.45, vencido: false, foraDoSaldo: false }],
 };
 
-interface Cenario { parametro?: string; arquivos?: Record<string, unknown>; runsInWidget: boolean; familia?: string; token?: string | null; resposta?: { status: number; corpo: unknown } | 'sem_rede'; cache?: unknown; pasteboard?: string; respostasAlerta?: number[]; campos?: string[] }
+interface Cenario { script?: string; parametro?: string; arquivos?: Record<string, unknown>; runsInWidget: boolean; familia?: string; token?: string | null; resposta?: { status: number; corpo: unknown } | 'sem_rede'; cache?: unknown; pasteboard?: string; respostasAlerta?: number[]; campos?: string[] }
 async function rodar(c: Cenario) {
   const textos: string[] = [];
   const requisicoes: { url: string; headers: Record<string, string> }[] = [];
@@ -68,7 +69,7 @@ async function rodar(c: Cenario) {
     Notification: function Notification() { const n: Record<string, unknown> = { schedule: async () => { notificacoes.push({ title: n.title as string, body: n.body as string, openURL: n.openURL as string }); } }; return n; },
     Script: { setWidget: (w: unknown) => { widget = w; }, complete: () => undefined, name: () => 'EIFF Caixa' },
   };
-  const codigo = scriptWidgetCaixa('https://eiffcontrol.com.br');
+  const codigo = c.script ?? scriptWidgetCaixa('https://eiffcontrol.com.br');
   const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (...a: string[]) => (...v: unknown[]) => Promise<void>;
   await new AsyncFunction(...Object.keys(ambiente), codigo)(...Object.values(ambiente));
   return { textos, requisicoes, keychain, arquivos, alertas, pasteboard, widget, apresentou, notificacoes };
@@ -210,5 +211,45 @@ describe('script do Scriptable · visão pedidos (Parameter = pedidos)', () => {
     const r = await rodar({ runsInWidget: false, token: TOKEN, respostasAlerta: [5], resposta: { status: 200, corpo: PEDIDOS } });
     expect(r.apresentou).toBe('presentLarge');
     expect(r.requisicoes[0].url).toContain('?visao=pedidos');
+  });
+});
+
+describe('script PRÓPRIO dos pedidos (sem a parte do caixa)', () => {
+  const SP = scriptWidgetPedidos('https://eiffcontrol.com.br');
+  it('não carrega nada do caixa e usa o mesmo token do Keychain', () => {
+    for (const trecho of ['curva(', 'caixaHoje', 'Próximos 7 dias', 'saúde do caixa', '/#/caixa', 'widgetParameter']) expect(SP, trecho).not.toContain(trecho);
+    expect(SP).toContain(`const CHAVE = '${CHAVE_KEYCHAIN_WIDGET}';`);
+    expect(SP).toContain("new Request(BASE + '/api/widget-caixa?visao=pedidos')");
+    expect(SP).not.toMatch(/eiffw_[0-9a-f]{64}/);
+    expect(() => scriptWidgetPedidos('http://eiffcontrol.com.br')).toThrow();
+  });
+  for (const familia of ['small', 'medium', 'large', 'extraLarge', 'accessoryRectangular', 'accessoryInline', 'accessoryCircular']) {
+    it(`widget ${familia} sem Parameter: só pedidos`, async () => {
+      const r = await rodar({ script: SP, runsInWidget: true, familia, token: TOKEN, resposta: { status: 200, corpo: PEDIDOS } });
+      expect(r.requisicoes.map((x) => x.url)).toEqual(['https://eiffcontrol.com.br/api/widget-caixa?visao=pedidos']);
+      const tudo = r.textos.join(' | ');
+      expect(tudo).not.toContain('Caixa');
+      if (familia === 'accessoryInline') expect(tudo).toBe('EIFF: 2 pedidos · R$ 200.180');
+      if (familia === 'large') { expect(tudo).toContain('Pedidos ao Diretor · EIFF'); expect(tudo).toContain('não recomendado'); expect(tudo).toContain('programado · Frete'); }
+    });
+  }
+  it('resposta do caixa é recusada; 401 apaga o guardado; sem token pede configuração', async () => {
+    expect((await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, resposta: { status: 200, corpo: RESUMO } })).textos).toContain('Pedidos indisponíveis');
+    const negado = await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, arquivos: { 'eiff-pedidos-resumo.json': PEDIDOS }, resposta: { status: 401, corpo: { erro: 'token_revogado', mensagem: 'Este aparelho foi revogado.' } } });
+    expect(negado.textos).toContain('Acesso do widget recusado');
+    expect(negado.arquivos.has('/cache/eiff-pedidos-resumo.json')).toBe(false);
+    expect((await rodar({ script: SP, runsInWidget: true, familia: 'small', token: null })).textos).toContain('Configure o token');
+  });
+  it('aviso de pedido novo: só o que não tinha visto; primeira vez só memoriza', async () => {
+    const primeira = await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, resposta: { status: 200, corpo: PEDIDOS } });
+    expect(primeira.notificacoes).toEqual([]);
+    const depois = await rodar({ script: SP, runsInWidget: true, familia: 'medium', token: TOKEN, arquivos: { 'eiff-pedidos-vistos.json': ['PED-0002'] }, resposta: { status: 200, corpo: PEDIDOS } });
+    expect(depois.notificacoes.map((n) => n.title)).toEqual(['Novo pedido de Tiago']);
+  });
+  it('no app: prévia grande e remover o token', async () => {
+    const previa = await rodar({ script: SP, runsInWidget: false, token: TOKEN, respostasAlerta: [2], resposta: { status: 200, corpo: PEDIDOS } });
+    expect(previa.apresentou).toBe('presentLarge');
+    const rem = await rodar({ script: SP, runsInWidget: false, token: TOKEN, respostasAlerta: [5] });
+    expect(rem.keychain.size).toBe(0);
   });
 });
