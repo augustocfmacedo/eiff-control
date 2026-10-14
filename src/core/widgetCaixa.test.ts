@@ -4,6 +4,7 @@ import { livroCaixa } from './caixa';
 import { addDays, calcLancamentos } from './engine';
 import { saudeCaixa } from './saudeCaixa';
 import { DIAS_CURVA_WIDGET, MAX_PROXIMOS_WIDGET, resumoWidgetCaixa } from './widgetCaixa';
+import { MAX_ITENS_PAGAMENTOS_WIDGET, resumoWidgetPagamentos } from './widgetPagamentos';
 import type { Dataset, Lancamento } from './types';
 import { actions, getState } from '../data/store';
 
@@ -116,5 +117,52 @@ describe('vencidos, rascunhos e textos longos', () => {
     expect(r.extrato.ate).toBeNull();
     expect(r.extrato.dias).toBeNull();
     expect(r.extrato.alerta).toMatch(/Nenhum extrato importado/);
+  });
+});
+
+describe('widget de pagamentos do dia = as saídas de hoje na Caixa', () => {
+  // planilha de 13/10 + um atrasado, um em aprovação, um rascunho, um faturado ao cliente, uma entrada e um de amanhã
+  let ds = planilha();
+  const obra = ds.obras[0]?.codigo ?? '';
+  const extra = [
+    lanc(ds, { categoria: 'Outros pagamentos', valorBruto: 1500, vencimento: '2026-10-10', descricao: 'Conta atrasada' }),
+    lanc(ds, { categoria: 'Outros pagamentos', valorBruto: 800, vencimento: HOJE, status: 'Pendente', descricao: 'Em aprovação' }),
+    lanc(ds, { categoria: 'Outros pagamentos', valorBruto: 300, vencimento: HOJE, status: 'Rascunho', descricao: 'Pedido ao Diretor' }),
+    lanc(ds, { categoria: 'Outros pagamentos', valorBruto: 9000, vencimento: HOJE, faturamentoDireto: true, codigoObra: obra, descricao: 'Nota direta' }),
+    lanc(ds, { categoria: 'Outros recebimentos', valorBruto: 4000, vencimento: HOJE, descricao: 'Recebimento de hoje' }),
+    lanc(ds, { categoria: 'Outros pagamentos', valorBruto: 999, vencimento: '2026-10-14', descricao: 'Amanhã' }),
+  ];
+  ds = { ...ds, lancamentos: [...ds.lancamentos, ...extra] };
+  const r = resumoWidgetPagamentos(ds, AGORA);
+
+  it('soma por situação: 10 pagos (25.421,49), 5.000 a pagar, 1.500 atrasado, 800 em aprovação', () => {
+    expect(r.visao).toBe('pagamentos');
+    expect(r.hoje).toBe(HOJE);
+    expect(r.quantidade).toEqual({ atrasado: 1, a_pagar: 1, aprovacao: 1, pago: 10 });
+    expect(r.valor).toEqual({ atrasado: 1500, a_pagar: 5000, aprovacao: 800, pago: 25421.49 });
+    expect(r.falta).toBe(6500);
+    expect(r.total).toBe(31921.49); // aprovação fica fora: ainda não sai do caixa
+    expect(r.progresso).toBeCloseTo(25421.49 / 31921.49, 3);
+  });
+
+  it('caixa de hoje é o da Caixa; depois de pagar o que falta', () => {
+    expect(r.caixaHoje).toBe(41988.93);
+    expect(r.caixaAposPagar).toBe(35488.93);
+    expect(r.minimo).toBe(20000);
+    expect(r.abaixoDoMinimo).toBe(false);
+  });
+
+  it('lista: o que exige ação primeiro (atrasado, a pagar, aprovação, pagos pelo maior valor); nunca rascunho, entrada, faturado ao cliente ou outro dia', () => {
+    expect(r.itens.slice(0, 3).map((p) => [p.status, p.valor])).toEqual([['atrasado', 1500], ['a_pagar', 5000], ['aprovacao', 800]]);
+    expect(r.itens[0].diasAtraso).toBe(3);
+    expect(r.itens[3]).toMatchObject({ status: 'pago', valor: 12000 });
+    const nomes = r.itens.map((p) => p.descricao);
+    for (const fora of ['Pedido ao Diretor', 'Nota direta', 'Recebimento de hoje', 'Amanhã']) expect(nomes).not.toContain(fora);
+    expect(r.itens.length).toBeLessThanOrEqual(MAX_ITENS_PAGAMENTOS_WIDGET);
+  });
+
+  it('dia sem pagamentos: total zero e progresso cheio', () => {
+    const vazio = resumoWidgetPagamentos(base(), AGORA);
+    expect([vazio.total, vazio.falta, vazio.itens.length, vazio.progresso]).toEqual([0, 0, 0, 1]);
   });
 });

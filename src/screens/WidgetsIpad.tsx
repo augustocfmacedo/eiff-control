@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { scriptWidgetCaixa } from '../core/widgetScriptable';
 import { scriptWidgetPedidos } from '../core/widgetScriptablePedidos';
+import { scriptWidgetPagamentos } from '../core/widgetScriptablePagamentos';
 import { WidgetsIndisponiveis, criarAparelho, listarAparelhos, revogarAparelho, situacaoAparelho, type AparelhoWidget, type TokenNovo } from '../data/widgets';
 import { remotoAtivo } from '../data/supabase';
 import { Badge, Field, Modal, Select } from '../ui/components';
@@ -28,6 +29,7 @@ export function WidgetsIpad({ onClose, toast }: { onClose: () => void; toast: (m
   const origem = typeof window !== 'undefined' && window.location.protocol === 'https:' ? window.location.origin : 'https://eiffcontrol.com.br';
   const script = scriptWidgetCaixa(origem);
   const scriptPedidos = scriptWidgetPedidos(origem);
+  const scriptPagamentos = scriptWidgetPagamentos(origem);
 
   const recarregar = () => listarAparelhos().then((l) => { setLista(l); setAviso(null); }).catch((e: Error) => { setLista(null); setAviso(e instanceof WidgetsIndisponiveis ? e.message : `Não foi possível listar os aparelhos: ${e.message}`); });
   useEffect(() => { if (remotoAtivo) void recarregar(); else setAviso('Widgets só funcionam no sistema publicado, conectado ao banco.'); }, []);
@@ -51,7 +53,7 @@ export function WidgetsIpad({ onClose, toast }: { onClose: () => void; toast: (m
     <Modal title="Widgets do iPad" onClose={onClose} wide>
       <p className="small muted" style={{ marginTop: 0 }}>
         O widget mostra o caixa de hoje, o menor saldo, a curva dos próximos 30 dias e o que vence na semana — os mesmos números desta tela.
-        O widget de <b>pedidos</b> tem script próprio (EIFF Pedidos): mostra o que a equipe pediu ao Diretor Financeiro, com a orientação para cada pedido, e avisa no iPad quando chega um pedido novo. Os dois usam o mesmo token do aparelho.
+        O widget de <b>pedidos</b> tem script próprio (EIFF Pedidos): mostra o que a equipe pediu ao Diretor Financeiro, com a orientação para cada pedido, e avisa no iPad quando chega um pedido novo. O de <b>pagamentos do dia</b> (EIFF Pagamentos) lista o que sai do caixa hoje — atrasados, a pagar, em aprovação e já pagos — com o total e o quanto falta. Todos usam o mesmo token do aparelho e pedem atualização a cada 15 minutos.
         Cada aparelho tem um token próprio, só de leitura, que você pode revogar a qualquer momento. Funciona com o app Scriptable (gratuito).
       </p>
       {aviso && <div className="alert info">{aviso}</div>}
@@ -68,10 +70,12 @@ export function WidgetsIpad({ onClose, toast }: { onClose: () => void; toast: (m
             <li>Volte aqui, toque em <b>Copiar token</b>, abra o Scriptable e toque no script: ele usa o token copiado, guarda no Keychain do iPad e limpa a área de transferência.</li>
             <li>Na tela de início: toque e segure → Editar → Adicionar widget → Scriptable → escolha o tamanho → toque no widget → Script: <b>EIFF Caixa</b>. Na tela de bloqueio, o mesmo pelo editor da tela de bloqueio.</li>
             <li>Para os pedidos da equipe: toque em <b>Copiar script dos pedidos</b>, crie outro script no Scriptable com o nome <b>EIFF Pedidos</b> e adicione um widget com ele. Permita as notificações do Scriptable para receber o aviso de pedido novo.</li>
+            <li>Para os pagamentos do dia: toque em <b>Copiar script dos pagamentos</b>, crie outro script com o nome <b>EIFF Pagamentos</b> e adicione um widget com ele (fica melhor no tamanho grande ou extra grande).</li>
           </ol>
           <div className="actions">
             <button className="btn primary" onClick={() => copiar(script, 'Script copiado: cole num script novo do Scriptable.')}>Copiar script</button>
             <button className="btn" onClick={() => copiar(scriptPedidos, 'Script dos pedidos copiado: cole num script novo do Scriptable chamado EIFF Pedidos.')}>Copiar script dos pedidos</button>
+            <button className="btn" onClick={() => copiar(scriptPagamentos, 'Script dos pagamentos copiado: cole num script novo do Scriptable chamado EIFF Pagamentos.')}>Copiar script dos pagamentos</button>
             <button className="btn" onClick={() => copiar(novo.token, 'Token copiado: agora toque no script dentro do Scriptable.')}>Copiar token</button>
             <button className="btn" onClick={() => setNovo(null)}>Pronto</button>
           </div>
@@ -82,7 +86,8 @@ export function WidgetsIpad({ onClose, toast }: { onClose: () => void; toast: (m
           <Field label="Validade"><Select value={dias} onChange={setDias} options={VALIDADES} /></Field>
           <div className="actions full"><button className="btn primary" disabled={ocupado || !nome.trim()} onClick={gerar}>Gerar token para este aparelho</button>
             <button className="btn" onClick={() => copiar(script, 'Script do caixa copiado: cole por cima do script EIFF Caixa no Scriptable (o token continua no iPad).')}>Copiar script do caixa</button>
-            <button className="btn" onClick={() => copiar(scriptPedidos, 'Script dos pedidos copiado: cole num script novo do Scriptable chamado EIFF Pedidos (usa o mesmo token).')}>Copiar script dos pedidos</button></div>
+            <button className="btn" onClick={() => copiar(scriptPedidos, 'Script dos pedidos copiado: cole num script novo do Scriptable chamado EIFF Pedidos (usa o mesmo token).')}>Copiar script dos pedidos</button>
+            <button className="btn" onClick={() => copiar(scriptPagamentos, 'Script dos pagamentos copiado: cole num script novo do Scriptable chamado EIFF Pagamentos (usa o mesmo token).')}>Copiar script dos pagamentos</button></div>
         </div>
       )}
 
