@@ -1354,3 +1354,27 @@ tr.arrastando td { opacity: 0.55; }
 .grafico-saldo-card h2 { margin: 0; }
 
 .acesso-pronto { white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; font-size: 13px; user-select: all; }
+
+/* CD-D3/E5 — Metas e resultados no Command Center */
+.meta-comercial { margin-bottom: var(--space-4); }
+.meta-cabecalho { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.meta-cabecalho h2 { margin: 0; margin-right: auto; }
+.meta-cabecalho select { width: auto; min-width: 170px; }
+.meta-instante { white-space: nowrap; }
+.meta-estado { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 var(--space-2); }
+.meta-aviso { margin-top: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius); font-size: var(--text-sm); border: 1px solid var(--border); }
+.meta-aviso.ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.meta-aviso.warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.meta-aviso.bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+.meta-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+.meta-detalhes { margin-top: var(--space-3); }
+.meta-detalhes summary { cursor: pointer; font-weight: 600; font-size: var(--text-sm); color: var(--muted); }
+.meta-detalhes-corpo { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-4); margin-top: var(--space-3); }
+.meta-detalhes-corpo h3 { margin: 0 0 var(--space-2); }
+.meta-detalhes-corpo ul { margin: 0; padding-left: var(--space-4); font-size: var(--text-sm); }
+.meta-detalhes-corpo table { width: 100%; }
+@media (max-width: 640px) {
+  .meta-cabecalho select { flex: 1 1 100%; }
+  .meta-instante { white-space: normal; }
+  .meta-acoes .btn { flex: 1 1 auto; }
+}

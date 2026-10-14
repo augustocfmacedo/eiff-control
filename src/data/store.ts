@@ -76,6 +76,7 @@ import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, t
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
+import { definirMetaConfirmada, type ResultadoMetaConfirmada } from './metaConfirmada';
 import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, enviarAnexoRemoto, removerAnexoRemoto, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { alteracaoDoJson, alteracoesDosPedidos, anexoDoJson, anexosDosPedidos, lancamentoDoPedido } from './solicitante';
 import { extensaoDoMime, mimeDoArquivo, podeRemoverAnexo, tiposQuePodeAnexar, validarArquivoAnexo } from '../core/anexos';
@@ -2312,6 +2313,29 @@ export const actions = {
       ultima ? { versao: ultima.versao, valor: ultima.valor ?? null } : undefined, { mes, versao: nova.versao, valor: nova.valor ?? null }, nova.motivo);
     commit(ds);
     return nova;
+  },
+
+  /**
+   * CD-D3/E5 — a MESMA ação canônica (`definirMetaComercialRadar`), mas só devolve sucesso depois que o banco confirma:
+   * no remoto espera a sincronização (RPC radar_definir_meta_comercial), recarrega e devolve a versão persistida; recusa
+   * do banco recarrega e devolve erro (nada fica só no navegador); sem rede devolve "pendente". Ver src/data/metaConfirmada.ts.
+   */
+  definirMetaComercialConfirmada(mes: string, valor: number | null, motivo: string): Promise<ResultadoMetaConfirmada> {
+    return definirMetaConfirmada({
+      remoto: state.modo === 'remoto',
+      syncAtual: () => state.sync,
+      definir: () => actions.definirMetaComercialRadar(mes, valor, motivo),
+      aguardarSincronizacao: () => actions.aguardarSincronizacao(),
+      recarregar: () => actions.recarregar(),
+      versoesDoMes: () => (state.ds.radar.metasComerciais ?? []).filter((m) => m.mes === mes),
+    });
+  },
+
+  /** Espera a fila de sincronização com o banco esvaziar (inclusive o que entrar enquanto espera) e devolve o status final. */
+  async aguardarSincronizacao(): Promise<SyncStatus> {
+    let atual: Promise<void>;
+    do { atual = fila; await atual; } while (atual !== fila);
+    return state.sync;
   },
 
   /**
