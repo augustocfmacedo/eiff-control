@@ -519,7 +519,9 @@ export const ACOES_DONO_RPC: ReadonlySet<string> = new Set(['radar_definir_dono_
 /** CD-D3/E2: ações de meta comercial que a RPC radar_definir_meta_comercial já audita no banco. */
 export const ACOES_META_RPC: ReadonlySet<string> = new Set(['radar_definir_meta_comercial', 'radar_retirar_meta_comercial']);
 /** Ações cuja auditoria o banco grava na mesma transação da mudança (o app não reenvia). */
-export const ACOES_AUDITADAS_PELA_RPC: ReadonlySet<string> = new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC]);
+/** CD-D3/E3: o complemento de valor de um ganho já é auditado pela RPC radar_complementar_valor_ganho. */
+export const ACOES_DESFECHO_RPC: ReadonlySet<string> = new Set(['radar_complementar_valor_ganho']);
+export const ACOES_AUDITADAS_PELA_RPC: ReadonlySet<string> = new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC, ...ACOES_DESFECHO_RPC]);
 
 /** Motivo da mudanca de dono mais recente da empresa (id do app) entre as entradas de auditoria desta sincronizacao. */
 export function motivoDonoDaAuditoria(entradas: readonly Auditoria[], empresaId: string): string | undefined {

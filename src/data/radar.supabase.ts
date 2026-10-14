@@ -3,7 +3,7 @@
 // insert nas imutaveis). Recebe os helpers do provider principal para nao criar ciclo de import.
 import { contentSpecPersistivel, type ContentSpec } from '../core/radar/comunicacao';
 import type { OperacaoVibeLedger, RadarDataset } from '../core/radar/types';
-import type { VersaoMetaComercial } from '../core/radar/metaComercial';
+import type { EventoDesfecho, VersaoMetaComercial } from '../core/radar/metaComercial';
 
 
 type Row = Record<string, any>;
@@ -22,6 +22,8 @@ export interface HelpersRadar {
   rpc: (nome: string, args: Row) => Promise<unknown>;
   /** CD-D5.2: motivo da mudança de dono da empresa (id do app), lido da auditoria do app desta sincronização */
   motivoDono: (empresaId: string) => string | undefined;
+  /** CD-D3/E3: o banco tem o livro de desfechos (0070)? Sem ele a coluna won_amount não existe e não é enviada. */
+  desfechos?: boolean;
 }
 
 type Chave = keyof RadarDataset;
@@ -55,7 +57,7 @@ const SPECS: Spec<{ id: string }>[] = [
   { chave: 'contatos', tabela: 'radar_contact', ordem: 'full_name', app: (x) => ({ id: x.id, empresaId: x.company_id, nome: x.full_name, cargo: s(x.job_title), departamento: s(x.department), senioridade: s(x.seniority), email: s(x.email), telefone: s(x.phone), celular: s(x.mobile_phone), whatsapp: s(x.whatsapp), linkedin: s(x.linkedin_url), decisor: !!x.is_decision_maker, poderDecisao: s(x.decision_power), persona: s(x.persona), personaManual: !!x.persona_manual, decisionFitScore: Number(x.decision_fit_score ?? 0), isPrimario: !!x.is_primary_contact, qualidade: Number(x.contact_quality ?? 0), statusEmail: s(x.professional_email_status), statusTelefone: s(x.phone_status), situacao: x.status ?? 'ATIVO', fonteId: s(x.source_id), fonteExternaId: s(x.source_external_id), verificadoEm: s(x.last_verified_at), observacoes: x.notes ?? '', ativo: !!x.active, criadoEm: x.created_at, atualizadoEm: x.updated_at }), db: (o: Row, ref) => ({ company_id: ref('empresas', o.empresaId), source_external_id: nn(o.fonteExternaId), full_name: o.nome, job_title: nn(o.cargo), department: nn(o.departamento), seniority: nn(o.senioridade), email: nn(o.email), phone: nn(o.telefone), mobile_phone: nn(o.celular), whatsapp: nn(o.whatsapp), linkedin_url: nn(o.linkedin), is_decision_maker: o.decisor, decision_power: nn(o.poderDecisao), persona: nn(o.persona), persona_manual: !!o.personaManual, decision_fit_score: o.decisionFitScore ?? 0, is_primary_contact: !!o.isPrimario, contact_quality: o.qualidade, professional_email_status: nn(o.statusEmail), phone_status: nn(o.statusTelefone), status: o.situacao ?? 'ATIVO', source_id: ref('fontes', o.fonteId), last_verified_at: nn(o.verificadoEm), notes: nn(o.observacoes), active: o.ativo }) },
   { chave: 'projetos', tabela: 'radar_project', ordem: 'name', app: (x) => ({ id: x.id, empresaId: x.company_id, nome: x.name, tipo: s(x.project_type), cidade: s(x.city), uf: s(x.state), endereco: s(x.address), areaM2: n(x.estimated_area_m2), valorEstimado: n(x.estimated_value), estagio: s(x.stage), inicioPrevisto: s(x.expected_start_date), fonteId: s(x.source_id), fonteExternaId: s(x.source_external_id), observacoes: x.notes ?? '', criadoEm: x.created_at, atualizadoEm: x.updated_at }), db: (o: Row, ref) => ({ company_id: ref('empresas', o.empresaId), name: o.nome, project_type: nn(o.tipo), city: nn(o.cidade), state: nn(o.uf), address: nn(o.endereco), estimated_area_m2: nn(o.areaM2), estimated_value: nn(o.valorEstimado), stage: nn(o.estagio), expected_start_date: nn(o.inicioPrevisto), source_id: ref('fontes', o.fonteId), source_external_id: nn(o.fonteExternaId), notes: nn(o.observacoes) }) },
   { chave: 'sinais', tabela: 'radar_signal', ordem: 'detected_at', imutavel: true, app: (x) => ({ id: x.id, empresaId: x.company_id, projetoId: s(x.project_id), fonteId: x.source_id, fonteTipo: x.source_type, tipo: x.signal_type, titulo: x.title, descricao: x.description ?? '', eventoEm: x.event_at, detectadoEm: x.detected_at, confianca: Number(x.confidence ?? 1), url: s(x.original_url), externoId: s(x.external_id), payload: x.raw_payload ?? undefined, scoreBase: Number(x.base_score ?? 0), scoreEfetivo: Number(x.effective_score ?? 0), verificado: !!x.verified, verificadoPor: s(x.verified_by), criadoEm: x.created_at }), db: (o: Row, ref, h) => ({ company_id: ref('empresas', o.empresaId), project_id: ref('projetos', o.projetoId), source_id: ref('fontes', o.fonteId), source_type: o.fonteTipo, signal_type: o.tipo, title: o.titulo, description: nn(o.descricao), event_at: o.eventoEm, detected_at: o.detectadoEm, confidence: o.confianca, original_url: nn(o.url), external_id: nn(o.externoId), raw_payload: o.payload ?? null, base_score: o.scoreBase, effective_score: o.scoreEfetivo, verified: o.verificado, verified_by: o.verificado ? h.perfil(o.verificadoPor) ?? h.atorId : null }) },
-  { chave: 'oportunidades', tabela: 'radar_opportunity', ordem: 'created_at', app: (x) => ({ id: x.id, empresaId: x.company_id, projetoId: s(x.project_id), titulo: x.title, estagio: x.stage, valorEstimado: n(x.estimated_value), probabilidade: Number(x.probability ?? 0), previsaoFechamento: s(x.expected_close_date), responsavelId: x.owner_id ?? '', estrategiaId: s(x.strategy_id), proximaAcao: s(x.next_action), proximaAcaoEm: s(x.next_action_at), motivoFechamento: s(x.close_reason), observacoes: x.notes ?? '', criadoEm: x.created_at, atualizadoEm: x.updated_at, fechadoEm: s(x.closed_at) }), db: (o: Row, ref, h) => ({ company_id: ref('empresas', o.empresaId), project_id: ref('projetos', o.projetoId), title: o.titulo, stage: o.estagio, estimated_value: nn(o.valorEstimado), probability: o.probabilidade, expected_close_date: nn(o.previsaoFechamento), owner_id: h.perfil(o.responsavelId) ?? h.atorId, strategy_id: ref('estrategias', o.estrategiaId), next_action: nn(o.proximaAcao), next_action_at: nn(o.proximaAcaoEm), close_reason: nn(o.motivoFechamento), notes: nn(o.observacoes), closed_at: nn(o.fechadoEm), updated_by: h.atorId }) },
+  { chave: 'oportunidades', tabela: 'radar_opportunity', ordem: 'created_at', app: (x) => ({ id: x.id, empresaId: x.company_id, projetoId: s(x.project_id), titulo: x.title, estagio: x.stage, valorEstimado: n(x.estimated_value), valorFechado: n(x.won_amount), probabilidade: Number(x.probability ?? 0), previsaoFechamento: s(x.expected_close_date), responsavelId: x.owner_id ?? '', estrategiaId: s(x.strategy_id), proximaAcao: s(x.next_action), proximaAcaoEm: s(x.next_action_at), motivoFechamento: s(x.close_reason), motivoEstagio: s(x.stage_reason), observacoes: x.notes ?? '', criadoEm: x.created_at, atualizadoEm: x.updated_at, fechadoEm: s(x.closed_at) }), db: (o: Row, ref, h) => ({ company_id: ref('empresas', o.empresaId), project_id: ref('projetos', o.projetoId), title: o.titulo, stage: o.estagio, estimated_value: nn(o.valorEstimado), probability: o.probabilidade, expected_close_date: nn(o.previsaoFechamento), owner_id: h.perfil(o.responsavelId) ?? h.atorId, strategy_id: ref('estrategias', o.estrategiaId), next_action: nn(o.proximaAcao), next_action_at: nn(o.proximaAcaoEm), close_reason: nn(o.motivoFechamento), notes: nn(o.observacoes), closed_at: nn(o.fechadoEm), updated_by: h.atorId, ...(h.desfechos ? { won_amount: nn(o.valorFechado), stage_reason: nn(o.motivoEstagio) } : {}) }) },
   { chave: 'historicoEstagios', tabela: 'radar_opportunity_stage_history', ordem: 'changed_at', imutavel: true, app: (x) => ({ id: x.id, oportunidadeId: x.opportunity_id, de: s(x.from_stage), para: x.to_stage, usuarioId: x.user_id ?? '', motivo: s(x.reason), em: x.changed_at }), db: (o: Row, ref, h) => ({ opportunity_id: ref('oportunidades', o.oportunidadeId), from_stage: nn(o.de), to_stage: o.para, user_id: h.perfil(o.usuarioId) ?? h.atorId, reason: nn(o.motivo), changed_at: o.em }) },
   { chave: 'atividades', tabela: 'radar_activity', ordem: 'occurred_at', imutavel: true, app: (x) => ({ id: x.id, empresaId: x.company_id, contatoId: s(x.contact_id), projetoId: s(x.project_id), oportunidadeId: s(x.opportunity_id), usuarioId: x.user_id ?? '', tipo: x.activity_type, canal: x.channel, estrategiaId: s(x.strategy_id), ocorreuEm: x.occurred_at, resultado: s(x.outcome), notas: x.notes ?? '', conteudoBruto: s(x.raw_content), criadoEm: x.created_at }), db: (o: Row, ref, h) => ({ company_id: ref('empresas', o.empresaId), contact_id: ref('contatos', o.contatoId), project_id: ref('projetos', o.projetoId), opportunity_id: ref('oportunidades', o.oportunidadeId), user_id: h.perfil(o.usuarioId) ?? h.atorId, activity_type: o.tipo, channel: o.canal, strategy_id: ref('estrategias', o.estrategiaId), occurred_at: o.ocorreuEm, outcome: nn(o.resultado), notes: nn(o.notas), raw_content: nn(o.conteudoBruto) }) },
   { chave: 'tarefas', tabela: 'radar_task', ordem: 'due_at', app: (x) => ({ id: x.id, empresaId: x.company_id, contatoId: s(x.contact_id), oportunidadeId: s(x.opportunity_id), responsavelId: x.assigned_to ?? '', tipo: x.task_type, prioridade: x.priority, venceEm: x.due_at, status: x.status, descricao: x.description, criadoEm: x.created_at, concluidaEm: s(x.completed_at) }), db: (o: Row, ref, h) => ({ company_id: ref('empresas', o.empresaId), contact_id: ref('contatos', o.contatoId), opportunity_id: ref('oportunidades', o.oportunidadeId), assigned_to: h.perfil(o.responsavelId) ?? h.atorId, task_type: o.tipo, priority: o.prioridade, due_at: o.venceEm, status: o.status, description: o.descricao, completed_at: nn(o.concluidaEm) }) },
@@ -97,7 +99,30 @@ export async function carregarRadar(h: Pick<HelpersRadar, 'sel' | 'orgId'>): Pro
   ds.pesosDecisionFit = pesosFit.map((x) => ({ chave: x.key, valor: Number(x.value) }));
   // CD-D3/E2: metas comerciais (somente leitura; escrita só pela RPC). Banco sem a 0068: indisponível (undefined), nunca "sem meta".
   ds.metasComerciais = await h.sel('radar_commercial_goal', 'created_at').then((linhas) => linhas.map(metaDoBanco)).catch(() => undefined);
+  // CD-D3/E3: livro de desfechos (somente leitura; o banco escreve). Banco sem a 0070: indisponível (undefined), nunca "sem ganho".
+  ds.desfechos = await h.sel('radar_commercial_outcome', 'occurred_at').then((linhas) => linhas.map(eventoDoBanco)).catch(() => undefined);
   return ds;
+}
+
+/** Linha de radar_commercial_outcome → `EventoDesfecho` do motor E1 (valor como veio do banco; instante com fuso). */
+export function eventoDoBanco(x: Row): EventoDesfecho {
+  const opc = (k: keyof EventoDesfecho, v: unknown) => (v === null || v === undefined ? {} : { [k]: String(v) });
+  return { id: String(x.id), tipo: x.event_type, oportunidadeId: String(x.opportunity_id), empresaId: String(x.company_id), ocorridoEm: String(x.occurred_at),
+    ...opc('valor', x.amount), ...opc('ganhoId', x.won_event_id), ...opc('responsavelId', x.owner_id), ...opc('donoContaId', x.account_owner_id), ...opc('motivo', x.reason), ...opc('registradoPor', x.actor_id) } as EventoDesfecho;
+}
+
+/**
+ * CD-D3/E3 — o app nunca grava GANHO nem ESTORNO (o gatilho da 0070 grava na mesma transação da mudança de estágio).
+ * Cada COMPLEMENTO_VALOR novo desde a última sincronização vira UMA chamada da RPC governada, depois da escrita das
+ * oportunidades; recusa = exceção, nada muda. Sem motivo: falha fechada.
+ */
+async function persistirDesfechos(h: HelpersRadar, antes: readonly EventoDesfecho[] | undefined, depois: readonly EventoDesfecho[] | undefined): Promise<void> {
+  if (!depois) return;
+  const ja = new Set((antes ?? []).map((e) => e.id));
+  for (const e of depois.filter((x) => !ja.has(x.id) && x.tipo === 'COMPLEMENTO_VALOR')) {
+    if (!e.motivo?.trim() || !e.ganhoId) throw new Error('desfecho: complemento sem motivo ou sem ganho; nada foi gravado.');
+    await h.rpc('radar_complementar_valor_ganho', { p_ganho: h.uuid(e.ganhoId) ?? e.ganhoId, p_valor: Number(e.valor), p_motivo: e.motivo.trim() });
+  }
 }
 
 /** Linha de radar_commercial_goal → versão de meta do motor (mês AAAA-MM; valor como veio do banco, null = retirada). */
@@ -159,6 +184,7 @@ async function persistirDonos(h: HelpersRadar, antes: { id: string }[], depois: 
 
 export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | undefined, depois: RadarDataset | undefined): Promise<void> {
   if (!depois || !refs) return;
+  h = { ...h, desfechos: depois.desfechos !== undefined };
   const a = antes ?? ({} as RadarDataset);
   const ref = (chave: Chave, id?: string) => (id ? refs!.get(chave)?.get(id) ?? h.uuid(id) : null);
   for (const sp of SPECS) {
@@ -197,4 +223,5 @@ export async function persistirRadar(h: HelpersRadar, antes: RadarDataset | unde
     await h.gravarComposta('radar_decision_fit_weight', { organization_id: h.orgId, key: c.chave }, { value: c.valor });
   }
   await persistirMetas(h, a.metasComerciais, depois.metasComerciais);
+  await persistirDesfechos(h, a.desfechos, depois.desfechos);
 }
