@@ -3,7 +3,7 @@
 // que as portas devolvem e o Dataset que o app usa — um Dataset minimo: o catalogo do pedido (categorias de saida e obras
 // ativas) e os pedidos da propria pessoa. Nada de saldo, conta, lancamento alheio ou cadastro.
 import seed from './seed.json';
-import type { AlteracaoPedido, Dataset, Lancamento, Obra, PlanoConta, StatusAlteracaoPedido, StatusLancamento, Usuario } from '../core/types';
+import type { AlteracaoPedido, AnexoLancamento, Dataset, Lancamento, Obra, PlanoConta, StatusAlteracaoPedido, StatusLancamento, Usuario } from '../core/types';
 import { ORIGEM_DF } from '../core/cfo';
 import type { DadosPagamento, FormaPagamento } from '../core/pagamento';
 
@@ -19,9 +19,25 @@ export interface PedidoSolicitante {
   criadoEm: string; atualizadoEm: string; repetido?: boolean;
   /** forma e dados de pagamento (0072); ausentes antes da migration */
   formaPagamento?: FormaPagamento | null; dadosPagamento?: DadosPagamento | null;
+  /** documentos ativos do pedido (0073); ausentes antes da migration */
+  anexos?: AnexoJson[];
   /** ultima alteracao de valor pedida (0071); ausente antes da migration */
   alteracao?: AlteracaoJson | null;
 }
+/** Documento como as portas devolvem (anexo_json, 0073). */
+export interface AnexoJson {
+  id: string; codigo: string; tipo: AnexoLancamento['tipo']; nome: string; caminho: string; mime: string; tamanho: number;
+  enviadoPor: string | null; enviadoPorId: string | null; enviadoEm: string; removidoEm: string | null; removidoPor: string | null; motivoRemocao: string | null; repetido?: boolean;
+}
+export function anexoDoJson(a: AnexoJson): AnexoLancamento {
+  return {
+    id: a.id, lancamentoId: a.codigo, tipo: a.tipo, nome: a.nome, caminho: a.caminho, mime: a.mime, tamanho: Number(a.tamanho), enviadoPor: a.enviadoPor ?? '',
+    enviadoPorId: a.enviadoPorId ?? undefined, enviadoEm: a.enviadoEm, removidoEm: a.removidoEm ?? undefined, removidoPor: a.removidoPor ?? undefined, motivoRemocao: a.motivoRemocao ?? undefined,
+  };
+}
+/** Documentos que vieram junto com os pedidos. */
+export const anexosDosPedidos = (pedidos: PedidoSolicitante[]): AnexoLancamento[] => pedidos.flatMap((p) => (p.anexos ?? []).map(anexoDoJson));
+
 /** Alteracao de valor como as portas devolvem (df_alteracao_json, 0071). */
 export interface AlteracaoJson {
   id: string; codigo: string; solicitadoPor: string | null; solicitadoEm: string; valorAnterior: number; valorNovo: number; motivo: string;
@@ -78,6 +94,7 @@ export function datasetSolicitante(ctx: ContextoSolicitante, pedidos: PedidoSoli
     planoContas, obras, usuarios: [usuario],
     lancamentos: pedidos.map((p) => lancamentoDoPedido(p, usuario.nome)),
     alteracoesPedido: alteracoesDosPedidos(pedidos, usuario.nome),
+    anexosLancamento: anexosDosPedidos(pedidos),
   };
   return { ds, usuario };
 }

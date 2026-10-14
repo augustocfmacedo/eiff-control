@@ -99,6 +99,9 @@ try {
   // a 0072 redefine df_pedido_json e df_registrar_pedido (forma e dados de pagamento): reaplicada por último, idempotente
   await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0072_'))), 'utf8'));
   res.migrations.reaplicacao_0072 = 'ok';
+  // a 0073 redefine df_pedido_json (com os anexos): reaplicada por último, idempotente. Ordem 0067 → 0071 → 0072 → 0073.
+  await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0073_'))), 'utf8'));
+  res.migrations.reaplicacao_0073 = 'ok';
 
   await db.exec('begin;');
   const org = await um(`select id from organization where code = 'EIFF'`);
@@ -257,6 +260,43 @@ try {
   const meusT = await como(SOL, async () => um(`select df_meus_pedidos()`));
   const p1t = (meusT.valor ?? []).find((x) => x.codigo === 'PED-0001');
   prova('V df_meus_pedidos mantém a alteração da 0071 e traz a forma (0072)', ['ACEITA', 'CANCELADA'].includes(p1t?.alteracao?.status) && 'formaPagamento' in (p1t ?? {}), JSON.stringify({ alt: p1t?.alteracao?.status, forma: p1t?.formaPagamento }));
+
+  // ---- 0073: documentos do pedido (nota fiscal, boleto, comprovante) ----
+  const pedT = t1.valor?.codigo; // pedido do SOL (com PIX), ainda Rascunho
+  const pasta = await como(SOL, async () => um(`select anexo_preparar($1, 'NOTA_FISCAL')`, [pedT]));
+  const nfPath = `${pasta.valor?.pasta}/nf-1.pdf`;
+  const upSol = await como(SOL, async () => q(`insert into storage.objects (bucket_id, name, owner) values ('anexos-financeiros', $1, $2)`, [nfPath, SOL]), { manter: true });
+  const regNf = await como(SOL, async () => um(`select anexo_registrar($1, 'NOTA_FISCAL', $2, 'NF 123.pdf', 'application/pdf', 2048)`, [pedT, nfPath]), { manter: true });
+  prova('W Solicitante anexa a nota fiscal ao próprio pedido (storage + registro) e vê no df_meus_pedidos',
+    !pasta.erro && !upSol.erro && regNf.valor?.tipo === 'NOTA_FISCAL' && regNf.valor?.enviadoPor === 'Equipe Um',
+    `${pasta.erro ?? ''} ${upSol.erro ?? ''} ${regNf.erro ?? JSON.stringify(regNf.valor)}`);
+  const compSol = await como(SOL, async () => um(`select anexo_preparar($1, 'COMPROVANTE')`, [pedT]));
+  const upSol2 = await como(SOL2, async () => q(`insert into storage.objects (bucket_id, name, owner) values ('anexos-financeiros', $1, $2)`, [`${pasta.valor?.pasta}/intruso.pdf`, SOL2]));
+  const prepSol2 = await como(SOL2, async () => um(`select anexo_preparar($1, 'NOTA_FISCAL')`, [pedT]));
+  const forjado = await como(SOL, async () => um(`select anexo_registrar($1, 'NOTA_FISCAL', $2, 'x.pdf', 'application/pdf', 10)`, [pedT, `${pasta.valor?.pasta}/nao-existe.pdf`]));
+  const outraPasta = await como(SOL, async () => q(`insert into storage.objects (bucket_id, name, owner) values ('anexos-financeiros', $1, $2)`, [`${org}/${await um(`select id from financial_entry where code = 'PAG-9001'`)}/x.pdf`, SOL]));
+  prova('X recusados: comprovante pelo solicitante, outra pessoa no pedido alheio, registro sem arquivo, upload na pasta de lançamento alheio',
+    !!compSol.erro && !!upSol2.erro && !!prepSol2.erro && /não encontrado/.test(forjado.erro ?? '') && !!outraPasta.erro,
+    `comp ${compSol.erro} · sol2 upload ${upSol2.erro} · sol2 preparar ${prepSol2.erro} · forjado ${forjado.erro} · pasta alheia ${outraPasta.erro}`);
+  const compPath = `${pasta.valor?.pasta}/comprovante.pdf`;
+  const upFin = await como(FIN, async () => { await q(`insert into storage.objects (bucket_id, name, owner) values ('anexos-financeiros', $1, $2)`, [compPath, FIN]); return um(`select anexo_registrar($1, 'COMPROVANTE', $2, 'comprovante.pdf', 'application/pdf', 4096)`, [pedT, compPath]); }, { manter: true });
+  const solVeObj = await como(SOL, async () => um(`select count(*)::int from storage.objects where bucket_id = 'anexos-financeiros'`));
+  const sol2VeObj = await como(SOL2, async () => um(`select count(*)::int from storage.objects where bucket_id = 'anexos-financeiros'`));
+  const meusDocs = await como(SOL, async () => um(`select df_meus_pedidos()`));
+  const docsPed = ((meusDocs.valor ?? []).find((x) => x.codigo === pedT)?.anexos ?? []).map((a) => a.tipo).sort().join(',');
+  prova('Y Financeiro anexa o comprovante; o solicitante baixa os dois arquivos do próprio pedido; outra pessoa da equipe não vê nenhum',
+    upFin.valor?.tipo === 'COMPROVANTE' && solVeObj.valor === 2 && sol2VeObj.valor === 0 && docsPed === 'COMPROVANTE,NOTA_FISCAL',
+    `${upFin.erro ?? ''} sol vê ${solVeObj.valor ?? solVeObj.erro} · sol2 vê ${sol2VeObj.valor ?? sol2VeObj.erro} · docs ${docsPed}`);
+  const nfId = regNf.valor?.id; const compId = upFin.valor?.id;
+  const insDir = await como(FIN, async () => q(`insert into entry_attachment (organization_id, entry_id, kind, file_name, storage_path, mime_type, size_bytes, uploaded_by) select organization_id, id, 'OUTRO', 'x', 'y', 'application/pdf', 1, $1 from financial_entry where code = 'PAG-9001'`, [FIN]));
+  const delDir = await como(ADMIN, async () => q(`delete from entry_attachment where id = $1`, [nfId]));
+  const solRemComp = await como(SOL, async () => um(`select anexo_remover($1, 'não quero')`, [compId]));
+  const solRemNf = await como(SOL, async () => um(`select anexo_remover($1, 'arquivo errado')`, [nfId]), { manter: true });
+  const aindaArquivo = await um(`select count(*)::int from storage.objects where name = $1`, [nfPath]);
+  const linhaRem = (await q(`select removed_at is not null as rem, removal_reason from entry_attachment where id = $1`, [nfId]))[0];
+  prova('Z sem caminho direto (insert/delete); solicitante não remove o comprovante; remoção lógica com motivo mantém o arquivo',
+    !!insDir.erro && !!delDir.erro && !!solRemComp.erro && !solRemNf.erro && linhaRem?.rem && linhaRem?.removal_reason === 'arquivo errado' && aindaArquivo === 1,
+    `insert ${insDir.erro} · delete ${delDir.erro} · remover comprovante ${solRemComp.erro} · remover nf ${solRemNf.erro ?? 'ok'} · arquivo ${aindaArquivo}`);
 
   // L. perfil inativo: nem as portas abrem
   await q(`update profile set active = false where id = $1`, [SOL2]);

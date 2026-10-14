@@ -10,6 +10,8 @@ import { tokenSessao } from '../data/supabase';
 import { Badge, Field, Input, Modal, MoedaInput, PageHead, Select, Tabs, money, tentar, useToast } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { CamposPagamento } from '../ui/Pagamento';
+import { DocumentosLancamento } from '../ui/Documentos';
+import { anexosDe, pendenciasDocumentos } from '../core/anexos';
 import { resumoPagamento, validarDadosPagamento, type DadosPagamento, type FormaPagamento } from '../core/pagamento';
 import { registrarAcao } from '../data/telemetria';
 
@@ -188,6 +190,7 @@ export function MeusPedidosDF() {
   const [grupo, setGrupo] = useState<GrupoPedido['id']>('todos');
   const [alterar, setAlterar] = useState<{ id: string; valor: number; motivo: string } | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [docsAbertos, setDocsAbertos] = useState<string | null>(null);
   const atualizar = () => { setAtualizando(true); actions.atualizarPedidosSolicitante().catch(() => undefined).finally(() => setAtualizando(false)); };
   // o Solicitante nao recebe atualizacao automatica dos dados: relê a lista a cada minuto enquanto a tela esta aberta
   useEffect(() => { if (!solicitante) return; const t = window.setInterval(() => { void actions.atualizarPedidosSolicitante().catch(() => undefined); }, 60_000); return () => window.clearInterval(t); }, [solicitante]);
@@ -237,7 +240,9 @@ export function MeusPedidosDF() {
           <div className="df-prev-acoes">
             <Badge tone={TOM_STATUS[s]}>{ROTULO_STATUS_DF[s]}</Badge>
             {!bloqueio && <button className="btn sm" onClick={() => setAlterar({ id: l.id, valor: l.valorBruto, motivo: '' })}>Alterar valor</button>}
+            <button className="btn sm" aria-expanded={docsAbertos === l.id} onClick={() => setDocsAbertos(docsAbertos === l.id ? null : l.id)}>Documentos ({anexosDe(ds, l.id).length}){pendenciasDocumentos(ds, l).length ? ' !' : ''}</button>
           </div>
+          {docsAbertos === l.id && <div style={{ flexBasis: '100%' }}><DocumentosLancamento lancamento={l} aviso={toast} compacto /></div>}
         </div>
       ); })}
       {alterar && pedidoAlterar && (
@@ -313,6 +318,7 @@ export function PedidosDF({ c, vazio = true }: { c: DadosCentralDF; vazio?: bool
               <Badge tone={o.acaoSugerida === 'programar' ? 'ok' : o.acaoSugerida === 'reagendar' ? 'info' : o.acaoSugerida === 'avaliar' ? 'warn' : 'bad'}>{o.acaoSugerida === 'programar' ? 'programar' : o.acaoSugerida === 'reagendar' ? `reagendar → ${br(o.dataSugerida)}` : o.acaoSugerida === 'avaliar' ? 'seu aval' : 'não recomendado'}</Badge>
             </div>
             {l.formaPagamento && <div className="small muted">Pagamento: {resumoPagamento(l.formaPagamento, l.dadosPagamento)}</div>}
+            <DocumentosLancamento lancamento={l} aviso={toast} compacto />
             <div className="df-orientacao"><b>{o.titulo}.</b> {o.detalhe}</div>
             {podeDecidir && <div className="actions">
               {o.acaoSugerida !== 'avaliar' && <button className="btn primary sm" onClick={() => seguir(l.id, o)}>{o.acaoSugerida === 'programar' ? `Programar para ${br(l.vencimento)}` : o.acaoSugerida === 'reagendar' ? `Reagendar para ${br(o.dataSugerida)}` : 'Recusar'}</button>}
