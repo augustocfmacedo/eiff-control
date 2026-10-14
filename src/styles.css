@@ -342,6 +342,13 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .df-dia b { font-variant-numeric: tabular-nums; }
 .df-prev { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .df-prev:first-of-type { border-top: 0; }
+.documentos { display: grid; gap: 6px; }
+.documento { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.documento-nome { background: none; border: 0; padding: 0; color: var(--brand); cursor: pointer; text-align: left; word-break: break-all; font: inherit; }
+.documento-nome:hover { text-decoration: underline; }
+.documento-novo { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.documento-novo select { width: auto; }
+.documentos.compacto { margin-top: 6px; }
 .dados-pagamento { display: grid; gap: 6px; margin: 0; }
 .dados-pagamento > div { display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 10px; align-items: center; }
 .dados-pagamento dt { color: var(--muted); font-size: var(--text-xs, 12px); }

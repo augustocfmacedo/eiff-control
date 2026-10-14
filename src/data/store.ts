@@ -29,6 +29,8 @@ import type {
   Demanda,
   Divida,
   AlteracaoPedido,
+  AnexoLancamento,
+  TipoAnexo,
   Lancamento,
   Liquidacao,
   Medicao,
@@ -74,8 +76,9 @@ import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, t
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
-import { alteracaoDoJson, alteracoesDosPedidos, lancamentoDoPedido } from './solicitante';
+import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, enviarAnexoRemoto, removerAnexoRemoto, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { alteracaoDoJson, alteracoesDosPedidos, anexoDoJson, anexosDosPedidos, lancamentoDoPedido } from './solicitante';
+import { extensaoDoMime, mimeDoArquivo, podeRemoverAnexo, tiposQuePodeAnexar, validarArquivoAnexo } from '../core/anexos';
 import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
 
@@ -342,6 +345,19 @@ function incorporarAlteracao(a: AlteracaoPedido) {
   state = { ...state, ds: trocar(state.ds) };
   persistir();
   emit();
+}
+
+/** Documento que veio da porta do banco: entra no estado e na base sincronizada (o banco ja tem a linha; nao e gravado pelo diff). */
+function incorporarAnexo(a: AnexoLancamento) {
+  const trocar = (ds: Dataset): Dataset => ({ ...ds, anexosLancamento: [...(ds.anexosLancamento ?? []).filter((x) => x.id !== a.id), a] });
+  if (baseSincronizada) baseSincronizada = trocar(baseSincronizada);
+  state = { ...state, ds: trocar(state.ds) };
+  persistir();
+  emit();
+}
+/** Arquivo como data URL (modo local/demo). */
+function lerComoDataUrl(b: Blob): Promise<string> {
+  return new Promise((ok, erro) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => erro(new RegraDeNegocioError('Não foi possível ler o arquivo.')); r.readAsDataURL(b); });
 }
 
 const seq = (prefix: string, ids: string[]): string => {
@@ -858,7 +874,7 @@ export const actions = {
   async atualizarPedidosSolicitante() {
     if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return;
     const pedidos = await meusPedidosSolicitante();
-    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)), alteracoesPedido: alteracoesDosPedidos(pedidos, state.usuario.nome) };
+    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)), alteracoesPedido: alteracoesDosPedidos(pedidos, state.usuario.nome), anexosLancamento: anexosDosPedidos(pedidos) };
     baseSincronizada = ds;
     state = { ...state, ds };
     emit();
@@ -887,6 +903,50 @@ export const actions = {
     const a: AlteracaoPedido = { id: seq('ALT', (state.ds.alteracoesPedido ?? []).map((x) => x.id)), lancamentoId: id, solicitadoPor: state.usuario.nome, solicitadoEm: agora(), valorAnterior: l.valorBruto, valorNovo: v, motivo: motivo.trim(), status: 'PENDENTE' };
     commit(registrar({ ...state.ds, alteracoesPedido: [...(state.ds.alteracoesPedido ?? []), a] }, 'pedir_alteracao_valor', 'lancamento', id, { valor: l.valorBruto }, { valor: v }, a.motivo));
     return a;
+  },
+
+  /**
+   * Anexa um documento ao lancamento (0073): nota fiscal e boleto por quem pediu ou pelo Financeiro; comprovante por quem paga.
+   * No modo remoto o arquivo vai ao bucket privado pelas portas anexo_preparar/anexo_registrar (o Solicitante inclusive); no
+   * modo local fica como data URL na memoria. `dados` e o arquivo (Blob) ou, nos testes e no modo local, uma data URL.
+   */
+  async anexarDocumento(lancamentoId: string, tipo: TipoAnexo, arquivo: { nome: string; mime: string; tamanho: number; dados: Blob | string }): Promise<AnexoLancamento> {
+    const l = state.ds.lancamentos.find((x) => x.id === lancamentoId);
+    if (!l) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    if (!tiposQuePodeAnexar(state.usuario, l).includes(tipo)) throw new RegraDeNegocioError(tipo === 'COMPROVANTE' ? 'O comprovante é anexado por quem paga (Financeiro ou Diretoria).' : 'Você não pode anexar documentos a este lançamento.');
+    const erro = validarArquivoAnexo({ name: arquivo.nome, type: arquivo.mime, size: arquivo.tamanho });
+    if (erro) throw new RegraDeNegocioError(erro);
+    const mime = mimeDoArquivo({ name: arquivo.nome, type: arquivo.mime })!;
+    const nome = arquivo.nome.trim().slice(0, 200) || `documento.${extensaoDoMime(mime)}`;
+    if (state.modo === 'remoto') {
+      if (typeof arquivo.dados === 'string') throw new RegraDeNegocioError('Envie o arquivo.');
+      const r = await enviarAnexoRemoto(lancamentoId, tipo, arquivo.dados, nome, mime, extensaoDoMime(mime));
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return anexoDoJson(r); }
+      const a = anexoDoJson(r);
+      incorporarAnexo(a);
+      return a;
+    }
+    const dataUrl = typeof arquivo.dados === 'string' ? arquivo.dados : await lerComoDataUrl(arquivo.dados);
+    const a: AnexoLancamento = { id: seq('ANX', (state.ds.anexosLancamento ?? []).map((x) => x.id)), lancamentoId, tipo, nome, dataUrl, mime, tamanho: arquivo.tamanho, enviadoPor: state.usuario.nome, enviadoPorId: state.usuario.id, enviadoEm: agora() };
+    commit(registrar({ ...state.ds, anexosLancamento: [...(state.ds.anexosLancamento ?? []), a] }, 'anexar_documento', 'lancamento', lancamentoId, undefined, { tipo, nome, tamanho: a.tamanho }));
+    return a;
+  },
+
+  /** Remocao logica de um documento, com motivo: quem enviou (antes do pagamento) ou o Financeiro/Diretoria. O arquivo fica. */
+  async removerDocumento(anexoId: string, motivo: string): Promise<void> {
+    const a = (state.ds.anexosLancamento ?? []).find((x) => x.id === anexoId);
+    const l = a && state.ds.lancamentos.find((x) => x.id === a.lancamentoId);
+    if (!a || !l) throw new RegraDeNegocioError('Documento não encontrado.');
+    if (!podeRemoverAnexo(state.usuario, a, l)) throw new RegraDeNegocioError('Só quem enviou (antes do pagamento) ou o Financeiro remove este documento.');
+    if (motivo.trim().length < 3) throw new RegraDeNegocioError('Informe o motivo da remoção.');
+    if (state.modo === 'remoto') {
+      const r = await removerAnexoRemoto(anexoId, motivo.trim());
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return; }
+      incorporarAnexo(anexoDoJson(r));
+      return;
+    }
+    const rem: AnexoLancamento = { ...a, removidoEm: agora(), removidoPor: state.usuario.nome, motivoRemocao: motivo.trim() };
+    commit(registrar({ ...state.ds, anexosLancamento: (state.ds.anexosLancamento ?? []).map((x) => (x.id === a.id ? rem : x)) }, 'remover_documento', 'lancamento', a.lancamentoId, { nome: a.nome }, { nome: a.nome, removido: true }, rem.motivoRemocao));
   },
 
   /** Quem pediu desiste da alteracao ainda pendente. */

@@ -4,6 +4,7 @@ import { actions, pode, useStore } from '../data/store';
 import { Empty, Field, Input, Link, Modal, Money, NumberInput, PageHead, Select, StatusBadge, dataHora, money, pct, tentar, useToast } from '../ui/components';
 import { Timeline } from '../ui/Timeline';
 import { DadosPagamentoView } from '../ui/Pagamento';
+import { DocumentosLancamento } from '../ui/Documentos';
 import { LancamentoForm } from './LancamentoForm';
 import { navegar } from '../ui/router';
 
@@ -78,6 +79,12 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
           </dl>
           {l.observacoes && <p className="muted small" style={{ marginTop: 8 }}>{l.observacoes}</p>}
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <h2>Documentos</h2>
+        <p className="small muted" style={{ marginTop: 0 }}>Nota fiscal, boleto e comprovante de pagamento. Quem pediu o pagamento vê e baixa os documentos do próprio pedido.</p>
+        <DocumentosLancamento lancamento={l} aviso={toast} />
       </div>
 
       {l.tipo === 'Saída' && !l.faturamentoDireto && (

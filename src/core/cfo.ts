@@ -418,7 +418,8 @@ export function orientacaoDF(p: Parecer): { titulo: string; detalhe: string; aca
 // ---------------------------------------------------------------------------------------------------------------------
 // Alteracao de valor de um pedido (0071): quem pediu solicita, com motivo; o titulo so muda quando a Diretoria aceita.
 // ---------------------------------------------------------------------------------------------------------------------
-export const alteracoesDoPedido = (ds: Dataset, id: string): AlteracaoPedido[] => (ds.alteracoesPedido ?? []).filter((a) => a.lancamentoId === id).sort((a, b) => b.solicitadoEm.localeCompare(a.solicitadoEm));
+/** Alteracoes do pedido, a mais recente antes (no mesmo instante, a registrada por ultimo). */
+export const alteracoesDoPedido = (ds: Dataset, id: string): AlteracaoPedido[] => (ds.alteracoesPedido ?? []).map((a, i) => ({ a, i })).filter(({ a }) => a.lancamentoId === id).sort((x, y) => y.a.solicitadoEm.localeCompare(x.a.solicitadoEm) || y.i - x.i).map(({ a }) => a);
 export const alteracaoPendente = (ds: Dataset, id: string) => (ds.alteracoesPedido ?? []).find((a) => a.lancamentoId === id && a.status === 'PENDENTE');
 export const ultimaAlteracao = (ds: Dataset, id: string): AlteracaoPedido | undefined => alteracoesDoPedido(ds, id)[0];
 export const ROTULO_ALTERACAO: Record<StatusAlteracaoPedido, string> = { PENDENTE: 'alteração de valor em análise', ACEITA: 'alteração de valor aceita', RECUSADA: 'alteração de valor recusada', CANCELADA: 'alteração cancelada' };

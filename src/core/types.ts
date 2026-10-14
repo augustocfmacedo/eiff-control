@@ -820,6 +820,27 @@ export interface Dataset {
   inbox?: InboxDataset;
   /** Alteracoes de valor pedidas pela equipe nos pedidos ao Diretor Financeiro (payment_change_request, 0071). Opcional: datasets antigos nao trazem. */
   alteracoesPedido?: AlteracaoPedido[];
+  /** Documentos dos lancamentos: nota fiscal, boleto, comprovante (entry_attachment, 0073). Opcional: datasets antigos nao trazem. */
+  anexosLancamento?: AnexoLancamento[];
+}
+
+export type TipoAnexo = 'NOTA_FISCAL' | 'BOLETO' | 'COMPROVANTE' | 'OUTRO';
+/** Documento anexado a um lancamento (arquivo no bucket anexos-financeiros; no modo local, dataUrl na memoria). */
+export interface AnexoLancamento {
+  id: string;
+  lancamentoId: string; // codigo do lancamento
+  tipo: TipoAnexo;
+  nome: string;
+  caminho?: string; // objeto no Storage
+  dataUrl?: string; // so no modo local/demo
+  mime: string;
+  tamanho: number;
+  enviadoPor: string; // nome
+  enviadoPorId?: string;
+  enviadoEm: string;
+  removidoEm?: string;
+  removidoPor?: string;
+  motivoRemocao?: string;
 }
 
 export type StatusAlteracaoPedido = 'PENDENTE' | 'ACEITA' | 'RECUSADA' | 'CANCELADA';
