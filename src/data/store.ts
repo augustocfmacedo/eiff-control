@@ -76,11 +76,11 @@ import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, t
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { definirMetaConfirmada, type ResultadoMetaConfirmada } from './metaConfirmada';
-import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, enviarAnexoRemoto, removerAnexoRemoto, lerMetasComerciaisDoMes, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { comIntencao, comMetaGravada, definirMetaConfirmada, recusaDefinitivaMeta, type ResultadoMetaConfirmada, type VersaoMetaLocal } from './metaConfirmada';
+import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, enviarAnexoRemoto, removerAnexoRemoto, aplicarIntencaoMeta, lerMetasComerciaisDoMes, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
 import { alteracaoDoJson, alteracoesDosPedidos, anexoDoJson, anexosDosPedidos, lancamentoDoPedido } from './solicitante';
 import { extensaoDoMime, mimeDoArquivo, podeRemoverAnexo, tiposQuePodeAnexar, validarArquivoAnexo } from '../core/anexos';
-import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
+import { apagarIntencoesMeta, apagarPendente, guardarCache, guardarIntencoesMeta, guardarPendente, lerCache, lerIntencoesMeta, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -210,26 +210,95 @@ function setSync(sync: SyncStatus) {
 }
 
 function sincronizar(depois: Dataset) {
-  fila = fila.then(async () => {
+  // a fila nunca fica rejeitada para sempre: qualquer falha inesperada de uma rodada vira status "erro" e a próxima roda
+  fila = fila.catch(() => undefined).then(() => rodadaDeSincronizacao(depois)).catch((e) => setSync({ status: 'erro', msg: (e as Error)?.message ?? String(e) }));
+}
+async function rodadaDeSincronizacao(depois: Dataset): Promise<void> {
+  {
     const antes = baseSincronizada ?? depois;
+    // CD-D3/E5: o que o banco já aceitou nesta rodada (metas) entra na base na hora; se algo depois falhar, a retomada
+    // e a pendência offline partem dessa base e não reenviam a meta. O resto da base fica como estava (as alterações
+    // dos outros módulos continuam pendentes e voltam a ser enviadas).
+    let base = antes;
     setSync({ status: 'enviando' });
+    // E5-REL-01: as intenções de meta desta rodada vão para o diário local ANTES do envio (se o app fechar no meio, a
+    // reabertura as reaplica pela RPC idempotente); cada uma sai do diário quando o banco a aceita
+    let emVoo: VersaoMetaLocal[];
+    try { emVoo = intencoesNovas(antes, depois); } catch (e) { setSync({ status: 'erro', msg: (e as Error).message }); return; }
+    // só envia se o IndexedDB CONFIRMOU a gravação; senão nada vai ao banco e a rodada fica recuperável ("Tentar de novo")
+    if (emVoo.length && !(await registrarIntencoes(state.usuario.id, emVoo))) {
+      setSync({ status: 'erro', msg: 'Não deu para guardar a intenção da meta neste aparelho; nada foi enviado. Tente de novo.' });
+      return;
+    }
+    const aceitas: string[] = [];
     try {
-      await persistirRemoto(antes, depois, state.usuario.id);
+      await persistirRemoto(antes, depois, state.usuario.id, { aoGravarMeta: (m) => { base = comMetaGravada(base, m); aceitas.push(m.id); } });
+      if (aceitas.length) await tirarIntencoes(aceitas);
       baseSincronizada = depois;
       await apagarPendente();
       state = { ...state, pendencias: false };
       setSync({ status: 'ok', em: new Date().toISOString() });
     } catch (e) {
+      if (aceitas.length) await tirarIntencoes(aceitas);
+      if (base !== antes) baseSincronizada = base;
       if (ehErroDeRede(e)) {
-        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu) e volta a ser enviado sozinho
-        await guardarPendente({ usuarioId: state.usuario.id, base: antes, ds: depois, em: new Date().toISOString() });
+        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu, mais as metas já aceitas) e
+        // volta a ser enviado sozinho
+        await guardarPendente({ usuarioId: state.usuario.id, base, ds: depois, em: new Date().toISOString() });
         state = { ...state, pendencias: true };
         setSync({ status: 'pendente', msg: 'sem conexão: alterações guardadas neste aparelho', desde: state.sync.desde ?? new Date().toISOString() });
         agendarRetentativa();
       } else setSync({ status: 'erro', msg: (e as Error).message });
     }
-  });
+  }
 }
+/**
+ * Versões de meta que `depois` tem e `antes` não (as que esta rodada vai enviar), já com a intenção normalizada
+ * (`comIntencao`: legado ganha intenção determinística; intenção incompleta lança erro e nada é enviado).
+ */
+function intencoesNovas(antes: Dataset, depois: Dataset): VersaoMetaLocal[] {
+  const ja = new Set((antes.radar.metasComerciais ?? []).map((m) => m.id));
+  return ((depois.radar.metasComerciais ?? []) as VersaoMetaLocal[]).filter((m) => !ja.has(m.id)).map(comIntencao);
+}
+/** Grava as intenções no diário; `true` só quando o IndexedDB confirmou (exceção também vira `false`). */
+async function registrarIntencoes(usuarioId: string, novas: VersaoMetaLocal[]): Promise<boolean> {
+  try {
+    const d = await lerIntencoesMeta();
+    const atuais = (d && d.usuarioId === usuarioId ? d.intencoes : []) as VersaoMetaLocal[];
+    const vistas = new Set(atuais.map((m) => m.intencao));
+    return (await guardarIntencoesMeta({ usuarioId, intencoes: [...atuais, ...novas.filter((m) => !vistas.has(m.intencao))] })) === true;
+  } catch { return false; }
+}
+async function tirarIntencoes(ids: string[]): Promise<void> {
+  const d = await lerIntencoesMeta();
+  if (!d) return;
+  const resto = (d.intencoes as VersaoMetaLocal[]).filter((m) => !ids.includes(m.id));
+  if (resto.length) await guardarIntencoesMeta({ usuarioId: d.usuarioId, intencoes: resto }); else await apagarIntencoesMeta();
+}
+/**
+ * Reabertura: reaplica as intenções de meta que ficaram no diário (app fechado no meio do envio). A RPC da 0074 devolve o
+ * resultado original se a intenção já foi executada e aplica com a pré-condição se não foi — nunca duplica. Recusa
+ * (decisão sobre versão desatualizada, conteúdo diferente) tira a intenção do diário e vira aviso; sem rede, ela fica.
+ */
+async function recuperarIntencoes(usuarioId: string): Promise<{ aplicou: boolean; avisos: string[] }> {
+  const d = await lerIntencoesMeta();
+  if (!d || d.usuarioId !== usuarioId || !d.intencoes.length) return { aplicou: false, avisos: [] };
+  const lista = [...(d.intencoes as VersaoMetaLocal[])].sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : a.versao - b.versao));
+  const avisos: string[] = []; let aplicou = false;
+  for (const m of lista) {
+    try { await aplicarIntencaoMeta(m); aplicou = true; await tirarIntencoes([m.id]); }
+    catch (e) {
+      if (ehErroDeRede(e)) throw e;
+      if (recusaDefinitivaMeta(e)) { avisos.push(`meta de ${m.mes} não reaplicada: ${(e as Error).message}`); await tirarIntencoes([m.id]); continue; }
+      // transitório, sessão/autenticação recuperável ou indeterminado: a intenção FICA no diário (reenviar é seguro) e as
+      // seguintes esperam, para manter a ordem
+      avisos.push(`meta de ${m.mes} ainda não confirmada (fica guardada para nova tentativa): ${(e as Error).message}`);
+      break;
+    }
+  }
+  return { aplicou, avisos };
+}
+
 let retentativa: number | undefined;
 function agendarRetentativa(ms = 30_000) {
   if (retentativa !== undefined || typeof window === 'undefined') return;
@@ -241,18 +310,29 @@ if (typeof window !== 'undefined') window.addEventListener('online', () => { if 
 async function carregarComPendentes(): Promise<{ ds: Dataset; usuario: Usuario; offline: boolean; aviso?: string }> {
   try {
     let { ds: dsRemoto, usuario } = await carregarRemoto();
+    // E5-REL-01: intenções de meta do diário primeiro (idempotentes no banco); depois recarrega o que o banco tem
+    const rec = await recuperarIntencoes(usuario.id);
+    if (rec.aplicou) ({ ds: dsRemoto, usuario } = await carregarRemoto());
     const p = await lerPendente();
     if (p && p.usuarioId === usuario.id) {
-      try { await persistirRemoto(p.base, p.ds, usuario.id); await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
+      let baseP = p.base; // CD-D3/E5: metas aceitas nesta aplicação entram na base da pendência (nunca reenviadas)
+      try {
+        const emVooP = intencoesNovas(p.base, p.ds);
+        if (emVooP.length && !(await registrarIntencoes(usuario.id, emVooP))) throw new Error('Não deu para guardar a intenção da meta neste aparelho; nada foi enviado.');
+        const aceitasP: string[] = [];
+        try { await persistirRemoto(p.base, p.ds, usuario.id, { aoGravarMeta: (m) => { baseP = comMetaGravada(baseP, m); aceitasP.push(m.id); } }); }
+        finally { if (aceitasP.length) await tirarIntencoes(aceitasP); }
+        await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
       catch (e) {
+        if (baseP !== p.base) await guardarPendente({ ...p, base: baseP });
         if (ehErroDeRede(e)) throw e;
         // conflito ou regra: mantem as alteracoes locais na tela e a pendencia guardada; o usuario decide entre tentar de novo e descartar
-        baseSincronizada = p.base; state = { ...state, pendencias: true };
+        baseSincronizada = baseP; state = { ...state, pendencias: true };
         return { ds: p.ds, usuario, offline: false, aviso: `alterações feitas offline não foram aplicadas: ${(e as Error).message}` };
       }
     }
     await guardarCache({ ds: dsRemoto, usuario });
-    return { ds: dsRemoto, usuario, offline: false };
+    return { ds: dsRemoto, usuario, offline: false, ...(rec.avisos.length ? { aviso: rec.avisos.join(' · ') } : {}) };
   } catch (e) {
     if (!ehErroDeRede(e)) throw e;
     const c = await lerCache(); if (!c) throw e;
@@ -2304,9 +2384,13 @@ export const actions = {
     }
     const anteriores = metas.filter((m) => m.mes === mes);
     const ultima = anteriores.reduce<VersaoMetaComercial | undefined>((u, m) => (!u || m.versao > u.versao ? m : u), undefined);
-    const nova: VersaoMetaComercial = {
-      id: idsRadar(r).novo('META'), mes, metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor, versao: proximaVersaoMeta(metas, mes),
+    // E5-REL-01: a intenção ganha um identificador ESTÁVEL antes do primeiro envio e leva a versão vigente em que a
+    // decisão se baseou; o banco (0074) devolve o resultado original no reenvio e recusa decisão sobre versão velha
+    const versaoBase = proximaVersaoMeta(metas, mes) - 1;
+    const nova: VersaoMetaLocal = {
+      id: idsRadar(r).novo('META'), mes, metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor, versao: versaoBase + 1,
       ...(ultima ? { substituiId: ultima.id } : {}), motivo: motivo.trim(), definidaPor: state.usuario.id, definidaEm: t,
+      intencao: globalThis.crypto.randomUUID(), versaoBase,
     };
     const radar: RadarDataset = { ...r, metasComerciais: [...metas, nova] };
     ds = registrar({ ...ds, radar }, valor === null ? 'radar_retirar_meta_comercial' : 'radar_definir_meta_comercial', 'radar_meta_comercial', nova.id,

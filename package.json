@@ -16,6 +16,7 @@
     "smoke:dono-conta": "node scripts/pg-smoke-dono-conta.mjs",
     "smoke:meta-comercial": "node scripts/pg-smoke-meta-comercial.mjs",
     "smoke:desfechos": "node scripts/pg-smoke-desfechos.mjs",
+    "smoke:meta-intencao": "node scripts/pg-smoke-meta-intencao.mjs",
     "smoke:widget-token": "node scripts/pg-smoke-widget-token.mjs",
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",

@@ -68,7 +68,44 @@ confirmado · meta vigente e nenhuma venda · parcial · atingida. Indisponível
 | Suíte completa, type-check, lint e build | ok |
 | Evidência visual (componente real com o CSS do app, 12 quadros: estados, detalhes, iPad, celular, formulário) | anexada ao PR |
 
+## Idempotência por intenção (E5-REL-01, migration 0074)
+
+Duas janelas sobravam depois do PR #71 original: a RPC fazia COMMIT e o cliente perdia a resposta (rede), ou o app
+fechava antes de registrar o progresso. A defesa definitiva é no banco:
+
+- **Identificador estável por intenção**: a ação canônica gera `intencao` (UUID) e `versaoBase` (a versão vigente em que
+  a decisão se apoiou) ANTES do primeiro envio; `persistirMetas` chama `radar_definir_meta_comercial_intencao` (0074),
+  que, sob trava da intenção: devolve o **resultado original** se a intenção já foi executada (sem versão nova, mesmo que
+  outra sessão tenha mudado a meta depois); **recusa** o mesmo id com conteúdo diferente; para intenção nova exige
+  **versão base = vigente** (decisão sobre dado desatualizado não substitui em silêncio uma posterior) e aplica pela RPC
+  da 0068 (papel, mês, valor, motivo, versão, auditoria). Registro `radar_commercial_goal_intent` imutável, só leitura
+  para a API. A 0068 e a 0070 não mudaram.
+- **Diário local antes do envio** (`offline.ts`, chave `intencoesMeta`): a intenção é gravada no IndexedDB antes de
+  ir ao banco e sai dele quando o banco a aceita. Na reabertura, `carregarComPendentes` reaplica o diário pela RPC
+  idempotente (nunca duplica); intenção recusada (versão velha, conteúdo diferente) sai do diário e vira aviso. As
+  pendências dos outros módulos continuam no mecanismo de sempre.
+- `definirMetaConfirmada` também compara a versão do banco com a do app antes de chamar a ação (desatualizada = nem envia).
+- **Ajustes finais**: (1) o envio só acontece depois de o IndexedDB CONFIRMAR a gravação do diário (`guardarIntencoesMeta` devolve `true` só com a transação completa); sem confirmação, nada vai ao banco, a sincronização fica em "erro" recuperável ("Tentar de novo") e a fila nunca fica rejeitada para sempre (`sincronizar` encadeia com `catch`). (2) Na reabertura, a intenção só sai do diário quando o banco confirma ou numa recusa DEFINITIVA (`recusaDefinitivaMeta`: SQLSTATE 23514 regra, 23505 outro conteúdo, 40001 versão desatualizada, 42501 "sem permissão"); rede, sessão expirada/não autenticada, perfil inativo e erro sem código mantêm a intenção, na ordem. (3) O app nunca chama a RPC antiga da 0068: intenção incompleta é recusada antes de sair (`comIntencao`), e registro LEGADO guardado offline ganha intenção DETERMINÍSTICA e versão base = versão − 1 — se outra sessão mudou a meta, a pré-condição recusa e o valor antigo não volta.
+
+Provas: `npm run smoke:meta-intencao` (PGlite, fila inteira até a 0074, no Quality Gate, 24 ok); gate em
+**PostgreSQL 17.6 real** descartável (ordem de produção …0073 → 0070 → 0074; mesma intenção em duas sessões 20/20,
+resposta perdida + outra sessão, conteúdo diferente concorrente, pré-condição concorrente 10/10, rajadas de 8 sessões
+5/5 + 5/5, integridade, zero deadlock: 12 ok); `src/data/meta.intencao.store.test.ts` (fila real do store: diário antes do
+envio, resposta perdida + outra sessão, reabertura, app fechado antes/depois da RPC, intenção velha recusada, nova
+decisão, falha posterior).
+
 ## Limitações
+
+- **Corrigido antes de publicar (bloqueador de release da E5)**: `persistirRemoto` grava na ordem escrita genérica →
+  `persistirRadar` (… `persistirMetas`, `persistirDesfechos`) → Inbox → auditoria, e a fila só avançava a base
+  sincronizada quando a rodada inteira dava certo. Com a meta aceita e uma operação POSTERIOR falhando, "Tentar de novo"
+  e a pendência offline reenviavam a mesma intenção — e, com outra sessão tendo mudado a meta no meio, a RPC criava uma
+  versão nova com o valor ANTIGO. Agora `persistirMetas` avisa `aoGravarMeta` logo depois de cada RPC aceita;
+  `sincronizar` e `carregarComPendentes` põem a versão na base (`comMetaGravada`: só a lista de metas muda) e a
+  pendência offline é regravada com ela. A retomada não a reenvia; as alterações dos outros módulos continuam pendentes.
+  Provas: `src/data/radar.meta.reenvio.test.ts` (banco simulado com a regra da RPC: o defeito reproduzido e a correção)
+  e `src/data/meta.reenvio.store.test.ts` (fila real do store: Tentar de novo, várias retomadas, meta nova depois da
+  falha, pendência offline e reabertura) — os 5 testes do store falham no código anterior.
 
 - O teste de confirmação usa um banco simulado nas portas; a RPC real e a recarga já são provadas pelo
   `smoke:meta-comercial` (E2) e pela integração da E3. A primeira confirmação com o banco de produção acontece na

@@ -24,12 +24,14 @@ function cenario(o: { banco?: VersaoMetaComercial[]; cache?: VersaoMetaComercial
   const pedido = o.pedido ?? { valor: 250000, motivo: 'meta aprovada' };
   const chamadas: string[] = [];
   let leituras = 0;
+  let definido = false; let enviado = false; // o banco simulado só "executa a RPC" depois da ação, uma vez
   const p: PortasMetaConfirmada = {
     remoto: true,
     syncAtual: () => o.antes ?? { status: 'ok' },
     definir: () => {
       chamadas.push('definir');
       if (o.recusaLocal) throw new Error(o.recusaLocal);
+      definido = true;
       const vig = cache.reduce<VersaoMetaComercial | undefined>((u, x) => (!u || x.versao > u.versao ? x : u), undefined);
       if (vig && vig.valor !== null && pedido.valor !== null && Number(vig.valor) === Number(pedido.valor)) return vig; // E2: mesmo valor não versiona (no cache)
       const nova = v(cache.length + 1, pedido.valor, pedido.motivo, 'META-LOCAL');
@@ -38,6 +40,8 @@ function cenario(o: { banco?: VersaoMetaComercial[]; cache?: VersaoMetaComercial
     },
     aguardarSincronizacao: async () => {
       chamadas.push('aguardar');
+      if (!definido || enviado) return o.fila ?? { status: 'ok' };
+      enviado = true;
       const prox = () => banco.reduce((m, x) => Math.max(m, x.versao), 0) + 1;
       if (o.rpc === 'outra_sessao') banco.push(v(prox(), 999, 'outra pessoa'));
       if (o.rpc === undefined || o.rpc === 'grava' || o.rpc === 'outra_sessao' || o.rpc === 'outra_sessao_depois') banco.push(v(prox(), String(pedido.valor === null ? '' : Number(pedido.valor).toFixed(2)) || null, pedido.motivo));
@@ -126,7 +130,7 @@ describe('E5 · mesmo valor da vigente (sem versão nova) conferido no banco', (
     const c = cenario({ cache: [v(1, '250000.00', 'meta aprovada')], banco: [v(1, '250000.00', 'meta aprovada'), v(2, '300000.00', 'revisão da outra sessão')], pedido: { valor: 250000, motivo: 'mesmo valor' } });
     const r = await definirMetaConfirmada(c.p);
     expect(r).toEqual({ ok: false, estado: 'desatualizada', mensagem: 'A meta mudou em outra sessão: no banco está R$ 300.000,00 (versão 2). Confira e tente de novo.' });
-    expect(c.chamadas).toEqual(['ler', 'definir', 'recarregar']);
+    expect(c.chamadas).toEqual(['ler', 'recarregar']); // detectado antes de chamar a ação: nada é enviado
     expect(c.cache().map((x) => x.versao)).toEqual([1, 2]);
   });
 

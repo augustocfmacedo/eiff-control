@@ -4,6 +4,7 @@
 import { contentSpecPersistivel, type ContentSpec } from '../core/radar/comunicacao';
 import type { OperacaoVibeLedger, RadarDataset } from '../core/radar/types';
 import type { EventoDesfecho, VersaoMetaComercial } from '../core/radar/metaComercial';
+import { comIntencao } from './metaConfirmada';
 
 
 type Row = Record<string, any>;
@@ -24,6 +25,11 @@ export interface HelpersRadar {
   motivoDono: (empresaId: string) => string | undefined;
   /** CD-D3/E3: o banco tem o livro de desfechos (0070)? Sem ele a coluna won_amount não existe e não é enviada. */
   desfechos?: boolean;
+  /**
+   * CD-D3/E5: avisado logo depois de cada RPC de meta que o banco ACEITOU (antes do que vier depois na rodada). O store
+   * põe a versão na base sincronizada e na pendência offline, para que a retomada nunca reenvie a mesma intenção.
+   */
+  aoGravarMeta?: (m: VersaoMetaComercial) => void;
 }
 
 type Chave = keyof RadarDataset;
@@ -135,6 +141,8 @@ export function metaDoBanco(x: Row): VersaoMetaComercial {
  * governada, na ordem de mês e versão. O banco é a autoridade: recalcula a versão sob trava, confere papel, organização,
  * mês, valor e motivo e audita na mesma transação; a versão local é só a intenção (o número final é o do banco, que a
  * recarga traz). Nunca há INSERT direto (authenticated não tem). Mesmo valor da vigente: a RPC não cria versão.
+ * Cada versão aceita é avisada em `h.aoGravarMeta` na hora: se algo POSTERIOR da rodada falhar, a retomada não a
+ * reenvia (um reenvio, com outra sessão tendo mudado a meta no meio, recriaria o valor antigo sobre o mais novo).
  */
 async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComercial[] | undefined, depois: readonly VersaoMetaComercial[] | undefined): Promise<void> {
   if (!depois) return;
@@ -142,8 +150,21 @@ async function persistirMetas(h: HelpersRadar, antes: readonly VersaoMetaComerci
   const novas = depois.filter((m) => !ja.has(m.id)).sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : a.versao - b.versao));
   for (const m of novas) {
     if (!m.motivo?.trim()) throw new Error('meta comercial: versão sem motivo; nada foi gravado.');
-    await h.rpc('radar_definir_meta_comercial', { p_mes: `${m.mes}-01`, p_valor: m.valor === null || m.valor === undefined || m.valor === '' ? null : Number(m.valor), p_motivo: m.motivo.trim() });
+    const [rpc, args] = chamadaDaMeta(m);
+    await h.rpc(rpc, args);
+    h.aoGravarMeta?.(m);
   }
+}
+
+/**
+ * CD-D3/E5 (0074) — a chamada de uma versão de meta: SEMPRE a RPC idempotente radar_definir_meta_comercial_intencao.
+ * Intenção incompleta é recusada antes de sair; registro legado (sem intenção) ganha intenção determinística e a versão
+ * base de quando foi criado (`comIntencao`). A RPC antiga da 0068 não é chamada pelo app.
+ */
+export function chamadaDaMeta(m: VersaoMetaComercial & { intencao?: string; versaoBase?: number }): [string, Row] {
+  const x = comIntencao(m);
+  const p_valor = x.valor === null || x.valor === undefined || x.valor === '' ? null : Number(x.valor);
+  return ['radar_definir_meta_comercial_intencao', { p_intencao: x.intencao, p_mes: `${x.mes}-01`, p_valor, p_motivo: x.motivo.trim(), p_versao_base: x.versaoBase }];
 }
 
 /** Mapeamentos expostos para scripts de carga (mesmas regras da persistencia do app). */
