@@ -342,6 +342,9 @@ label.field.req > span::after { content: " *"; color: var(--brand); }
 .df-dia b { font-variant-numeric: tabular-nums; }
 .df-prev { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .df-prev:first-of-type { border-top: 0; }
+.ajuste-opcoes { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 10px; margin: 8px 0; display: grid; gap: 6px; }
+.ajuste-opcoes legend { color: var(--muted); padding: 0 4px; }
+.ajuste-opcoes label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 .documentos { display: grid; gap: 6px; }
 .documento { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .documento-nome { background: none; border: 0; padding: 0; color: var(--brand); cursor: pointer; text-align: left; word-break: break-all; font: inherit; }

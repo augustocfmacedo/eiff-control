@@ -126,6 +126,7 @@ export const LICOES: Licao[] = [
       'Clique em Liquidar. Informe a data de realização, o valor pago, a conta financeira e a evidência (número do comprovante, NF, boleto).',
       'Liquidação parcial: informe o valor pago; o saldo continua em aberto com o mesmo vencimento.',
       'Errou? Use Estornar informando o motivo; o título volta a aberto e o estorno fica na auditoria.',
+      'Pagou ou recebeu um valor diferente do previsto (tarifa, juros, desconto, arredondamento)? Não estorne: no lançamento (ou no Pago da Caixa, ou no celular) use "Ajustar valor pago", informe o valor real, a data e o motivo e escolha se a diferença corrige o valor do título ou vira juros/multa ou desconto. O título continua pago; conciliado com o extrato não ajusta (o valor do banco é o real).',
       'Prefira liquidar a partir da transação bancária em Bancos e conciliação: já nasce conciliado.',
       'A conta informada na liquidação total vira a conta do título (o caixa segue o banco em que o dinheiro entrou). Errou a conta? No detalhe do título use Alterar conta: vale em qualquer status, as liquidações acompanham e fica na auditoria; título conciliado com o extrato não troca de conta.',
     ],
