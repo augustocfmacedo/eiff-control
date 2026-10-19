@@ -4,6 +4,7 @@ import { actions, pode, useStore } from '../data/store';
 import { Empty, Field, Input, Link, Modal, Money, NumberInput, PageHead, Select, StatusBadge, dataHora, money, pct, tentar, useToast } from '../ui/components';
 import { Timeline } from '../ui/Timeline';
 import { DadosPagamentoView } from '../ui/Pagamento';
+import { AjustePago } from '../ui/AjustePago';
 import { DocumentosLancamento } from '../ui/Documentos';
 import { LancamentoForm } from './LancamentoForm';
 import { navegar } from '../ui/router';
@@ -15,6 +16,7 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
   const [liq, setLiq] = useState<{ data: string; valor: number; conta: string; documento: string } | null>(null);
   const [cancel, setCancel] = useState<string | null>(null);
   const [conta, setConta] = useState<{ conta: string; motivo: string } | null>(null);
+  const [ajuste, setAjuste] = useState(false);
   const [excluir, setExcluir] = useState<string | null>(null);
   const base = ds.lancamentos.find((x) => x.id === id);
   if (!base) return <Empty>Lançamento {id} não encontrado. <Link to="/lancamentos">Voltar</Link></Empty>;
@@ -35,11 +37,13 @@ export default function LancamentoDetalhe({ id }: { id: string }) {
         <button className="btn" onClick={() => navegar(l.tipo === 'Entrada' ? '/receber' : '/pagar')}>← Lista</button>
         {editavel && <button className="btn" onClick={() => setEditando(true)}>Editar</button>}
         {podeLiquidar && <button className="btn primary" onClick={() => setLiq({ data: ds.params.dataBase, valor: l.saldoAberto, conta: l.contaFinanceira, documento: '' })}>Liquidar</button>}
+        {l.status === 'Realizado' && !excluido && pode(usuario, 'liquidar', l.codigoObra || undefined) && <button className="btn" disabled={!!l.vinculoBancario} title={l.vinculoBancario ? 'Conciliado com o extrato: desfaça a conciliação para ajustar' : 'Alinhar com o valor realmente pago/recebido'} onClick={() => setAjuste(true)}>Ajustar valor pago</button>}
         {podeAlterarConta && verBancos && <button className="btn" onClick={() => setConta({ conta: l.contaFinanceira, motivo: '' })}>Alterar conta</button>}
         {(editavel || (l.status === 'Realizado' && pode(usuario, 'liquidar'))) && <button className="btn danger" onClick={() => setCancel('')}>{l.status === 'Realizado' ? 'Estornar' : 'Cancelar'}</button>}
         {podeExcluir && <button className="btn danger" onClick={() => setExcluir('')}>Excluir</button>}
         {excluido && pode(usuario, 'editar_lancamento', l.codigoObra || undefined) && <button className="btn" onClick={() => tentar(() => actions.restaurarLancamento(id), toast, () => toast('Lançamento restaurado.'))}>Restaurar</button>}
       </PageHead>
+      {ajuste && <AjustePago lancamento={l} tipo={l.tipo} valorPagoAtual={l.valorRealizadoTotal} dataAtual={l.realizacao} onClose={() => setAjuste(false)} aviso={toast} />}
       {excluido && <div className="alert bad">Excluído em {dataHora(l.excluidoEm!)} por {l.excluidoPor}: {l.motivoExclusao}. Fora das listas, do caixa, do fluxo e da DRE; o registro e a auditoria permanecem.</div>}
       {l.status === 'Pendente' && <div className="alert warn">Aguardando aprovação: fora das visões oficiais de caixa até ser aprovado. <Link to={`/aprovacoes?id=${aprov[0]?.id ?? ''}`}>Ver aprovação</Link></div>}
       {l.status === 'Rascunho' && <div className="alert info">Rascunho: editável e fora das visões oficiais.</div>}

@@ -9,6 +9,7 @@ import { actions, pode, useStore } from '../data/store';
 import { Badge, Field, Input, Modal, MoedaInput, Select, money } from '../ui/components';
 import { CamposPagamento, DadosPagamentoView } from '../ui/Pagamento';
 import { DocumentosLancamento } from '../ui/Documentos';
+import { AjustePago } from '../ui/AjustePago';
 
 const br = (iso?: string) => (iso ? iso.slice(0, 10).split('-').reverse().slice(0, 2).join('/') : '—');
 const CHAVE_FILTRO = 'eiff-control:campo:pagamentos:filtro';
@@ -111,6 +112,7 @@ function Detalhe({ id, onClose, toast }: { id: string; onClose: () => void; toas
   const [modo, setModo] = useState<'ver' | 'pagar' | 'editar'>('ver');
   const [pag, setPag] = useState(() => ({ data: ds.params.dataBase, valor: item?.valor ?? 0, conta: base && contas.includes(base.contaFinanceira) ? base.contaFinanceira : contas[0] ?? '' }));
   const [ed, setEd] = useState<Lancamento | null>(null);
+  const [ajuste, setAjuste] = useState(false);
   if (!base || !item) return null;
   const l = item.l;
   const pagar = () => {
@@ -132,7 +134,9 @@ function Detalhe({ id, onClose, toast }: { id: string; onClose: () => void; toas
         <div className="actions" style={{ marginBottom: 10 }}>
           {item.pagavel && <button className="btn primary" onClick={() => { setPag({ ...pag, valor: item.valor }); setModo('pagar'); }}>Pagar {money(item.valor)}</button>}
           {editavel && <button className="btn" onClick={() => { setEd({ ...base }); setModo('editar'); }}>Editar</button>}
+          {l.status === 'Realizado' && <button className="btn" disabled={!!l.vinculoBancario} title={l.vinculoBancario ? 'Conciliado com o extrato' : undefined} onClick={() => setAjuste(true)}>Ajustar valor pago</button>}
         </div>
+        {ajuste && <AjustePago lancamento={base} tipo={l.tipo} valorPagoAtual={l.valorRealizadoTotal} dataAtual={l.realizacao} onClose={() => setAjuste(false)} aviso={toast} />}
         <h3 className="pag-sub">Dados para pagamento</h3>
         <DadosPagamentoView forma={l.formaPagamento} dados={l.dadosPagamento} />
         <h3 className="pag-sub">Documentos</h3>

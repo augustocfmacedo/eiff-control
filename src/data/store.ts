@@ -1332,6 +1332,67 @@ export const actions = {
   },
 
   /**
+   * Ajusta o valor PAGO/RECEBIDO de um titulo ja liquidado (Realizado) ao valor real, sem estornar e relancar (pedido do
+   * Augusto em 19/10/2026). A diferenca entre o pago real e o liquido previsto vira, a escolha de quem ajusta:
+   *   'valor'    — o proprio titulo passa a valer o pago (valor bruto corrigido);
+   *   'juros'    — multa/juros (so quando o pago e MAIOR que o previsto);
+   *   'desconto' — desconto (so quando o pago e MENOR que o previsto).
+   * A ultima liquidacao absorve a diferenca do total liquidado (data opcional); o titulo continua Realizado. No banco, o
+   * titulo e gravado antes da liquidacao (persistirRemoto), entao o gatilho apply_settlement recalcula com o liquido novo.
+   * Bloqueado quando conciliado com o extrato (o banco e o fato: desfaca a conciliacao) e em periodo fechado.
+   */
+  ajustarValorPago(id: string, dados: { valorPago: number; tratamento: 'valor' | 'juros' | 'desconto'; motivo: string; data?: string }) {
+    const atual = state.ds.lancamentos.find((l) => l.id === id);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    exigir('liquidar', atual.codigoObra || undefined);
+    if (atual.status !== 'Realizado' || atual.excluidoEm) throw new RegraDeNegocioError('Só dá para ajustar o valor pago de um lançamento já pago/recebido.');
+    if (state.ds.transacoes.some((t) => t.lancamentoIds.includes(id))) throw new RegraDeNegocioError('Pagamento conciliado com o extrato: o valor do banco é o real. Desfaça a conciliação antes de ajustar.');
+    if (periodoFechado(state.ds, atual.competencia)) throw new RegraDeNegocioError('Período fechado.');
+    if (dados.motivo.trim().length < 3) throw new RegraDeNegocioError('Informe o motivo do ajuste.');
+    const pago = Math.round(dados.valorPago * 100) / 100;
+    if (!(pago > 0)) throw new RegraDeNegocioError('O valor pago deve ser positivo.');
+    if (dados.data && dados.data > state.ds.params.dataBase) throw new RegraDeNegocioError('A data do pagamento não pode ser futura.');
+    const liquido = Math.round((atual.valorBruto - atual.retencoes - atual.desconto + atual.multaJuros) * 100) / 100;
+    const liqs = state.ds.liquidacoes.filter((q) => q.lancamentoId === id).sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.id.localeCompare(b.id)));
+    const ultima = liqs[liqs.length - 1];
+    if (!ultima) throw new RegraDeNegocioError('Lançamento sem pagamento registrado.');
+    const totalLiq = Math.round(liqs.reduce((a, q) => a + q.valor, 0) * 100) / 100;
+    const difLiquido = Math.round((pago - liquido) * 100) / 100;
+    const difPago = Math.round((pago - totalLiq) * 100) / 100;
+    const data = dados.data || ultima.data;
+    if (!difLiquido && !difPago && data === ultima.data) throw new RegraDeNegocioError('O valor e a data já são esses.');
+    const novaUltima = Math.round((ultima.valor + difPago) * 100) / 100;
+    if (!(novaUltima > 0)) throw new RegraDeNegocioError('Este título tem pagamentos parciais e o ajuste zeraria o último: estorne o pagamento e registre de novo.');
+    let campos: Partial<Lancamento> = {};
+    if (difLiquido) {
+      if (dados.tratamento === 'juros') {
+        if (difLiquido < 0) throw new RegraDeNegocioError('Juros/multa só quando o valor pago é maior que o previsto. Use desconto ou corrija o valor.');
+        campos = { multaJuros: Math.round((atual.multaJuros + difLiquido) * 100) / 100 };
+      } else if (dados.tratamento === 'desconto') {
+        if (difLiquido > 0) throw new RegraDeNegocioError('Desconto só quando o valor pago é menor que o previsto. Use juros ou corrija o valor.');
+        campos = { desconto: Math.round((atual.desconto - difLiquido) * 100) / 100 };
+      } else {
+        const bruto = Math.round((atual.valorBruto + difLiquido) * 100) / 100;
+        if (!(bruto > 0)) throw new RegraDeNegocioError('O valor do título ficaria zerado: confira o valor pago.');
+        campos = { valorBruto: bruto };
+      }
+    }
+    const rotulo = { valor: 'valor do título corrigido', juros: 'diferença como multa/juros', desconto: 'diferença como desconto' }[dados.tratamento];
+    const nota = `Valor pago ajustado de ${moeda(totalLiq)} para ${moeda(pago)}${data !== ultima.data ? ` (data ${data.split('-').reverse().join('/')})` : ''} por ${state.usuario.nome}: ${dados.motivo.trim()}${difLiquido ? ` (${rotulo})` : ''}.`;
+    const l: Lancamento = { ...atual, ...campos, valorRealizado: pago, realizacao: data, observacoes: `${atual.observacoes}\n${nota}`.trim(), atualizadoEm: agora(), atualizadoPor: state.usuario.nome, versao: atual.versao + 1 };
+    const erros = validarLancamento(state.ds, l);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    let ds: Dataset = {
+      ...state.ds,
+      lancamentos: state.ds.lancamentos.map((x) => (x.id === id ? l : x)),
+      liquidacoes: state.ds.liquidacoes.map((q) => (q.id === ultima.id ? { ...q, valor: novaUltima, data } : q)),
+    };
+    ds = registrar(ds, 'ajustar_valor_pago', 'lancamento', id, { valorPago: totalLiq, valorBruto: atual.valorBruto, desconto: atual.desconto, multaJuros: atual.multaJuros, realizacao: atual.realizacao }, { valorPago: pago, valorBruto: l.valorBruto, desconto: l.desconto, multaJuros: l.multaJuros, realizacao: data }, dados.motivo.trim());
+    commit(ds);
+    return l;
+  },
+
+  /**
    * Edicao rapida de datas na grade. Competencia e vencimento passam por salvarLancamento (validacoes,
    * periodo fechado e reabertura de aprovacao). A data de realizacao de um titulo Realizado e ajustada aqui,
    * junto com a ultima liquidacao, e exige o papel que liquida.
