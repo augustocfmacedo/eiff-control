@@ -23,25 +23,6 @@
       ],
       "port": 5174,
       "autoPort": true
-    },
-    {
-      "name": "pranchas",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "D:/Usuario/Documents/CLAUDE/eiff-pre-engenharia/scripts/servir-pranchas.mjs"
-      ],
-      "port": 5178
-    },
-    {
-      "name": "eiff-site",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "--prefix",
-        "D:/Usuario/Documents/CLAUDE/eiff-site",
-        "run",
-        "dev"
-      ],
-      "port": 5180
     }
   ]
 }
