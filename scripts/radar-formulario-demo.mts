@@ -8,7 +8,8 @@
  * esta demonstração muda junto, que é o ponto.
  */
 import {
-  adapterFormularioSite, envelopeDaSubmissao, oportunidadeDoFormulario, pedidoDeIntake,
+  adapterFormularioSite, canonicoDaSubmissao, envelopeDaSubmissao, observacoesDoLead,
+  oportunidadeDoFormulario, pedidoDeIntake,
   type SubmissaoFormulario,
 } from '../src/core/radar/formularioSite'
 import {
@@ -19,6 +20,9 @@ import { construirCommercialQueue } from '../src/core/radar/commercialMachine'
 import { planoDeAcaoCM } from '../src/core/radar/commercialActionPlan'
 import { cadenciaDaContaCM, TEXTO_ESTADO_CADENCIA_CM, TEXTO_NATUREZA_TOQUE_CM } from '../src/core/radar/commercialCadence'
 import { upsertContato } from '../src/core/radar/ingestao'
+import { deSubmissaoDoSite } from '../src/core/inbox/formularioSite'
+import { receberMensagem } from '../src/core/inbox/fronteiras'
+import { inboxVazio } from '../src/core/inbox/tipos'
 import { radarVazio } from '../src/core/radar/types'
 import type { Fonte, RadarDataset } from '../src/core/radar/types'
 
@@ -111,10 +115,36 @@ if (!alterada.ok) { console.error('alterada inválida'); process.exit(1) }
 ok(`com o pé-direito corrigido: ${classificarIntake(alterada, discoveryRecords(r.registrosFonte)).resultado} — nasce ao lado, não por cima`)
 
 /* ---------------------------------------------------------------
+   3b · O Inbox — visível na hora, SEM empresa
+--------------------------------------------------------------- */
+
+passo(4, 'O atendimento: conversa no Inbox, sem exigir empresa nem CNPJ')
+const canon = canonicoDaSubmissao(SUBMISSAO)
+const msg = deSubmissaoDoSite({
+  externalMessageId: registro.externoIdDaSubmissao ?? 'netlify-demo-0001',
+  em: SUBMISSAO.recebidoEm,
+  rastro: { registroFonteId: registro.id, payloadFingerprint: registro.payloadFingerprint!, formulario: canon.formulario },
+  resumo: {
+    nome: canon.nome, email: canon.email, telefone: canon.telefone, empresa: canon.empresa,
+    cidade: canon.cidade, resumo: canon.resumo, mensagem: canon.mensagem,
+    linhas: observacoesDoLead(canon).split('\n').slice(1),
+  },
+})
+if ('erro' in msg) { console.error('sem conversa:', msg.erro); process.exit(1) }
+let inbox = inboxVazio()
+const rec1 = receberMensagem(inbox, msg, { agora: AGORA, novoId: ids.novo })
+inbox = rec1.ds
+ok(`thread ${inbox.threads[0]!.id} · status ${inbox.threads[0]!.status}`)
+ok(`contato ${inbox.contatos[0]!.nome} · relação ${inbox.contatos[0]!.tipoRelacao} — nenhuma empresa exigida`)
+ok(`rastro na mensagem: registroFonteId=${inbox.mensagens[0]!.meta?.['registroFonteId']}`)
+const rec2 = receberMensagem(inbox, msg, { agora: AGORA, novoId: ids.novo })
+ok(`reenvio da mesma mensagem: duplicada=${rec2.duplicada} · threads=${rec2.ds.threads.length}`)
+
+/* ---------------------------------------------------------------
    4 · A decisão humana
 --------------------------------------------------------------- */
 
-passo(4, 'A promoção — decisão HUMANA, na aba Candidatos')
+passo(5, 'A promoção — decisão HUMANA, na aba Candidatos')
 
 /* 4a — o formulário COMO ESTÁ PUBLICADO hoje: sem campo de CNPJ. */
 const semCnpj = aplicarDecisao(
@@ -163,7 +193,7 @@ ok(`registro de origem: ${r.registrosFonte[0]!.statusIntake} — a evidência fi
    4c · O contato — passo próprio, com o upsert do Radar
 --------------------------------------------------------------- */
 
-passo(5, 'O contato — a promoção não cria, porque nas fontes de descoberta não há pessoa')
+passo(6, 'O contato — a promoção não cria, porque nas fontes de descoberta não há pessoa')
 const env = envelopeDaSubmissao(comCnpj)
 const normalizado = adapterFormularioSite.normalizar(env)!
 const normalizadoContato = normalizado.contatos?.[0]
@@ -181,7 +211,7 @@ if (normalizadoContato !== undefined) {
    5 · A oportunidade
 --------------------------------------------------------------- */
 
-passo(6, 'A oportunidade comercial')
+passo(7, 'A oportunidade comercial')
 const projetoId = r.projetos[0]?.id
 const amanha = '2026-11-10'
 const oportunidade = oportunidadeDoFormulario({
@@ -203,7 +233,7 @@ ok(`projeto normalizado: ${normalizado.projeto?.areaM2 ?? '—'} m²`)
    6 · A tarefa — pela cadência que já existe
 --------------------------------------------------------------- */
 
-passo(7, 'A próxima tarefa, pela cadência CM2-B.1 (nenhum mecanismo novo)')
+passo(8, 'A próxima tarefa, pela cadência CM2-B.1 (nenhum mecanismo novo)')
 const fila = construirCommercialQueue(r, HOJE)
 const item = fila.itens.find((i) => i.empresaId === empresa.id)
 if (item === undefined) {
