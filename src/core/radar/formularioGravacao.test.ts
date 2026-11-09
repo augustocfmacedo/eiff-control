@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { ErroDeGravacao, gravarSubmissao, linhaDeEvidencia, resumoParaOInbox, type PortasGravacao } from './formularioGravacao'
+import { ErroDeGravacao, ROTULO_LEITURA_DA_PAGINA, gravarSubmissao, linhaDeEvidencia, linhaDeOrigem, resumoParaOInbox, type PortasGravacao } from './formularioGravacao'
 import { textoDaMensagem } from '../inbox/formularioSite'
 import { pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
 import { planejarGravacao } from './formularioServidor'
@@ -32,7 +32,7 @@ const SUB: SubmissaoFormulario = {
     nome: 'Ana Lima (FICTÍCIO)', email: 'ana@exemplo.com.br', telefone: '62 90000-0000',
     empresa: 'Lima Indústria', cidade: 'Goiânia, GO', uso: 'industrial', area: '900',
     vao: '20', observacao: 'Preciso de um galpão para a fábrica.', resumo: 'Industrial · 900 m² · vão 20 m',
-    leitura: '[atencao] Vão de 20 m pede treliça (pré-engenharia)',
+    leitura: '[especial] Vão de 20 m acima do já projetado. É possível, mas exige estudo estrutural específico.',
   },
 }
 
@@ -284,9 +284,28 @@ describe('gravação · o que o atendente lê', () => {
     expect(r.resumo).toBe('Industrial · 900 m² · vão 20 m')
     const linhas = (r.linhas ?? []).join(' | ')
     expect(linhas).toContain('vão 20 m')
-    expect(linhas).toContain('Leitura da página:')
-    /* a linha de origem não se repete: ela já é o cabeçalho de observacoesDoLead */
-    expect(linhas).not.toContain('Origem: formulário')
+    expect(linhas).toContain(ROTULO_LEITURA_DA_PAGINA)
+  })
+
+  it('e diz de onde a solicitação veio: formulário e site, uma vez só', () => {
+    const t = textoDaMensagem(resumoParaOInbox(SUB))
+    expect(t).toContain('Origem: formulário "simular-galpao" do site (eiff.com.br).')
+    expect(t.split('Origem:').length - 1).toBe(1)
+    expect(linhaDeOrigem({ formulario: 'iniciar-projeto' })).toContain('"iniciar-projeto"')
+    /* o instante fica para a data da mensagem, que a interface mostra no fuso de quem lê */
+    expect(t).not.toContain(SUB.recebidoEm)
+  })
+
+  it('a leitura técnica da página vai como EVIDÊNCIA rotulada, nunca como orientação da EIFF', () => {
+    const t = textoDaMensagem(resumoParaOInbox(SUB))
+    /* o texto do site é preservado palavra por palavra… */
+    expect(t).toContain('exige estudo estrutural específico')
+    /* …e a linha diz de quem é a fala ANTES de dizer qual é */
+    const linha = t.split('\n').find((l) => l.includes('exige estudo estrutural específico'))!
+    expect(linha.startsWith(ROTULO_LEITURA_DA_PAGINA)).toBe(true)
+    expect(linha).toContain('não é orientação de engenharia da EIFF')
+    /* e o rótulo nunca se apresenta como recomendação nossa */
+    expect(ROTULO_LEITURA_DA_PAGINA.toLowerCase()).not.toContain('recomend')
   })
 
   it('e NADA aparece duas vezes no texto da conversa', () => {

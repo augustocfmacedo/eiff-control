@@ -10,6 +10,7 @@
  * O que o banco ACEITA é medido em outro lugar, com PostgreSQL de verdade:
  * `npm run smoke:formulario`.
  */
+import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { corpoDaSubmissaoNetlify } from './formularioTransporte';
 import { pedidoDeIntake } from './formularioSite';
@@ -260,3 +261,69 @@ function impressaoEsperada(): string {
   if (!v.ok) throw new Error('setup');
   return v.payloadFingerprint;
 }
+
+/* ---------------------------------------------------------------
+   O que a borda ARRASTA consigo — medido no grafo de importação
+--------------------------------------------------------------- */
+
+/**
+ * O grafo transitivo de `formularioBorda.ts`, seguindo só import relativo.
+ *
+ * Por que medir isto: a função Netlify é empacotada pelo esbuild, que junta
+ * tudo o que o grafo alcança. Duas perguntas do preflight de ativação se
+ * respondem aqui e em nenhum outro teste — se o caminho do lead toca o motor
+ * estrutural (não deve: nenhuma peça dele é homologada para orientar cliente)
+ * e se a função arrasta a aplicação (telas, adapters do navegador), o que
+ * faria o pacote crescer e acoplaria a borda ao app.
+ */
+function grafoDaBorda(): string[] {
+  const vistos = new Set<string>();
+  const pilha = ['src/core/radar/formularioBorda.ts'];
+  const pasta = (f: string) => f.slice(0, f.lastIndexOf('/'));
+  const normalizar = (p: string) => {
+    const partes: string[] = [];
+    for (const parte of p.split('/')) {
+      if (parte === '.' || parte === '') continue;
+      if (parte === '..') partes.pop();
+      else partes.push(parte);
+    }
+    return partes.join('/');
+  };
+  while (pilha.length > 0) {
+    const f = pilha.pop()!;
+    if (vistos.has(f)) continue;
+    vistos.add(f);
+    const texto = readFileSync(f, 'utf8');
+    for (const m of texto.matchAll(/from '(\.[^']+)'/g)) {
+      const alvo = normalizar(`${pasta(f)}/${m[1]!}`);
+      const cand = [`${alvo}.ts`, `${alvo}.tsx`, `${alvo}/index.ts`].find((c) => existsSync(c));
+      if (cand === undefined) throw new Error(`import não resolvido: ${m[1]} em ${f}`);
+      pilha.push(cand);
+    }
+  }
+  return [...vistos].sort();
+}
+
+describe('borda · o que ela arrasta para o pacote da função', () => {
+  const grafo = grafoDaBorda();
+
+  it('o caminhador anda de verdade: o grafo é grande e começa na borda', () => {
+    /* sem esta guarda, um caminhador quebrado passaria em todas as asserções abaixo */
+    expect(grafo.length).toBeGreaterThan(20);
+    expect(grafo).toContain('src/core/radar/formularioBorda.ts');
+    expect(grafo).toContain('src/core/inbox/ingestaoPorta.ts');
+  });
+
+  it('NADA do motor estrutural entra: nem código, nem vocabulário', () => {
+    const fonte = grafo.map((f) => readFileSync(f, 'utf8')).join('\n');
+    for (const termo of ['solveFrame', 'checkMember', 'resolverPortico', 'generateFrameModel', 'calcS2', 'LOCUS-ENGINE', 'api/pre-engenharia']) {
+      expect(fonte.includes(termo)).toBe(false);
+    }
+  });
+
+  it('e a borda não arrasta a aplicação: só módulos de src/core', () => {
+    const forasteiros = grafo.filter((f) => !f.startsWith('src/core/'));
+    expect(forasteiros).toEqual([]);
+    expect(grafo.filter((f) => f.startsWith('src/ui/') || f.startsWith('src/screens/') || f.startsWith('src/data/'))).toEqual([]);
+  });
+});

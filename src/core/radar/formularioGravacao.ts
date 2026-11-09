@@ -58,6 +58,40 @@ export const CAMPOS_EXIBIDOS_DO_BRUTO: readonly string[] = Object.freeze(['leitu
  */
 export const LINHAS_JA_ESCRITAS: readonly string[] = Object.freeze(['Configuração:', 'Mensagem:'])
 
+/**
+ * Como a leitura técnica da página entra na conversa.
+ *
+ * A página do simulador compara o que o visitante digitou com o que a EIFF já
+ * executou e mostra um texto automático («vão dentro do que já foi executado»,
+ * «acima do já projetado, exige estudo estrutural específico»). Isso é
+ * EVIDÊNCIA do que a pessoa viu antes de pedir contato, e por isso vai para a
+ * conversa palavra por palavra.
+ *
+ * O que não pode acontecer é o atendente ler aquilo como parecer da
+ * engenharia e repetir ao cliente: nenhum desses textos passou por
+ * homologação estrutural. Daí o rótulo — a linha diz de quem é a fala antes
+ * de dizer qual é.
+ */
+export const ROTULO_LEITURA_DA_PAGINA =
+  'Mostrado ao visitante pela página (texto automático do site, não é orientação de engenharia da EIFF)'
+
+/** O site de onde a solicitação veio. */
+export const ORIGEM_DO_SITE = 'eiff.com.br'
+
+/**
+ * De onde a solicitação veio, dito na própria conversa.
+ *
+ * O canal `PORTAL` e o `meta.formulario` já guardam isso para a máquina, mas
+ * quem abre o Inbox lê texto: sem esta linha, a conversa não diz que o pedido
+ * entrou por um formulário do site nem qual deles. E o instante fica de fora
+ * de propósito — a mensagem já tem data e hora, que a interface mostra no
+ * fuso de quem lê, e repetir um instante UTC aqui convidaria a ler o horário
+ * errado.
+ */
+export function linhaDeOrigem(c: { formulario: string }): string {
+  return `Origem: formulário "${c.formulario}" do site (${ORIGEM_DO_SITE}).`
+}
+
 /** Submissão → o que a conversa mostra. Nome, telefone, e-mail, lugar e o galpão. */
 export function resumoParaOInbox(s: SubmissaoFormulario): ResumoDaSubmissao {
   const c = canonicoDaSubmissao(s)
@@ -68,8 +102,9 @@ export function resumoParaOInbox(s: SubmissaoFormulario): ResumoDaSubmissao {
     .filter((l) => !LINHAS_JA_ESCRITAS.some((p) => l.startsWith(p)))
   for (const campo of CAMPOS_EXIBIDOS_DO_BRUTO) {
     const v = s.campos[campo]?.trim()
-    if (v !== undefined && v !== '') linhas.push(`Leitura da página: ${v}`)
+    if (v !== undefined && v !== '') linhas.push(`${ROTULO_LEITURA_DA_PAGINA}: ${v}`)
   }
+  linhas.push(linhaDeOrigem(c))
   return {
     ...(c.nome !== undefined ? { nome: c.nome } : {}),
     ...(c.email !== undefined ? { email: c.email } : {}),

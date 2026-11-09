@@ -20,6 +20,31 @@
  *
  * Tokens: NETLIFY_AUTH_TOKEN (PAT, só para ler submissões) e EIFF_FORM_SECRET (o mesmo segredo da borda).
  * Nunca em arquivo versionado, nunca impressos.
+ *
+ * ── COMO ELE OPERA (decidido no preflight de 09/11/2026) ─────────────────────────────────────────
+ *
+ * FREQUÊNCIA. De hora em hora, no modo execução, com o marco da ativação. É a cadência que casa com o
+ * prazo de primeira resposta do Inbox (1 dia): uma submissão perdida pelo evento volta em até 60 min e
+ * ainda sobra dia para responder. Mais frequente não melhora nada — o evento entrega em segundos quando
+ * entrega — e menos frequente come o prazo. Rodar de hora em hora não custa nada quando nada falhou: sem
+ * submissão nova, o plano devolve lista vazia e o processo termina sem escrever no banco.
+ *
+ * REGISTRO. Toda rodada imprime UMA linha legível por máquina, `RECONCILIACAO_RESUMO { … }`, com lidas,
+ * recuperadas, retidas e falhas — nos dois modos. É o que vai para o log do agendador.
+ *
+ * ALERTA. Não existe notificação automática, porque nenhum canal de saída está autorizado nesta fase
+ * (nem no Inbox, nem na EIFF Central). O alerta é o CÓDIGO DE SAÍDA, que faz o job do agendador falhar:
+ *
+ *     0  nada a fazer, ou tudo recuperado sem erro
+ *     1  alguma submissão NÃO entrou (a próxima rodada tenta de novo; se repetir, é defeito)
+ *     2  BLOQUEADO antes de ler qualquer coisa (falta token, marco, confirmação: erro de operação)
+ *
+ * A regra de atenção humana: `falhas > 0` em duas rodadas seguidas, ou `recuperadas > 0` com frequência —
+ * recuperar é normal uma vez, rotina significa que o evento do site está falhando e é lá que se olha.
+ *
+ * MARCO INICIAL. O instante em que a integração entra no ar, informado em `--marco`. Antes dele a
+ * reconciliação RETÉM: as submissões reais guardadas no painel são decisão comercial, com autorização
+ * própria, e liberá-las exige `--incluir-anteriores` MAIS `--confirmar-anteriores`.
  */
 import fs from 'node:fs';
 import {
@@ -31,10 +56,13 @@ import { FORMULARIOS } from '../src/core/radar/formularioSite';
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const arg = (n: string, d = '') => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] ?? d : d; };
 const flag = (n: string) => args.includes(`--${n}`);
-const falhar = (m: string): never => { console.error(`BLOQUEADO: ${m}`); process.exit(1); };
+/** Bloqueio é erro de operação, não de entrega: sai com 2 para o agendador distinguir. */
+const falhar = (m: string): never => { console.error(`BLOQUEADO: ${m}`); process.exit(2); };
 
 const API = 'https://api.netlify.com/api/v1';
 const CONFIRMACAO = 'FORMULARIO_SITE_V1';
+/** Processar submissão anterior ao marco é processar lead REAL: porta própria, separada da porta de reenvio. */
+const CONFIRMACAO_ANTERIORES = 'LEADS_REAIS_ANTES_DO_MARCO';
 
 const siteId = arg('site');
 const arquivo = arg('arquivo');
@@ -43,12 +71,17 @@ const endpoint = arg('endpoint', 'https://eiffcontrol.com.br/api/formulario-site
 const excluidos = arg('excluidos').split(',').map((x) => x.trim()).filter((x) => x !== '');
 const porPagina = Number(arg('por-pagina', '100'));
 const incluirAnteriores = flag('incluir-anteriores');
+const anterioresConfirmados = arg('confirmar-anteriores') === CONFIRMACAO_ANTERIORES;
 const executar = flag('executar');
 const confirmado = arg('confirmar') === CONFIRMACAO;
 
 if (marco === '' || Number.isNaN(Date.parse(marco))) falhar('informe --marco <instante ISO> (a partir de quando a reconciliação pode reenviar).');
 if (siteId === '' && arquivo === '') falhar('informe --site <site_id do Netlify> ou --arquivo <json com as submissões>.');
 if (executar && !confirmado) falhar(`--executar sem --confirmar ${CONFIRMACAO} é recusado. Não há modo intermediário.`);
+if (incluirAnteriores && !anterioresConfirmados) {
+  falhar(`--incluir-anteriores sem --confirmar-anteriores ${CONFIRMACAO_ANTERIORES} é recusado: `
+    + 'as submissões de antes do marco são leads REAIS e liberá-las é decisão comercial, não rotina.');
+}
 if (incluirAnteriores && !executar) console.log('AVISO: --incluir-anteriores só tem efeito com --executar.');
 
 const modo = executar && confirmado ? 'EXECUÇÃO' : 'SIMULAÇÃO';
@@ -102,7 +135,17 @@ for (const i of plano.enviar) {
   console.log(`  ${i.criadoEm} · ${i.formulario} · id ${i.id} · externo ${i.externoId} · impressão ${i.payloadFingerprint.slice(0, 16)}`);
 }
 
+/** A linha que o agendador lê. Sem conteúdo de lead: só contagens, motivos e o modo. */
+const resumo = (extra: Record<string, unknown> = {}) => {
+  const motivos: Record<string, number> = {};
+  for (const [m, n] of porMotivo) motivos[m] = n;
+  console.log(`RECONCILIACAO_RESUMO ${JSON.stringify({
+    modo, marco, lidas: plano.lidas, aReenviar: plano.enviar.length, retidas: plano.retidas.length, motivos, ...extra,
+  })}`);
+};
+
 if (modo === 'SIMULAÇÃO') {
+  resumo({ recuperadas: 0, falhas: 0 });
   console.log('\nSIMULAÇÃO: nada foi enviado. Para reenviar, repita com --executar --confirmar ' + CONFIRMACAO);
   process.exit(0);
 }
@@ -133,7 +176,9 @@ for (const i of plano.enviar) {
 }
 
 const rel = relatorioDaReconciliacao(respostas);
+const recuperadas = rel.registradas + rel.completadas + rel.novasObservacoes;
 console.log(`\n${JSON.stringify(rel, null, 2)}`);
 // Falha não é erro fatal: a submissão fica guardada no Netlify e a próxima rodada a traz. Mas o código de
 // saída avisa, para a reconciliação agendada não falhar em silêncio.
+resumo({ recuperadas, falhas: rel.falhas.length });
 process.exit(rel.falhas.length === 0 ? 0 : 1);

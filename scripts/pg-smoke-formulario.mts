@@ -30,6 +30,7 @@
  *   L  a evidência é imutável: editar o payload é recusado pelo trigger
  *   M  promover exige entidade: RESOLVED sem entity_id é recusado pelo CHECK
  *   N  o telefone que já é de outro contato NÃO troca de dono
+ *   P  identidade estável: evento e API oficial do Netlify dão o MESMO candidato, e o MESMO id nas duas gravações
  *   O  estado final conferido linha por linha
  *
  * O @electric-sql/pglite é devDependency FIXADA. O banco é em memória, roda dentro de BEGIN ... ROLLBACK e
@@ -37,7 +38,7 @@
  */
 import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
-import { gravarSubmissao, linhaDeEvidencia, type PortasGravacao } from '../src/core/radar/formularioGravacao';
+import { ROTULO_LEITURA_DA_PAGINA, gravarSubmissao, linhaDeEvidencia, type PortasGravacao } from '../src/core/radar/formularioGravacao';
 import { argsIngest, resultadoIngest } from '../src/core/inbox/ingestaoPorta';
 import { registroDoBanco } from '../src/core/radar/formularioPorta';
 import { dadosDoContato } from '../src/core/inbox/formularioSite';
@@ -109,15 +110,28 @@ insert into inbox_config (organization_id) values ('${ORG}');
 
 const BRUTA_NETLIFY = {
   payload: {
+    // A forma REAL do evento, com os campos que a plataforma manda ao lado dos nossos: `number`, `form_id`,
+    // `site_url`, `state`, `human_fields` e `ordered_human_fields` existem de verdade no corpo e NÃO entram
+    // na identidade nem na impressão. É o que faz o evento e a API oficial (que devolve mais campos ainda)
+    // produzirem o MESMO candidato — provado em P.
     id: 'nf-prova-0001',
+    number: 41,
+    form_id: 'fid-prova-0001',
     form_name: 'simular-galpao',
+    site_url: 'https://eiff.com.br',
+    state: 'verified',
     created_at: '2026-11-09T14:00:00.000Z',
+    email: 'ana@exemplo.invalido',
+    name: 'Ana Lima (FICTÍCIO)',
+    human_fields: { Nome: 'Ana Lima (FICTÍCIO)', 'E-mail': 'ana@exemplo.invalido' },
+    ordered_human_fields: [{ title: 'Nome', name: 'nome', value: 'Ana Lima (FICTÍCIO)' }],
     data: {
       nome: 'Ana Lima (FICTÍCIO)', email: 'ana@exemplo.invalido', telefone: '62 90000-0000',
       empresa: 'Lima Indústria (FICTÍCIO)', cidade: 'Goiânia, GO', uso: 'industrial',
       area: '900', vao: '20', comprimento: '45', peDireito: '8',
       observacao: 'Preciso de um galpão para a fábrica. Qual o prazo?',
       resumo: 'Industrial · 900 m² · vão 20 m', prazo: '3 a 6 meses',
+      leitura: '[especial] Vão de 20 m acima do já projetado. É possível, mas exige estudo estrutural específico.',
       'form-name': 'simular-galpao', 'empresa-site': '', ip: '200.0.0.1', user_agent: 'Mozilla',
     },
   },
@@ -343,12 +357,23 @@ async function main() {
     ds.contatos[0]!.identidades.length === 2 && ds.contatos[0]!.tipoRelacao === 'lead',
     ds.contatos[0]!.identidades.map((i) => i.canal).join('+'));
 
+  prova('D4', 'o texto diz DE ONDE veio e rótula a leitura técnica da página como evidência',
+    texto.includes('Origem: formulário "simular-galpao" do site (eiff.com.br).')
+    && texto.includes(ROTULO_LEITURA_DA_PAGINA)
+    && texto.includes('exige estudo estrutural específico')
+    && texto.includes('não é orientação de engenharia da EIFF'),
+    'a leitura do site vai palavra por palavra, com a fala identificada antes do conteúdo');
+
   /* ---------------- E · prazo de primeira resposta ---------------- */
 
   const threadLinha = (await todas('select * from inbox_thread'))[0]!;
   prova('E', 'prazo de primeira resposta gravado pela configuração do Inbox',
     threadLinha['sla_first_response_due'] !== null,
     `vence em ${threadLinha['sla_first_response_due']}`);
+
+  prova('E2', 'e a conversa tem RESPONSÁVEL, não fica só no setor',
+    threadLinha['assignee_id'] !== null && String(threadLinha['assignee_id']) === ATENDENTE,
+    `responsável=${threadLinha['assignee_id'] ?? '—'} status=${threadLinha['status']}`);
 
   /* ---------------- F · o roteador que já existia ---------------- */
 
@@ -378,6 +403,28 @@ async function main() {
   prova('J', 'RECUPERAÇÃO 4 · falha de rede depois de gravar: reenviar 3 vezes não duplica',
     r3.resultado === 'IDEMPOTENTE' && r4.resultado === 'IDEMPOTENTE'
     && (await conta('radar_source_record')) === antesDoReenvio.ev && (await conta('inbox_message')) === antesDoReenvio.msg);
+
+  /* ---------------- P · a identidade é estável entre os DOIS caminhos de entrada ---------------- */
+
+  // O evento do site entrega `{ payload: ... }`; a API oficial de submissões (que o reconciliador lê) entrega
+  // o objeto cru, com MAIS campos. Se os dois não produzirem a mesma identidade e a mesma impressão, a
+  // idempotência não vale nada e reconciliar duplicaria tudo.
+  const PELA_API = submissaoDe({
+    ...BRUTA_NETLIFY.payload, number: 41, title: null, summary: 'resumo que a plataforma monta',
+    body: 'corpo que a plataforma monta', first_name: 'Ana', last_name: 'Lima', company: 'Lima Indústria (FICTÍCIO)',
+  });
+  const rP = await gravar(PELA_API);
+  prova('P', 'evento e API oficial do Netlify produzem o MESMO candidato: identidade e impressão iguais',
+    PELA_API.id === SUB.id && rP.payloadFingerprint === r1.payloadFingerprint && rP.resultado === 'IDEMPOTENTE'
+    && (await conta('radar_source_record', "external_id = 'nf-prova-0001'")) === 1,
+    `id=${PELA_API.id} resultado=${rP.resultado}`);
+
+  prova('P2', 'e o MESMO id da submissão chega às DUAS gravações, de ponta a ponta',
+    String(evidencia['external_id']) === 'nf-prova-0001'
+    && String(msg['external_message_id']) === 'nf-prova-0001'
+    && String(evidencia['external_id']) === String(msg['external_message_id'])
+    && rP.externoId === String(evidencia['external_id']),
+    `evidência.external_id = mensagem.external_message_id = ${evidencia['external_id']}`);
 
   /* ---------------- H · morreu entre as duas gravações ---------------- */
 
