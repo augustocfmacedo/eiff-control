@@ -30,7 +30,7 @@ Simulado com as 8 regras de roteamento lidas da produção (somente leitura) e p
 | responsável padrão | **nulo em produção** — a conversa cairia no setor, sem dono (`ATRIBUIR_SETOR`) |
 | membro ou equipe exigidos? | **não**: o responsável padrão do setor basta para o roteador (`selecionarResponsavel`) e para a RPC `inbox_apply_routing` |
 | visibilidade | Administrador é transversal: vê todas as caixas. Único perfil ativo que pode receber: Augusto Macedo |
-| prazo | **30 minutos úteis** a partir do instante da submissão (segunda a sexta, 08h–18h, São Paulo; feriados nacionais e de Goiânia). Regra só do lead do site: os demais canais seguem com as horas corridas da configuração (Normal 24 h). Detalhe em `docs/formulario-site.md` §4.1 |
+| prazo | **30 minutos úteis** a partir do instante da submissão (segunda a sexta, 08h–18h, São Paulo; feriados nacionais, o estadual de 26/07 e os de Goiânia, Corpus Christi incluído; ponto facultativo não conta). Regra só do lead do site: os demais canais seguem com as horas corridas da configuração (Normal 24 h). Detalhe em `docs/formulario-site.md` §4.1 |
 | encaminhamento para o COMERCIAL | **dependia do texto**: «podem me ligar?» no formulário `iniciar-projeto` ia para a ENGENHARIA com 95% (a palavra «projeto», inclusive a do nome do formulário). Corrigido com a regra `ROT-SITE` (canal PORTAL + contexto EXTERNAL → COMERCIAL, ordem 0) |
 | onde aparece | selo do menu Atendimento e caixa «Precisa de mim» (atribuídas a mim); «Não atribuídos»; indicador «SLA vencido», que também ordena a lista |
 
@@ -52,6 +52,8 @@ Nenhuma foi feita. Cada linha precisa de autorização.
 
 O CRM fica funcional e provado **antes** de a função do site existir.
 
+0. **Marco**: anotar o instante (UTC) e conferir no painel do Netlify que as submissões guardadas são as mesmas 11
+   (§9). O marco é ANTERIOR a tudo o que vem abaixo.
 1. **C1** (banco) e **C2** (variáveis do CRM).
 2. **Publicar o eiff-control** (merge da `feature/radar-formulario-site` + deploy). Sem migration.
 3. **Provar o endpoint** (§5, passos 1 a 6). O site ainda não manda nada.
@@ -63,26 +65,45 @@ O CRM fica funcional e provado **antes** de a função do site existir.
 
 ## 5. Ensaio fictício
 
-Submissão: `scripts/formulario-ensaio-ficticio.json` (nome «ENSAIO FICTÍCIO (não é lead)», e-mail
-`@exemplo.invalido`). O envio usa o próprio reconciliador com `--arquivo`: **não lê o painel do Netlify**,
-então os leads antigos não são tocados.
+**O ensaio definitivo é uma submissão REAL e verificada do formulário público**, com dados claramente de teste.
+O id e o instante são os que o Netlify atribuiu: nada de data escrita à mão, relógio alterado ou evento
+montado. É o que faz o prazo de 30 minutos úteis ser conferido contra o instante verdadeiro.
 
-| # | passo | esperado | demonstra |
-|---|---|---|---|
-| 1 | `curl -s -o NUL -w "%{http_code}" -X POST https://eiffcontrol.com.br/api/formulario-site` | `401` (não `404`, não `503`) | endpoint publicado e autenticado |
-| 2 | `npx vite-node scripts/formulario-reconciliar.mts -- --arquivo scripts/formulario-ensaio-ficticio.json --marco 2026-11-10T00:00:00Z` | simulação: `aReenviar: 1` | o que seria enviado |
-| 3 | o mesmo, com `--executar --confirmar FORMULARIO_SITE_V1` (e `EIFF_FORM_SECRET` no ambiente do terminal) | `200 REGISTRADO` | recebida e gravada; **é o caminho de recuperação** de uma falha de transporte |
-| 4 | repetir o passo 3 | `200 IDEMPOTENTE` | reenvio não duplica |
-| 5 | `npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f scripts/formulario-ensaio-conferencia.sql` | 1 evidência PENDING da fonte WEBSITE · 1 mensagem · COMERCIAL · ATRIBUIDA · responsável · prazo de 30 minutos úteis · contato `lead` com PORTAL e WHATSAPP · 0 contas, 0 oportunidades | banco certo, setor, responsável, prazo, contato |
-| 6 | no app, como Augusto: `#/atendimento` → «Precisa de mim» → abrir; conferir nome, telefone e dados do galpão; mudar para Em atendimento; registrar nota interna | permitido | o atendente abre e atualiza |
-| 7 | **depois de publicar o site**: preencher o formulário público com dados claramente fictícios | conversa nova em segundos | submissão recebida do site |
-| 8 | reconciliador com `--site <id> --marco <instante da ativação>`, em simulação | antigos em `anterior_ao_marco`; a do passo 7 já entrou | marco e retenção |
+A primeira submissão é única e identificada como teste:
 
-O arquivo de ensaio traz `created_at` fixo (10/11/2026, 09:00 em São Paulo): o prazo calculado é 09:30 daquele dia, então,
-rodado depois disso, o lead **chega com o SLA vencido** — é o comportamento certo para uma submissão antiga. Para ver o
-prazo correndo, troque o `created_at` do arquivo pelo instante do ensaio (e o `id`, se o anterior já tiver entrado).
+| campo | valor |
+|---|---|
+| nome | `ENSAIO EIFF — TESTE (não é lead)` |
+| empresa | `Ensaio de integração EIFF` |
+| e-mail | `ensaio-ficticio@exemplo.invalido` (é por ele que a conferência acha o ensaio) |
+| telefone | `(62) 90000-0000` |
+| observação | `ENSAIO DE CERTIFICAÇÃO site → EIFF Control. Não responder: não existe cliente.` |
 
-Encerrar: fechar as conversas de ensaio com motivo «ensaio» e rejeitar os candidatos na aba Candidatos com o
+Risco conhecido: o filtro de spam do Netlify pode reter um e-mail de domínio inexistente. Se a submissão não
+aparecer como **verificada** no painel, repetir com um endereço real da EIFF (e trocar o e-mail na consulta de
+conferência). Submissão marcada como spam não dispara o evento nem entra pela reconciliação.
+
+O ensaio tem duas submissões, porque há dois caminhos de entrada a provar, e a ordem delas segue a da publicação:
+
+| # | quando | passo | esperado | demonstra |
+|---|---|---|---|---|
+| 1 | CRM publicado, site ainda sem a função | `curl -s -o NUL -w "%{http_code}" -X POST https://eiffcontrol.com.br/api/formulario-site` | `401` (não `404`, não `503`) | endpoint publicado e autenticado |
+| 2 | idem | **submissão de teste nº 1** pelo formulário público | aparece como verificada no painel do Netlify; **nada** chega ao CRM (a função do site ainda não existe) | o estado «submissão nova entre o deploy do CRM e o do site» |
+| 3 | idem | `npx vite-node scripts/formulario-reconciliar.mts -- --site <site_id> --marco <marco>` | simulação: `aReenviar: 1`, as históricas em `anterior_ao_marco` | o marco separa o teste das históricas |
+| 4 | idem | o mesmo, com `--executar --confirmar FORMULARIO_SITE_V1` | `200 REGISTRADO` | recebida e gravada **pelo caminho de recuperação** |
+| 5 | idem | repetir o passo 4 | `200 IDEMPOTENTE` | reenvio não duplica |
+| 6 | idem | `scripts/formulario-ensaio-conferencia.sql` (somente leitura) | 1 evidência PENDING da fonte `WEBSITE`, vinculada à mensagem · COMERCIAL · ATRIBUIDA · responsável · vencimento = 30 min úteis depois de `submetida_em` · contato `lead` · 0 empresas | banco certo, fonte, setor, responsável, prazo |
+| 7 | idem | no app, como Augusto: `#/atendimento` → «Precisa de mim» → abrir; conferir nome, telefone, empresa, dados do galpão e a linha de origem; mudar para Em atendimento; registrar nota interna | permitido | o atendente abre e atualiza |
+| 8 | **site publicado** | **submissão de teste nº 2** (outro e-mail de teste, ex.: `ensaio-ficticio-2@exemplo.invalido`) | conversa nova em segundos, com o prazo correndo | o evento do site entrega sem a reconciliação |
+| 9 | idem | reconciliador em simulação | as duas de teste já dentro; históricas retidas | nada ficou para trás |
+
+Se o passo 6 mostrar a conversa **sem responsável** ou com outro prazo, parar antes do passo 8.
+
+`scripts/formulario-ensaio-ficticio.json` **não é o ensaio definitivo**: é um artefato de simulação local, com
+data fixa, usado só para exercitar o reconciliador com `--arquivo` sem rede. Não enviar esse arquivo ao
+endpoint de produção.
+
+Encerrar: fechar as conversas de teste com motivo «ensaio» e rejeitar os candidatos na aba Candidatos com o
 mesmo motivo. A evidência é imutável e **fica** (REJECTED); não há como apagá-la, por desenho.
 
 ## 6. Reconciliação horária
@@ -110,3 +131,70 @@ GitHub Actions que existia como reserva manual nunca esteve ligado e saiu do rel
 | tirar o endpoint | reverter o merge no eiff-control e publicar | `404`; nada a desfazer no banco (sem migration) |
 | desfazer a configuração | os dois `update` do cabeçalho de `scripts/formulario-ativacao-producao.sql` | COMERCIAL volta a ficar sem responsável e sem a regra |
 | o que já entrou | nada é apagado | conversa fechada com motivo; candidato REJECTED |
+
+## 8. Cumprimento do SLA: falso cumprimento e a correção mínima proposta
+
+**Achado (09/11/2026).** O único gesto que registra a primeira resposta é «Registrar rascunho de resposta»
+(`actions.inboxResponder`). O provider do canal é MANUAL: a mensagem fica com entrega `registrada`, **nada é
+enviado**, e mesmo assim `aoResponder` grava `primeiraRespostaEm` — o SLA vira «respondida». Um rascunho
+encerra o prazo. Resolver ou fechar a conversa também tira o selo de atraso, sem registrar resposta.
+
+**Requisito.** Só uma resposta efetivamente realizada, ou registrada como realizada por uma pessoa, cumpre o prazo.
+
+**Correção mínima proposta — NÃO implementada, espera decisão** (muda a regra de SLA de todos os canais do Inbox):
+
+1. `inboxResponder` deixa de marcar a primeira resposta quando a entrega é só `registrada` (rascunho). O rascunho
+   continua existindo e continua levando a conversa a Em atendimento.
+2. O compositor ganha um terceiro modo, ao lado de «nota interna» e «rascunho»: **«Contato realizado»** — meio
+   (telefone, e-mail, WhatsApp pessoal, presencial), instante (padrão agora, nunca no futuro) e resumo. Vira uma
+   mensagem de saída com entrega `enviada` e o meio em `meta`, e é ela que chama `aoResponder`.
+3. O painel de SLA passa a distinguir «respondida» de «encerrada sem resposta».
+
+Sem migration (`delivery_state` já aceita `enviada`; `meta` já existe). Arquivos: `src/data/store.ts`,
+`src/core/inbox/estados.ts`, `src/screens/Inbox.tsx` e os testes do Inbox. Estimativa: meio dia.
+Enquanto não for feita, o número «respondidas no prazo» não é confiável.
+
+## 9. O marco da reconciliação
+
+O marco é o instante a partir do qual uma submissão do painel do Netlify pode entrar no CRM pela reconciliação.
+
+| requisito | como o marco atende |
+|---|---|
+| as 11 históricas ficam fora | o marco é **posterior** à mais recente delas (03/11/2026). Antes do marco, a rodada agendada retém sempre, sem opção de liberar |
+| submissão nova entre o deploy do CRM e o do site não é esquecida | o marco é **anterior** ao deploy do CRM. Nesse intervalo a função do site ainda não existe; a submissão fica no Netlify e é elegível |
+| submissão anterior à ativação da reconciliação, mas posterior ao marco | elegível: a rodada compara o instante da submissão com o marco, não com a hora em que foi ligada |
+| idempotência e rastreabilidade | a identidade é o id do Netlify nas duas gravações; o que o evento já entregou é reconhecido como «já dentro» e não é regravado |
+
+**Marco seguro = o instante registrado imediatamente ANTES de começar a implantação**, depois de conferir que o
+painel continua com as mesmas 11 submissões. Não usar o instante da ativação da reconciliação (deixaria de fora
+tudo o que chegou entre o deploy do CRM e o momento de ligar).
+
+Se, ao registrar o marco, o painel tiver **mais** que 11 submissões, as novas são leads reais chegados depois de
+03/11 e ficarão retidas como as demais: não são esquecidas, mas precisam de decisão comercial própria antes de
+seguir — não é caso para mover o marco para trás.
+
+Provado em `formularioAgendado.test.ts` («o marco na sequência CRM → site → reconciliação»): desligada não lê
+nada; ao ligar, a histórica fica retida e as três posteriores ao marco entram; a rodada seguinte não regrava.
+
+Consequência conhecida: a submissão recuperada chega com o prazo contado do instante original, em geral já vencido.
+
+## 10. Aviso de lead novo: contingência inicial
+
+O EIFF Control **não avisa** ninguém: o lead aparece no selo do menu e em «Precisa de mim» para quem está com o
+sistema aberto. Não há e-mail, push nem agendador de escalação, e nenhum canal de saída está autorizado.
+
+**Contingência: a notificação nativa por e-mail do Netlify Forms.** O Netlify permite notificação por e-mail para
+submissões **verificadas**, de um formulário específico ou de todos do site (painel do eiff-site › Forms ›
+notificações de submissão). Não é o webhook descartado no desenho — aquele não aceitava cabeçalho; este é só
+e-mail e não depende de nada do CRM.
+
+| | |
+|---|---|
+| configurar | uma notificação por e-mail para `simular-galpao` e outra para `iniciar-projeto`, para o endereço de quem atende. **Não configurado nesta etapa** |
+| o que entrega | o conteúdo da submissão, na hora. O lead continua entrando no CRM pelo caminho normal: o e-mail é só o aviso |
+| limites | o remetente é um endereço do Netlify (responder ao e-mail não responde ao lead); há relatos de e-mails que não chegam (lista de supressão, filtros) — testar com a submissão de teste e não tratar como garantia; o conteúdo do lead passa a existir também numa caixa de e-mail |
+| o que não substitui | o registro da resposta no Inbox e a reconciliação |
+
+Pendente para o futuro (fora desta etapa): aviso interno do próprio EIFF Control — novo lead, prazo vencendo e
+vencido —, que depende de um canal de saída autorizado e de um agendador de escalação (hoje só o contrato existe).
+

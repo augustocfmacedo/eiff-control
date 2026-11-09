@@ -403,3 +403,65 @@ describe('reconciliação agendada · o prazo de primeira resposta', () => {
     expect((await rodadaDeReconciliacao(terceira.env, terceira.deps)).jaDentro).toBe(1)
   })
 })
+
+describe('reconciliação agendada · o marco na sequência CRM → site → reconciliação', () => {
+  // MARCO = instante registrado ANTES do deploy do CRM (10/11 00:00 UTC neste arquivo).
+  const HISTORICA = submissao('nf-historica', '2026-11-03T15:00:00.000Z')          // antes do marco: lead real antigo
+  const NO_MARCO = submissao('nf-no-marco', MARCO)                                  // exatamente no marco
+  const ENTRE_DEPLOYS = submissao('nf-entre-deploys', '2026-11-10T12:10:00.000Z')  // CRM no ar, função do site ainda não
+  const ANTES_DE_LIGAR = submissao('nf-antes-de-ligar', '2026-11-10T16:40:00.000Z') // site no ar, o evento falhou, rodada ainda desligada
+
+  it('enquanto a rodada está desligada nada é lido nem gravado — e nada se perde, porque as submissões ficam no Netlify', async () => {
+    const m = montar({ env: { FORMULARIO_RECONCILIACAO: undefined }, submissoes: [HISTORICA, ENTRE_DEPLOYS, ANTES_DE_LIGAR] })
+    const r = await rodadaDeReconciliacao(m.env, m.deps)
+    expect(r.desfecho).toBe('desligada')
+    expect(m.chamadas).toEqual([])
+    expect(m.banco.registros).toEqual([])
+  })
+
+  it('ao ligar: a histórica fica retida; a do marco, a de entre os deploys e a de antes de ligar são recuperadas', async () => {
+    const m = montar({ submissoes: [HISTORICA, NO_MARCO, ENTRE_DEPLOYS, ANTES_DE_LIGAR] })
+    const r = await rodadaDeReconciliacao(m.env, m.deps)
+    expect(r.retidas).toBe(1)
+    expect(r.motivosRetencao['anterior_ao_marco']).toBe(1)
+    expect(r.recuperadas).toBe(3)
+    expect(r.falhas).toBe(0)
+    const dentro = m.banco.registros.map((x) => x.externoId).sort()
+    expect(dentro).toEqual(['nf-antes-de-ligar', 'nf-entre-deploys', 'nf-no-marco'])
+    expect(m.banco.conversas.has('nf-historica')).toBe(false)
+  })
+
+  it('rastreabilidade e idempotência: o id do Netlify é a identidade, e a rodada seguinte não regrava nada', async () => {
+    const banco = bancoFalso()
+    const primeira = montar({ submissoes: [HISTORICA, ENTRE_DEPLOYS, ANTES_DE_LIGAR], banco })
+    await rodadaDeReconciliacao(primeira.env, primeira.deps)
+    const depoisDaPrimeira = banco.registros.map((x) => `${x.externoId}@${x.payloadFingerprint}`)
+    const segunda = montar({ submissoes: [HISTORICA, ENTRE_DEPLOYS, ANTES_DE_LIGAR], banco })
+    const r = await rodadaDeReconciliacao(segunda.env, segunda.deps)
+    expect(r.jaDentro).toBe(2)
+    expect(r.processadas).toBe(0)
+    expect(r.retidas).toBe(1)
+    expect(banco.registros.map((x) => `${x.externoId}@${x.payloadFingerprint}`)).toEqual(depoisDaPrimeira)
+  })
+
+  it('o que o evento do site JÁ entregou não é regravado pela rodada', async () => {
+    const banco = bancoFalso()
+    // o evento entregou esta submissão pelo caminho normal (mesma gravarSubmissao, mesma identidade)
+    const entregue = montar({ submissoes: [ANTES_DE_LIGAR], banco })
+    await rodadaDeReconciliacao(entregue.env, entregue.deps)
+    expect(banco.registros).toHaveLength(1)
+    const rodada = montar({ submissoes: [ANTES_DE_LIGAR, ENTRE_DEPLOYS], banco })
+    const r = await rodadaDeReconciliacao(rodada.env, rodada.deps)
+    expect(r.jaDentro).toBe(1)
+    expect(r.recuperadas).toBe(1)
+    expect(banco.registros).toHaveLength(2)
+  })
+
+  it('a rodada agendada não tem como incluir as históricas, qualquer que seja o ambiente', async () => {
+    const m = montar({ submissoes: [HISTORICA], env: { EIFF_FORM_INCLUIR_ANTERIORES: 'true', INCLUIR_ANTERIORES: 'true' } as never })
+    const r = await rodadaDeReconciliacao(m.env, m.deps)
+    expect(r.recuperadas).toBe(0)
+    expect(r.retidas).toBe(1)
+    expect(m.banco.registros).toEqual([])
+  })
+})

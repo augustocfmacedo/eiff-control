@@ -131,7 +131,7 @@ pela reconciliação quando a variável for corrigida. Vale para a borda e para 
 |---|---|
 | **regra** | 30 minutos de **expediente** para a primeira resposta a um lead do formulário do site |
 | **expediente** | segunda a sexta, 08h–18h, `America/Sao_Paulo` |
-| **feriados** | nacionais, Sexta-feira Santa e os dois de Goiânia (24/05 e 24/10), como **regras** em `src/core/inbox/calendarioComercial.ts` — valem para qualquer ano. Corpus Christi e 26/07 estão como `a_confirmar` e **não contam** até alguém conferir a base legal |
+| **feriados** | nacionais, Sexta-feira Santa, o estadual de Goiás (26/07) e os de Goiânia (24/05, Corpus Christi e 24/10), como **regras** em `src/core/inbox/calendarioComercial.ts` — valem para qualquer ano. 26/07 e Corpus Christi entraram em 09/11/2026 com a base informada pela Diretoria (calendário da Casa Civil; Lei Municipal nº 100/1951, citada no Decreto Municipal nº 1.936/2017). **Ponto facultativo não é feriado** e não entra: Carnaval, Cinzas, a sexta depois de Corpus Christi, 28/10 e as vésperas contam como dias úteis |
 | **início** | o instante original da submissão (`created_at` do Netlify), nunca o do processamento: lead recuperado uma hora depois chega vencido, e isso é a verdade |
 | **demais canais** | intocados: continuam com as horas corridas de `inbox_config.sla_hours`. Nenhuma chamada do formulário lê ou escreve essa configuração para decidir o prazo |
 
@@ -159,11 +159,15 @@ curto» e foi o smoke em PostgreSQL que achou.
 `SLA vencido`, que também põe a conversa no topo da lista e no indicador do painel; no detalhe, o instante
 do vencimento. **Ninguém é avisado**: não há notificação nem agendador de escalação.
 
-**Como se registra a primeira resposta.** Nenhum canal envia nesta fase. A resposta ao lead é por telefone
-ou e-mail, fora do sistema, e o SLA é cumprido quando a pessoa **registra** a resposta na conversa (o
-rascunho de resposta do compositor: `aoResponder` grava `primeiraRespostaEm` e leva a conversa a Em
-atendimento). Nota interna e mudança de status **não** contam como primeira resposta. Quem ligou e não
-registrou continua com o SLA correndo.
+**Como se registra a primeira resposta — e o defeito conhecido.** Nenhum canal envia nesta fase: a resposta ao
+lead é por telefone ou e-mail, fora do sistema. Hoje o único gesto que registra a primeira resposta é o botão
+«Registrar rascunho de resposta» do compositor (`actions.inboxResponder` → `aoResponder`, que grava
+`primeiraRespostaEm` e leva a conversa a Em atendimento). **Isso é falso cumprimento**: o rascunho fica com
+entrega `registrada`, nada foi enviado e ninguém declarou ter falado com a pessoa, mas o SLA passa a
+«respondida». Vale para todos os canais do Inbox, não só para o lead do site. Nota interna e mudança de status
+não contam como primeira resposta (resolver ou fechar a conversa tira o selo de atraso, sem registrar resposta).
+A correção mínima está proposta em `docs/formulario-site-ativacao.md` §8 e **não foi implementada**: muda a
+regra de SLA de todos os canais e espera decisão.
 
 **Revisão anual do calendário.** Procedimento no cabeçalho de `calendarioComercial.ts`: conferir o
 calendário do TJGO e os decretos de Goiás e de Goiânia, editar `FERIADOS`/`EXCECOES`, atualizar
@@ -235,8 +239,8 @@ Os cinco cenários, provados em PostgreSQL real (`npm run smoke:formulario`):
 
 | prova | o que cobre |
 |---|---|
-| `npm test` | **258 testes** da integração: transporte, borda HTTP com o corpo efetivo, gravação, portas, reconciliação, rodada agendada, roteamento para o COMERCIAL, contato, grafo de importação, fonte canônica, prazo sem falso sucesso e os 31 do calendário comercial |
-| `npm run smoke:formulario` | **39 provas** em PostgreSQL real (PGlite, ROLLBACK), também no Quality Gate: a cadeia inteira, os 5 cenários, a leitura pela camada da interface, o roteamento para o COMERCIAL, o mesmo id nas duas gravações, fonte errada sem escrita (Q), outro canal com 24 h e configuração intacta (R), falha no prazo sem falso sucesso e conserto no reenvio (S), sexta, feriado e segunda solicitação (T) |
+| `npm test` | **269 testes** da integração: transporte, borda HTTP com o corpo efetivo, gravação, portas, reconciliação, rodada agendada, roteamento para o COMERCIAL, contato, grafo de importação, fonte canônica, prazo sem falso sucesso, o marco na sequência CRM → site → reconciliação e os 37 do calendário comercial |
+| `npm run smoke:formulario` | **40 provas** em PostgreSQL real (PGlite, ROLLBACK), também no Quality Gate: a cadeia inteira, os 5 cenários, a leitura pela camada da interface, o roteamento para o COMERCIAL, o mesmo id nas duas gravações, fonte errada sem escrita (Q), outro canal com 24 h e configuração intacta (R), falha no prazo sem falso sucesso e conserto no reenvio (S), sexta, feriado e segunda solicitação (T), a consulta de conferência do ensaio (V) |
 | `npx esbuild netlify/functions/formulario-site.ts --bundle` | empacotamento: 118 KB, sem `import.meta.env`, sem react/three/vite, sem supabase-js, sem motor estrutural |
 | `npx esbuild netlify/functions/formulario-reconciliar.mts --bundle` | a função agendada: 121 KB, `schedule: "@hourly"` no pacote, idem quanto a `import.meta.env` e ao motor |
 | suíte do site | 153 testes, 12 do encaminhador (forma do evento, segredo fora do log, repetição, 4xx) |

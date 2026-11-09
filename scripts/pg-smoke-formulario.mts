@@ -82,7 +82,8 @@ create table profile (id uuid primary key, organization_id uuid not null referen
 create table company (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), name text);
 create table project (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), code text not null);
 create table worker (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), name text not null);
-create table radar_company (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), legal_name text);
+create table radar_company (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), legal_name text, created_at timestamptz not null default now());
+create table radar_opportunity (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id));
 create table radar_contact (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), full_name text);
 create table radar_source (id uuid primary key, organization_id uuid not null references organization(id), code text, source_type text not null default 'WEBSITE', active boolean not null default true);
 create table radar_source_record (
@@ -649,6 +650,20 @@ async function main() {
     && rSegunda.prazo.venceEm === '2026-11-16T11:30:00.000Z' && !rSegunda.prazo.ajustado
     && (await conta('inbox_message', "external_message_id in ('nf-prova-sexta','nf-prova-sexta-2')")) === 2,
     `conversas=${await conta('inbox_thread')} (antes ${threadsAntes}) · prazo=${rSegunda.prazo.venceEm} (${rSegunda.prazo.motivo})`);
+
+  /* ---------------- V · a consulta de conferência do ensaio ---------------- */
+
+  // O MESMO arquivo que a pessoa roda em produção depois do ensaio, aqui apontado para o lead da prova A.
+  const sqlConferencia = fs.readFileSync('scripts/formulario-ensaio-conferencia.sql', 'utf8').replace('ensaio-ficticio@exemplo.invalido', 'ana@exemplo.invalido');
+  const conf = (await uma(sqlConferencia))!['ensaio'] as Record<string, any>;
+  const cv = conf['conversa']?.[0]; const ct = conf['contato']?.[0]; const evs = conf['evidencias'] ?? [];
+  prova('V', 'a consulta de conferência do ensaio roda neste schema e acha o lead pelo e-mail: evidência vinculada, COMERCIAL, responsável e prazo',
+    Array.isArray(conf['mensagens']) && conf['mensagens'].length >= 1 && evs.length >= 1
+    && evs.every((e: Record<string, any>) => e['status'] === 'PENDING' && e['entidade'] === null && e['fonte_codigo'] === 'WEBSITE')
+    && evs.some((e: Record<string, any>) => e['mesma_da_mensagem'] === true)
+    && cv?.['setor'] === 'COMERCIAL' && cv?.['responsavel'] !== null && Number(cv?.['minutos_corridos_ate_o_prazo']) === 30
+    && ct?.['relacao'] === 'lead' && conf['empresas_criadas_desde_o_ensaio'] === 0,
+    JSON.stringify({ conversa: cv, contato: ct, evidencias: evs.length, mensagens: conf['mensagens']?.length }).slice(0, 400));
 
   prova('U', 'ao final de tudo: nenhuma empresa do Radar e nenhuma evidência com entidade',
     (await conta('radar_company')) === 0 && (await conta('radar_source_record', 'entity_id is not null')) === 0);
