@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  CANAL_FORMULARIO, PROVIDER_FORMULARIO, deSubmissaoDoSite, identidadeDaSubmissao,
+  CANAL_FORMULARIO, PROVIDER_FORMULARIO, completarContato, dadosDoContato, deSubmissaoDoSite, identidadeDaSubmissao,
   textoDaMensagem, type PedidoDeMensagem,
 } from './formularioSite'
 import { receberMensagem } from './fronteiras'
@@ -100,6 +100,47 @@ describe('inbox · a submissão vira mensagem', () => {
     const chaves = Object.keys(m.meta ?? {})
     expect(chaves.sort()).toEqual(['formulario', 'payloadFingerprint', 'registroFonteId'])
     expect(JSON.stringify(m.meta)).not.toMatch(/token|secret|senha|authorization/i)
+  })
+})
+
+describe('inbox · o contato não fica «não identificado» quando o dado existe', () => {
+  it('nome, empresa, relação lead e o telefone como segunda identidade', () => {
+    const d = dadosDoContato(PEDIDO.resumo)
+    expect(d.nome).toBe('Ana Lima')
+    expect(d.empresaNome).toBe('Lima Indústria')
+    expect(d.relacaoSeDesconhecido).toBe('lead')
+    /* E.164 sem «+», como o Inbox normaliza o canal WHATSAPP */
+    expect(d.identidades).toEqual([{ canal: 'WHATSAPP', identificador: '5562900000000', nomeInformado: 'Ana Lima', verificada: false }])
+  })
+
+  it('telefone impossível não vira identidade', () => {
+    expect(dadosDoContato({ email: 'a@b.com', telefone: '123' }).identidades).toEqual([])
+    expect(dadosDoContato({ email: 'a@b.com' }).identidades).toEqual([])
+  })
+
+  it('completa o contato recém-criado pela ingestão', () => {
+    const base = { id: 'CTI-1', nome: 'Contato não identificado', tipoRelacao: 'desconhecido' as const, identidades: [identidadeDaSubmissao(PEDIDO.resumo)!], obras: [], criadoEm: '2026-11-09T14:00:00.000Z' }
+    const c = completarContato(base, dadosDoContato(PEDIDO.resumo))
+    expect(c.nome).toBe('Ana Lima')
+    expect(c.empresaNome).toBe('Lima Indústria')
+    expect(c.tipoRelacao).toBe('lead')
+    expect(c.identidades.map((i) => i.canal)).toEqual(['PORTAL', 'WHATSAPP'])
+  })
+
+  it('e NUNCA sobrescreve o que já se sabia', () => {
+    const base = { id: 'CTI-1', nome: 'Ana Souza', empresaNome: 'Outra S.A.', tipoRelacao: 'cliente' as const, identidades: [], obras: [], criadoEm: '2026-11-09T14:00:00.000Z' }
+    const c = completarContato(base, dadosDoContato(PEDIDO.resumo))
+    expect(c.nome).toBe('Ana Souza')
+    expect(c.empresaNome).toBe('Outra S.A.')
+    expect(c.tipoRelacao).toBe('cliente')
+  })
+
+  it('aplicar duas vezes não duplica identidade', () => {
+    const base = { id: 'CTI-1', nome: 'Contato não identificado', tipoRelacao: 'desconhecido' as const, identidades: [], obras: [], criadoEm: '2026-11-09T14:00:00.000Z' }
+    const d = dadosDoContato(PEDIDO.resumo)
+    const uma = completarContato(base, d)
+    const duas = completarContato(uma, d)
+    expect(duas.identidades.length).toBe(1)
   })
 })
 

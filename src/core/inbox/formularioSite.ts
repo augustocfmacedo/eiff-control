@@ -34,8 +34,8 @@
  * que vai aqui é identificador e impressão, nunca token, nunca o payload.
  */
 import type { MensagemRecebida } from './fronteiras'
-import type { CanalInbox, IdentidadeCanal } from './tipos'
-import type { CodigoProvider } from '../radar/canais'
+import type { CanalInbox, ContatoInbox, IdentidadeCanal, TipoRelacao } from './tipos'
+import { normalizarTelefone, type CodigoProvider } from '../radar/canais'
 
 /** Canal do formulário. `PORTAL` já existia no catálogo do Inbox. */
 export const CANAL_FORMULARIO: CanalInbox = 'PORTAL'
@@ -106,6 +106,77 @@ export function identidadeDaSubmissao(r: ResumoDaSubmissao): IdentidadeCanal | u
     ...(r.nome !== undefined ? { nomeInformado: r.nome } : {}),
     // Preencher formulário não prova identidade: ninguém confirmou nada.
     verificada: false,
+  }
+}
+
+/* ---------------------------------------------------------------
+   O contato: o que a submissão já disse sobre quem escreveu
+--------------------------------------------------------------- */
+
+/**
+ * `inbox_ingest` cria o contato com o nome informado e relação
+ * «desconhecido» — é o certo para um número de WhatsApp que aparece do nada.
+ * Mas aqui NÃO é do nada: a pessoa escreveu o nome, a empresa, o telefone e
+ * a cidade num formulário comercial. Deixar o atendente com «Contato não
+ * identificado» quando o dado está na submissão é perder informação que já
+ * chegou.
+ *
+ * Então, depois da ingestão, o contato recebe o que a submissão trouxe:
+ *
+ *   relação     `lead` — quem preenche o formulário comercial é um lead, e
+ *               essa palavra já existe no catálogo do Inbox (TIPOS_RELACAO)
+ *   nome        o que a pessoa escreveu
+ *   empresa     idem, quando informada
+ *   telefone    como SEGUNDA identidade (WHATSAPP), não verificada
+ *
+ * O telefone como identidade tem efeito real: quando essa pessoa mandar
+ * mensagem no WhatsApp, cai na MESMA conversa, porque o Inbox trabalha com
+ * pessoa → n identidades. E segue `verificada: false`: preencher formulário
+ * não prova nada, e só identidade verificada libera ação sensível.
+ *
+ * Nada aqui sobrescreve o que já existe: um contato que já era `cliente` não
+ * é rebaixado a `lead`, e um nome já conhecido não é trocado pelo do
+ * formulário. A regra é COMPLETAR o que está vazio.
+ */
+export interface DadosDoContato {
+  nome?: string
+  empresaNome?: string
+  /** Relação a aplicar APENAS quando o contato ainda é `desconhecido`. */
+  relacaoSeDesconhecido: TipoRelacao
+  /** Identidades a acrescentar; a do canal do formulário já existe. */
+  identidades: readonly IdentidadeCanal[]
+}
+
+/** Relação de quem preenche o formulário comercial. */
+export const RELACAO_DO_FORMULARIO: TipoRelacao = 'lead'
+
+export function dadosDoContato(r: ResumoDaSubmissao): DadosDoContato {
+  const telefone = normalizarTelefone(r.telefone)
+  return {
+    ...(r.nome !== undefined && r.nome.trim() !== '' ? { nome: r.nome.trim() } : {}),
+    ...(r.empresa !== undefined && r.empresa.trim() !== '' ? { empresaNome: r.empresa.trim() } : {}),
+    relacaoSeDesconhecido: RELACAO_DO_FORMULARIO,
+    identidades: telefone === undefined ? [] : [{
+      canal: 'WHATSAPP', identificador: telefone,
+      ...(r.nome !== undefined ? { nomeInformado: r.nome } : {}),
+      verificada: false,
+    }],
+  }
+}
+
+/**
+ * Aplica os dados ao contato em memória (modo local e testes). A versão do
+ * banco é a mesma regra: completar vazio, nunca sobrescrever.
+ */
+export function completarContato(c: ContatoInbox, d: DadosDoContato): ContatoInbox {
+  const jaTem = (i: IdentidadeCanal) => c.identidades.some((x) => x.canal === i.canal && x.identificador === i.identificador)
+  const semNome = c.nome.trim() === '' || c.nome === 'Contato não identificado'
+  return {
+    ...c,
+    nome: semNome && d.nome !== undefined ? d.nome : c.nome,
+    empresaNome: c.empresaNome ?? d.empresaNome,
+    tipoRelacao: c.tipoRelacao === 'desconhecido' ? d.relacaoSeDesconhecido : c.tipoRelacao,
+    identidades: [...c.identidades, ...d.identidades.filter((i) => !jaTem(i))],
   }
 }
 

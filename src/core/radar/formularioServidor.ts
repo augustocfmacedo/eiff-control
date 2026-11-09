@@ -199,7 +199,13 @@ export function planejarGravacao(
   }
 
   if (classificacao.resultado === 'NOVA_OBSERVACAO') {
-    return { ...base, resultado: 'NOVA_OBSERVACAO', passos: ['GRAVAR_EVIDENCIA'], porque: 'mesma submissão com conteúdo diferente: nasce ao lado, sem sobrescrever — e a conversa já existe' }
+    // A conversa pode NÃO existir aqui: é o caso de a primeira passagem ter
+    // gravado a evidência, morrido antes da conversa, e a submissão voltar
+    // com conteúdo diferente (reconciliação). Observação nova ao lado E a
+    // conversa que faltou — nunca «já existe» por suposição.
+    return estado.conversaExiste
+      ? { ...base, resultado: 'NOVA_OBSERVACAO', passos: ['GRAVAR_EVIDENCIA'], porque: 'mesma submissão com conteúdo diferente: nasce ao lado, sem sobrescrever — e a conversa já existe' }
+      : { ...base, resultado: 'NOVA_OBSERVACAO', passos: ['GRAVAR_EVIDENCIA', 'GRAVAR_CONVERSA'], porque: 'mesma submissão com conteúdo diferente e sem conversa: nasce ao lado e abre o atendimento que faltou' }
   }
 
   return { ...base, resultado: 'REGISTRADO', passos: ['GRAVAR_EVIDENCIA', 'GRAVAR_CONVERSA'], porque: 'submissão nova: evidência primeiro, conversa depois' }

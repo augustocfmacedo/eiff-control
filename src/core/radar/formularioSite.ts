@@ -129,7 +129,7 @@ export const numeroDe = (v: string | undefined): number | undefined => {
 export function cidadeEUf(bruto: string | undefined): { cidade?: string; uf?: string } {
   const t = limpo(bruto)
   if (t === undefined) return {}
-  const m = /^(.*?)[,\/-]\s*([A-Za-z]{2})\s*$/.exec(t)
+  const m = /^(.*?)[,/-]\s*([A-Za-z]{2})\s*$/.exec(t)
   if (m) return { cidade: normalizarCidade(m[1]!), uf: normalizarUf(m[2]!) }
   return { cidade: normalizarCidade(t) }
 }

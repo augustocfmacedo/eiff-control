@@ -19,7 +19,7 @@
     "smoke:meta-intencao": "node scripts/pg-smoke-meta-intencao.mjs",
     "smoke:widget-token": "node scripts/pg-smoke-widget-token.mjs",
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
-    "smoke:formulario": "node scripts/pg-smoke-formulario.mjs",
+    "smoke:formulario": "vite-node scripts/pg-smoke-formulario.mts",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
     "lint": "eslint src"
