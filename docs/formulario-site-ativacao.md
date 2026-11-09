@@ -132,27 +132,27 @@ GitHub Actions que existia como reserva manual nunca esteve ligado e saiu do rel
 | desfazer a configuração | os dois `update` do cabeçalho de `scripts/formulario-ativacao-producao.sql` | COMERCIAL volta a ficar sem responsável e sem a regra |
 | o que já entrou | nada é apagado | conversa fechada com motivo; candidato REJECTED |
 
-## 8. Cumprimento do SLA: falso cumprimento e a correção mínima proposta
+## 8. Cumprimento do SLA: só contato realizado
 
-**Achado (09/11/2026).** O único gesto que registra a primeira resposta é «Registrar rascunho de resposta»
-(`actions.inboxResponder`). O provider do canal é MANUAL: a mensagem fica com entrega `registrada`, **nada é
-enviado**, e mesmo assim `aoResponder` grava `primeiraRespostaEm` — o SLA vira «respondida». Um rascunho
-encerra o prazo. Resolver ou fechar a conversa também tira o selo de atraso, sem registrar resposta.
+**O defeito (corrigido em 09/11/2026).** «Registrar rascunho de resposta» marcava a conversa como respondida:
+o provider do canal é MANUAL, a mensagem fica com entrega `registrada`, nada é enviado — e mesmo assim o
+relógio parava. Resolver ou fechar sem resposta também saía como «cumprido».
 
-**Requisito.** Só uma resposta efetivamente realizada, ou registrada como realizada por uma pessoa, cumpre o prazo.
+**A regra agora.** Só cumpre o SLA de primeira resposta o contato efetivamente realizado: declarado por uma
+pessoa («Registrar contato já feito» → «Falei com a pessoa») ou enviado de fato por um canal, quando houver
+um ligado. Rascunho, nota interna, assumir, reatribuir, tentativa sem sucesso e encerramento não cumprem.
 
-**Correção mínima proposta — NÃO implementada, espera decisão** (muda a regra de SLA de todos os canais do Inbox):
+| situação na tela | quando |
+|---|---|
+| aguardando primeira resposta | sem contato realizado e conversa aberta (no prazo, vencendo ou vencida) |
+| respondida dentro do prazo | o primeiro contato realizado é anterior ou igual ao vencimento |
+| respondida fora do prazo | o primeiro contato realizado é posterior ao vencimento |
+| encerrada sem resposta | resolvida ou fechada sem nenhum contato realizado |
 
-1. `inboxResponder` deixa de marcar a primeira resposta quando a entrega é só `registrada` (rascunho). O rascunho
-   continua existindo e continua levando a conversa a Em atendimento.
-2. O compositor ganha um terceiro modo, ao lado de «nota interna» e «rascunho»: **«Contato realizado»** — meio
-   (telefone, e-mail, WhatsApp pessoal, presencial), instante (padrão agora, nunca no futuro) e resumo. Vira uma
-   mensagem de saída com entrega `enviada` e o meio em `meta`, e é ela que chama `aoResponder`.
-3. O painel de SLA passa a distinguir «respondida» de «encerrada sem resposta».
+No ensaio (§5, passo 7): registrar um rascunho e conferir que a conversa continua «aguardando»; depois
+registrar o contato realizado e conferir «respondida dentro do prazo» ou «fora do prazo», conforme o instante.
 
-Sem migration (`delivery_state` já aceita `enviada`; `meta` já existe). Arquivos: `src/data/store.ts`,
-`src/core/inbox/estados.ts`, `src/screens/Inbox.tsx` e os testes do Inbox. Estimativa: meio dia.
-Enquanto não for feita, o número «respondidas no prazo» não é confiável.
+Sem migration. Detalhe do modelo e dos limites em `docs/eiff-inbox.md` §17.
 
 ## 9. O marco da reconciliação
 

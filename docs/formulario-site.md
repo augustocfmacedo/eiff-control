@@ -159,15 +159,13 @@ curto» e foi o smoke em PostgreSQL que achou.
 `SLA vencido`, que também põe a conversa no topo da lista e no indicador do painel; no detalhe, o instante
 do vencimento. **Ninguém é avisado**: não há notificação nem agendador de escalação.
 
-**Como se registra a primeira resposta — e o defeito conhecido.** Nenhum canal envia nesta fase: a resposta ao
-lead é por telefone ou e-mail, fora do sistema. Hoje o único gesto que registra a primeira resposta é o botão
-«Registrar rascunho de resposta» do compositor (`actions.inboxResponder` → `aoResponder`, que grava
-`primeiraRespostaEm` e leva a conversa a Em atendimento). **Isso é falso cumprimento**: o rascunho fica com
-entrega `registrada`, nada foi enviado e ninguém declarou ter falado com a pessoa, mas o SLA passa a
-«respondida». Vale para todos os canais do Inbox, não só para o lead do site. Nota interna e mudança de status
-não contam como primeira resposta (resolver ou fechar a conversa tira o selo de atraso, sem registrar resposta).
-A correção mínima está proposta em `docs/formulario-site-ativacao.md` §8 e **não foi implementada**: muda a
-regra de SLA de todos os canais e espera decisão.
+**Como se registra a primeira resposta.** Nenhum canal envia nesta fase: a resposta ao lead é por telefone,
+e-mail, WhatsApp externo ou pessoalmente, fora do sistema. O prazo só é cumprido quando a pessoa registra o
+**contato realizado** no compositor da conversa («Registrar contato já feito» → «Falei com a pessoa»), com o
+meio, a data e a hora do contato e um resumo. Fica gravado quem declarou, quando foi o contato e quando foi
+registrado. Rascunho de resposta, nota interna, assumir, reatribuir, tentativa sem sucesso («Tentei, sem
+sucesso») e resolver ou fechar a conversa **não cumprem o prazo**. Vale para todos os canais do Inbox
+(`docs/eiff-inbox.md` §17). Contato registrado depois do vencimento aparece como «respondida fora do prazo».
 
 **Revisão anual do calendário.** Procedimento no cabeçalho de `calendarioComercial.ts`: conferir o
 calendário do TJGO e os decretos de Goiás e de Goiânia, editar `FERIADOS`/`EXCECOES`, atualizar
