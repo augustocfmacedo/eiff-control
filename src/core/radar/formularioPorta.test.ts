@@ -173,3 +173,50 @@ describe('porta · o mapeamento da linha', () => {
     expect(r.entidadeId).toBeUndefined()
   })
 })
+
+describe('porta · o estado de muitas submissões de uma vez', () => {
+  const ids = Array.from({ length: 120 }, (_, i) => `nf-${String(i).padStart(3, '0')}`)
+
+  it('pergunta por evidência e por conversa, em lotes de 50, sempre com a organização', async () => {
+    const f = falso({
+      radar_source_record: [{ external_id: 'nf-000', payload_fingerprint: 'abc' }],
+      inbox_message: [{ external_message_id: 'nf-000' }],
+    })
+    const r = await portasFormularioRest(CFG, f.fetchFn).estadoEmLote!(CFG.fonteId, 'MANUAL', ids)
+
+    /* 120 ids → 3 lotes × 2 consultas */
+    expect(f.chamadas).toHaveLength(6)
+    expect(f.chamadas.every((c) => c.metodo === 'GET')).toBe(true)
+    expect(f.chamadas.every((c) => c.url.includes('organization_id=eq.ORG-1'))).toBe(true)
+    /* a chave de serviço ignora RLS: a fonte e o provider também vão explícitos */
+    expect(f.chamadas.filter((c) => c.url.startsWith('radar_source_record')).every((c) => c.url.includes('source_id=eq.FNT-SITE'))).toBe(true)
+    expect(f.chamadas.filter((c) => c.url.startsWith('inbox_message')).every((c) => c.url.includes('provider=eq.MANUAL'))).toBe(true)
+    /* os ids vão entre aspas, no formato `in.()` do PostgREST */
+    expect(f.chamadas[0]!.url).toContain('external_id=in.("nf-000"')
+    /* e não se pede payload: só o que decide */
+    expect(f.chamadas[0]!.url).toContain('select=external_id,payload_fingerprint')
+    expect(f.chamadas[0]!.url).not.toContain('payload&')
+
+    expect(r.evidencias).toEqual([{ externoId: 'nf-000', impressao: 'abc' }, { externoId: 'nf-000', impressao: 'abc' }, { externoId: 'nf-000', impressao: 'abc' }])
+    expect(r.conversas).toEqual(['nf-000', 'nf-000', 'nf-000'])
+  })
+
+  it('evidência sem impressão volta sem impressão — e não como texto «null»', async () => {
+    const f = falso({ radar_source_record: [{ external_id: 'nf-legada', payload_fingerprint: null }] })
+    const r = await portasFormularioRest(CFG, f.fetchFn).estadoEmLote!(CFG.fonteId, 'MANUAL', ['nf-legada'])
+    expect(r.evidencias).toEqual([{ externoId: 'nf-legada' }])
+  })
+
+  it('falha do banco sobe como status, sem corpo e sem a chave', async () => {
+    const f = falso({ radar_source_record: { status: 500 } })
+    await expect(portasFormularioRest(CFG, f.fetchFn).estadoEmLote!(CFG.fonteId, 'MANUAL', ['nf-1']))
+      .rejects.toThrow(/http 500/)
+    try {
+      await portasFormularioRest(CFG, f.fetchFn).estadoEmLote!(CFG.fonteId, 'MANUAL', ['nf-1'])
+    } catch (e) {
+      const m = (e as Error).message
+      expect(m).not.toContain(CFG.chave)
+      expect(m).not.toContain('não deve vazar')
+    }
+  })
+})

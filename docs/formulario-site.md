@@ -142,13 +142,23 @@ npx vite-node scripts/formulario-reconciliar.mts -- --site <site_id> --marco 202
 
 Sem flags é **simulação**. Reenviar exige `--executar` **e** `--confirmar FORMULARIO_SITE_V1` juntos.
 
-| | decisão do preflight |
+| | como ela opera |
 |---|---|
-| **frequência** | de hora em hora, no modo execução. Casa com o prazo de primeira resposta do Inbox (24 h): uma submissão perdida volta em até 60 min e ainda sobra dia para responder. Sem submissão nova o plano devolve lista vazia e nada é escrito. |
-| **registro** | uma linha por rodada, nos dois modos: `RECONCILIACAO_RESUMO {"modo","marco","lidas","aReenviar","retidas","motivos","recuperadas","falhas"}`. Sem conteúdo de lead — só contagens. |
-| **alerta** | o **código de saída**, que faz o job do agendador falhar. `0` nada a fazer ou tudo recuperado · `1` alguma submissão não entrou · `2` bloqueado antes de ler (falta token, marco ou confirmação). Não existe notificação automática porque **nenhum canal de saída está autorizado** nesta fase, nem no Inbox nem na EIFF Central. |
+| **quem roda** | uma **Scheduled Function do Netlify** no eiffcontrol: `netlify/functions/formulario-reconciliar.mts`, `schedule: "@hourly"` (= `0 * * * *`, UTC). Decisão inteira em `src/core/radar/formularioAgendado.ts`, com `fetch`, ambiente e relógio injetados. O horário só vale em **deploy publicado**, e a plataforma **não** repete uma rodada que falhou — a repetição é a hora seguinte. |
+| **frequência** | de hora em hora. Casa com o prazo de primeira resposta do Inbox (24 h): uma submissão perdida volta em até 60 min e ainda sobra dia para responder. Sem submissão nova, a rodada custa duas consultas e não escreve nada. |
+| **duas chaves** | `FORMULARIO_RECONCILIACAO` tem de valer exatamente `ativa` **e** `EIFF_FORM_MARCO` tem de trazer o instante da ativação. Sem o interruptor a rodada não lê nem a lista de formulários; sem marco não começa — um marco padrão errado processaria lead real. |
+| **lote** | a função agendada tem **30 s**. A rodada processa no máximo `LOTE` = 20 submissões e para quando o tempo restante chega à reserva de 8 s, devolvendo `restam`. O que ficou volta na hora seguinte. |
+| **a fila anda** | antes do teto, a rodada tira da fila o que já está inteiramente dentro (evidência da MESMA impressão **e** conversa), em duas consultas por lote de 50 (`estadoEmLote`). Sem isso, as 20 vagas seriam gastas sempre nas mesmas submissões mais antigas e o resto nunca entraria — foi um defeito real, achado por teste, não uma hipótese. |
+| **registro** | uma linha por rodada, inclusive quando desligada: `RECONCILIACAO_AGENDADA {"desfecho","em","marco","lidas","elegiveis","jaDentro","processadas","restam","retidas","motivosRetencao","resultados","recuperadas","falhas","duracaoMs"}`. O campo `em` é a **última execução**. Só números, motivos e instantes. |
+| **alerta** | a rodada que não pôde rodar responde **503** (e o painel de Functions mostra a falha); a concluída responde 200 com o resumo. Não existe notificação automática porque **nenhum canal de saída está autorizado** nesta fase, nem no Inbox nem na EIFF Central. |
 | **atenção humana** | `falhas > 0` em duas rodadas seguidas, ou `recuperadas > 0` com frequência — recuperar uma vez é normal, recuperar sempre significa que o evento do site está falhando, e é lá que se olha. |
-| **marco inicial** | o instante em que a integração entra no ar, informado em `--marco`. Antes dele a reconciliação **retém**. |
+| **retomada** | não há estado a guardar: o que ficou de fora volta na hora seguinte e, pela idempotência, entrar duas vezes não duplica. Rodada morta no meio não deixa nada pela metade — a submissão com evidência e sem conversa é o caso `COMPLETADO`, previsto e provado. |
+
+O **script** (`scripts/formulario-reconciliar.mts`) continua sendo o caminho de mão humana — é ele que tem
+`--incluir-anteriores`, e por isso a rodada agendada **não tem como** liberar lead histórico: a opção não
+existe lá (prendido por teste, na fonte do módulo e no invólucro). O workflow do GitHub Actions
+(`.github/workflows/formulario-reconciliacao.yml`) fica como reserva manual, **desligado** até a variável de
+repositório `FORMULARIO_RECONCILIACAO` valer `ativa`.
 
 **Os leads históricos ficam fora.** Há submissões reais guardadas no painel de antes de a integração
 existir; processá-las é decisão comercial com autorização própria, nunca efeito colateral de uma rodada de
@@ -170,9 +180,10 @@ Os cinco cenários, provados em PostgreSQL real (`npm run smoke:formulario`):
 
 | prova | o que cobre |
 |---|---|
-| `npm test` | 154 testes da integração: transporte, borda HTTP com o corpo efetivo, gravação, portas, reconciliação, contato, grafo de importação |
+| `npm test` | **183 testes** da integração: transporte, borda HTTP com o corpo efetivo, gravação, portas, reconciliação, rodada agendada, roteamento para o COMERCIAL, contato, grafo de importação |
 | `npm run smoke:formulario` | **31 provas** em PostgreSQL real (PGlite, ROLLBACK): a cadeia inteira, os 5 cenários, a leitura pela camada da interface, o roteamento para o COMERCIAL, o mesmo id nas duas gravações |
 | `npx esbuild netlify/functions/formulario-site.ts --bundle` | empacotamento: 104 KB, sem `import.meta.env`, sem react/three/vite, sem supabase-js, sem motor estrutural |
+| `npx esbuild netlify/functions/formulario-reconciliar.mts --bundle` | a função agendada: 109 KB, `schedule: "@hourly"` no pacote, idem quanto a `import.meta.env` e ao motor |
 | suíte do site | 153 testes, 12 do encaminhador (forma do evento, segredo fora do log, repetição, 4xx) |
 | ensaio dos dois projetos juntos | o evento (Request) → função do site → HTTP com o segredo → borda → PostgREST/RPC falsos: 8 conferências, inclusive a ordem das duas gravações e o id do Netlify como identidade |
 
@@ -188,12 +199,13 @@ Conferido no banco de produção em 09/11/2026, **somente leitura**.
 | 1 | fonte `WEBSITE` em `radar_source` | **pronta** — `0e238b9c-01f1-4a33-9274-de7f1af8245f`, ativa, organização EIFF |
 | 2 | organização do Inbox | **pronta** — existe uma só: `e1a7e58f-29d1-4c22-b41e-597ebdeee86e` (EIFF) |
 | 3 | `inbox_config` com SLA | **pronta** — Urgente 1 h · Alta 4 h · Normal 24 h · Baixa 72 h; fallback ADMINISTRATIVO, escalação DIRETORIA |
-| 4 | setor `COMERCIAL` | **ativo, mas SEM responsável padrão** (`default_assignee_id` nulo) e `inbox_member` está vazio — sem isso a conversa cai no setor e **fica sem responsável** |
+| 4 | setor `COMERCIAL` com responsável padrão e a regra `ROT-SITE` | **SQL pronto e não aplicado**: `scripts/formulario-ativacao-producao.sql` (idempotente, com conferência na mesma transação). Sem o responsável a conversa cai no setor sem dono; sem a `ROT-SITE` uma redação vaga sai do COMERCIAL pelas palavras do texto |
 | 5 | `EIFF_FORM_SECRET`, o mesmo valor nos **dois** sites | falta (painel do Netlify, humano) |
 | 6 | `EIFF_FORM_SOURCE_ID` = o id do passo 1 · `SUPABASE_SERVICE_ROLE_KEY` · `EIFF_INBOX_ORGANIZATION_ID` | falta (painel do eiffcontrol) |
-| 7 | publicar a função do site | falta (deploy do eiff-site) |
-| 8 | ensaio com submissão fictícia e conferência na aba Candidatos e no `#/atendimento` | depois de 4–7 |
-| 9 | reconciliação em simulação, para ver os leads retidos antes de decidir sobre eles | depois de 5–6 |
+| 7 | variáveis da rodada agendada: `FORMULARIO_RECONCILIACAO=ativa` · `EIFF_FORM_MARCO` (instante da ativação) · `EIFF_FORM_NETLIFY_SITE` (site_id do eiff-site) · `NETLIFY_AUTH_TOKEN` | falta (painel do eiffcontrol) |
+| 8 | publicar a função do site — pela branch **`release/encaminhador-crm`**, não pela `feature/formulario-para-o-crm`: esta última carrega dois commits do «resgate do lead» que MUDAM a página pública (`src/simulador/tela.ts`, `resgate.ts`, `analytics.ts`) | falta (deploy do eiff-site) |
+| 9 | ensaio com submissão fictícia (`scripts/formulario-ensaio-ficticio.json`) e conferência na aba Candidatos e no `#/atendimento` | depois de 4–8 |
+| 10 | reconciliação em simulação, para ver os leads retidos antes de decidir sobre eles | depois de 5–7 |
 
 As RPCs que gravam (`inbox_ingest`, `inbox_apply_routing`) têm EXECUTE só para `postgres` e `service_role` —
 conferido. É por isso que a chave de serviço é obrigatória: a chave pública não alcança nenhuma das duas.

@@ -142,6 +142,14 @@ export function linhaDeEvidencia(plano: PlanoDeGravacao, organizacaoId: string):
    3 · As portas
 --------------------------------------------------------------- */
 
+/** O que já existe, para um conjunto de submissões. */
+export interface EstadoEmLote {
+  /** Uma entrada por evidência gravada: id externo e impressão do payload. */
+  evidencias: readonly { externoId: string; impressao?: string }[]
+  /** Ids externos que já têm conversa. */
+  conversas: readonly string[]
+}
+
 export interface ResumoContatoCompletado {
   /** Campos do contato que estavam vazios e foram preenchidos. */
   campos: readonly string[]
@@ -160,6 +168,15 @@ export interface PortasGravacao {
   ingerir: PortasIngestao['ingerir']
   /** Octopus Router (0057). Ausente quando a flag está desligada. Nunca lança. */
   rotear?: PortasIngestao['rotear']
+  /**
+   * Estado de VÁRIAS submissões de uma vez, para a reconciliação agendada
+   * saber o que já está dentro sem gastar uma rodada de gravação em cada uma.
+   *
+   * Não é atalho de regra: quem decide o que pular é o core, com os mesmos
+   * dois critérios do plano — evidência com a MESMA impressão (versão nova da
+   * submissão não é «já dentro») e conversa existente.
+   */
+  estadoEmLote?(fonteId: string, provider: CodigoProvider, externoIds: readonly string[]): Promise<EstadoEmLote>
   /** Contato da identidade do canal, para completar em qualquer passagem. */
   contatoDaIdentidade?(canal: string, identificador: string): Promise<string | undefined>
   /** Completa o contato: preenche vazio, nunca sobrescreve. */

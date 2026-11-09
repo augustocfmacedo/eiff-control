@@ -13,9 +13,9 @@
 import { autorizar, validarCorpo } from './formularioServidor'
 import { corpoDaSubmissaoNetlify } from './formularioTransporte'
 import { ErroDeGravacao, gravarSubmissao } from './formularioGravacao'
-import { configPortaFormulario, portasFormularioRest, type AmbienteFormulario } from './formularioPorta'
+import { montarPortasIntegracao, type AmbienteFormulario } from './formularioPorta'
 import { FORMULARIOS } from './formularioSite'
-import { montarPortasInbox, type AmbienteAtivacao } from '../inbox/ativacao'
+import type { AmbienteAtivacao } from '../inbox/ativacao'
 
 export interface AmbienteBorda extends AmbienteFormulario, AmbienteAtivacao {
   EIFF_FORM_SECRET?: string
@@ -67,24 +67,15 @@ export async function tratarPedidoFormulario(req: Request, deps: DepsBorda): Pro
   }
 
   // Ligação com o banco: a mesma configuração do Inbox (organização + chave de serviço) mais a fonte WEBSITE.
-  const cfg = configPortaFormulario(deps.env)
-  if ('motivo' in cfg) {
-    log({ resultado: 'nao_configurada', motivo: cfg.motivo })
-    return { status: 503, corpo: { erro: 'integracao_nao_configurada', motivo: cfg.motivo } }
-  }
   // A conversa continua sendo gravada pela porta do Inbox (RPC inbox_ingest) e roteada pelo Octopus Router —
-  // os mesmos que a EIFF Central usa, com os mesmos kill switches. Sem segundo mecanismo.
-  const inbox = montarPortasInbox(deps.env, { fetch: deps.fetch, log: deps.log })
-  if (!inbox.ligado) {
-    log({ resultado: 'nao_configurada', motivo: `inbox: ${inbox.motivo}` })
-    return { status: 503, corpo: { erro: 'integracao_nao_configurada', motivo: `inbox: ${inbox.motivo}` } }
+  // os mesmos que a EIFF Central usa, com os mesmos kill switches. Sem segundo mecanismo. É a MESMA montagem
+  // que a reconciliação agendada usa: um caminho de entrada não pode divergir do outro.
+  const ligacao = montarPortasIntegracao(deps.env, { fetch: deps.fetch, log: deps.log })
+  if (!ligacao.ok) {
+    log({ resultado: 'nao_configurada', motivo: ligacao.motivo })
+    return { status: 503, corpo: { erro: 'integracao_nao_configurada', motivo: ligacao.motivo } }
   }
-
-  const portas = {
-    ...portasFormularioRest(cfg, deps.fetch, deps.log),
-    ingerir: inbox.portas.ingerir,
-    ...(inbox.portas.rotear !== undefined ? { rotear: inbox.portas.rotear } : {}),
-  }
+  const { cfg, portas } = ligacao
 
   try {
     const r = await gravarSubmissao(corpo.submissao, cfg.fonteId, cfg.organizacaoId, portas)
