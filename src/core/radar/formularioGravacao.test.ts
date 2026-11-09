@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ErroDeGravacao, gravarSubmissao, linhaDeEvidencia, resumoParaOInbox, type PortasGravacao } from './formularioGravacao'
+import { textoDaMensagem } from '../inbox/formularioSite'
 import { pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
 import { planejarGravacao } from './formularioServidor'
 import { registroDeIntake, validarIntake } from './leadEngineIntake'
@@ -286,6 +287,17 @@ describe('gravação · o que o atendente lê', () => {
     expect(linhas).toContain('Leitura da página:')
     /* a linha de origem não se repete: ela já é o cabeçalho de observacoesDoLead */
     expect(linhas).not.toContain('Origem: formulário')
+  })
+
+  it('e NADA aparece duas vezes no texto da conversa', () => {
+    const t = textoDaMensagem(resumoParaOInbox(SUB))
+    const vezes = (p: string) => t.split(p).length - 1
+    expect(vezes('Configuração:')).toBe(1)
+    expect(vezes('Preciso de um galpão para a fábrica.')).toBe(1)
+    expect(vezes('Mensagem:')).toBe(0)
+    /* e cada linha é única */
+    const linhas = t.split('\n').filter((l) => l.trim() !== '')
+    expect(new Set(linhas).size).toBe(linhas.length)
   })
 
   it('submissão magra não inventa texto', () => {

@@ -51,12 +51,21 @@ import type { RegistroFonte } from './types'
  */
 export const CAMPOS_EXIBIDOS_DO_BRUTO: readonly string[] = Object.freeze(['leitura'])
 
+/**
+ * Linhas de `observacoesDoLead` que `textoDaMensagem` já escreve a partir dos
+ * campos próprios (`resumo` e `mensagem`). Sem este filtro a conversa mostra
+ * a configuração duas vezes e repete a mensagem da pessoa logo abaixo dela.
+ */
+export const LINHAS_JA_ESCRITAS: readonly string[] = Object.freeze(['Configuração:', 'Mensagem:'])
+
 /** Submissão → o que a conversa mostra. Nome, telefone, e-mail, lugar e o galpão. */
 export function resumoParaOInbox(s: SubmissaoFormulario): ResumoDaSubmissao {
   const c = canonicoDaSubmissao(s)
   const lugar = [c.cidade, c.uf].filter((x) => x !== undefined).join('/')
-  // `observacoesDoLead` abre com a linha de origem; o resto são as linhas de detalhe.
+  // `observacoesDoLead` abre com a linha de origem; o resto são as linhas de detalhe,
+  // menos as que a própria mensagem já escreve pelos campos `resumo` e `mensagem`.
   const linhas = observacoesDoLead(c).split('\n').slice(1)
+    .filter((l) => !LINHAS_JA_ESCRITAS.some((p) => l.startsWith(p)))
   for (const campo of CAMPOS_EXIBIDOS_DO_BRUTO) {
     const v = s.campos[campo]?.trim()
     if (v !== undefined && v !== '') linhas.push(`Leitura da página: ${v}`)
