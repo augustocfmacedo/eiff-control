@@ -66,6 +66,12 @@ antiga (`event.body`) num arquivo `.mts` com `export default`: a plataforma entr
 único `export default` (nada de `handler` ao lado, que deixaria a plataforma escolher o contrato de
 chamada) e o corpo lido do `Request`, aceitando também a forma antiga `{ body: string }`.
 
+**Mais dois achados de empacotamento, do lado do site.** Todo arquivo solto em `netlify/functions` é uma
+função para a plataforma e a documentação não declara exceção para arquivo de teste: o teste que estava ao
+lado da função seria empacotado como `submission-created.test`, levando o vitest para o deploy e publicando
+um endpoint que não existe — ele foi para `src/transporte/`. E o `tsconfig.json` do site incluía só `src`,
+então a função de transporte **nunca passou pelo `tsc`** do `npm run build`; agora `netlify` também entra.
+
 **E o fato que manda no desenho:** a documentação do evento diz que o valor devolvido pela função «não é
 usado pela plataforma». **Não há reenvio automático.** Então a sequência «submissão válida → função falha →
 nada no CRM» é possível, e nada no caminho do webhook a conserta. Quem conserta é a reconciliação (§5) — e
@@ -168,6 +174,7 @@ Os cinco cenários, provados em PostgreSQL real (`npm run smoke:formulario`):
 | `npm run smoke:formulario` | **31 provas** em PostgreSQL real (PGlite, ROLLBACK): a cadeia inteira, os 5 cenários, a leitura pela camada da interface, o roteamento para o COMERCIAL, o mesmo id nas duas gravações |
 | `npx esbuild netlify/functions/formulario-site.ts --bundle` | empacotamento: 104 KB, sem `import.meta.env`, sem react/three/vite, sem supabase-js, sem motor estrutural |
 | suíte do site | 153 testes, 12 do encaminhador (forma do evento, segredo fora do log, repetição, 4xx) |
+| ensaio dos dois projetos juntos | o evento (Request) → função do site → HTTP com o segredo → borda → PostgREST/RPC falsos: 8 conferências, inclusive a ordem das duas gravações e o id do Netlify como identidade |
 
 O smoke declara o que **não** prova: roda como dono do banco, então GRANT e RLS não são exercidos (isso é
 `pg-smoke-inbox.mjs` e o preflight), e o transporte HTTP é provado na suíte com `fetch` falso.
