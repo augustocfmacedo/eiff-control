@@ -14,10 +14,11 @@ Como a solicitação feita em `eiff.com.br/simular-galpao/` (e em `/contato/`) e
 formulário publicado (Netlify Forms, sem mudança nenhuma no HTML)
         │
         ▼  evento de submissão verificada
-função do SITE  netlify/functions/submission-created.mts   (repo eiff-site)
+função do SITE  netlify/functions/submission-created.mts   (repo eiff-site, branch não publicada)
         │        acrescenta x-eiff-form-secret · tenta 3 vezes · não registra o lead em log
         ▼
-/api/formulario-site            (este repo, netlify/functions/formulario-site.ts)
+/api/formulario-site      (invólucro: netlify/functions/formulario-site.ts
+        │                 decisão:   src/core/radar/formularioBorda.ts)
         │
         ├─ 1º  radar_source_record  PENDING, sem entidade     ← evidência (Lead Engine)
         └─ 2º  RPC inbox_ingest     thread + mensagem         ← atendimento (EIFF Inbox)
@@ -115,7 +116,7 @@ Os cinco cenários, provados em PostgreSQL real (`npm run smoke:formulario`):
 
 | prova | o que cobre |
 |---|---|
-| `npm test` | 77 testes novos: transporte, borda, gravação, portas, reconciliação, contato |
+| `npm test` | 148 testes da integração (95 novos nesta entrega): transporte, borda HTTP, gravação, portas, reconciliação, contato |
 | `npm run smoke:formulario` | 27 provas em PostgreSQL real (PGlite, ROLLBACK): a cadeia inteira, os 5 cenários, a leitura pela camada da interface, o roteamento para o COMERCIAL |
 | `npx vite-node scripts/radar-formulario-demo.mts` | a cadeia em memória até oportunidade e cadência CM2-B.1 |
 | suíte do site | 7 testes do encaminhador (segredo fora do log, repetição, 4xx) |
