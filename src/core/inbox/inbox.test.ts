@@ -58,12 +58,18 @@ describe('máquina de estados da thread', () => {
     expect(statusAposAtribuicao(thread({ status: 'ATRIBUIDA', responsavelId: 'u1' }), 'FINANCEIRO', undefined)).toBe('TRIADA');
     expect(statusAposAtribuicao(thread({ status: 'EM_ATENDIMENTO', responsavelId: 'u1' }), 'OBRAS', 'u2')).toBe('EM_ATENDIMENTO');
   });
-  it('mensagem do contato reabre o que esperava por ele; resposta da EIFF cumpre o SLA', () => {
+  it('mensagem do contato reabre o que esperava por ele; só resposta EFETIVA da EIFF cumpre o SLA', () => {
     expect(aoReceberMensagem(thread({ status: 'AGUARDANDO_CONTATO', responsavelId: 'u1' }), AGORA).status).toBe('EM_ATENDIMENTO');
     expect(aoReceberMensagem(thread({ status: 'FECHADA' }), AGORA).status).toBe('EM_ATENDIMENTO');
     expect(aoReceberMensagem(thread({ status: 'EM_ATENDIMENTO' }), AGORA).status).toBe('EM_ATENDIMENTO');
-    const r = aoResponder(thread({ status: 'ATRIBUIDA', responsavelId: 'u1', sla: { primeiraRespostaAte: '2026-09-24T10:00:00.000Z' } }), AGORA);
+    const base = thread({ status: 'ATRIBUIDA', responsavelId: 'u1', sla: { primeiraRespostaAte: '2026-09-24T10:00:00.000Z' } });
+    const r = aoResponder(base, AGORA, true);
     expect(r.status).toBe('EM_ATENDIMENTO'); expect(r.sla?.primeiraRespostaEm).toBe(AGORA);
+    // rascunho (não efetivo): a conversa entra em atendimento, mas o relógio da primeira resposta NÃO para
+    const rascunho = aoResponder(base, AGORA, false);
+    expect(rascunho.status).toBe('EM_ATENDIMENTO'); expect(rascunho.sla?.primeiraRespostaEm).toBeUndefined();
+    // o primeiro registro é o que vale: um contato posterior não o substitui
+    expect(aoResponder(r, '2026-09-25T10:00:00.000Z', true).sla?.primeiraRespostaEm).toBe(AGORA);
   });
 });
 
@@ -103,11 +109,16 @@ describe('roteamento e política IA + humano', () => {
 
 describe('SLA, escalação e ordem de trabalho', () => {
   const sla = (ate: string, em?: string) => ({ primeiraRespostaAte: ate, primeiraRespostaEm: em });
-  it('estado do SLA: no prazo, vencendo (<25% restante), vencido, cumprido', () => {
+  it('estado do SLA: no prazo, vencendo (<25% restante), vencido, cumprido, atrasada e sem resposta', () => {
     expect(estadoSla(thread({ sla: sla('2026-09-24T10:00:00.000Z') }), AGORA)).toBe('no_prazo');
     expect(estadoSla(thread({ sla: sla('2026-09-23T12:30:00.000Z') }), AGORA)).toBe('vencendo');
     expect(estadoSla(thread({ sla: sla('2026-09-23T11:00:00.000Z') }), AGORA)).toBe('vencido');
     expect(estadoSla(thread({ sla: sla('2026-09-23T11:00:00.000Z', '2026-09-23T10:30:00.000Z') }), AGORA)).toBe('cumprido');
+    // respondida DEPOIS do vencimento não é cumprimento
+    expect(estadoSla(thread({ sla: sla('2026-09-23T11:00:00.000Z', '2026-09-23T11:00:01.000Z') }), AGORA)).toBe('atrasada');
+    // resolvida ou fechada sem resposta não é atendimento realizado
+    expect(estadoSla(thread({ status: 'RESOLVIDA', sla: sla('2026-09-24T10:00:00.000Z') }), AGORA)).toBe('sem_resposta');
+    expect(estadoSla(thread({ status: 'FECHADA', sla: sla('2026-09-23T11:00:00.000Z') }), AGORA)).toBe('sem_resposta');
     expect(estadoSla(thread(), AGORA)).toBe('sem_sla');
   });
   it('vencido sem resposta escala para o setor de escalação, exceto se já está nele', () => {

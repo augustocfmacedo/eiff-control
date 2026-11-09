@@ -64,7 +64,7 @@ import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { MATRIZ, pode, type Acao } from '../core/permissoes';
-import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATUS, RISCOS, alvoDaDecisao, aoResponder, aplicarStatus, classificacaoAuditavel, decidirRoteamento, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, reavaliar, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type DecisaoOctopus, type EntradaRoteador, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
+import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATUS, RISCOS, alvoDaDecisao, aoResponder, NOME_MEIO, contatoDuplicado, ehRespostaEfetiva, metaDoContato, situacaoPrimeiraResposta, validarContato, type PedidoDeContato, aplicarStatus, classificacaoAuditavel, decidirRoteamento, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, reavaliar, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type DecisaoOctopus, type EntradaRoteador, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
@@ -3782,15 +3782,59 @@ export const actions = {
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
     const proposta = opcoes.propostaId ? i.acoes.find((a) => a.id === opcoes.propostaId && a.threadId === t.id) : undefined;
     const m: InboxMessage = { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'outbound', tipo: 'texto', autor: atorAtual(), texto: texto.trim(), anexos: [], em: ids.agora, entrega: envio.entrega, externalMessageId: envio.externalMessageId, propostaId: proposta?.id };
-    const novo = aoResponder(entrar(t, state.usuario.id), ids.agora);
-    const eventos = [eventoInbox(ids, t.id, 'MESSAGE_REGISTERED', `rascunho de resposta ${envio.entrega}: ${envio.motivo}`, undefined, undefined, m.id)];
+    // Rascunho (entrega `registrada`) NAO cumpre o SLA: nada saiu e ninguem foi atendido. So conta resposta que um
+    // canal efetivamente enviou — e o contato declarado por pessoa, que tem acao propria (inboxRegistrarContato).
+    const efetiva = ehRespostaEfetiva(m);
+    const novo = aoResponder(entrar(t, state.usuario.id), ids.agora, efetiva);
+    const eventos = [eventoInbox(ids, t.id, 'MESSAGE_REGISTERED', `${efetiva ? 'resposta' : 'rascunho de resposta'} ${envio.entrega}: ${envio.motivo}`, undefined, undefined, m.id)];
     if (novo.status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'primeira ação da EIFF na conversa', t.status, novo.status));
     let acoes = i.acoes;
     if (proposta && (proposta.estado === 'proposta' || proposta.estado === 'aprovada')) {
       acoes = trocar(i.acoes, { ...proposta, estado: 'executada', executadaEm: ids.agora, referencia: m.id, aprovacao: { ...proposta.aprovacao, decisao: 'aprovada', decididaPor: state.usuario.id, decididaEm: ids.agora } });
       eventos.push(eventoInbox(ids, t.id, 'ACTION_EXECUTED', `sugestão ${proposta.id} usada na resposta`));
     }
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos], acoes }), 'inbox_responder', 'inbox_thread', t.id, undefined, { mensagemId: m.id, entrega: envio.entrega, chars: m.texto.length, propostaId: proposta?.id }));
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos], acoes }), 'inbox_responder', 'inbox_thread', t.id, undefined, { mensagemId: m.id, entrega: envio.entrega, chars: m.texto.length, propostaId: proposta?.id, cumpreSla: efetiva }));
+    return m;
+  },
+
+  /**
+   * CONTATO DECLARADO: uma pessoa registra que FALOU com o interessado fora de um canal ligado (telefone, e-mail,
+   * WhatsApp externo, presencial) — ou que tentou e nao conseguiu.
+   *
+   * So o resultado `realizado` cumpre o SLA de primeira resposta, e so o PRIMEIRO: contatos posteriores ficam no
+   * historico e nao mexem em `primeiraRespostaEm`. `tentativa` vira nota interna marcada, sem efeito no prazo.
+   * O instante do SLA e o DECLARADO do contato (nunca no futuro, nunca antes da abertura); o instante do registro
+   * fica ao lado (`registradaEm`, relogio do banco depois de sincronizar). Quem declarou e o usuario autenticado.
+   * Repetir o mesmo registro (duplo clique, fila offline) devolve o que ja existe. Nada e enviado a ninguem.
+   */
+  inboxRegistrarContato(threadId: string, pedido: PedidoDeContato): InboxMessage {
+    exigir('inbox');
+    const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
+    const p: PedidoDeContato = { ...pedido, resumo: pedido.resumo.trim(), em: Number.isNaN(Date.parse(pedido.em)) ? pedido.em : new Date(pedido.em).toISOString() };
+    const erros = validarContato(p, t, ids.agora);
+    if (erros.length) throw new RegraDeNegocioError(erros[0]);
+    const repetido = contatoDuplicado(i.mensagens, t.id, state.usuario.id, p);
+    if (repetido) return repetido;
+    const realizado = p.resultado === 'realizado';
+    const m: InboxMessage = realizado
+      ? { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'outbound', tipo: 'texto', autor: atorAtual(), texto: p.resumo, anexos: [], em: p.em, registradaEm: ids.agora, entrega: 'entregue', meta: metaDoContato(p) }
+      : { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'interna', tipo: 'nota', autor: atorAtual(), texto: p.resumo, anexos: [], em: p.em, registradaEm: ids.agora, meta: metaDoContato(p) };
+    const antes = t.sla?.primeiraRespostaEm;
+    const base = entrar(t, state.usuario.id);
+    const novo = realizado ? aoResponder(base, p.em, true) : { ...base, ultimaMensagemEm: !base.ultimaMensagemEm || ids.agora > base.ultimaMensagemEm ? ids.agora : base.ultimaMensagemEm };
+    const primeiro = realizado && !antes && !!novo.sla?.primeiraRespostaEm;
+    const situacao = situacaoPrimeiraResposta(novo);
+    const quando = `${p.em.slice(8, 10)}/${p.em.slice(5, 7)} ${p.em.slice(11, 16)} UTC`;
+    const eventos = [eventoInbox(ids, t.id, realizado ? 'MESSAGE_REGISTERED' : 'NOTE_ADDED',
+      realizado
+        ? `contato realizado por ${NOME_MEIO[p.meio]}, declarado para ${quando}${primeiro ? ` — primeira resposta ${situacao === 'respondida_no_prazo' ? 'dentro do prazo' : 'FORA do prazo'}` : ' (a primeira resposta já estava registrada)'}`
+        : `tentativa de contato por ${NOME_MEIO[p.meio]} sem sucesso, declarada para ${quando} — não cumpre o SLA`,
+      undefined, undefined, m.id)];
+    if (novo.status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'primeira ação da EIFF na conversa', t.status, novo.status));
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos] }),
+      realizado ? 'inbox_contato_realizado' : 'inbox_tentativa_contato', 'inbox_thread', t.id,
+      { primeiraRespostaEm: antes ?? null },
+      { mensagemId: m.id, meio: p.meio, declaradoEm: p.em, registradoEm: ids.agora, declaradoPor: state.usuario.id, primeiraResposta: primeiro, primeiraRespostaEm: novo.sla?.primeiraRespostaEm ?? null, situacao, chars: m.texto.length }));
     return m;
   },
 
