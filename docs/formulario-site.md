@@ -237,8 +237,8 @@ Os cinco cenários, provados em PostgreSQL real (`npm run smoke:formulario`):
 |---|---|
 | `npm test` | **258 testes** da integração: transporte, borda HTTP com o corpo efetivo, gravação, portas, reconciliação, rodada agendada, roteamento para o COMERCIAL, contato, grafo de importação, fonte canônica, prazo sem falso sucesso e os 31 do calendário comercial |
 | `npm run smoke:formulario` | **39 provas** em PostgreSQL real (PGlite, ROLLBACK), também no Quality Gate: a cadeia inteira, os 5 cenários, a leitura pela camada da interface, o roteamento para o COMERCIAL, o mesmo id nas duas gravações, fonte errada sem escrita (Q), outro canal com 24 h e configuração intacta (R), falha no prazo sem falso sucesso e conserto no reenvio (S), sexta, feriado e segunda solicitação (T) |
-| `npx esbuild netlify/functions/formulario-site.ts --bundle` | empacotamento: 104 KB, sem `import.meta.env`, sem react/three/vite, sem supabase-js, sem motor estrutural |
-| `npx esbuild netlify/functions/formulario-reconciliar.mts --bundle` | a função agendada: 109 KB, `schedule: "@hourly"` no pacote, idem quanto a `import.meta.env` e ao motor |
+| `npx esbuild netlify/functions/formulario-site.ts --bundle` | empacotamento: 118 KB, sem `import.meta.env`, sem react/three/vite, sem supabase-js, sem motor estrutural |
+| `npx esbuild netlify/functions/formulario-reconciliar.mts --bundle` | a função agendada: 121 KB, `schedule: "@hourly"` no pacote, idem quanto a `import.meta.env` e ao motor |
 | suíte do site | 153 testes, 12 do encaminhador (forma do evento, segredo fora do log, repetição, 4xx) |
 | ensaio dos dois projetos juntos | o evento (Request) → função do site → HTTP com o segredo → borda → PostgREST/RPC falsos: 8 conferências, inclusive a ordem das duas gravações e o id do Netlify como identidade |
 
