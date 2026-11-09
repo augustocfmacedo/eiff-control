@@ -28,7 +28,7 @@ Conferido em 09/11/2026, somente leitura.
 | branch | commit | onde |
 |---|---|---|
 | `main` = `origin/main` | `2bc130a` | GitHub |
-| `feature/radar-formulario-site` | `9079f3d` | **só nesta máquina** — 9 commits à frente da `main` |
+| `feature/radar-formulario-site` | `9079f3d` + os commits deste checkpoint | **só nesta máquina** — 9 commits de código à frente da `main` |
 | `feature/leads-do-site-menu` | `9079f3d` | só nesta máquina; worktree `.claude/worktrees/leads-do-site`, sem alteração |
 
 Os 9 commits, do mais antigo ao mais novo: `8d16cdb` · `1dbce59` · `26020e9` · `06cdd99` · `d3aeebe` ·
