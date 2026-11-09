@@ -1,5 +1,9 @@
 # Formulário do site → EIFF Control: checkpoint de continuidade
 
+> **09/11/2026 — Fase A (correções locais do release) concluída depois deste checkpoint; a integração continua NÃO
+> funcionando em produção.** Estado das branches abaixo é o do momento do checkpoint; o HEAD atual está no relatório da
+> Fase A e em `git log`.
+>
 > **09/11/2026 — frente SUSPENSA por decisão do Augusto. A integração NÃO funciona em produção.**
 > Nada foi publicado, enviado ao GitHub ou aplicado no banco. A próxima prioridade é o SIM-04.
 
@@ -65,6 +69,18 @@ Restaurar, num clone que já tenha a `main`: `git fetch <arquivo.bundle> <branch
 
 O backup definitivo é o push das branches, que depende de autorização e não foi feito.
 
+## 2.1 Fase A — correções locais feitas depois do checkpoint
+
+| correção | onde |
+|---|---|
+| fonte canônica do site conferida antes de qualquer gravação (503 e zero escrita se errada) | `formularioGravacao.ts`, `formularioPorta.ts`, `formularioBorda.ts` |
+| prazo de primeira resposta de 30 minutos úteis para o lead do site, sem falso sucesso | os mesmos + `src/core/inbox/calendarioComercial.ts` |
+| `.claude/launch.json` e `supabase/.temp/cli-latest` de volta à versão da `main` | higiene |
+| workflow do GitHub de reconciliação retirado; Scheduled Function do Netlify como executor único | higiene |
+| smoke do formulário no Quality Gate | `.github/workflows/quality-gate.yml` |
+
+Os comandos de backup do §2 continuam válidos: o bundle leva o que estiver na branch no momento em que for gerado.
+
 ## 3. Bloqueadores de publicação
 
 Todos dependem de um operador autorizado. Nenhum é defeito de código conhecido.
@@ -75,7 +91,8 @@ Todos dependem de um operador autorizado. Nenhum é defeito de código conhecido
    não foram exercidos.
 2. **Variáveis ausentes no Netlify do eiff-control**: `EIFF_FORM_SECRET`, `EIFF_FORM_SOURCE_ID`
    (`0e238b9c-01f1-4a33-9274-de7f1af8245f`), `EIFF_INBOX_ORGANIZATION_ID`
-   (`e1a7e58f-29d1-4c22-b41e-597ebdeee86e`); para a reconciliação, `NETLIFY_AUTH_TOKEN`,
+   (`e1a7e58f-29d1-4c22-b41e-597ebdeee86e`) — a fonte tem de ser a de código `WEBSITE`, ativa, senão a borda
+   responde 503; para a reconciliação, `NETLIFY_AUTH_TOKEN`,
    `EIFF_FORM_NETLIFY_SITE`, `EIFF_FORM_MARCO` e, por último, `FORMULARIO_RECONCILIACAO=ativa`.
 3. **Push e merge não autorizados** nos dois repositórios.
 4. **Deploy do eiff-control travado**: push na `main` constrói e não publica até destravar.
