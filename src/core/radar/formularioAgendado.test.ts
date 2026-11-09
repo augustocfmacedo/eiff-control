@@ -41,11 +41,24 @@ const submissao = (id: string, criadoEm: string, extra: Record<string, string> =
 })
 
 /** Um banco minúsculo, com as regras que importam: unicidade por id e por conversa. */
-function bancoFalso(opcoes: { falharEm?: string; semEstadoEmLote?: boolean } = {}) {
+function bancoFalso(opcoes: { falharEm?: string; semEstadoEmLote?: boolean; falharPrazoEm?: string } = {}) {
   const registros: RegistroFonte[] = []
   const conversas = new Set<string>()
+  /** Vencimento da primeira resposta por conversa: nasce com 24 h corridas, como no banco. */
+  const prazos = new Map<string, string>()
+  const aberturas = new Map<string, string>()
   let n = 0
   const portas: PortasGravacao = {
+    async fonte(fonteId) { return { id: fonteId, codigo: 'WEBSITE', tipo: 'WEBSITE', ativa: true } },
+    async prazoDaConversa(_provider, externalMessageId) {
+      if (!conversas.has(externalMessageId)) return undefined
+      return { threadId: `THR-${externalMessageId}`, venceEm: prazos.get(externalMessageId), aberta: true, abertaEm: aberturas.get(externalMessageId) }
+    },
+    async definirPrazo(threadId, venceEmIso) {
+      if (opcoes.falharPrazoEm !== undefined && threadId === `THR-${opcoes.falharPrazoEm}`) throw new Error('postgrest PATCH inbox_thread http 500')
+      prazos.set(threadId.replace(/^THR-/, ''), venceEmIso)
+      return venceEmIso
+    },
     async registrosDaSubmissao(fonteId, externoId) {
       return registros.filter((r) => r.fonteId === fonteId && r.externoId === externoId)
     },
@@ -75,14 +88,17 @@ function bancoFalso(opcoes: { falharEm?: string; semEstadoEmLote?: boolean } = {
           .filter((r) => r.fonteId === fonteId && externoIds.includes(r.externoId ?? ''))
           .map((r) => ({ externoId: r.externoId ?? '', ...(r.payloadFingerprint === undefined ? {} : { impressao: r.payloadFingerprint }) })),
         conversas: externoIds.filter((x) => conversas.has(x)),
+        prazos: externoIds.filter((x) => conversas.has(x)).map((x) => ({ externoId: x, threadId: `THR-${x}`, venceEm: prazos.get(x), aberta: true, abertaEm: aberturas.get(x) })),
       }
     },
     async ingerir(p) {
       conversas.add(p.externalMessageId)
+      prazos.set(p.externalMessageId, new Date(Date.parse(p.em) + 24 * 3_600_000).toISOString())
+      aberturas.set(p.externalMessageId, p.em)
       return { ok: true, duplicada: false, threadId: `THR-${p.externalMessageId}`, messageId: `MSG-${p.externalMessageId}`, novaThread: true }
     },
   }
-  return { portas, registros, conversas }
+  return { portas, registros, conversas, prazos, opcoes }
 }
 
 interface Cenario {
@@ -340,5 +356,50 @@ describe('reconciliação agendada · o registro', () => {
     const r = await rodadaDeReconciliacao(m.env, m.deps)
     expect(m.logs.some((l) => l['evento'] === 'RECONCILIACAO_AGENDADA' && l['desfecho'] === 'desligada')).toBe(true)
     expect(r.em).toBeTruthy()
+  })
+})
+
+describe('reconciliação agendada · o prazo de primeira resposta', () => {
+  const S1 = submissao('nf-prazo-1', '2026-11-10T14:00:00.000Z')
+  // terça 10/11/2026 às 11:00 em São Paulo: 30 min úteis → 14:30 UTC
+  const ALVO = '2026-11-10T14:30:00.000Z'
+
+  it('a rodada grava o lead com 30 minutos úteis, não com as 24 h corridas', async () => {
+    const m = montar({ submissoes: [S1] })
+    const r = await rodadaDeReconciliacao(m.env, m.deps)
+    expect(r.falhas).toBe(0)
+    expect(m.banco.prazos.get('nf-prazo-1')).toBe(ALVO)
+  })
+
+  it('falha ao gravar o prazo conta como FALHA da rodada, nunca como recuperada', async () => {
+    const m = montar({ submissoes: [S1], banco: bancoFalso({ falharPrazoEm: 'nf-prazo-1' }) })
+    const r = await rodadaDeReconciliacao(m.env, m.deps)
+    expect(r.falhas).toBe(1)
+    expect(r.recuperadas).toBe(0)
+  })
+
+  it('estado parcial (evidência + conversa, prazo ainda errado) NÃO é «já dentro»: a rodada seguinte conserta', async () => {
+    const banco = bancoFalso({ falharPrazoEm: 'nf-prazo-1' })
+    const primeira = montar({ submissoes: [S1], banco })
+    expect((await rodadaDeReconciliacao(primeira.env, primeira.deps)).falhas).toBe(1)
+    expect(banco.registros).toHaveLength(1)
+    expect(banco.conversas.has('nf-prazo-1')).toBe(true)
+    expect(banco.prazos.get('nf-prazo-1')).not.toBe(ALVO)
+
+    // o banco volta a aceitar; a mesma submissão tem de voltar à fila
+    delete banco.opcoes.falharPrazoEm
+    const segunda = montar({ submissoes: [S1], banco })
+    const r = await rodadaDeReconciliacao(segunda.env, segunda.deps)
+    expect(r.jaDentro).toBe(0)
+    expect(r.processadas).toBe(1)
+    expect(r.falhas).toBe(0)
+    expect(r.resultados['IDEMPOTENTE']).toBe(1)
+    // sem evidência nem conversa novas: só o prazo mudou
+    expect(banco.registros).toHaveLength(1)
+    expect(banco.prazos.get('nf-prazo-1')).toBe(ALVO)
+
+    // e a terceira já a encontra inteiramente dentro
+    const terceira = montar({ submissoes: [S1], banco })
+    expect((await rodadaDeReconciliacao(terceira.env, terceira.deps)).jaDentro).toBe(1)
   })
 })

@@ -42,6 +42,13 @@ let rpcRecusa = false;
 let registros: unknown[] = [];
 let mensagens: unknown[] = [];
 let env: Record<string, string | undefined> = {};
+const FONTE_DO_SITE = { id: 'FNT-SITE', code: 'WEBSITE', source_type: 'WEBSITE', active: true };
+const THREAD_NOVA = { id: 'THR-1', status: 'NOVA', opened_at: '2026-11-09T14:00:00.000Z', sla_first_response_due: '2026-11-10T14:00:00.000Z', sla_first_response_at: null as string | null };
+let fonte: Record<string, unknown> | undefined = FONTE_DO_SITE;
+let fonteFalha = false;
+let ingerida = false;
+let thread = { ...THREAD_NOVA };
+let prazoFalha: undefined | 'erro' | 'sem_confirmacao';
 
 const falsoFetch = ((url: string, init?: RequestInit) => {
   const metodo = init?.method ?? 'GET';
@@ -49,11 +56,25 @@ const falsoFetch = ((url: string, init?: RequestInit) => {
   pedidos.push({ url, metodo, corpo });
   const ok = (d: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => d } as unknown as Response);
   if (url.includes('/rpc/inbox_ingest')) {
+    if (!rpcRecusa) ingerida = true;
     return ok(rpcRecusa
       ? { ok: false, erro: 'somente_servidor' }
       : { ok: true, duplicada: false, thread_id: 'THR-1', message_id: 'MSG-1', contact_id: 'CTI-1', nova_thread: true, novo_contato: true });
   }
   if (url.includes('radar_source_record')) return ok(metodo === 'POST' ? (semEvidencia ? [] : [{ id: 'RF-1' }]) : registros);
+  // a fonte configurada: o que o banco devolve para o id pedido, já com o filtro de organização
+  if (url.includes('radar_source?')) return fonteFalha ? Promise.resolve({ ok: false, status: 500, json: async () => ({}) } as unknown as Response) : ok(fonte === undefined ? [] : [fonte]);
+  // a conversa nasce com as 24 h corridas da configuração; o PATCH do prazo é o que a corrige
+  if (url.includes('inbox_thread')) {
+    if (metodo === 'PATCH') {
+      if (prazoFalha === 'erro') return Promise.resolve({ ok: false, status: 500, json: async () => ({}) } as unknown as Response);
+      if (prazoFalha === 'sem_confirmacao') return ok([]);
+      thread = { ...thread, sla_first_response_due: (corpo as Record<string, string>)['sla_first_response_due']! };
+      return ok([{ sla_first_response_due: thread.sla_first_response_due }]);
+    }
+    return ok([thread]);
+  }
+  if (url.includes('inbox_message') && url.includes('select=thread_id')) return ok(ingerida || mensagens.length > 0 ? [{ thread_id: 'THR-1' }] : []);
   if (url.includes('inbox_message')) return ok(mensagens);
   if (url.includes('inbox_contact_identity')) return ok([]);
   if (url.includes('inbox_contact')) return ok([{ id: 'CTI-1', name: 'Contato não identificado', company_name: null, relation_kind: 'desconhecido' }]);
@@ -68,6 +89,7 @@ const pedir = (corpo: unknown, cabecalhos: Record<string, string> = { 'x-eiff-fo
 
 beforeEach(() => {
   pedidos = []; logs = []; semEvidencia = false; rpcRecusa = false; registros = []; mensagens = [];
+  fonte = FONTE_DO_SITE; fonteFalha = false; ingerida = false; thread = { ...THREAD_NOVA }; prazoFalha = undefined;
   env = {
     EIFF_FORM_SECRET: SEGREDO, EIFF_FORM_SOURCE_ID: 'FNT-SITE', SUPABASE_SERVICE_ROLE_KEY: CHAVE,
     EIFF_INBOX_ORGANIZATION_ID: 'ORG-1', SUPABASE_URL: URL_BANCO,
@@ -325,5 +347,79 @@ describe('borda · o que ela arrasta para o pacote da função', () => {
     const forasteiros = grafo.filter((f) => !f.startsWith('src/core/'));
     expect(forasteiros).toEqual([]);
     expect(grafo.filter((f) => f.startsWith('src/ui/') || f.startsWith('src/screens/') || f.startsWith('src/data/'))).toEqual([]);
+  });
+});
+
+describe('borda · a fonte configurada', () => {
+  const escritasDe = () => pedidos.filter((p) => p.metodo !== 'GET');
+
+  const invalidas: [string, () => void, string][] = [
+    ['inexistente ou de outra organização', () => { fonte = undefined; }, 'fonte_inexistente'],
+    ['de outro tipo', () => { fonte = { id: 'FNT-SITE', code: 'CNO', source_type: 'CNO', active: true }; }, 'fonte_nao_website'],
+    ['WEBSITE que não é a do simulador', () => { fonte = { id: 'FNT-SITE', code: 'OFFICIAL_COMPANY_SOURCE', source_type: 'WEBSITE', active: true }; }, 'fonte_nao_canonica'],
+    ['inativa', () => { fonte = { ...FONTE_DO_SITE, active: false }; }, 'fonte_inativa'],
+    ['que o banco não deixou ler', () => { fonteFalha = true; }, 'fonte_nao_verificada'],
+  ];
+  it.each(invalidas)('fonte %s → 503 integracao_nao_configurada e ZERO escrita', async (_nome, preparar, motivo) => {
+    preparar();
+    const r = await pedir(CORPO);
+    expect(r.status).toBe(503);
+    expect(r.corpo).toEqual({ erro: 'integracao_nao_configurada', motivo });
+    expect(escritasDe()).toEqual([]);
+  });
+
+  it('a leitura da fonte carrega a organização e vem antes de qualquer outra consulta', async () => {
+    await pedir(CORPO);
+    expect(pedidos[0]!.url).toContain('radar_source?');
+    expect(pedidos[0]!.url).toContain('organization_id=eq.ORG-1');
+    expect(pedidos[0]!.url).toContain('id=eq.FNT-SITE');
+  });
+});
+
+describe('borda · prazo de primeira resposta', () => {
+  // CORPO chega segunda 09/11/2026 às 11:00 em São Paulo: 30 min úteis → 14:30 UTC
+  const ALVO = '2026-11-09T14:30:00.000Z';
+
+  it('sucesso devolve o vencimento de 30 minutos úteis, já gravado na conversa', async () => {
+    const r = await pedir(CORPO);
+    expect(r.status).toBe(200);
+    expect(r.corpo['primeiraRespostaAte']).toBe(ALVO);
+    expect(thread.sla_first_response_due).toBe(ALVO);
+    const patch = pedidos.find((p) => p.metodo === 'PATCH' && p.url.includes('inbox_thread'))!;
+    expect(patch.corpo).toEqual({ sla_first_response_due: ALVO }); // só o prazo: nada de setor, responsável ou status
+    expect(patch.url).toContain('organization_id=eq.ORG-1');
+  });
+
+  it.each([['erro' as const], ['sem_confirmacao' as const]])('falha ao gravar o prazo (%s) → 502 na etapa «prazo», nunca 200', async (modo) => {
+    prazoFalha = modo;
+    const r = await pedir(CORPO);
+    expect(r.status).toBe(502);
+    expect(r.corpo).toEqual({ erro: 'gravacao_falhou', etapa: 'prazo' });
+    expect(thread.sla_first_response_due).toBe(THREAD_NOVA.sla_first_response_due);
+  });
+
+  it('o reenvio depois da falha conserta o prazo e não regrava evidência nem conversa', async () => {
+    prazoFalha = 'erro';
+    expect((await pedir(CORPO)).status).toBe(502);
+    // o que a primeira tentativa deixou no banco
+    const primeiro = pedidos.find((p) => p.metodo === 'POST' && p.url.includes('radar_source_record'))!.corpo as Record<string, unknown>;
+    registros = [{
+      id: 'RF-1', source_id: 'FNT-SITE', record_type: 'empresa', external_id: 'nf-777', payload: primeiro['payload'],
+      payload_fingerprint: primeiro['payload_fingerprint'], intake_status: 'PENDING', entity_id: null, received_at: primeiro['received_at'],
+    }];
+    mensagens = [{ id: 'MSG-1' }];
+    prazoFalha = undefined; pedidos = [];
+
+    const r = await pedir(CORPO);
+    expect(r.status).toBe(200);
+    expect(r.corpo['resultado']).toBe('IDEMPOTENTE');
+    expect(pedidos.some((p) => p.metodo === 'POST' && p.url.includes('radar_source_record'))).toBe(false);
+    expect(pedidos.some((p) => p.url.includes('rpc/inbox_ingest'))).toBe(false);
+    expect(thread.sla_first_response_due).toBe(ALVO);
+  });
+
+  it('nenhuma chamada toca a configuração global de SLA do Inbox', async () => {
+    await pedir(CORPO);
+    expect(pedidos.filter((p) => p.metodo !== 'GET').some((p) => p.url.includes('inbox_config'))).toBe(false);
   });
 });

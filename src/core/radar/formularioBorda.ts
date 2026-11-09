@@ -12,7 +12,7 @@
  */
 import { autorizar, validarCorpo } from './formularioServidor'
 import { corpoDaSubmissaoNetlify } from './formularioTransporte'
-import { ErroDeGravacao, gravarSubmissao } from './formularioGravacao'
+import { ErroDeConfiguracao, ErroDeGravacao, gravarSubmissao } from './formularioGravacao'
 import { montarPortasIntegracao, type AmbienteFormulario } from './formularioPorta'
 import { FORMULARIOS } from './formularioSite'
 import type { AmbienteAtivacao } from '../inbox/ativacao'
@@ -83,15 +83,24 @@ export async function tratarPedidoFormulario(req: Request, deps: DepsBorda): Pro
       resultado: r.resultado, externoId: r.externoId, impressao: r.payloadFingerprint.slice(0, 16),
       passos: r.passos, registro: r.registroFonteId, thread: r.threadId ?? null,
       contato: r.contatoId ?? null, completado: r.contatoCompletado?.campos ?? [], roteada: r.roteada?.aplicado ?? null,
+      prazo: r.prazo.venceEm ?? null, prazoAjustado: r.prazo.ajustado, prazoMotivo: r.prazo.motivo,
     })
     return {
       status: 200,
       corpo: {
         resultado: r.resultado, externoId: r.externoId, passos: r.passos,
         registroFonteId: r.registroFonteId, threadId: r.threadId ?? null, novaConversa: r.novaConversa,
+        primeiraRespostaAte: r.prazo.venceEm ?? null,
       },
     }
   } catch (e) {
+    // Fonte configurada que não é a do formulário do site: erro de CONFIGURAÇÃO, percebido antes de qualquer
+    // escrita. 503 como as demais faltas de configuração — a submissão fica no painel do Netlify e a
+    // reconciliação a traz quando a variável for corrigida.
+    if (e instanceof ErroDeConfiguracao) {
+      log({ resultado: 'nao_configurada', motivo: e.motivo })
+      return { status: 503, corpo: { erro: 'integracao_nao_configurada', motivo: e.motivo } }
+    }
     // Gravação exigida que não foi confirmada: 5xx, nada de sucesso. Quem chamou reenvia e o plano COMPLETA
     // o que faltou — e, se ninguém reenviar, o reconciliador traz a submissão de volta sem duplicar.
     const etapa = e instanceof ErroDeGravacao ? e.etapa : 'desconhecida'

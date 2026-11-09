@@ -38,7 +38,9 @@
  */
 import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
-import { ROTULO_LEITURA_DA_PAGINA, gravarSubmissao, linhaDeEvidencia, type PortasGravacao } from '../src/core/radar/formularioGravacao';
+import {
+  ErroDeConfiguracao, ErroDeGravacao, ROTULO_LEITURA_DA_PAGINA, gravarSubmissao, linhaDeEvidencia, prazoDoLead, type PortasGravacao,
+} from '../src/core/radar/formularioGravacao';
 import { argsIngest, resultadoIngest } from '../src/core/inbox/ingestaoPorta';
 import { registroDoBanco } from '../src/core/radar/formularioPorta';
 import { dadosDoContato } from '../src/core/inbox/formularioSite';
@@ -56,6 +58,14 @@ const sqlArquivo = (n: string) => fs.readFileSync(new URL(n, RAIZ), 'utf8');
 const ORG = '11111111-1111-1111-1111-111111111111';
 const FONTE = '22222222-2222-2222-2222-222222222222';
 const ATENDENTE = 'aaaaaaaa-0000-0000-0000-000000000001';
+// Fontes que NÃO são a do formulário do site: mesmo tipo com outro código (existe em produção), outro tipo,
+// inativa, de outra organização e inexistente.
+const OUTRA_ORG = '11111111-1111-1111-1111-999999999999';
+const FONTE_OFICIAL = '22222222-2222-2222-2222-000000000002';
+const FONTE_CNO = '22222222-2222-2222-2222-000000000003';
+const FONTE_INATIVA = '22222222-2222-2222-2222-000000000004';
+const FONTE_DE_OUTRA_ORG = '22222222-2222-2222-2222-000000000005';
+const FONTE_INEXISTENTE = '22222222-2222-2222-2222-00000000dead';
 const SETOR_COMERCIAL = 'cccccccc-0000-0000-0000-000000000001';
 
 /** Só o que a 0055 e a 0056 assumem do resto do schema. Não é o banco real: isso é do pg-preflight. */
@@ -74,7 +84,7 @@ create table project (id uuid primary key default gen_random_uuid(), organizatio
 create table worker (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), name text not null);
 create table radar_company (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), legal_name text);
 create table radar_contact (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organization(id), full_name text);
-create table radar_source (id uuid primary key, organization_id uuid not null references organization(id), code text);
+create table radar_source (id uuid primary key, organization_id uuid not null references organization(id), code text, source_type text not null default 'WEBSITE', active boolean not null default true);
 create table radar_source_record (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organization(id),
@@ -98,7 +108,13 @@ grant select on profile to authenticated;
 const SEMENTE = `
 insert into organization (id, name) values ('${ORG}', 'EIFF');
 insert into profile (id, organization_id, name, email, role) values ('${ATENDENTE}', '${ORG}', 'Comercial', 'c@eiff', 'Diretoria');
-insert into radar_source (id, organization_id, code) values ('${FONTE}', '${ORG}', 'WEBSITE');
+insert into organization (id, name) values ('${OUTRA_ORG}', 'Outra organização');
+insert into radar_source (id, organization_id, code, source_type, active) values
+  ('${FONTE}', '${ORG}', 'WEBSITE', 'WEBSITE', true),
+  ('${FONTE_OFICIAL}', '${ORG}', 'OFFICIAL_COMPANY_SOURCE', 'WEBSITE', true),
+  ('${FONTE_CNO}', '${ORG}', 'CNO', 'CNO', true),
+  ('${FONTE_INATIVA}', '${ORG}', 'WEBSITE_ANTIGA', 'WEBSITE', false),
+  ('${FONTE_DE_OUTRA_ORG}', '${OUTRA_ORG}', 'WEBSITE', 'WEBSITE', true);
 insert into inbox_sector (id, organization_id, code, name, sort_order, default_assignee_id) values
   ('${SETOR_COMERCIAL}', '${ORG}', 'COMERCIAL', 'Comercial', 1, '${ATENDENTE}'),
   ('cccccccc-0000-0000-0000-000000000002', '${ORG}', 'ADMINISTRATIVO', 'Administrativo', 2, null);
@@ -209,11 +225,38 @@ async function main() {
   };
 
   /** Ponte do `sel` do adapter da interface sobre este banco. */
-  const sel = async (tabela: string, ordem: string) => todas(`select * from ${tabela} order by ${ordem}`);
+  // O PostgREST entrega instantes como TEXTO; o PGlite entrega `Date`. A ponte converte, para a camada da
+  // interface receber aqui o mesmo que recebe em produção (o roteador ordena mensagens comparando texto, e
+  // isso só aparece quando a conversa tem mais de uma mensagem — prova T2).
+  const comoPostgrest = (linha: Record<string, any>) => Object.fromEntries(Object.entries(linha).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v]));
+  const sel = async (tabela: string, ordem: string) => (await todas(`select * from ${tabela} order by ${ordem}`)).map(comoPostgrest);
   const lerPelaInterface = (): Promise<InboxDataset> => carregarInbox({ sel, orgId: ORG, obraCodigo: () => undefined });
 
   let falharIngest = false;
+  let falharPrazo = false;
+  const iso = (v: unknown): string | undefined => (v === null || v === undefined ? undefined : new Date(v as string).toISOString());
   const portas = (): PortasGravacao => ({
+    async fonte(fonteId) {
+      const f = await uma('select id, code, source_type, active from radar_source where organization_id = $1 and id = $2', [ORG, fonteId]);
+      return f === undefined ? undefined : { id: String(f['id']), codigo: String(f['code'] ?? ''), tipo: String(f['source_type'] ?? ''), ativa: f['active'] === true };
+    },
+    async prazoDaConversa(provider, externalMessageId) {
+      const t = await uma(
+        `select t.id, t.status, t.opened_at, t.sla_first_response_due, t.sla_first_response_at from inbox_thread t
+           join inbox_message m on m.thread_id = t.id
+          where m.organization_id = $1 and m.provider = $2 and m.external_message_id = $3`, [ORG, provider, externalMessageId]);
+      if (t === undefined) return undefined;
+      const vence = iso(t['sla_first_response_due']); const respondida = iso(t['sla_first_response_at']); const aberta = iso(t['opened_at']);
+      return {
+        threadId: String(t['id']), aberta: !['RESOLVIDA', 'FECHADA'].includes(String(t['status'])),
+        ...(vence !== undefined ? { venceEm: vence } : {}), ...(respondida !== undefined ? { respondidaEm: respondida } : {}), ...(aberta !== undefined ? { abertaEm: aberta } : {}),
+      };
+    },
+    async definirPrazo(threadId, venceEmIso) {
+      if (falharPrazo) throw new Error('postgrest PATCH inbox_thread http 503');
+      const r = await uma('update inbox_thread set sla_first_response_due = $1::timestamptz where organization_id = $2 and id = $3 returning sla_first_response_due', [venceEmIso, ORG, threadId]);
+      return r === undefined ? undefined : iso(r['sla_first_response_due']);
+    },
     async registrosDaSubmissao(fonteId, externoId) {
       const linhas = await todas('select * from radar_source_record where organization_id = $1 and source_id = $2 and external_id = $3', [ORG, fonteId, externoId]);
       return linhas.map(registroDoBanco);
@@ -367,9 +410,12 @@ async function main() {
   /* ---------------- E · prazo de primeira resposta ---------------- */
 
   const threadLinha = (await todas('select * from inbox_thread'))[0]!;
-  prova('E', 'prazo de primeira resposta gravado pela configuração do Inbox',
-    threadLinha['sla_first_response_due'] !== null,
-    `vence em ${threadLinha['sla_first_response_due']}`);
+  // A submissão chega segunda 09/11/2026 às 11:00 em São Paulo: 30 minutos ÚTEIS → 11:30 (14:30 UTC).
+  // A RPC cria a conversa com as 24 h corridas da configuração; quem deixa 30 min úteis é o passo do prazo.
+  prova('E', 'prazo de primeira resposta do lead do site: 30 minutos ÚTEIS a partir da submissão original',
+    iso(threadLinha['sla_first_response_due']) === prazoDoLead(SUB) && prazoDoLead(SUB) === '2026-11-09T14:30:00.000Z'
+    && r1.prazo.ajustado && r1.prazo.venceEm === prazoDoLead(SUB),
+    `vence em ${iso(threadLinha['sla_first_response_due'])} (submissão ${SUB.recebidoEm})`);
 
   prova('E2', 'e a conversa tem RESPONSÁVEL, não fica só no setor',
     threadLinha['assignee_id'] !== null && String(threadLinha['assignee_id']) === ATENDENTE,
@@ -513,6 +559,99 @@ async function main() {
     final.evidencias === 5 && final.pendentes === 5 && final.comEntidade === 0
     && final.threads === 4 && final.mensagens === 4 && final.empresasRadar === 0,
     JSON.stringify(final));
+
+  /* ---------------- Q · a fonte configurada tem de ser a do formulário do site ---------------- */
+
+  const antes = { ev: await conta('radar_source_record'), th: await conta('inbox_thread'), msg: await conta('inbox_message'), ct: await conta('inbox_contact') };
+  const NOVA = (id: string, email: string, criadoEm = '2026-11-12T13:00:00.000Z') =>
+    submissaoDe({ ...BRUTA_NETLIFY.payload, id, created_at: criadoEm, data: { ...BRUTA_NETLIFY.payload.data, email, telefone: '' } });
+  const fontesErradas: [string, string, string][] = [
+    ['WEBSITE de outro código', FONTE_OFICIAL, 'fonte_nao_canonica'],
+    ['de outro tipo', FONTE_CNO, 'fonte_nao_website'],
+    ['inativa, de outro código', FONTE_INATIVA, 'fonte_nao_canonica'],
+    ['de outra organização', FONTE_DE_OUTRA_ORG, 'fonte_inexistente'],
+    ['inexistente', FONTE_INEXISTENTE, 'fonte_inexistente'],
+  ];
+  const motivos: string[] = [];
+  for (const [, fonteId] of fontesErradas) {
+    const e = await gravarSubmissao(NOVA('nf-prova-fonte', 'fonte@exemplo.invalido'), fonteId, ORG, portas()).catch((x: unknown) => x);
+    motivos.push(e instanceof ErroDeConfiguracao ? e.motivo : `SEM ERRO DE CONFIGURAÇÃO: ${String(e)}`);
+  }
+  // a PRÓPRIA fonte do site, desativada: o código é único por organização, então «inativa» é ela mesma desligada
+  await db.query('update radar_source set active = false where id = $1', [FONTE]);
+  const eInativa = await gravarSubmissao(NOVA('nf-prova-fonte', 'fonte@exemplo.invalido'), FONTE, ORG, portas()).catch((x: unknown) => x);
+  motivos.push(eInativa instanceof ErroDeConfiguracao ? eInativa.motivo : `SEM ERRO DE CONFIGURAÇÃO: ${String(eInativa)}`);
+  await db.query('update radar_source set active = true where id = $1', [FONTE]);
+  const depois = { ev: await conta('radar_source_record'), th: await conta('inbox_thread'), msg: await conta('inbox_message'), ct: await conta('inbox_contact') };
+  prova('Q', 'fonte errada (WEBSITE de outro código, outro tipo, outra organização, inexistente, e a do site desativada) → erro de configuração e ZERO escrita',
+    JSON.stringify(motivos) === JSON.stringify([...fontesErradas.map((f) => f[2]), 'fonte_inativa']) && JSON.stringify(antes) === JSON.stringify(depois),
+    `${motivos.join(' · ')} · antes=${JSON.stringify(antes)} depois=${JSON.stringify(depois)}`);
+
+  /* ---------------- R · os outros canais continuam com o SLA da configuração ---------------- */
+
+  const cfgAntes = (await uma('select sla_hours from inbox_config where organization_id = $1', [ORG]))!['sla_hours'];
+  const zap = await uma(
+    `select inbox_ingest($1::uuid,'META_CLOUD','WHATSAPP','EXTERNAL','5562988887777','Contato de WhatsApp (FICTÍCIO)','wamid.prova-0001',null,
+       'Bom dia, preciso de um orçamento.','texto','2026-11-12T13:00:00.000Z'::timestamptz,null,null,null,'[]'::jsonb,'{}'::jsonb) as d`, [ORG]);
+  const threadZap = await uma('select opened_at, sla_first_response_due from inbox_thread where id = $1', [(zap!['d'] as Record<string, unknown>)['thread_id']]);
+  const horasZap = (new Date(threadZap!['sla_first_response_due']).getTime() - new Date(threadZap!['opened_at']).getTime()) / 3_600_000;
+  const cfgDepois = (await uma('select sla_hours from inbox_config where organization_id = $1', [ORG]))!['sla_hours'];
+  prova('R', 'outro canal (WhatsApp) continua com as 24 h corridas, e a configuração global de SLA não foi tocada',
+    horasZap === 24 && JSON.stringify(cfgAntes) === JSON.stringify(cfgDepois) && Number((cfgDepois as Record<string, number>)['Normal']) === 24,
+    `WhatsApp: ${horasZap} h · sla_hours=${JSON.stringify(cfgDepois)}`);
+
+  /* ---------------- S · falha no ajuste do prazo: sem falso sucesso, e o reenvio conserta ---------------- */
+
+  const COM_FALHA = NOVA('nf-prova-prazo', 'prazo@exemplo.invalido');
+  falharPrazo = true;
+  const tentativa = await gravar(COM_FALHA).catch((x: unknown) => x);
+  falharPrazo = false;
+  const parcial = await portas().prazoDaConversa('MANUAL', 'nf-prova-prazo');
+  const semSucesso = tentativa instanceof ErroDeGravacao && tentativa.etapa === 'prazo';
+  const ficouErrado = parcial !== undefined && parcial.venceEm !== prazoDoLead(COM_FALHA);
+  prova('S', 'falha ao gravar o prazo → ERRO na etapa «prazo» (a borda responde 502), nunca sucesso com prazo errado',
+    semSucesso && ficouErrado,
+    `erro=${tentativa instanceof Error ? tentativa.message : String(tentativa)} · prazo que ficou=${parcial?.venceEm}`);
+
+  const contagem = async () => ({
+    ev: await conta('radar_source_record', "external_id = 'nf-prova-prazo'"),
+    msg: await conta('inbox_message', "external_message_id = 'nf-prova-prazo'"),
+    th: await conta('inbox_thread'),
+  });
+  const antesDoReenvioPrazo = await contagem();
+  const reenvio = await gravar(COM_FALHA);
+  const consertado = await portas().prazoDaConversa('MANUAL', 'nf-prova-prazo');
+  const depoisDoReenvioPrazo = await contagem();
+  prova('S2', 'o reenvio conserta o prazo: IDEMPOTENTE, mesma evidência, mesma conversa, vencimento certo',
+    reenvio.resultado === 'IDEMPOTENTE' && reenvio.prazo.ajustado && consertado?.venceEm === prazoDoLead(COM_FALHA)
+    && JSON.stringify(antesDoReenvioPrazo) === JSON.stringify(depoisDoReenvioPrazo) && antesDoReenvioPrazo.ev === 1 && antesDoReenvioPrazo.msg === 1,
+    `resultado=${reenvio.resultado} · vence em ${consertado?.venceEm} · ${JSON.stringify(depoisDoReenvioPrazo)}`);
+
+  const terceiro = await gravar(COM_FALHA);
+  prova('S3', 'e um terceiro envio não escreve mais nada no prazo',
+    terceiro.resultado === 'IDEMPOTENTE' && !terceiro.prazo.ajustado && terceiro.prazo.motivo === 'prazo_correto');
+
+  /* ---------------- T · sexta à noite, feriado e a segunda solicitação da mesma pessoa ---------------- */
+
+  const SEXTA = NOVA('nf-prova-sexta', 'sexta@exemplo.invalido', '2026-11-13T22:00:00.000Z');   // sexta 19:00 em São Paulo
+  const FERIADO = NOVA('nf-prova-feriado', 'feriado@exemplo.invalido', '2026-11-20T13:00:00.000Z'); // sexta 20/11, Consciência Negra
+  const rSexta = await gravar(SEXTA);
+  const rFeriado = await gravar(FERIADO);
+  prova('T', 'sexta à noite e feriado: o prazo vence às 08:30 da segunda seguinte (horário de São Paulo)',
+    rSexta.prazo.venceEm === '2026-11-16T11:30:00.000Z' && rFeriado.prazo.venceEm === '2026-11-23T11:30:00.000Z',
+    `sexta → ${rSexta.prazo.venceEm} · feriado → ${rFeriado.prazo.venceEm}`);
+
+  const SEGUNDA_SOLICITACAO = NOVA('nf-prova-sexta-2', 'sexta@exemplo.invalido', '2026-11-14T15:00:00.000Z');
+  const threadsAntes = await conta('inbox_thread');
+  const rSegunda = await gravar(SEGUNDA_SOLICITACAO);
+  prova('T2', 'segunda solicitação da mesma pessoa, sem resposta à primeira: mesma conversa, e vale o prazo mais curto',
+    rSegunda.resultado === 'REGISTRADO' && (await conta('inbox_thread')) === threadsAntes
+    && rSegunda.prazo.venceEm === '2026-11-16T11:30:00.000Z' && !rSegunda.prazo.ajustado
+    && (await conta('inbox_message', "external_message_id in ('nf-prova-sexta','nf-prova-sexta-2')")) === 2,
+    `conversas=${await conta('inbox_thread')} (antes ${threadsAntes}) · prazo=${rSegunda.prazo.venceEm} (${rSegunda.prazo.motivo})`);
+
+  prova('U', 'ao final de tudo: nenhuma empresa do Radar e nenhuma evidência com entidade',
+    (await conta('radar_company')) === 0 && (await conta('radar_source_record', 'entity_id is not null')) === 0);
 
   await db.exec('rollback');
   await db.close();

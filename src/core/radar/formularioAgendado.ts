@@ -36,7 +36,7 @@
  *    no meio não deixa nada pela metade — a submissão com evidência e sem
  *    conversa é o caso COMPLETADO, previsto e provado.
  */
-import { gravarSubmissao, type PortasGravacao } from './formularioGravacao'
+import { decidirPrazo, gravarSubmissao, prazoDoLead, type PortasGravacao } from './formularioGravacao'
 import { planoDaReconciliacao, type ItemReconciliacao, type MotivoRetencao } from './formularioReconciliacao'
 import { montarPortasIntegracao, type AmbienteFormulario } from './formularioPorta'
 import { FORMULARIOS } from './formularioSite'
@@ -223,7 +223,16 @@ export async function rodadaDeReconciliacao(env: AmbienteAgendado, deps: DepsAge
       )
       const comEvidencia = new Set(estado.evidencias.map((e) => chaveDaVersao(e.externoId, e.impressao)))
       const comConversa = new Set(estado.conversas)
-      fila = ordenada.filter((i) => !(comEvidencia.has(chaveDaVersao(i.externoId, i.payloadFingerprint)) && comConversa.has(i.externoId)))
+      // Terceiro critério: o prazo de primeira resposta já é o certo. Uma submissão que parou entre a
+      // conversa e o ajuste do prazo NÃO está «dentro» — sem isto ela ficaria para sempre com as 24 h
+      // corridas da configuração. Sem leitura de prazo para a conversa, também não está dentro.
+      const prazoDe = new Map((estado.prazos ?? []).map((p) => [p.externoId, p]))
+      const prazoCerto = (i: ItemReconciliacao): boolean => {
+        const p = prazoDe.get(i.externoId)
+        if (p === undefined) return false
+        try { return decidirPrazo(p, prazoDoLead(i.submissao)).acao === 'manter' } catch { return false }
+      }
+      fila = ordenada.filter((i) => !(comEvidencia.has(chaveDaVersao(i.externoId, i.payloadFingerprint)) && comConversa.has(i.externoId) && prazoCerto(i)))
       jaDentro = ordenada.length - fila.length
     } catch (e) {
       // Sem o estado em lote a rodada continua: cada submissão ainda é idempotente

@@ -14,7 +14,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { ErroDeGravacao, ROTULO_LEITURA_DA_PAGINA, gravarSubmissao, linhaDeEvidencia, linhaDeOrigem, resumoParaOInbox, type PortasGravacao } from './formularioGravacao'
+import {
+  ErroDeConfiguracao, ErroDeGravacao, PRAZO_PRIMEIRA_RESPOSTA_MIN, ROTULO_LEITURA_DA_PAGINA, decidirPrazo, gravarSubmissao, linhaDeEvidencia,
+  linhaDeOrigem, prazoDoLead, resumoParaOInbox, validarFonte, type EstadoDoPrazo, type FonteLida, type PortasGravacao,
+} from './formularioGravacao'
 import { textoDaMensagem } from '../inbox/formularioSite'
 import { pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
 import { planejarGravacao } from './formularioServidor'
@@ -50,6 +53,7 @@ interface Espiao {
   ingestoes: unknown[]
   completados: { contatoId: string; dados: unknown }[]
   roteadas: string[]
+  prazos: { threadId: string; venceEm: string }[]
 }
 
 function espiao(opcoes: {
@@ -61,9 +65,35 @@ function espiao(opcoes: {
   falharContato?: boolean
   semRotear?: boolean
   contatoDaIdentidade?: string
+  fonte?: FonteLida | undefined
+  falharFonte?: boolean
+  prazo?: Partial<EstadoDoPrazo>
+  falharLeituraDoPrazo?: boolean
+  falharPrazo?: 'erro' | 'sem_confirmacao' | 'valor_diferente'
 } = {}): Espiao {
-  const e: Espiao = { ordem: [], evidencias: [], ingestoes: [], completados: [], roteadas: [], portas: {} as PortasGravacao }
+  const e: Espiao = { ordem: [], evidencias: [], ingestoes: [], completados: [], roteadas: [], prazos: [], portas: {} as PortasGravacao }
+  let conversa = opcoes.conversaExiste ?? false
+  // a conversa nasce com 24 h corridas, como a RPC grava; o passo do prazo é o que corrige
+  let vence: string | undefined = opcoes.prazo && 'venceEm' in opcoes.prazo ? opcoes.prazo.venceEm : '2026-11-10T14:00:00.000Z'
   e.portas = {
+    fonte: async (fonteId) => {
+      if (opcoes.falharFonte === true) throw new Error('postgrest GET radar_source http 500')
+      return 'fonte' in opcoes ? opcoes.fonte : { id: fonteId, codigo: 'WEBSITE', tipo: 'WEBSITE', ativa: true }
+    },
+    prazoDaConversa: async () => {
+      if (opcoes.falharLeituraDoPrazo === true) throw new Error('postgrest GET inbox_thread http 500')
+      if (!conversa) return undefined
+      return { threadId: 'THR-1', aberta: true, ...opcoes.prazo, ...(vence !== undefined ? { venceEm: vence } : {}) }
+    },
+    definirPrazo: async (threadId, venceEmIso) => {
+      e.ordem.push('prazo')
+      e.prazos.push({ threadId, venceEm: venceEmIso })
+      if (opcoes.falharPrazo === 'erro') throw new Error('postgrest PATCH inbox_thread http 500')
+      if (opcoes.falharPrazo === 'sem_confirmacao') return undefined
+      if (opcoes.falharPrazo === 'valor_diferente') return '2026-11-10T14:00:00.000Z'
+      vence = venceEmIso
+      return venceEmIso
+    },
     registrosDaSubmissao: async () => opcoes.registros ?? [],
     conversaExiste: async () => opcoes.conversaExiste ?? false,
     gravarEvidencia: async (linha) => {
@@ -76,6 +106,7 @@ function espiao(opcoes: {
       e.ordem.push('conversa')
       e.ingestoes.push(p)
       if (opcoes.falharIngest === true) throw new Error('rpc caiu')
+      if (opcoes.ingest?.ok !== false) conversa = true
       return {
         ok: true, duplicada: false, threadId: 'THR-1', messageId: 'MSG-1', contactId: 'CTI-1',
         novaThread: true, novoContato: true, reaberta: false, ...opcoes.ingest,
@@ -372,5 +403,133 @@ describe('gravação · o que ela não faz', () => {
     for (const chave of ['empresaId', 'oportunidadeId', 'tarefaId', 'enviada']) {
       expect(Object.keys(r)).not.toContain(chave)
     }
+  })
+})
+
+/* ------------------------------------------------------------------ */
+
+describe('gravação · a fonte configurada é a do formulário do site', () => {
+  const FONTE_OK: FonteLida = { id: FONTE, codigo: 'WEBSITE', tipo: 'WEBSITE', ativa: true }
+
+  it('a regra pura: existe, é WEBSITE, é a canônica e está ativa', () => {
+    expect(validarFonte(FONTE, FONTE_OK)).toEqual({ ok: true })
+    expect(validarFonte(FONTE, undefined)).toEqual({ ok: false, motivo: 'fonte_inexistente' })
+    expect(validarFonte(FONTE, { ...FONTE_OK, id: 'OUTRA' })).toEqual({ ok: false, motivo: 'fonte_inexistente' })
+    expect(validarFonte(FONTE, { ...FONTE_OK, tipo: 'CNO', codigo: 'CNO' })).toEqual({ ok: false, motivo: 'fonte_nao_website' })
+    // a outra fonte WEBSITE que existe em produção: mesmo tipo, outro código
+    expect(validarFonte(FONTE, { ...FONTE_OK, codigo: 'OFFICIAL_COMPANY_SOURCE' })).toEqual({ ok: false, motivo: 'fonte_nao_canonica' })
+    expect(validarFonte(FONTE, { ...FONTE_OK, ativa: false })).toEqual({ ok: false, motivo: 'fonte_inativa' })
+  })
+
+  const invalidas: [string, Parameters<typeof espiao>[0], string][] = [
+    ['inexistente (ou de outra organização: a porta filtra antes)', { fonte: undefined }, 'fonte_inexistente'],
+    ['de outro tipo', { fonte: { id: FONTE, codigo: 'CNO', tipo: 'CNO', ativa: true } }, 'fonte_nao_website'],
+    ['WEBSITE, mas não a do simulador', { fonte: { id: FONTE, codigo: 'OFFICIAL_COMPANY_SOURCE', tipo: 'WEBSITE', ativa: true } }, 'fonte_nao_canonica'],
+    ['inativa', { fonte: { id: FONTE, codigo: 'WEBSITE', tipo: 'WEBSITE', ativa: false } }, 'fonte_inativa'],
+    ['que não pôde ser lida', { falharFonte: true }, 'fonte_nao_verificada'],
+  ]
+  it.each(invalidas)('fonte %s → erro de configuração e ZERO escrita', async (_nome, opcoes, motivo) => {
+    const e = espiao(opcoes)
+    const erro = await gravarSubmissao(SUB, FONTE, ORG, e.portas).catch((x: unknown) => x)
+    expect(erro).toBeInstanceOf(ErroDeConfiguracao)
+    expect((erro as ErroDeConfiguracao).motivo).toBe(motivo)
+    expect(e.ordem).toEqual([])
+    expect(e.evidencias).toEqual([])
+    expect(e.ingestoes).toEqual([])
+    expect(e.prazos).toEqual([])
+  })
+
+  it('fonte válida: o processamento é o de sempre', async () => {
+    const e = espiao({ fonte: FONTE_OK })
+    const r = await gravarSubmissao(SUB, FONTE, ORG, e.portas)
+    expect(r.resultado).toBe('REGISTRADO')
+    expect(e.ordem.slice(0, 2)).toEqual(['evidencia', 'conversa'])
+  })
+})
+
+describe('gravação · prazo de primeira resposta do lead do site', () => {
+  // SUB chega segunda 09/11/2026 às 11:00 em São Paulo (14:00 UTC): 30 min úteis → 11:30 (14:30 UTC)
+  const ALVO = '2026-11-09T14:30:00.000Z'
+
+  it('o alvo são 30 minutos ÚTEIS a partir do instante ORIGINAL da submissão', () => {
+    expect(PRAZO_PRIMEIRA_RESPOSTA_MIN).toBe(30)
+    expect(prazoDoLead(SUB)).toBe(ALVO)
+    // sexta 13/11 às 19:00 em São Paulo → segunda 16/11 às 08:30
+    expect(prazoDoLead({ ...SUB, recebidoEm: '2026-11-13T22:00:00.000Z' })).toBe('2026-11-16T11:30:00.000Z')
+  })
+
+  it('a conversa nasce com 24 h corridas e SAI com 30 min úteis, confirmados pelo banco', async () => {
+    const e = espiao()
+    const r = await gravarSubmissao(SUB, FONTE, ORG, e.portas)
+    expect(e.prazos).toEqual([{ threadId: 'THR-1', venceEm: ALVO }])
+    expect(r.prazo).toEqual({ venceEm: ALVO, ajustado: true, motivo: 'definido' })
+    // depois da conversa e antes do contato e do roteador (que preserva o prazo que encontra)
+    expect(e.ordem).toEqual(['evidencia', 'conversa', 'prazo', 'contato', 'rotear'])
+  })
+
+  const falhas: [string, Parameters<typeof espiao>[0]][] = [
+    ['o banco recusa a gravação do prazo', { falharPrazo: 'erro' }],
+    ['a gravação volta sem confirmação', { falharPrazo: 'sem_confirmacao' }],
+    ['o banco devolve outro vencimento', { falharPrazo: 'valor_diferente' }],
+    ['o prazo atual não pôde ser lido', { falharLeituraDoPrazo: true }],
+  ]
+  it.each(falhas)('SEM FALSO SUCESSO: %s → erro na etapa «prazo», nunca resultado', async (_nome, opcoes) => {
+    const e = espiao(opcoes)
+    const erro = await gravarSubmissao(SUB, FONTE, ORG, e.portas).catch((x: unknown) => x)
+    expect(erro).toBeInstanceOf(ErroDeGravacao)
+    expect((erro as ErroDeGravacao).etapa).toBe('prazo')
+    // parou antes do contato e do roteador: quem chamou recebe 5xx e reenvia
+    expect(e.ordem).not.toContain('rotear')
+  })
+
+  it('RECUPERAÇÃO: o reenvio depois da falha conserta o prazo sem regravar evidência nem conversa', async () => {
+    // estado parcial deixado pela tentativa anterior: evidência e conversa existem, prazo ainda de 24 h
+    const e = espiao({ registros: [evidenciaExistente(SUB)], conversaExiste: true })
+    const r = await gravarSubmissao(SUB, FONTE, ORG, e.portas)
+    expect(r.resultado).toBe('IDEMPOTENTE')
+    expect(e.evidencias).toEqual([])
+    expect(e.ingestoes).toEqual([])
+    expect(e.prazos).toEqual([{ threadId: 'THR-1', venceEm: ALVO }])
+    expect(r.prazo.ajustado).toBe(true)
+  })
+
+  it('reenvio com o prazo já certo: nada é escrito', async () => {
+    const e = espiao({ registros: [evidenciaExistente(SUB)], conversaExiste: true, prazo: { venceEm: ALVO } })
+    const r = await gravarSubmissao(SUB, FONTE, ORG, e.portas)
+    expect(r.resultado).toBe('IDEMPOTENTE')
+    expect(e.prazos).toEqual([])
+    expect(r.prazo).toEqual({ venceEm: ALVO, ajustado: false, motivo: 'prazo_correto' })
+  })
+
+  it('segunda solicitação da mesma pessoa, com a primeira ainda sem resposta: vale o prazo mais curto (o da primeira)', async () => {
+    // a conversa foi aberta por um pedido das 09:40 (12:40 UTC), ainda sem resposta: vence 10:10
+    const anterior = '2026-11-09T13:10:00.000Z'
+    const e = espiao({ prazo: { venceEm: anterior, abertaEm: '2026-11-09T12:40:00.000Z' } })
+    const r = await gravarSubmissao(SUB, FONTE, ORG, e.portas)
+    expect(e.prazos).toEqual([])
+    expect(r.prazo).toEqual({ venceEm: anterior, ajustado: false, motivo: 'prazo_anterior_mais_curto' })
+  })
+
+  it('conversa já respondida ou encerrada: o prazo não é reaberto pelo formulário', () => {
+    expect(decidirPrazo({ threadId: 'T', aberta: true, venceEm: '2026-11-10T14:00:00.000Z', respondidaEm: '2026-11-09T14:05:00.000Z' }, ALVO))
+      .toEqual({ acao: 'manter', motivo: 'ja_respondida' })
+    expect(decidirPrazo({ threadId: 'T', aberta: false, venceEm: '2026-11-10T14:00:00.000Z' }, ALVO)).toEqual({ acao: 'manter', motivo: 'encerrada' })
+    expect(decidirPrazo({ threadId: 'T', aberta: true }, ALVO)).toEqual({ acao: 'definir', venceEm: ALVO })
+  })
+
+  it('prazo de fábrica MENOR que o alvo também é corrigido: sexta à noite não vence no sábado', () => {
+    // lead de sexta 13/11 às 19:00 em São Paulo; a RPC grava +24 h corridas = sábado 19:00
+    const abertaEm = '2026-11-13T22:00:00.000Z'
+    const alvo = '2026-11-16T11:30:00.000Z' // segunda 08:30
+    expect(decidirPrazo({ threadId: 'T', aberta: true, abertaEm, venceEm: '2026-11-14T22:00:00.000Z' }, alvo)).toEqual({ acao: 'definir', venceEm: alvo })
+    expect(decidirPrazo({ threadId: 'T', aberta: true, abertaEm, venceEm: alvo }, alvo)).toEqual({ acao: 'manter', motivo: 'prazo_correto' })
+  })
+
+  it('instante ilegível falha ANTES de gravar qualquer coisa', async () => {
+    const e = espiao()
+    const erro = await gravarSubmissao({ ...SUB, recebidoEm: 'ontem' }, FONTE, ORG, e.portas).catch((x: unknown) => x)
+    expect(erro).toBeInstanceOf(Error)
+    expect(e.evidencias).toEqual([])
+    expect(e.ingestoes).toEqual([])
   })
 })

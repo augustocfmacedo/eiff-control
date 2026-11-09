@@ -16,7 +16,7 @@
  * disciplina de filtrar, e ela está em cada chamada.
  */
 import type { CodigoProvider } from './canais'
-import type { PortasGravacao, ResumoContatoCompletado } from './formularioGravacao'
+import type { EstadoDoPrazo, FonteLida, PortasGravacao, ResumoContatoCompletado } from './formularioGravacao'
 import type { DadosDoContato } from '../inbox/formularioSite'
 import type { RegistroFonte } from './types'
 import { montarPortasInbox, type AmbienteAtivacao } from '../inbox/ativacao'
@@ -67,6 +67,9 @@ const CAMPOS_REGISTRO = 'id,source_id,record_type,external_id,payload,payload_fi
 /** Campos do contato que o formulário completa quando estão vazios. */
 export const CAMPOS_COMPLETAVEIS: readonly string[] = Object.freeze(['name', 'company_name', 'relation_kind'])
 
+/** Status em que a conversa não espera mais primeira resposta. */
+export const STATUS_ENCERRADOS: readonly string[] = Object.freeze(['RESOLVIDA', 'FECHADA'])
+
 export function portasFormularioRest(
   cfg: ConfigPortaFormulario,
   fetchFn: typeof fetch,
@@ -85,7 +88,52 @@ export function portasFormularioRest(
     return Array.isArray(d) ? (d as Record<string, unknown>[]) : [d as Record<string, unknown>]
   }
 
+  const texto = (v: unknown): string | undefined => (v === null || v === undefined ? undefined : String(v))
+  /** Linha de `inbox_thread` → o que a conversa diz sobre o prazo. */
+  const prazoDaLinha = (t: Record<string, unknown>): EstadoDoPrazo => ({
+    threadId: String(t['id']),
+    ...(texto(t['sla_first_response_due']) !== undefined ? { venceEm: texto(t['sla_first_response_due'])! } : {}),
+    ...(texto(t['sla_first_response_at']) !== undefined ? { respondidaEm: texto(t['sla_first_response_at'])! } : {}),
+    aberta: !STATUS_ENCERRADOS.includes(String(t['status'])),
+    ...(texto(t['opened_at']) !== undefined ? { abertaEm: texto(t['opened_at'])! } : {}),
+  })
+  const CAMPOS_PRAZO = 'id,status,opened_at,sla_first_response_due,sla_first_response_at'
+
   return {
+    /**
+     * A fonte configurada. O filtro de organização está na consulta: fonte de
+     * outra organização volta como inexistente, sem a chave de serviço abrir
+     * caminho para ela.
+     */
+    async fonte(fonteId) {
+      const linhas = await pedir(`radar_source?${org}&id=eq.${q(fonteId)}&select=id,code,source_type,active&limit=1`)
+      const f = linhas[0]
+      if (f === undefined) return undefined
+      const lida: FonteLida = { id: String(f['id']), codigo: String(f['code'] ?? ''), tipo: String(f['source_type'] ?? ''), ativa: f['active'] === true }
+      return lida
+    },
+
+    async prazoDaConversa(provider: CodigoProvider, externalMessageId: string) {
+      const msgs = await pedir(`inbox_message?${org}&provider=eq.${q(provider)}&external_message_id=eq.${q(externalMessageId)}&select=thread_id&limit=1`)
+      const threadId = texto(msgs[0]?.['thread_id'])
+      if (threadId === undefined) return undefined
+      const threads = await pedir(`inbox_thread?${org}&id=eq.${q(threadId)}&select=${CAMPOS_PRAZO}&limit=1`)
+      return threads[0] === undefined ? undefined : prazoDaLinha(threads[0])
+    },
+
+    /**
+     * Só o vencimento da primeira resposta desta conversa. Não toca em setor,
+     * responsável, status nem prioridade (isso é da RPC governada e do
+     * roteador), e não toca na configuração: os SLAs dos demais canais ficam
+     * como estão. `return=representation` é a confirmação do que ficou.
+     */
+    async definirPrazo(threadId, venceEmIso) {
+      const linhas = await pedir(`inbox_thread?${org}&id=eq.${q(threadId)}&select=sla_first_response_due`, {
+        method: 'PATCH', headers: { prefer: 'return=representation' }, body: JSON.stringify({ sla_first_response_due: venceEmIso }),
+      })
+      return texto(linhas[0]?.['sla_first_response_due'])
+    },
+
     async registrosDaSubmissao(fonteId, externoId) {
       const linhas = await pedir(`radar_source_record?${org}&source_id=eq.${q(fonteId)}&external_id=eq.${q(externoId)}&select=${CAMPOS_REGISTRO}`)
       return linhas.map(registroDoBanco)
@@ -107,6 +155,7 @@ export function portasFormularioRest(
     async estadoEmLote(fonteId: string, provider: CodigoProvider, externoIds: readonly string[]) {
       const evidencias: { externoId: string; impressao?: string }[] = []
       const conversas: string[] = []
+      const prazos: (EstadoDoPrazo & { externoId: string })[] = []
       for (let i = 0; i < externoIds.length; i += 50) {
         const parte = externoIds.slice(i, i + 50)
         // PostgREST: in.("a","b"). As aspas valem para qualquer id, inclusive com vírgula.
@@ -118,11 +167,24 @@ export function portasFormularioRest(
               ? {} : { impressao: String(linha['payload_fingerprint']) }),
           })
         }
-        for (const linha of await pedir(`inbox_message?${org}&provider=eq.${q(provider)}&external_message_id=${lista}&select=external_message_id`)) {
-          conversas.push(String(linha['external_message_id']))
+        const daThread = new Map<string, string[]>()
+        for (const linha of await pedir(`inbox_message?${org}&provider=eq.${q(provider)}&external_message_id=${lista}&select=external_message_id,thread_id`)) {
+          const externo = String(linha['external_message_id'])
+          conversas.push(externo)
+          const thread = texto(linha['thread_id'])
+          if (thread !== undefined) daThread.set(thread, [...(daThread.get(thread) ?? []), externo])
+        }
+        // O prazo de cada conversa: é o que deixa a rodada agendada ver uma submissão
+        // que parou entre a conversa e o ajuste do prazo.
+        const threads = [...daThread.keys()]
+        if (threads.length > 0) {
+          for (const t of await pedir(`inbox_thread?${org}&id=in.(${threads.map((x) => `"${q(x)}"`).join(',')})&select=${CAMPOS_PRAZO}`)) {
+            const estado = prazoDaLinha(t)
+            for (const externo of daThread.get(estado.threadId) ?? []) prazos.push({ ...estado, externoId: externo })
+          }
         }
       }
-      return { evidencias, conversas }
+      return { evidencias, conversas, prazos }
     },
 
     async gravarEvidencia(linha) {

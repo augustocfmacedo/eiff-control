@@ -220,3 +220,74 @@ describe('porta · o estado de muitas submissões de uma vez', () => {
     }
   })
 })
+
+describe('porta · a fonte configurada', () => {
+  it('lê pela organização e pelo id, e devolve código, tipo e situação', async () => {
+    const f = falso({ radar_source: [{ id: 'FNT-SITE', code: 'WEBSITE', source_type: 'WEBSITE', active: true }] })
+    const r = await portasFormularioRest(CFG, f.fetchFn).fonte('FNT-SITE')
+    expect(r).toEqual({ id: 'FNT-SITE', codigo: 'WEBSITE', tipo: 'WEBSITE', ativa: true })
+    expect(f.chamadas[0]!.url).toContain('organization_id=eq.ORG-1')
+    expect(f.chamadas[0]!.url).toContain('id=eq.FNT-SITE')
+    expect(f.chamadas[0]!.metodo).toBe('GET')
+  })
+
+  it('fonte de outra organização não aparece: volta indefinida', async () => {
+    const f = falso({ radar_source: [] })
+    expect(await portasFormularioRest(CFG, f.fetchFn).fonte('FNT-DE-OUTRA-ORG')).toBeUndefined()
+  })
+
+  it('«active» que não é verdadeiro literal é inativa', async () => {
+    const f = falso({ radar_source: [{ id: 'FNT-SITE', code: 'WEBSITE', source_type: 'WEBSITE', active: null }] })
+    expect((await portasFormularioRest(CFG, f.fetchFn).fonte('FNT-SITE'))!.ativa).toBe(false)
+  })
+})
+
+describe('porta · o prazo de primeira resposta da conversa', () => {
+  const THREAD = { id: 'THR-1', status: 'NOVA', opened_at: '2026-11-09T14:00:00+00:00', sla_first_response_due: '2026-11-10T14:00:00+00:00', sla_first_response_at: null }
+
+  it('acha a conversa pela mensagem da submissão e lê só o que o prazo precisa', async () => {
+    const f = falso({ inbox_message: [{ thread_id: 'THR-1' }], inbox_thread: [THREAD] })
+    const r = await portasFormularioRest(CFG, f.fetchFn).prazoDaConversa('MANUAL', 'nf-777')
+    expect(r).toEqual({ threadId: 'THR-1', venceEm: '2026-11-10T14:00:00+00:00', aberta: true, abertaEm: '2026-11-09T14:00:00+00:00' })
+    expect(f.chamadas.every((c) => c.url.includes('organization_id=eq.ORG-1'))).toBe(true)
+    expect(f.chamadas.every((c) => c.metodo === 'GET')).toBe(true)
+  })
+
+  it('sem mensagem não há conversa; resolvida e fechada não estão abertas; respondida traz o instante', async () => {
+    expect(await portasFormularioRest(CFG, falso({ inbox_message: [] }).fetchFn).prazoDaConversa('MANUAL', 'nf-x')).toBeUndefined()
+    for (const status of ['RESOLVIDA', 'FECHADA']) {
+      const f = falso({ inbox_message: [{ thread_id: 'THR-1' }], inbox_thread: [{ ...THREAD, status }] })
+      expect((await portasFormularioRest(CFG, f.fetchFn).prazoDaConversa('MANUAL', 'nf-777'))!.aberta).toBe(false)
+    }
+    const f = falso({ inbox_message: [{ thread_id: 'THR-1' }], inbox_thread: [{ ...THREAD, sla_first_response_at: '2026-11-09T14:05:00+00:00' }] })
+    expect((await portasFormularioRest(CFG, f.fetchFn).prazoDaConversa('MANUAL', 'nf-777'))!.respondidaEm).toBe('2026-11-09T14:05:00+00:00')
+  })
+
+  it('grava SÓ o vencimento, com a organização, e devolve o que ficou no banco', async () => {
+    const f = falso({ inbox_thread: [{ sla_first_response_due: '2026-11-09T14:30:00+00:00' }] })
+    const ficou = await portasFormularioRest(CFG, f.fetchFn).definirPrazo('THR-1', '2026-11-09T14:30:00.000Z')
+    expect(ficou).toBe('2026-11-09T14:30:00+00:00')
+    const c = f.chamadas[0]!
+    expect(c.metodo).toBe('PATCH')
+    expect(c.url).toContain('organization_id=eq.ORG-1')
+    expect(c.url).toContain('id=eq.THR-1')
+    expect(c.corpo).toEqual({ sla_first_response_due: '2026-11-09T14:30:00.000Z' })
+    expect(c.prefer).toBe('return=representation')
+  })
+
+  it('nenhuma linha de volta é «não confirmado»; erro do banco sobe só com o status', async () => {
+    expect(await portasFormularioRest(CFG, falso({ inbox_thread: [] }).fetchFn).definirPrazo('THR-1', '2026-11-09T14:30:00.000Z')).toBeUndefined()
+    await expect(portasFormularioRest(CFG, falso({ inbox_thread: { status: 500 } }).fetchFn).definirPrazo('THR-1', '2026-11-09T14:30:00.000Z'))
+      .rejects.toThrow(/http 500/)
+  })
+
+  it('o estado em lote traz o prazo de cada conversa, para a rodada agendada ver o estado parcial', async () => {
+    const f = falso({
+      radar_source_record: [{ external_id: 'nf-1', payload_fingerprint: 'abc' }],
+      inbox_message: [{ external_message_id: 'nf-1', thread_id: 'THR-1' }],
+      inbox_thread: [THREAD],
+    })
+    const r = await portasFormularioRest(CFG, f.fetchFn).estadoEmLote!(CFG.fonteId, 'MANUAL', ['nf-1'])
+    expect(r.prazos).toEqual([{ externoId: 'nf-1', threadId: 'THR-1', venceEm: '2026-11-10T14:00:00+00:00', aberta: true, abertaEm: '2026-11-09T14:00:00+00:00' }])
+  })
+})

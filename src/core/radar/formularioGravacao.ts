@@ -33,6 +33,7 @@
 import { planejarGravacao, type EstadoAtual, type PlanoDeGravacao, type ResultadoBorda } from './formularioServidor'
 import { canonicoDaSubmissao, observacoesDoLead, pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
 import { validarIntake } from './leadEngineIntake'
+import { prazoUtil } from '../inbox/calendarioComercial'
 import { PROVIDER_FORMULARIO, dadosDoContato, deSubmissaoDoSite, type DadosDoContato, type ResumoDaSubmissao } from '../inbox/formularioSite'
 import type { MensagemRecebida } from '../inbox/fronteiras'
 import type { PortasIngestao, ResultadoIngest } from '../inbox/ingestaoServidor'
@@ -148,6 +149,112 @@ export interface EstadoEmLote {
   evidencias: readonly { externoId: string; impressao?: string }[]
   /** Ids externos que já têm conversa. */
   conversas: readonly string[]
+  /**
+   * O prazo de primeira resposta da conversa de cada submissão. Sem ele, uma
+   * submissão que parou entre a conversa e o ajuste do prazo pareceria «já
+   * dentro» e a rodada agendada nunca a consertaria.
+   */
+  prazos?: readonly (EstadoDoPrazo & { externoId: string })[]
+}
+
+/* ---------------------------------------------------------------
+   3a · A fonte: QUAL origem recebe a evidência
+--------------------------------------------------------------- */
+
+/** Tipo da fonte canônica do formulário do site em `radar_source`. */
+export const TIPO_DA_FONTE_DO_SITE = 'WEBSITE'
+/**
+ * O código é o que distingue a fonte do site das outras fontes do MESMO tipo
+ * (em produção há duas WEBSITE: `WEBSITE` e `OFFICIAL_COMPANY_SOURCE`). É o
+ * código de `FONTES_PADRAO`, único por organização no banco.
+ */
+export const CODIGO_DA_FONTE_DO_SITE = 'WEBSITE'
+
+/** A linha de `radar_source` que a porta leu, já filtrada pela organização. */
+export interface FonteLida { id: string; codigo: string; tipo: string; ativa: boolean }
+
+export type MotivoFonteInvalida = 'fonte_inexistente' | 'fonte_nao_website' | 'fonte_nao_canonica' | 'fonte_inativa'
+
+/**
+ * A fonte configurada é a do formulário do site? Fonte de outra organização
+ * chega aqui como inexistente: a porta filtra pela organização antes.
+ */
+export function validarFonte(fonteId: string, f: FonteLida | undefined): { ok: true } | { ok: false; motivo: MotivoFonteInvalida } {
+  if (f === undefined || f.id !== fonteId) return { ok: false, motivo: 'fonte_inexistente' }
+  if (f.tipo !== TIPO_DA_FONTE_DO_SITE) return { ok: false, motivo: 'fonte_nao_website' }
+  if (f.codigo !== CODIGO_DA_FONTE_DO_SITE) return { ok: false, motivo: 'fonte_nao_canonica' }
+  if (!f.ativa) return { ok: false, motivo: 'fonte_inativa' }
+  return { ok: true }
+}
+
+/** Configuração errada, percebida ANTES de qualquer escrita. A borda responde 503. */
+export class ErroDeConfiguracao extends Error {
+  constructor(readonly motivo: MotivoFonteInvalida | 'fonte_nao_verificada') {
+    super(`integração não configurada: ${motivo}`)
+    this.name = 'ErroDeConfiguracao'
+  }
+}
+
+/* ---------------------------------------------------------------
+   3b · O prazo de primeira resposta do lead do site
+--------------------------------------------------------------- */
+
+/** Minutos ÚTEIS para a primeira resposta a um lead do formulário do site. */
+export const PRAZO_PRIMEIRA_RESPOSTA_MIN = 30
+
+/**
+ * O vencimento: 30 minutos de expediente a partir do instante ORIGINAL da
+ * submissão (o `created_at` do Netlify), nunca do processamento — um lead
+ * recuperado uma hora depois chega vencido, e isso é a verdade.
+ *
+ * Só o caminho do formulário chama isto. Os SLAs dos demais canais continuam
+ * sendo as horas corridas de `inbox_config.sla_hours`, intocadas.
+ */
+export const prazoDoLead = (s: SubmissaoFormulario): string => prazoUtil(s.recebidoEm, PRAZO_PRIMEIRA_RESPOSTA_MIN)
+
+/** O que a conversa da submissão diz hoje sobre o prazo. */
+export interface EstadoDoPrazo {
+  threadId: string
+  /** `sla_first_response_due` atual. */
+  venceEm?: string
+  /** `sla_first_response_at`: alguém já respondeu. */
+  respondidaEm?: string
+  /** Falso para conversa resolvida ou fechada. */
+  aberta: boolean
+  /** `opened_at`: o instante da primeira mensagem da conversa (a RPC abre com o instante da mensagem). */
+  abertaEm?: string
+}
+
+export type DecisaoDoPrazo =
+  | { acao: 'definir'; venceEm: string }
+  | { acao: 'manter'; motivo: 'ja_respondida' | 'encerrada' | 'prazo_correto' | 'prazo_anterior_mais_curto' }
+
+/**
+ * O prazo da conversa precisa mudar?
+ *
+ * - já respondida ou encerrada: não se mexe — o SLA já foi cumprido ou não se aplica;
+ * - senão, o vencimento CERTO é o menor entre o alvo desta submissão e os 30
+ *   minutos úteis contados da ABERTURA da conversa: quando a mesma pessoa manda
+ *   um segundo pedido sem resposta ao primeiro, vale o prazo do primeiro;
+ * - qualquer outro valor é corrigido, seja maior ou MENOR. «Menor» não é
+ *   detalhe: a conversa nasce com as 24 h CORRIDAS da configuração, e para um
+ *   lead de sexta à noite isso cai no sábado — antes da segunda-feira que o
+ *   calendário comercial manda. Manter «o mais curto» ali marcaria como
+ *   vencido, no fim de semana, um lead que ninguém podia ter atendido
+ *   (achado da prova T do smoke em PostgreSQL).
+ */
+export function decidirPrazo(e: EstadoDoPrazo, alvoIso: string): DecisaoDoPrazo {
+  if (e.respondidaEm !== undefined) return { acao: 'manter', motivo: 'ja_respondida' }
+  if (!e.aberta) return { acao: 'manter', motivo: 'encerrada' }
+  const alvo = Date.parse(alvoIso)
+  let certo = alvo
+  if (e.abertaEm !== undefined && !Number.isNaN(Date.parse(e.abertaEm))) {
+    const daAbertura = Date.parse(prazoUtil(e.abertaEm, PRAZO_PRIMEIRA_RESPOSTA_MIN))
+    if (daAbertura < certo) certo = daAbertura
+  }
+  const atual = e.venceEm === undefined ? Number.NaN : Date.parse(e.venceEm)
+  if (atual === certo) return { acao: 'manter', motivo: certo < alvo ? 'prazo_anterior_mais_curto' : 'prazo_correto' }
+  return { acao: 'definir', venceEm: new Date(certo).toISOString() }
 }
 
 export interface ResumoContatoCompletado {
@@ -158,6 +265,12 @@ export interface ResumoContatoCompletado {
 }
 
 export interface PortasGravacao {
+  /** A fonte configurada, lida do banco e já filtrada pela organização. Obrigatória: sem ela nada é gravado. */
+  fonte(fonteId: string): Promise<FonteLida | undefined>
+  /** O prazo atual da conversa desta submissão (provider + externalMessageId). */
+  prazoDaConversa(provider: CodigoProvider, externalMessageId: string): Promise<EstadoDoPrazo | undefined>
+  /** Grava o vencimento da primeira resposta e devolve o valor que FICOU no banco — a confirmação. */
+  definirPrazo(threadId: string, venceEmIso: string): Promise<string | undefined>
   /** Registros de origem já existentes para esta fonte e este id externo. */
   registrosDaSubmissao(fonteId: string, externoId: string): Promise<readonly RegistroFonte[]>
   /** A conversa desta submissão já existe? (provider + externalMessageId) */
@@ -196,12 +309,14 @@ export interface ResultadoGravacao {
   conversaDuplicada: boolean
   contatoCompletado?: ResumoContatoCompletado
   roteada?: { aplicado: boolean; motivo?: string }
+  /** O prazo de primeira resposta que a conversa TEM ao final, conferido no banco. */
+  prazo: { venceEm?: string; ajustado: boolean; motivo: string }
   passos: readonly string[]
   porque: string
 }
 
 export class ErroDeGravacao extends Error {
-  constructor(readonly etapa: 'evidencia' | 'conversa', readonly detalhe: string) {
+  constructor(readonly etapa: 'evidencia' | 'conversa' | 'prazo', readonly detalhe: string) {
     super(`gravação falhou na etapa ${etapa}: ${detalhe}`)
     this.name = 'ErroDeGravacao'
   }
@@ -227,6 +342,17 @@ export async function gravarSubmissao(
   const valido = validarIntake(pedidoDeIntake(s, fonteId))
   if (!valido.ok) throw new ErroDeGravacao('evidencia', `intake inválido: ${valido.motivos.join(', ')}`)
   const externoId = valido.identidade.externoId
+
+  // 0) a fonte, ANTES de qualquer leitura de estado e de qualquer escrita: evidência
+  //    gravada na fonte errada é imutável, não tem conserto depois.
+  let fonteLida: FonteLida | undefined
+  try { fonteLida = await portas.fonte(fonteId) } catch { throw new ErroDeConfiguracao('fonte_nao_verificada') }
+  const fonteOk = validarFonte(fonteId, fonteLida)
+  if (!fonteOk.ok) throw new ErroDeConfiguracao(fonteOk.motivo)
+  // O alvo do prazo também vem antes: instante ilegível tem de falhar sem ter gravado nada.
+  let alvoDoPrazo: string
+  try { alvoDoPrazo = prazoDoLead(s) } catch (e) { throw new ErroDeGravacao('prazo', (e as Error).message ?? 'erro') }
+
   const registros = await portas.registrosDaSubmissao(fonteId, externoId)
   const conversaExiste = await portas.conversaExiste(PROVIDER_FORMULARIO, externoId)
   const estado: EstadoAtual = { registros, conversaExiste }
@@ -282,9 +408,17 @@ export async function gravarSubmissao(
     ...(ingest?.contactId !== undefined ? { contatoId: ingest.contactId } : {}),
     novaConversa: ingest?.novaThread === true,
     conversaDuplicada: ingest?.duplicada === true,
+    prazo: { ajustado: false, motivo: 'pendente' },
     passos: plano.passos,
     porque: plano.porque,
   }
+
+  // 2b) o prazo de primeira resposta. EXIGIDO e CONVERGENTE: roda em toda passagem
+  //     (inclusive no reenvio IDEMPOTENTE), e sem o prazo certo confirmado no banco
+  //     não há sucesso — a conversa nasce com as 24 h corridas da configuração, e
+  //     devolver 200 nesse estado esconderia um lead com prazo errado. A falha vira
+  //     5xx, o reenvio volta aqui e conserta, sem duplicar conversa nem evidência.
+  r.prazo = await ajustarPrazo(portas, plano.externoId, alvoDoPrazo)
 
   // 3) o contato, com o que a submissão trouxe. Convergente e nunca fatal.
   const contatoId = r.contatoId ?? await contatoDaConversa(portas, mensagem)
@@ -303,6 +437,26 @@ export async function gravarSubmissao(
     r.roteada = { aplicado: rot.aplicado, ...(rot.motivo !== undefined ? { motivo: rot.motivo } : {}) }
   }
   return r
+}
+
+async function ajustarPrazo(portas: PortasGravacao, externoId: string, alvoIso: string): Promise<ResultadoGravacao['prazo']> {
+  let estado: EstadoDoPrazo | undefined
+  try { estado = await portas.prazoDaConversa(PROVIDER_FORMULARIO, externoId) } catch (e) {
+    throw new ErroDeGravacao('prazo', (e as Error).message ?? 'erro')
+  }
+  if (estado === undefined) throw new ErroDeGravacao('prazo', 'conversa da submissão não encontrada para conferir o prazo')
+  const decisao = decidirPrazo(estado, alvoIso)
+  if (decisao.acao === 'manter') {
+    return { ...(estado.venceEm !== undefined ? { venceEm: estado.venceEm } : {}), ajustado: false, motivo: decisao.motivo }
+  }
+  let ficou: string | undefined
+  try { ficou = await portas.definirPrazo(estado.threadId, decisao.venceEm) } catch (e) {
+    throw new ErroDeGravacao('prazo', (e as Error).message ?? 'erro')
+  }
+  if (ficou === undefined || Date.parse(ficou) !== Date.parse(decisao.venceEm)) {
+    throw new ErroDeGravacao('prazo', 'vencimento não confirmado pelo banco')
+  }
+  return { venceEm: decisao.venceEm, ajustado: true, motivo: 'definido' }
 }
 
 async function contatoDaConversa(portas: PortasGravacao, m: MensagemRecebida): Promise<string | undefined> {
