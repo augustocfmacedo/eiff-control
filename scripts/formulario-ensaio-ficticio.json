@@ -1,0 +1,25 @@
+[
+  {
+    "id": "ensaio-ficticio-0001",
+    "form_name": "simular-galpao",
+    "state": "verified",
+    "created_at": "2026-11-10T12:00:00.000Z",
+    "data": {
+      "nome": "ENSAIO FICTÍCIO (não é lead)",
+      "empresa": "Empresa de Ensaio Fictícia",
+      "email": "ensaio-ficticio@exemplo.invalido",
+      "telefone": "(62) 90000-0000",
+      "cidade": "Goiânia, GO",
+      "uso": "Logística e armazenagem",
+      "area": "1200",
+      "vao": "20",
+      "comprimento": "60",
+      "peDireito": "8",
+      "prazo": "Até 6 meses",
+      "escopo": "Estrutura e cobertura",
+      "resumo": "ENSAIO: galpão logístico 20 x 60 m, pé-direito 8 m, 1.200 m²",
+      "observacao": "ENSAIO DE CERTIFICAÇÃO da integração site → EIFF Control. Não responder: não existe cliente.",
+      "leitura": "ENSAIO: texto automático da página"
+    }
+  }
+]

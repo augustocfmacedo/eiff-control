@@ -34,7 +34,7 @@
  * que vai aqui é identificador e impressão, nunca token, nunca o payload.
  */
 import type { MensagemRecebida } from './fronteiras'
-import type { CanalInbox, ContatoInbox, IdentidadeCanal, TipoRelacao } from './tipos'
+import type { CanalInbox, ContatoInbox, IdentidadeCanal, RegraRoteamento, TipoRelacao } from './tipos'
 import { normalizarTelefone, type CodigoProvider } from '../radar/canais'
 
 /** Canal do formulário. `PORTAL` já existia no catálogo do Inbox. */
@@ -46,6 +46,34 @@ export const CANAL_FORMULARIO: CanalInbox = 'PORTAL'
  * tem o efeito certo — nada é enviado de volta por provider nenhum.
  */
 export const PROVIDER_FORMULARIO: CodigoProvider = 'MANUAL'
+
+/**
+ * A regra de roteamento do formulário do site, como DADO de configuração.
+ *
+ * Sem ela o setor sai das palavras do texto (catálogo de intenções), e o
+ * texto é livre: «podem me ligar sobre um projeto?» casa `revisao_projeto` e
+ * vai para a ENGENHARIA — e a própria linha de origem carrega o nome do
+ * formulário «iniciar-projeto». Quem preencheu um formulário comercial é
+ * atendido pelo COMERCIAL, qualquer que seja a redação.
+ *
+ * Não é segundo mecanismo: é uma `RegraRoteamento` comum (regra explícita
+ * vence catálogo e IA no Octopus Router), casada pelo CANAL e pelo contexto —
+ * que só o formulário produz — e nunca pelo texto. Entra em
+ * `inbox_config.routing_rules` com ordem 0, antes das regras por intenção. O
+ * editor da tela não edita a condição `canais` (e a preserva ao salvar), por
+ * isso a instalação é o SQL preparado em `scripts/formulario-ativacao-producao.sql`.
+ *
+ * O responsável NÃO está na regra: vem do responsável padrão do setor, para
+ * trocar a pessoa sem tocar na regra.
+ */
+export const REGRA_ROTEAMENTO_DO_SITE: RegraRoteamento = Object.freeze({
+  id: 'ROT-SITE',
+  ordem: 0,
+  condicao: { contexto: 'EXTERNAL', canais: ['PORTAL'] },
+  destino: { setorCodigo: 'COMERCIAL' },
+  motivo: 'solicitação recebida pelo formulário do site',
+  ativa: true,
+}) as RegraRoteamento
 
 /** O que liga a mensagem à evidência. Só identificador e impressão. */
 export interface RastroDaSubmissao {

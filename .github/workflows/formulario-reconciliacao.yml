@@ -1,0 +1,73 @@
+# Reconciliação do formulário do site — a rede de segurança da entrada de leads (docs/formulario-site.md §5).
+#
+# O evento de submissão do Netlify NÃO tem reenvio automático: se a função do site falhar, a submissão fica só
+# no painel do Netlify. Este workflow lê a API oficial de submissões e reenvia, pelo MESMO endpoint do CRM e com
+# a mesma chave de idempotência, o que ainda não entrou. Sem submissão nova, não escreve nada.
+#
+# DESLIGADO POR PADRÃO. Mesclar este arquivo não ativa nada: o job só roda quando a variável de repositório
+# FORMULARIO_RECONCILIACAO vale exatamente `ativa`. Ativar é decisão explícita, depois do ensaio fictício.
+#
+# Configuração (Settings › Secrets and variables › Actions), feita por pessoa:
+#   variáveis  FORMULARIO_RECONCILIACAO = ativa         (liga; qualquer outro valor ou ausência = desligado)
+#              FORMULARIO_MARCO         = instante ISO  (a ativação; antes dele NADA é reenviado — os leads
+#                                                        antigos do painel ficam retidos)
+#              FORMULARIO_NETLIFY_SITE  = site_id do eiff-site no Netlify
+#   segredos   NETLIFY_AUTH_TOKEN       = token pessoal do Netlify, usado só para LER submissões
+#              EIFF_FORM_SECRET         = o mesmo segredo da borda /api/formulario-site
+#
+# Alerta: o código de saída. 0 = nada a fazer ou tudo recuperado · 1 = alguma submissão não entrou ·
+# 2 = bloqueado antes de ler (falta token, marco ou confirmação). 1 e 2 derrubam o run, e o GitHub avisa por
+# e-mail quem cuida do repositório. A linha RECONCILIACAO_RESUMO do log traz só contagens, nunca conteúdo de lead.
+#
+# O que este workflow NUNCA faz: não usa `--incluir-anteriores` (leads de antes do marco são decisão comercial,
+# com autorização própria), não acessa o Supabase, não faz deploy, não envia mensagem a ninguém.
+
+name: Reconciliação do formulário do site
+
+on:
+  schedule:
+    - cron: "7 * * * *" # de hora em hora, fora do minuto cheio
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "simulacao (só lê e conta) ou execucao (reenvia o que falta)"
+        type: choice
+        options: [simulacao, execucao]
+        default: simulacao
+
+concurrency:
+  group: formulario-reconciliacao
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reconciliar:
+    if: ${{ vars.FORMULARIO_RECONCILIACAO == 'ativa' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Reconciliar
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          EIFF_FORM_SECRET: ${{ secrets.EIFF_FORM_SECRET }}
+          MARCO: ${{ vars.FORMULARIO_MARCO }}
+          SITE: ${{ vars.FORMULARIO_NETLIFY_SITE }}
+          MODO: ${{ github.event_name == 'schedule' && 'execucao' || inputs.modo }}
+        run: |
+          if [ "$MODO" = "execucao" ]; then
+            npx vite-node scripts/formulario-reconciliar.mts -- --site "$SITE" --marco "$MARCO" --executar --confirmar FORMULARIO_SITE_V1
+          else
+            npx vite-node scripts/formulario-reconciliar.mts -- --site "$SITE" --marco "$MARCO"
+          fi
