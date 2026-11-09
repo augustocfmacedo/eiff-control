@@ -6,8 +6,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CANAIS_INBOX, NIVEIS_ATENDIMENTO, NOME_STATUS, PRIORIDADES, TIPOS_ACAO, TRANSICOES_THREAD, caixasVirtuais, ehAberta, escalacoesPendentes, estadoSla,
-  identificadorMascarado, ordenarParaTrabalho, resumoExecutivo, threadsDaCaixa, validarTransicao,
-  type CanalInbox, type DecisaoOctopus, type EstadoSla, type InboxAction, type InboxJob, type InboxThread, type NivelAtendimento, type Prioridade, type StatusThread, type TipoAcao, type TipoEventoThread,
+  MEIOS_CONTATO, NOME_MEIO, NOME_SITUACAO_RESPOSTA, contatoDaMensagem, identificadorMascarado, ordenarParaTrabalho, origemPrimeiraResposta, resumoExecutivo, situacaoPrimeiraResposta, threadsDaCaixa, validarTransicao,
+  type CanalInbox, type DecisaoOctopus, type EstadoSla, type InboxAction, type InboxJob, type InboxMessage, type InboxThread, type MeioContato, type ResultadoContato, type NivelAtendimento, type Prioridade, type StatusThread, type TipoAcao, type TipoEventoThread,
 } from '../core/inbox';
 import { RegraDeNegocioError, actions, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, dataHora, useToast, type Tone } from '../ui/components';
@@ -17,8 +17,17 @@ import { navegar } from '../ui/router';
 const NOME_CANAL: Record<CanalInbox, string> = { WHATSAPP: 'WhatsApp', EMAIL: 'E-mail', PORTAL: 'Portal', WEBCHAT: 'Webchat', SISTEMA: 'Sistema' };
 const TOM_PRIORIDADE: Record<Prioridade, Tone> = { Baixa: 'muted', Normal: 'info', Alta: 'warn', Urgente: 'bad' };
 const TOM_STATUS: Record<StatusThread, Tone> = { NOVA: 'bad', TRIADA: 'warn', ATRIBUIDA: 'warn', EM_ATENDIMENTO: 'info', AGUARDANDO_CONTATO: 'muted', AGUARDANDO_INTERNO: 'warn', AGUARDANDO_APROVACAO: 'warn', RESOLVIDA: 'ok', FECHADA: 'muted' };
-const NOME_SLA: Record<EstadoSla, string> = { sem_sla: 'sem SLA', no_prazo: 'no prazo', vencendo: 'vencendo', vencido: 'SLA vencido', cumprido: 'respondida' };
-const TOM_SLA: Record<EstadoSla, Tone> = { sem_sla: 'muted', no_prazo: 'ok', vencendo: 'warn', vencido: 'bad', cumprido: 'muted' };
+const NOME_SLA: Record<EstadoSla, string> = { sem_sla: 'sem SLA', no_prazo: 'no prazo', vencendo: 'vencendo', vencido: 'SLA vencido', cumprido: 'respondida no prazo', atrasada: 'respondida fora do prazo', sem_resposta: 'encerrada sem resposta' };
+const TOM_SLA: Record<EstadoSla, Tone> = { sem_sla: 'muted', no_prazo: 'ok', vencendo: 'warn', vencido: 'bad', cumprido: 'ok', atrasada: 'warn', sem_resposta: 'bad' };
+/** `datetime-local` no horário do navegador: 'AAAA-MM-DDTHH:MM'. */
+const agoraLocal = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
+/** De quem é a fala e o que ela é: contato declarado, tentativa, nota interna ou rascunho que não saiu. */
+function rotuloDaMensagem(m: InboxMessage): string {
+  const c = contatoDaMensagem(m);
+  if (c) return `${c.resultado === 'realizado' ? 'Contato realizado' : 'Tentativa sem sucesso'}${c.meio ? ` por ${NOME_MEIO[c.meio]}` : ''} · `;
+  if (m.direcao === 'interna') return 'Nota interna · ';
+  return m.direcao === 'outbound' && m.entrega === 'registrada' ? 'Rascunho (não enviado) · ' : '';
+}
 const NOME_NIVEL: Record<NivelAtendimento, string> = { A: 'A · IA responde', B: 'B · IA prepara, humano aprova', C: 'C · humano obrigatório' };
 const NOME_ACAO: Record<TipoAcao, string> = { responder: 'Responder', encaminhar: 'Encaminhar', criar_tarefa: 'Criar tarefa', consultar_sistema: 'Consultar sistema', registrar_previsao: 'Registrar previsão', criar_job: 'Criar job' };
 const TOM_ACAO: Record<InboxAction['estado'], Tone> = { proposta: 'muted', aguardando_aprovacao: 'warn', aprovada: 'info', rejeitada: 'bad', executada: 'ok', falhou: 'bad' };
@@ -43,10 +52,15 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
   const [aba, setAba] = useState<'contexto' | 'acoes' | 'historico'>('contexto');
   const [texto, setTexto] = useState('');
   const [nota, setNota] = useState(false);
+  // Contato declarado (telefone, e-mail, WhatsApp externo, presencial): o único gesto de pessoa que cumpre o SLA.
+  const [modoContato, setModoContato] = useState(false);
+  const [resultado, setResultado] = useState<ResultadoContato>('realizado');
+  const [meio, setMeio] = useState<MeioContato>('telefone');
+  const [quando, setQuando] = useState(agoraLocal());
   const [modal, setModal] = useState<null | 'triar' | 'acao' | 'resultado' | 'simular' | 'status'>(null);
   const [jobAlvo, setJobAlvo] = useState<InboxJob | null>(null);
   const [statusAlvo, setStatusAlvo] = useState<StatusThread | null>(null);
-  useEffect(() => { setTexto(''); setNota(false); setAba('contexto'); }, [threadId]);
+  useEffect(() => { setTexto(''); setNota(false); setModoContato(false); setResultado('realizado'); setMeio('telefone'); setQuando(agoraLocal()); setAba('contexto'); }, [threadId]);
 
   const podeConfigurar = pode(usuario, 'inbox_config');
   const caixas = useMemo(() => (inbox ? caixasVirtuais(inbox, usuario) : []), [inbox, usuario]);
@@ -89,8 +103,16 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
 
   const enviar = () => {
     if (!thread || !texto.trim()) return;
+    if (modoContato) {
+      tentar(() => {
+        const m = actions.inboxRegistrarContato(thread.id, { resultado, meio, em: quando ? new Date(quando).toISOString() : '', resumo: texto });
+        setTexto(''); setModoContato(false);
+        toast(contatoDaMensagem(m)?.resultado === 'realizado' ? 'Contato realizado registrado.' : 'Tentativa registrada. O prazo de primeira resposta continua correndo.');
+      });
+      return;
+    }
     if (nota) tentar(() => { actions.inboxAnotar(thread.id, texto); setTexto(''); }, 'Nota registrada');
-    else tentar(async () => { const m = await actions.inboxResponder(thread.id, texto, { propostaId: sugestao && texto.trim() === sugestao.descricao.trim() ? sugestao.id : undefined }); setTexto(''); toast(m.entrega === 'registrada' ? 'Rascunho registrado. Canal não conectado: nada foi enviado.' : `Resposta ${m.entrega}`); });
+    else tentar(async () => { const m = await actions.inboxResponder(thread.id, texto, { propostaId: sugestao && texto.trim() === sugestao.descricao.trim() ? sugestao.id : undefined }); setTexto(''); toast(m.entrega === 'registrada' ? 'Rascunho registrado. Nada foi enviado e o prazo de primeira resposta continua correndo.' : `Resposta ${m.entrega}`); });
   };
   const mudarStatus = (para: StatusThread) => {
     if (!thread) return;
@@ -171,7 +193,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                 {mensagens.map((m) => (
                   <div key={m.id} className={`chat-msg ${m.direcao === 'outbound' ? 'usuario' : m.direcao === 'interna' ? 'interna' : 'assistente'}`}>
                     <div className={`chat-bolha ${m.direcao === 'interna' ? 'nota' : ''}`}>
-                      <div className="inbox-msg-autor small">{m.direcao === 'interna' ? 'Nota interna · ' : ''}{m.autor.nome}{m.autor.tipo === 'ia' ? ' (IA)' : ''} · {dataHora(m.em)}{m.entrega ? ` · ${m.entrega}` : ''}</div>
+                      <div className="inbox-msg-autor small">{rotuloDaMensagem(m)}{m.autor.nome}{m.autor.tipo === 'ia' ? ' (IA)' : ''} · {dataHora(m.em)}{contatoDaMensagem(m) && m.registradaEm && m.registradaEm !== m.em ? ` · registrado em ${dataHora(m.registradaEm)}` : ''}{m.entrega && !contatoDaMensagem(m) ? ` · ${m.entrega}` : ''}</div>
                       <p>{m.texto}</p>
                       {m.anexos.length > 0 && <div className="small muted">{m.anexos.map((a) => a.nome).join(', ')}</div>}
                     </div>
@@ -187,12 +209,22 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
               )}
               <div className="inbox-composer">
                 <div className="actions small">
-                  <label><input type="checkbox" checked={nota} onChange={(e) => setNota(e.target.checked)} /> Nota interna (o contato não vê)</label>
-                  {!nota && <span className="muted">Rascunho de resposta: fica registrado na conversa; nenhum canal envia nesta fase.</span>}
+                  <label><input type="checkbox" checked={nota} disabled={modoContato} onChange={(e) => setNota(e.target.checked)} /> Nota interna (o contato não vê)</label>
+                  <label><input type="checkbox" checked={modoContato} onChange={(e) => { setModoContato(e.target.checked); if (e.target.checked) { setNota(false); setQuando(agoraLocal()); } }} /> Registrar contato já feito</label>
+                  {!nota && !modoContato && <span className="muted">Rascunho de resposta: fica registrado na conversa, nada é enviado e <b>não conta como primeira resposta</b>.</span>}
                 </div>
-                <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} placeholder={nota ? 'Anotar para a equipe…' : `Responder a ${contato?.nome ?? 'contato'}…`} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') enviar(); }} disabled={thread.status === 'FECHADA'} />
+                {modoContato && (
+                  <div className="actions small" data-contato-realizado>
+                    <label><input type="radio" name="resultado-contato" checked={resultado === 'realizado'} onChange={() => setResultado('realizado')} /> Falei com a pessoa</label>
+                    <label><input type="radio" name="resultado-contato" checked={resultado === 'tentativa'} onChange={() => setResultado('tentativa')} /> Tentei, sem sucesso</label>
+                    <Select value={meio} onChange={(v) => setMeio(v as MeioContato)} options={MEIOS_CONTATO.map((x) => ({ value: x, label: NOME_MEIO[x] }))} />
+                    <input type="datetime-local" value={quando} max={agoraLocal()} onChange={(e) => setQuando(e.target.value)} aria-label="Data e hora do contato" />
+                    <span className="muted">{resultado === 'realizado' ? 'Só este registro cumpre o prazo de primeira resposta. Fica gravado quem declarou e quando.' : 'Tentativa não cumpre o prazo: fica como nota interna.'}</span>
+                  </div>
+                )}
+                <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} placeholder={modoContato ? 'Resumo do contato: com quem falou e o que ficou combinado…' : nota ? 'Anotar para a equipe…' : `Responder a ${contato?.nome ?? 'contato'}…`} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') enviar(); }} disabled={thread.status === 'FECHADA'} />
                 <div className="actions">
-                  <button className="btn primary" onClick={enviar} disabled={!texto.trim() || thread.status === 'FECHADA'}>{nota ? 'Registrar nota interna' : 'Registrar rascunho de resposta'}</button>
+                  <button className="btn primary" onClick={enviar} disabled={!texto.trim() || thread.status === 'FECHADA'}>{modoContato ? (resultado === 'realizado' ? 'Registrar contato realizado' : 'Registrar tentativa') : nota ? 'Registrar nota interna' : 'Registrar rascunho de resposta'}</button>
                   <span className="muted small">Ctrl+Enter</span>
                   <div className="spacer" />
                   {thread.status === 'FECHADA' ? <button className="btn sm" onClick={() => mudarStatus('EM_ATENDIMENTO')}>Reabrir</button> : (
@@ -252,7 +284,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                   <h3>Atribuição</h3>
                   <Atribuicao thread={thread} setores={inbox.setores} equipes={inbox.equipes} usuarios={ds.usuarios} onAplicar={(setorCodigo, equipeId, responsavelId) => tentar(() => actions.inboxAtribuir(thread.id, { setorCodigo, equipeId, responsavelId }), 'Atribuição aplicada')} />
                   {atribuicaoVigente && <div className="small muted" style={{ marginTop: 6 }}>desde {dataHora(atribuicaoVigente.atribuidaEm)} · origem {atribuicaoVigente.origem}{atribuicaoVigente.motivo ? ` · ${atribuicaoVigente.motivo}` : ''}</div>}
-                  {thread.sla && <div className="small muted" style={{ marginTop: 8 }}>SLA de primeira resposta: {dataHora(thread.sla.primeiraRespostaAte)}{thread.sla.primeiraRespostaEm ? ` · respondida ${dataHora(thread.sla.primeiraRespostaEm)}` : ''}</div>}
+                  {thread.sla && <div className="small muted" style={{ marginTop: 8 }} data-situacao-resposta={situacaoPrimeiraResposta(thread)}>Primeira resposta até {dataHora(thread.sla.primeiraRespostaAte)} · <b>{NOME_SITUACAO_RESPOSTA[situacaoPrimeiraResposta(thread)]}</b>{thread.sla.primeiraRespostaEm ? ` em ${dataHora(thread.sla.primeiraRespostaEm)}` : ''}{origemPrimeiraResposta(thread, inbox.mensagens) === 'anterior_a_regra' ? ' · registro anterior à regra de contato realizado (não verificável)' : ''}</div>}
                   {thread.labels.length > 0 && <div className="actions" style={{ marginTop: 8 }}>{thread.labels.map((l) => <Badge key={l} tone="muted">{l}</Badge>)}</div>}
                 </>
               )}
