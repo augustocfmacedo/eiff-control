@@ -130,6 +130,14 @@ jobs:
       - name: PostgreSQL Smoke (EIFF Inbox)
         run: node scripts/pg-smoke-inbox.mjs
 
+      # scripts/pg-smoke-formulario.mts prova a entrada do formulário do site num PGlite descartável, com o CÓDIGO de
+      # produção (gravarSubmissao, a montagem da RPC, a leitura da interface e o Octopus Router): evidência + conversa,
+      # os cenários de recuperação, a fonte canônica verificada antes de escrever, o prazo de 30 minutos úteis sem
+      # falso sucesso e os demais canais com o SLA intacto. Submissões fictícias, ROLLBACK ao final, nenhuma rede.
+      # Sai com código 1 se qualquer prova falhar. Não toca em banco externo, não usa segredo.
+      - name: PostgreSQL Smoke (formulário do site)
+        run: npm run smoke:formulario
+
       # scripts/pg-smoke-fin-reset.mjs aplica a fila INTEIRA de migrations num PGlite descartável e prova o FIN-RESET-01
       # (0061/0062): reset do extrato com lista fechada, reimportação do mesmo OFX sem FITID ativo duplicado, relançamento
       # sem colidir, desfazer e autoridade (só o dono do banco executa). Sai com código 1 se qualquer prova falhar.
