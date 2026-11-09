@@ -33,10 +33,12 @@
  *
  * Feriado com `status: 'a_confirmar'` NÃO conta: fica na lista para ser visto
  * e decidido, e o dia é tratado como útil — errar para o lado do prazo mais
- * curto, nunca do mais folgado.
+ * curto, nunca do mais folgado. Hoje não há nenhum nesse estado.
+ *
+ * Ponto facultativo não é feriado e nunca entra automaticamente.
  */
 
-export const CALENDARIO_VERSAO = '2026-11-09'
+export const CALENDARIO_VERSAO = '2026-11-09.2'
 /** Último ano civil cuja legislação foi conferida por pessoa. */
 export const REVISADO_ATE = 2026
 
@@ -86,9 +88,13 @@ export const FERIADOS: readonly RegraFeriado[] = Object.freeze([
   { id: 'natal', nome: 'Natal', ambito: 'nacional', regra: fixo(12, 25), status: 'vigente', base: 'Lei 662/1949' },
   { id: 'auxiliadora', nome: 'Nossa Senhora Auxiliadora (padroeira de Goiânia)', ambito: 'municipal-Goiania', regra: fixo(5, 24), status: 'vigente', base: 'feriado municipal; consta no calendário de feriados do TJGO para a comarca de Goiânia' },
   { id: 'aniversario-goiania', nome: 'Aniversário de Goiânia', ambito: 'municipal-Goiania', regra: fixo(10, 24), status: 'vigente', base: 'feriado municipal' },
-  // Não confirmados em fonte oficial em 09/11/2026: ficam visíveis e NÃO contam.
-  { id: 'corpus-christi', nome: 'Corpus Christi', ambito: 'municipal-Goiania', regra: { tipo: 'pascoa', deslocamentoDias: 60 }, status: 'a_confirmar', base: 'ponto facultativo federal; as fontes divergem sobre ser feriado em Goiânia' },
-  { id: 'fundacao-cidade-de-goias', nome: 'Fundação da Cidade de Goiás', ambito: 'estadual-GO', regra: fixo(7, 26), status: 'a_confirmar', base: 'transferência simbólica da capital; não confirmado como feriado estadual geral' },
+  // Confirmados pela Diretoria em 09/11/2026, com a base indicada por ela. Não conferi o texto oficial das
+  // normas: na revisão anual, ler o calendário da Casa Civil de Goiás e o decreto municipal do ano.
+  { id: 'corpus-christi', nome: 'Corpus Christi', ambito: 'municipal-Goiania', regra: { tipo: 'pascoa', deslocamentoDias: 60 }, status: 'vigente', base: 'feriado municipal em Goiânia: Lei Municipal nº 100/1951, mencionada no Decreto Municipal nº 1.936/2017 (base informada pela Diretoria)' },
+  { id: 'fundacao-cidade-de-goias', nome: 'Fundação da Cidade de Goiás', ambito: 'estadual-GO', regra: fixo(7, 26), status: 'vigente', base: 'feriado estadual de Goiás, conforme o calendário oficial da Casa Civil (base informada pela Diretoria)' },
+  // PONTO FACULTATIVO NÃO É FERIADO e não entra aqui por regra: Carnaval, Quarta-feira de Cinzas, a sexta
+  // depois de Corpus Christi, Dia do Servidor Público (28/10), vésperas de Natal e de Ano-Novo. Se a EIFF
+  // decidir não atender num desses dias, o lugar é `EXCECOES`, com a data — decisão de cada ano, não regra.
 ])
 
 /** Dia isolado que não é regra. `util: false` fecha um dia; `util: true` abre um feriado. */
