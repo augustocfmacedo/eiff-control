@@ -59,7 +59,7 @@ Escopo e contexto, a conferir no painel ao criar cada variável:
 | escopo | a função só lê a variável se o escopo incluir **Functions**. A escolha de escopo existe nos planos Pro e Enterprise; em plano menor a variável vale para todos os escopos | se o seletor aparecer, marcar Functions |
 | contexto | Production, Deploy Previews, Branch deploys e outros | criar os valores **só em Production**. O PR do CRM gera deploy de prévia; assim a prévia do endpoint responde 503 e não grava |
 | segredo | «Contains secret values» | marcar em `EIFF_FORM_SECRET` e em qualquer token |
-| conferência | sem revelar valor | lista de nomes no painel, ou o comportamento: sem as variáveis o endpoint responde 503 `integracao_nao_configurada`; com elas e sem segredo no pedido, 401 |
+| conferência | sem revelar valor | metadados da variável (nome, escopo, contexto, data de alteração: `netlify api getEnvVars`; `env:list` só mostra o contexto dev). **O 401 não prova nada sobre o segredo**: o endpoint responde 401 tanto com o segredo errado quanto sem a variável; 503 `integracao_nao_configurada` é só para organização/fonte. A prova de que os dois lados têm o mesmo valor é a submissão de ensaio virar evidência e conversa. Variável alterada depois do build exige novo deploy do lado alterado |
 
 ### 3.2 O que precisa existir
 
@@ -380,3 +380,20 @@ Netlify Forms contra o Inbox.
 - A função agendada nunca foi executada no Netlify.
 - O instante do contato realizado é declarado e pode ser antedatado; fica o rastro (autor e hora do registro).
 - Ninguém além do Augusto está apto a receber o lead; ausência dele é ausência de atendimento.
+
+## 13. Registro da primeira janela (10/11/2026) — GO-1 interrompido
+
+- CRM-1c `6af375b6` (commit `8a43719`) publicado e travado depois da rotação do segredo. O CRM-1b `6af31456` carrega o
+  segredo anterior e **não serve de rollback de integração**.
+- A `main` do site mudou duas vezes por outra frente durante a janela (`faeb898`, `dc1ff72`). O deploy inerte de
+  referência passou a ser o `6af32e64` (`dc1ff72`, com a foto da solda).
+- Site-2 `6af37886` ficou no ar das 17:04 às 17:29. A submissão de ensaio `6af379040c7080bc34020601` (17:05:24) provou
+  autenticação, evidência WEBSITE PENDING sem entidade, conversa no COMERCIAL com responsável, regra ROT-SITE e prazo de
+  30 minutos úteis (17:35:24). Zero empresas e oportunidades criadas. Nenhum lead real na janela.
+- **Falhou a etapa do Inbox**: nenhuma alteração de conversa era gravada (`permission denied for table inbox_thread`).
+  Causa, correção e provas em `docs/eiff-inbox.md` §18. O rascunho não chegou ao banco e o contato não foi registrado.
+- Rollback do site para o `6af32e64` às 17:29. O contato real do ensaio foi um e-mail de contato@ para augusto@ às 17:20
+  (entre aliases da mesma caixa), ainda **não registrado** no sistema.
+- **Retomada**: depois do deploy do CRM com a correção, o GO-1 continua na MESMA conversa de ensaio, sem nova submissão:
+  rascunho → contato realizado declarado para 17:20 de 10/11 (o registro terá o horário real da gravação) →
+  idempotência → evidências para o GO-2. Lição para o checklist: conferir «gravado» no banco, nunca só na tela.
