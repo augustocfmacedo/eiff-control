@@ -47,6 +47,23 @@ const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b
 /** Eventos que a RPC inbox_assign_thread registra por conta propria (o store tambem os gera, no mesmo instante da atribuicao). */
 const TIPOS_EVENTO_ATRIBUICAO = new Set<string>(['ROUTED', 'REASSIGNED', 'ASSIGNED', 'RELEASED', 'STATUS_CHANGED']);
 
+/**
+ * Colunas de `inbox_thread` que so existem na CRIACAO da conversa (INSERT do app ou RPC inbox_ingest). O banco nao concede
+ * UPDATE nelas a `authenticated` (0056), e o PostgreSQL recusa o comando INTEIRO quando uma unica coluna do SET nao tem
+ * privilegio ("permission denied for table inbox_thread"). Mandar qualquer uma no UPDATE impede TODA alteracao de conversa.
+ */
+export const COLUNAS_SO_DA_CRIACAO_DA_CONVERSA = ['channel', 'provider', 'context', 'contact_id', 'opened_at', 'origin'] as const;
+/**
+ * Colunas que o app pode mandar no UPDATE de `inbox_thread`: exatamente as concedidas por coluna nas migrations 0056 e 0057.
+ * Setor, equipe e responsavel ficam de fora: pertencem a RPC governada inbox_assign_thread. O teste
+ * inbox.persistencia.integracao.test.ts prende esta lista ao privilegio efetivo de um PostgreSQL com a fila de migrations.
+ */
+export const COLUNAS_MUTAVEIS_DA_CONVERSA = [
+  'subject', 'status', 'priority', 'service_level', 'participant_ids', 'project_id', 'labels', 'classification', 'summary', 'routing',
+  'sla_first_response_due', 'sla_first_response_at', 'sla_resolution_due', 'last_message_at', 'last_inbound_at', 'resolved_at', 'closed_at', 'resolved_by',
+  'central_conversation_id', 'external_conversation_id',
+] as const;
+
 /** Registra um id ja gravado no banco (ex.: thread criada pela RPC inbox_ingest) para a persistencia nao reinserir. */
 export function registrarRefInbox(colecao: Colecao, id: string): void { refs?.get(colecao)?.set(id, id); }
 
@@ -159,7 +176,7 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
     const cid = refs.get('contatos')!.get(c.id); if (!cid) continue;
     for (const i of c.identidades) await h.gravarComposta('inbox_contact_identity', { organization_id: h.orgId, channel: i.canal, identifier: i.identificador }, { contact_id: cid, display_name: nn(i.nomeInformado), verified: i.verificada });
   }
-  // 5) threads (update sem select)
+  // 5) threads (update sem select; ver threadUpdate abaixo)
   const th = mudados<InboxThread>('threads');
   // colunas de ATRIBUICAO so no INSERT (thread nova); no UPDATE elas pertencem a RPC governada
   const threadRow = (t: InboxThread, comAtribuicao = true): Row => ({
@@ -184,7 +201,11 @@ export async function persistirInbox(h: HelpersInbox, antes: InboxDataset | unde
     for (const e of depois.eventos) if (e.threadId === x.threadId && e.em === x.atribuidaEm && TIPOS_EVENTO_ATRIBUICAO.has(e.tipo)) { eventosDaAtribuicao.add(e.id); refs.get('eventos')!.set(e.id, e.id); }
   }
   for (const x of at.alterados) if (!refs.get('atribuicoes')!.has(x.id)) continue; // liberadaEm: encerrada pela RPC
-  await atualizarAlterados('threads', th.alterados, (t) => threadRow(t, false));
+  // UPDATE: so as colunas mutaveis concedidas por coluna (0056/0057). As da criacao (canal, provider, contexto, contato,
+  // abertura, origem) e as de atribuicao nunca vao: uma unica coluna sem privilegio derruba o comando inteiro.
+  const mutaveis = new Set<string>(COLUNAS_MUTAVEIS_DA_CONVERSA);
+  const threadUpdate = (t: InboxThread): Row => Object.fromEntries(Object.entries(threadRow(t, false)).filter(([coluna]) => mutaveis.has(coluna)));
+  await atualizarAlterados('threads', th.alterados, threadUpdate);
   // 6) acoes (passo 1: job_id so quando o job ja existe)
   const ac = mudados<InboxAction>('acoes');
   const acaoRow = (x: InboxAction): Row => ({

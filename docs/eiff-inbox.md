@@ -722,3 +722,41 @@ conversa, sem resposta).
 - Não há indicador agregado «respondidas no prazo» em tela; `commercialDirector` continua contando conversas com
   primeira resposta registrada, agora sem os rascunhos novos.
 
+
+## 18. Incidente de 10/11/2026: nenhuma alteração de conversa era gravada em produção
+
+**O que aconteceu.** No ensaio de ativação do formulário do site (GO-1), registrar um rascunho na conversa do ensaio
+devolveu `atualizar inbox_thread: permission denied for table inbox_thread`. A tela mostrava o rascunho, mas ele só
+existia no navegador: no banco a conversa continuou «Atribuída», com a única mensagem recebida. O site foi devolvido ao
+deploy inerte e o GO-1 ficou interrompido.
+
+**Causa.** A 0056 revoga o UPDATE de tabela em `inbox_thread` e concede UPDATE **por coluna** (20 colunas, com a
+`routing` da 0057). O adapter mandava no UPDATE também `channel`, `provider`, `context`, `contact_id`, `opened_at` e
+`origin`, que só existem na criação. O PostgreSQL recusa o comando **inteiro** quando uma única coluna do `SET` não tem
+privilégio — antes da RLS e dos gatilhos. Como a conversa é gravada antes das mensagens e dos eventos, nada mais entrava.
+Valia para todos os canais e para todo tipo de alteração feita por pessoa (rascunho, nota, contato realizado, status,
+prioridade, encerramento). A atribuição não era afetada: passa pela RPC `inbox_assign_thread`.
+
+**Por que os testes não viram.** A suíte provava o que o adapter manda com helpers falsos; a prova de banco
+(`scripts/pg-smoke-inbox.mjs`) atualizava a conversa com SQL próprio. O comando que o app monta nunca tinha sido
+executado contra os privilégios reais — e ninguém tinha alterado uma conversa real em produção até o ensaio.
+
+**Correção (sem migration, sem mudar permissão).** `src/data/inbox.supabase.ts` declara
+`COLUNAS_MUTAVEIS_DA_CONVERSA` (as 20 concedidas) e `COLUNAS_SO_DA_CRIACAO_DA_CONVERSA` (as 6); o UPDATE de conversa
+manda só as mutáveis. O INSERT de conversa nova continua completo.
+
+**Provas.**
+- `src/data/inbox.persistencia.integracao.test.ts`: as AÇÕES do store de produção (`inboxResponder`,
+  `inboxRegistrarContato`, `inboxMudarStatus`, `inboxAnotar`, `inboxMudarPrioridade`) + o `persistirInbox` de produção
+  contra um PostgreSQL com a fila inteira de migrations, como `authenticated` com `auth.uid()`. Confere por leitura
+  posterior: rascunho grava mensagem e eventos e **não** cumpre o SLA; contato realizado cumpre com o horário
+  **declarado** (`occurred_at`) e o registro fica com o relógio do banco (`received_at`); o prazo original não é
+  recalculado; contato depois do vencimento continua «respondida fora do prazo»; o responsável não transversal grava na
+  conversa dele e não enxerga a dos outros; setor e responsável seguem fora do UPDATE direto. Guarda de contrato: a lista
+  do app é comparada com o privilégio efetivo do banco e com os `grant update (...)` das migrations, e toda coluna de
+  todo UPDATE emitido é conferida. Sem a correção, 9 dos 15 testes falham com o erro de produção.
+- `scripts/pg-smoke-inbox.mjs`, prova **Z**: 20 colunas concedidas, as 6 da criação negadas, UPDATE só com as mutáveis
+  aceito.
+
+**Regra que fica.** Privilégio por coluna no banco exige que o comando do app seja provado contra o banco, com o papel
+real. Tabela nova do Inbox com `grant update (colunas)` faz o teste de contrato falhar até o adapter ser revisto.
