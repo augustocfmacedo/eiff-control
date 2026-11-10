@@ -3,6 +3,7 @@
 // O payload bruto nunca e descartado: vai para registrosFonte (source_records) e para signal.payload.
 import type { TipoFonte, TipoSinal } from './types';
 import { contextoCnoDoPayload, type ContextoCnoRevisao } from './cnoDadosAbertos';
+import { adapterFormularioSite } from './formularioSite';
 export type { ContextoCnoRevisao } from './cnoDadosAbertos';
 
 export interface EmpresaNormalizada { businessId?: string; cnpj?: string; razaoSocial: string; nomeFantasia?: string; dominio?: string; site?: string; setor?: string; cnae?: string; cidade?: string; uf?: string; pais?: string; faixaFuncionarios?: string; faixaReceita?: string; capitalSocial?: number; externoId?: string }
@@ -130,5 +131,10 @@ export const adapterNoticias: AdapterFonte = {
   },
 };
 
-export const ADAPTERS: AdapterFonte[] = [adapterCNO, adapterPNCP, adapterCNPJ, adapterB2B, adapterNoticias];
+/**
+ * O formulário do site entra pelo mesmo registro das demais fontes. Ele vive
+ * em `formularioSite.ts` porque é a única fonte INBOUND — a pessoa pediu
+ * contato — e isso muda o que o adapter pode supor, não como ele é registrado.
+ */
+export const ADAPTERS: AdapterFonte[] = [adapterCNO, adapterPNCP, adapterCNPJ, adapterB2B, adapterNoticias, adapterFormularioSite];
 export const adapterDe = (fonte: TipoFonte) => ADAPTERS.find((a) => a.fonte === fonte);

@@ -2,6 +2,7 @@
 export * from './tipos';
 export * from './estados';
 export * from './roteamento';
+export * from './primeiraResposta';
 export * from './fronteiras';
 export * from './seed';
 export * from './ingestaoServidor';

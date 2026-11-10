@@ -98,7 +98,7 @@ export async function carregarInbox(h: Pick<HelpersInbox, 'sel' | 'orgId' | 'obr
       abertaEm: x.opened_at, ultimaMensagemEm: x.last_message_at, ultimaInboundEm: s(x.last_inbound_at), resolvidaEm: s(x.resolved_at), fechadaEm: s(x.closed_at), resolvidaPor: s(x.resolved_by) as InboxThread['resolvidaPor'], origem: x.origin ?? 'MANUAL',
     })),
     mensagens: messages.map<InboxMessage>((x) => ({
-      id: x.id, threadId: x.thread_id, provider: x.provider, direcao: x.direction, tipo: x.content_type, autor: { tipo: x.sender_kind, id: s(x.sender_id), nome: x.sender_name }, texto: x.body, anexos: x.attachments ?? [], em: x.occurred_at,
+      id: x.id, threadId: x.thread_id, provider: x.provider, direcao: x.direction, tipo: x.content_type, autor: { tipo: x.sender_kind, id: s(x.sender_id), nome: x.sender_name }, texto: x.body, anexos: x.attachments ?? [], em: x.occurred_at, registradaEm: s(x.received_at),
       externalMessageId: s(x.external_message_id), replyToExternalId: s(x.reply_to_external_id), mensagemCentralId: s(x.central_message_id), entrega: s(x.delivery_state) as InboxMessage['entrega'], propostaId: s(x.proposal_id), meta: x.meta && Object.keys(x.meta).length ? x.meta : undefined,
     })),
     atribuicoes: assignments.map<Atribuicao>((x) => ({ id: x.id, threadId: x.thread_id, setorCodigo: x.sector_id ? codigoDoSetor.get(x.sector_id) : undefined, equipeId: s(x.team_id), usuarioId: s(x.assignee_id), atribuidaEm: x.assigned_at, liberadaEm: s(x.released_at), motivo: s(x.reason), origem: x.origin, atorId: s(x.actor_id) })),

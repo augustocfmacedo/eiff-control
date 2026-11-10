@@ -95,11 +95,23 @@ export function aoReceberMensagem(t: InboxThread, em: string): InboxThread {
   return base;
 }
 
-/** Resposta da EIFF: registra a primeira resposta no SLA e leva ATRIBUIDA/TRIADA para EM_ATENDIMENTO. */
-export function aoResponder(t: InboxThread, em: string): InboxThread {
-  const sla = t.sla && !t.sla.primeiraRespostaEm ? { ...t.sla, primeiraRespostaEm: em } : t.sla;
+/**
+ * Ação da EIFF na conversa: leva NOVA/TRIADA/ATRIBUIDA para EM_ATENDIMENTO e, SÓ quando `efetiva`, registra a
+ * primeira resposta no SLA.
+ *
+ * `efetiva` é obrigatório de propósito: quem chama tem de dizer se houve contato de verdade. Rascunho
+ * (entrega `registrada`) NÃO é efetivo — nada saiu, ninguém foi atendido — e antes desta regra um rascunho
+ * encerrava o relógio. Efetivo é o contato declarado por uma pessoa ou o envio feito por um canal
+ * (`primeiraResposta.ts`).
+ *
+ * O PRIMEIRO registro é o que vale: um contato posterior nunca substitui `primeiraRespostaEm`. E o instante é
+ * o do CONTATO (`em`), que pode ser anterior ao do registro — por isso responder atrasado fica «fora do prazo».
+ */
+export function aoResponder(t: InboxThread, em: string, efetiva: boolean): InboxThread {
+  const sla = efetiva && t.sla && !t.sla.primeiraRespostaEm ? { ...t.sla, primeiraRespostaEm: em } : t.sla;
   const status: StatusThread = t.status === 'ATRIBUIDA' || t.status === 'TRIADA' || t.status === 'NOVA' ? 'EM_ATENDIMENTO' : t.status;
-  return { ...t, sla, status, ultimaMensagemEm: em };
+  const maior = !t.ultimaMensagemEm || em > t.ultimaMensagemEm ? em : t.ultimaMensagemEm;
+  return { ...t, sla, status, ultimaMensagemEm: maior };
 }
 
 // ---------------------------------------------------------------------------

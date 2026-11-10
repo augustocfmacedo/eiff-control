@@ -2,7 +2,7 @@
 // nada de texto fora de inbox_message) e como LE (linhas -> InboxDataset). O que o banco ACEITA e assunto de
 // scripts/pg-smoke-inbox.mjs.
 import { describe, expect, it } from 'vitest';
-import { seedInbox, inboxVazio } from '../core/inbox';
+import { contatoDaMensagem, inboxVazio, metaDoContato, origemPrimeiraResposta, seedInbox, situacaoPrimeiraResposta, type InboxMessage } from '../core/inbox';
 import { carregarInbox, persistirInbox, type HelpersInbox } from './inbox.supabase';
 
 const ORG = '11111111-1111-1111-1111-111111111111';
@@ -122,5 +122,52 @@ describe('leitura', () => {
     const { h } = helpersFalsos();
     const ds = await carregarInbox(h);
     expect(ds.origem).toBe('vazio'); expect(ds.threads).toEqual([]);
+  });
+});
+
+describe('contato realizado na camada de persistência', () => {
+  it('grava o contato com o instante DECLARADO, o meio e quem declarou; o instante de REGISTRO é do banco, nunca enviado', async () => {
+    const { h, chamadas } = helpersFalsos();
+    await carregarInbox(h);
+    const seed = seedInbox(AGORA);
+    await persistirInbox(h, inboxVazio(), seed);
+    chamadas.length = 0;
+
+    const t = seed.threads.find((x) => x.id === 'THR-00001')!;
+    const declarado = '2026-09-23T11:40:00.000Z';
+    const m: InboxMessage = {
+      id: 'MSG-CONTATO', threadId: t.id, provider: t.provider, direcao: 'outbound', tipo: 'texto', autor: { tipo: 'usuario', id: 'u-fin', nome: 'Financeiro' },
+      texto: 'Falei com o Paulo; a NF será paga na sexta.', anexos: [], em: declarado, registradaEm: AGORA, entrega: 'entregue', meta: metaDoContato({ resultado: 'realizado', meio: 'telefone' }),
+    };
+    const depois = { ...seed, mensagens: [...seed.mensagens, m], threads: seed.threads.map((x) => (x.id === t.id ? { ...x, sla: { ...x.sla!, primeiraRespostaEm: declarado } } : x)) };
+    await persistirInbox(h, seed, depois);
+
+    const inserida = chamadas.find((c) => c.op === 'inserir' && c.tabela === 'inbox_message')!.rows[0]!;
+    expect(inserida).toMatchObject({
+      direction: 'outbound', content_type: 'texto', sender_kind: 'usuario', sender_id: 'perfil-u-fin', occurred_at: declarado,
+      delivery_state: 'entregue', meta: { contato: 'realizado', contatoMeio: 'telefone' }, body: m.texto,
+    });
+    // `received_at` e `created_at` ficam com o padrão do banco (now()): o navegador não escolhe a hora do registro
+    expect('received_at' in inserida).toBe(false);
+    expect('created_at' in inserida).toBe(false);
+    const atualizada = chamadas.find((c) => c.op === 'atualizar' && c.tabela === 'inbox_thread')!.rows[0]!;
+    expect(atualizada['sla_first_response_at']).toBe(declarado);
+    // o vencimento não é tocado por registrar o contato
+    expect(atualizada['sla_first_response_due']).toBe(t.sla!.primeiraRespostaAte);
+  });
+
+  it('lê de volta o instante de registro (received_at) ao lado do declarado (occurred_at)', async () => {
+    const { h } = helpersFalsos({
+      inbox_contact: [{ id: 'c-1', name: 'Paulo', relation_kind: 'lead', created_at: AGORA }],
+      inbox_thread: [{ id: 't-1', channel: 'PORTAL', provider: 'MANUAL', context: 'EXTERNAL', contact_id: 'c-1', subject: 'Galpão', status: 'EM_ATENDIMENTO', priority: 'Normal', service_level: 'C', participant_ids: [], labels: [], sla_first_response_due: '2026-09-23T11:30:00.000Z', sla_first_response_at: '2026-09-23T11:20:00.000Z', opened_at: '2026-09-23T11:00:00.000Z', last_message_at: AGORA, origin: 'MANUAL' }],
+      inbox_message: [{ id: 'm-1', thread_id: 't-1', provider: 'MANUAL', direction: 'outbound', content_type: 'texto', sender_kind: 'usuario', sender_id: 'p-1', sender_name: 'Ana', body: 'Falei com o cliente por telefone.', attachments: [], occurred_at: '2026-09-23T11:20:00.000Z', received_at: '2026-09-23T11:55:00.000Z', delivery_state: 'entregue', meta: { contato: 'realizado', contatoMeio: 'telefone' } }],
+    });
+    const ds = await carregarInbox(h);
+    const m = ds.mensagens[0]!;
+    expect(m.em).toBe('2026-09-23T11:20:00.000Z');
+    expect(m.registradaEm).toBe('2026-09-23T11:55:00.000Z');
+    expect(contatoDaMensagem(m)).toEqual({ resultado: 'realizado', meio: 'telefone' });
+    expect(situacaoPrimeiraResposta(ds.threads[0]!)).toBe('respondida_no_prazo');
+    expect(origemPrimeiraResposta(ds.threads[0]!, ds.mensagens)).toBe('contato_declarado');
   });
 });

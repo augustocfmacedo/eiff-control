@@ -175,6 +175,11 @@ export interface InboxMessage {
   texto: string;
   anexos: AnexoInbox[];
   em: string;
+  /**
+   * Quando a mensagem foi REGISTRADA no sistema (`received_at`, relogio do banco). Difere de `em` quando a pessoa
+   * declara depois um contato que ja aconteceu. Ausente em mensagem ainda nao lida de volta do banco.
+   */
+  registradaEm?: string;
   /** Chave de deduplicacao quando a mensagem vem de um provider (a Meta reenvia ate receber 200). */
   externalMessageId?: string;
   replyToExternalId?: string;
