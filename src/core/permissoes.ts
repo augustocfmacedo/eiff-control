@@ -36,6 +36,7 @@ export type Acao =
   | 'radar_dono'
   | 'inbox'
   | 'inbox_config'
+  | 'enviar_email'
   | 'pedir_pagamento';
 
 export const MATRIZ: Record<Acao, Papel[]> = {
@@ -70,6 +71,9 @@ export const MATRIZ: Record<Acao, Papel[]> = {
   // EIFF Inbox: a permissao abre a central; o recorte por setor e feito DENTRO dela (src/core/inbox/roteamento.ts), nunca uma segunda ACL.
   inbox: ['Administrador', 'Diretoria', 'Financeiro', 'Gestor de obra', 'Engenharia', 'Compras', 'Contabilidade'],
   inbox_config: ['Administrador', 'Diretoria'],
+  // E-mail comercial (docs/email-comercial.md): enviar em nome da empresa pela caixa corporativa. Separada de `inbox`: atender uma
+  // conversa nao da o direito de enviar. O servidor (/api/email-comercial) confere o papel no perfil do BANCO contra esta lista.
+  enviar_email: ['Administrador', 'Diretoria'],
 };
 
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {
