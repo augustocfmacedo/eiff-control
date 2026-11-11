@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { MATRIZ } from '../permissoes'
 import { PAPEIS } from '../usuarios'
 import { TRANSICOES_ENTREGA_EMAIL, transicaoDeEntregaPermitida, type EstadoEntregaEmail, type MotivoEntrega, type RespostaGoogle } from './emailEnvio'
-import { ESPERA_RECONCILIACAO_MS, lerPedido, podeEnviarEmail, tratarEmailComercial, type AmbienteEmail, type ConversaLida, type DepsEmail, type EntregaLida, type UsuarioDaSessao } from './emailServidor'
+import { CONFIRMACAO_NAO_ENVIADO, ESPERA_RECONCILIACAO_MS, lerPedido, resolverDestinatario, podeEnviarEmail, tratarEmailComercial, type AmbienteEmail, type ConversaLida, type DepsEmail, type EntregaLida, type UsuarioDaSessao } from './emailServidor'
 
 const ORG = 'org-1'
 const T1 = '11111111-1111-4111-8111-111111111111'
@@ -12,7 +12,8 @@ const INT = '22222222-2222-4222-8222-222222222222'
 const INT2 = '33333333-3333-4333-8333-333333333333'
 const AGORA = '2026-11-11T18:00:00.000Z'
 const ADMIN: UsuarioDaSessao = { id: 'u-admin', nome: 'Augusto Macedo', papel: 'Administrador', organizacaoId: ORG, ativo: true }
-const CONVERSA: ConversaLida = { id: T1, organizacaoId: ORG, status: 'ATRIBUIDA', contexto: 'EXTERNAL', contatoId: 'c-1', emails: ['Marina@Exemplo.com.br'] }
+const CONVERSA: ConversaLida = { id: T1, organizacaoId: ORG, status: 'ATRIBUIDA', contexto: 'EXTERNAL', contatoId: 'c-1', canal: 'PORTAL', identidades: [{ canal: 'PORTAL', identificador: 'Marina@Exemplo.com.br' }] }
+const PARA = 'marina@exemplo.com.br'
 const AMBIENTE: AmbienteEmail = { modo: 'ativo', canario: [], remetente: 'contato@eiff.com.br', nomeExibido: 'EIFF', limiteUsuario: 30, limiteOrganizacao: 100, credenciais: true }
 const TOKEN_OK: RespostaGoogle = { tipo: 'http', status: 200, corpo: { access_token: 'tok-de-teste' } }
 const ENVIO_OK: RespostaGoogle = { tipo: 'http', status: 200, corpo: { id: 'gm-1', threadId: 'gt-1' } }
@@ -72,7 +73,7 @@ function mundo(p: { ambiente?: Partial<AmbienteEmail>; usuario?: UsuarioDaSessao
     },
   }
   const pedir = (body: unknown, authorization: string | null = 'Bearer jwt-de-teste') => tratarEmailComercial({ authorization, body }, deps)
-  const enviar = (extra: Record<string, unknown> = {}) => pedir({ acao: 'enviar', threadId: T1, assunto: 'Sua solicitação de galpão', corpo: 'Olá, Marina.\n\nPodemos conversar amanhã?', intencao: INT, ...extra })
+  const enviar = (extra: Record<string, unknown> = {}) => pedir({ acao: 'enviar', threadId: T1, assunto: 'Sua solicitação de galpão', corpo: 'Olá, Marina.\n\nPodemos conversar amanhã?', intencao: INT, destinatario: PARA, ...extra })
   return { deps, linhas, chamadas, enviados, logs, pedir, enviar }
 }
 const decodificar = (raw: string) => Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
@@ -95,14 +96,15 @@ describe('forma do pedido: chaves fechadas', () => {
     expect(lerPedido({ acao: 'reconciliar', entregaId: T1, desfecho: 'encontrado' })).toMatchObject({ desfecho: 'encontrado' })
   })
   it('destinatário, remetente, cópia ou qualquer chave a mais é recusa', () => {
-    const base = { acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT }
+    const base = { acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT, destinatario: PARA }
     expect(lerPedido(base)).toBeDefined()
     for (const extra of ['para', 'to', 'de', 'from', 'remetente', 'cc', 'bcc', 'anexos', 'html', 'papel', 'organizacaoId']) expect(lerPedido({ ...base, [extra]: 'x' })).toBeUndefined()
   })
   it('ids que não são uuid, ação desconhecida, chave faltando e tipos errados são recusa', () => {
-    expect(lerPedido({ acao: 'enviar', threadId: 'THR-1', assunto: 'a', corpo: 'b', intencao: INT })).toBeUndefined()
-    expect(lerPedido({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b' })).toBeUndefined()
-    expect(lerPedido({ acao: 'enviar', threadId: T1, assunto: 1, corpo: 'b', intencao: INT })).toBeUndefined()
+    expect(lerPedido({ acao: 'enviar', threadId: 'THR-1', assunto: 'a', corpo: 'b', intencao: INT, destinatario: PARA })).toBeUndefined()
+    expect(lerPedido({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', destinatario: PARA })).toBeUndefined()
+    expect(lerPedido({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT })).toBeUndefined()
+    expect(lerPedido({ acao: 'enviar', threadId: T1, assunto: 1, corpo: 'b', intencao: INT, destinatario: PARA })).toBeUndefined()
     expect(lerPedido({ acao: 'enviar_em_massa', threads: [T1] })).toBeUndefined()
     expect(lerPedido({ acao: 'reconciliar', entregaId: T1, desfecho: 'reenviar' })).toBeUndefined()
     expect(lerPedido([{ acao: 'saude' }])).toBeUndefined()
@@ -110,7 +112,7 @@ describe('forma do pedido: chaves fechadas', () => {
   })
   it('pedido malformado: 400 sem tocar em nenhuma porta', async () => {
     const m = mundo()
-    expect((await m.pedir({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT, para: 'outro@exemplo.com' })).status).toBe(400)
+    expect((await m.pedir({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT, destinatario: PARA, para: 'outro@exemplo.com' })).status).toBe(400)
     expect(m.chamadas).toEqual({ token: 0, enviar: 0, criar: 0, usuario: 0, conversa: 0 })
   })
 })
@@ -124,8 +126,8 @@ describe('as chaves de segurança, uma a uma', () => {
   })
   it('sem JWT ou sessão inválida: 401, nada criado, nada enviado', async () => {
     const m = mundo()
-    expect((await m.pedir({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT }, null)).status).toBe(401)
-    expect((await m.pedir({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT }, 'token-sem-bearer')).status).toBe(401)
+    expect((await m.pedir({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT, destinatario: PARA }, null)).status).toBe(401)
+    expect((await m.pedir({ acao: 'enviar', threadId: T1, assunto: 'a', corpo: 'b', intencao: INT, destinatario: PARA }, 'token-sem-bearer')).status).toBe(401)
     const semSessao = mundo({ usuario: null })
     expect((await semSessao.enviar()).status).toBe(401)
     expect(m.chamadas.enviar + semSessao.chamadas.enviar + m.chamadas.criar + semSessao.chamadas.criar).toBe(0)
@@ -173,7 +175,7 @@ describe('Server Truth: conversa e destinatário vêm do banco', () => {
   it('conversa fechada, interna ou sem e-mail válido: recusa sem criar entrega', async () => {
     expect((await mundo({ conversa: { ...CONVERSA, status: 'FECHADA' } }).enviar()).corpo['erro']).toBe('conversa_fechada')
     expect((await mundo({ conversa: { ...CONVERSA, contexto: 'INTERNAL' } }).enviar()).corpo['erro']).toBe('conversa_interna')
-    const semEmail = mundo({ conversa: { ...CONVERSA, emails: ['não é e-mail', ''] } })
+    const semEmail = mundo({ conversa: { ...CONVERSA, identidades: [{ canal: 'PORTAL', identificador: 'não é e-mail' }, { canal: 'EMAIL', identificador: '' }, { canal: 'WHATSAPP', identificador: '5562999990000' }] } })
     expect(await semEmail.enviar()).toMatchObject({ status: 422, corpo: { erro: 'sem_email_valido' } })
     expect(semEmail.chamadas.criar).toBe(0)
   })
@@ -321,13 +323,13 @@ describe('reconciliação humana do resultado desconhecido', () => {
   })
   it('«não foi enviado»: vira FAILED e libera novo envio na conversa', async () => {
     const { m, id } = await desconhecida()
-    expect((await m.pedir({ acao: 'reconciliar', entregaId: id, desfecho: 'nao_enviado' })).corpo).toMatchObject({ estado: 'FAILED', reconciliada: true })
+    expect((await m.pedir({ acao: 'reconciliar', entregaId: id, desfecho: 'nao_enviado', confirmacao: CONFIRMACAO_NAO_ENVIADO })).corpo).toMatchObject({ estado: 'FAILED', reconciliada: true })
     expect(m.linhas[0].motivo).toBe('declarado_nao_enviado')
   })
   it('entrega já terminada não é reconciliada; entrega inexistente é 404', async () => {
     const m = mundo()
     const r = await m.enviar()
-    expect(await m.pedir({ acao: 'reconciliar', entregaId: r.corpo['entregaId'], desfecho: 'nao_enviado' })).toMatchObject({ status: 409, corpo: { erro: 'reconciliacao_indevida' } })
+    expect(await m.pedir({ acao: 'reconciliar', entregaId: r.corpo['entregaId'], desfecho: 'nao_enviado', confirmacao: CONFIRMACAO_NAO_ENVIADO })).toMatchObject({ status: 409, corpo: { erro: 'reconciliacao_indevida' } })
     expect((await m.pedir({ acao: 'reconciliar', entregaId: INT2, desfecho: 'encontrado' })).status).toBe(404)
     expect(m.linhas[0].estado).toBe('ACCEPTED')
   })
@@ -343,22 +345,20 @@ describe('reconciliação humana do resultado desconhecido', () => {
 })
 
 describe('preparar e saúde: informam, nunca enviam', () => {
-  it('preparar diz por que o envio não está disponível, com o destinatário mascarado', async () => {
+  it('preparar diz por que o envio não está disponível e para quem a conversa responde', async () => {
     const off = mundo({ ambiente: { modo: 'disabled' } })
-    expect((await off.pedir({ acao: 'preparar', threadId: T1 })).corpo).toMatchObject({ disponivel: false, motivo: 'envio_desligado', destinatario: 'm•••@exemplo.com.br', remetente: 'contato@eiff.com.br' })
+    expect((await off.pedir({ acao: 'preparar', threadId: T1 })).corpo).toMatchObject({ disponivel: false, motivo: 'envio_desligado', destinatario: PARA, remetente: 'contato@eiff.com.br' })
     const semCred = mundo({ ambiente: { credenciais: false } })
     expect((await semCred.pedir({ acao: 'preparar', threadId: T1 })).corpo).toMatchObject({ disponivel: false, motivo: 'credencial_indisponivel' })
     const canario = mundo({ ambiente: { modo: 'canary', canario: [] } })
     expect((await canario.pedir({ acao: 'preparar', threadId: T1 })).corpo).toMatchObject({ disponivel: false, motivo: 'destino_nao_autorizado' })
     const ok = mundo()
-    expect((await ok.pedir({ acao: 'preparar', threadId: T1 })).corpo).toEqual({ modo: 'ativo', remetente: 'contato@eiff.com.br', disponivel: true, destinatario: 'm•••@exemplo.com.br' })
+    expect((await ok.pedir({ acao: 'preparar', threadId: T1 })).corpo).toEqual({ modo: 'ativo', remetente: 'contato@eiff.com.br', disponivel: true, destinatario: PARA })
     for (const m of [off, semCred, canario, ok]) expect(m.chamadas).toMatchObject({ token: 0, enviar: 0, criar: 0 })
   })
-  it('preparar nunca devolve o endereço completo nem a lista do canário', async () => {
+  it('preparar nunca devolve a lista do canário', async () => {
     const m = mundo({ ambiente: { modo: 'canary', canario: ['interno@eiff.com.br'] } })
-    const texto = JSON.stringify((await m.pedir({ acao: 'preparar', threadId: T1 })).corpo)
-    expect(texto).not.toContain('marina@exemplo.com.br')
-    expect(texto).not.toContain('interno@eiff.com.br')
+    expect(JSON.stringify((await m.pedir({ acao: 'preparar', threadId: T1 })).corpo)).not.toContain('interno@eiff.com.br')
   })
   it('preparar e saúde exigem a permissão de envio', async () => {
     const m = mundo({ usuario: { ...ADMIN, papel: 'Compras' } })
@@ -393,5 +393,108 @@ describe('não vazamento', () => {
     expect(TRANSICOES_ENTREGA_EMAIL.UNKNOWN).toEqual(['ACCEPTED', 'FAILED'])
     expect(transicaoDeEntregaPermitida('READY', 'ACCEPTED')).toBe(false)
     expect(transicaoDeEntregaPermitida('UNKNOWN', 'REQUESTED')).toBe(false)
+  })
+})
+
+/* ---------------------------------------------------------------
+   Revisão final da Direção (11/11/2026): destinatário, confirmação e reconciliação
+--------------------------------------------------------------- */
+
+describe('regressão — para QUAL endereço a conversa responde', () => {
+  const id = (canal: string, identificador: string) => ({ canal, identificador })
+  it('conversa do formulário do site responde ao e-mail do FORMULÁRIO, mesmo com outra identidade de e-mail no contato', async () => {
+    const conversa: ConversaLida = { ...CONVERSA, canal: 'PORTAL', identidades: [id('EMAIL', 'antigo@outra-empresa.com'), id('PORTAL', 'marina@exemplo.com.br'), id('WHATSAPP', '5562999990000')] }
+    expect(resolverDestinatario(conversa)).toEqual({ ok: true, destino: 'marina@exemplo.com.br' })
+    const m = mundo({ conversa })
+    expect((await m.pedir({ acao: 'preparar', threadId: T1 })).corpo).toMatchObject({ disponivel: true, destinatario: 'marina@exemplo.com.br' })
+    expect((await m.enviar()).corpo['estado']).toBe('ACCEPTED')
+    expect(m.enviados.map((e) => e.destino)).toEqual(['marina@exemplo.com.br'])
+    expect(decodificar(m.enviados[0]!.raw)).toContain('To: marina@exemplo.com.br')
+    expect(decodificar(m.enviados[0]!.raw)).not.toContain('antigo@outra-empresa.com')
+  })
+  it('a ordem em que o banco devolve as identidades não muda o destino', () => {
+    const a = [id('EMAIL', 'antigo@outra-empresa.com'), id('PORTAL', 'marina@exemplo.com.br')]
+    expect(resolverDestinatario({ canal: 'PORTAL', identidades: a })).toEqual(resolverDestinatario({ canal: 'PORTAL', identidades: [...a].reverse() }))
+    expect(resolverDestinatario({ canal: 'EMAIL', identidades: a })).toEqual({ ok: true, destino: 'antigo@outra-empresa.com' })
+  })
+  it('dois endereços possíveis sem critério seguro: ambíguo, nada é criado nem enviado', async () => {
+    const doisNoFormulario: ConversaLida = { ...CONVERSA, identidades: [id('PORTAL', 'marina@exemplo.com.br'), id('PORTAL', 'compras@exemplo.com.br')] }
+    const outroCanal: ConversaLida = { ...CONVERSA, canal: 'WHATSAPP', identidades: [id('EMAIL', 'a@exemplo.com.br'), id('PORTAL', 'b@exemplo.com.br')] }
+    for (const conversa of [doisNoFormulario, outroCanal]) {
+      expect(resolverDestinatario(conversa)).toEqual({ ok: false, erro: 'destinatario_ambiguo' })
+      const m = mundo({ conversa })
+      expect((await m.pedir({ acao: 'preparar', threadId: T1 })).corpo).toMatchObject({ disponivel: false, motivo: 'destinatario_ambiguo' })
+      for (const destinatario of ['marina@exemplo.com.br', 'a@exemplo.com.br']) expect(await m.enviar({ destinatario })).toMatchObject({ status: 409, corpo: { erro: 'destinatario_ambiguo' } })
+      expect(m.chamadas).toMatchObject({ criar: 0, token: 0, enviar: 0 })
+    }
+  })
+  it('o mesmo endereço em duas identidades não é ambiguidade; conversa de outro canal com UM e-mail usa esse', () => {
+    expect(resolverDestinatario({ canal: 'PORTAL', identidades: [id('PORTAL', 'Marina@Exemplo.com.br '), id('EMAIL', 'marina@exemplo.com.br')] })).toEqual({ ok: true, destino: 'marina@exemplo.com.br' })
+    expect(resolverDestinatario({ canal: 'WHATSAPP', identidades: [id('WHATSAPP', '5562999990000'), id('PORTAL', 'marina@exemplo.com.br')] })).toEqual({ ok: true, destino: 'marina@exemplo.com.br' })
+    expect(resolverDestinatario({ canal: 'PORTAL', identidades: [id('PORTAL', 'sem-arroba'), id('EMAIL', 'marina@exemplo.com.br')] })).toEqual({ ok: true, destino: 'marina@exemplo.com.br' })
+    expect(resolverDestinatario({ canal: 'PORTAL', identidades: [id('WHATSAPP', 'marina@exemplo.com.br')] })).toEqual({ ok: false, erro: 'sem_email_valido' })
+  })
+  it('o navegador não escolhe o destino: endereço diferente do banco é recusa, nunca redirecionamento', async () => {
+    const m = mundo()
+    expect(await m.enviar({ destinatario: 'atacante@exemplo.org' })).toMatchObject({ status: 409, corpo: { erro: 'destinatario_mudou' } })
+    expect(m.chamadas).toMatchObject({ criar: 0, token: 0, enviar: 0 })
+    expect((await m.enviar({ destinatario: ' Marina@Exemplo.com.br ' })).corpo['estado']).toBe('ACCEPTED')
+    expect(m.enviados.map((e) => e.destino)).toEqual([PARA])
+  })
+  it('o endereço mudou entre a confirmação e o envio: nada sai', async () => {
+    const m = mundo()
+    const visto = (await m.pedir({ acao: 'preparar', threadId: T1 })).corpo['destinatario'] as string
+    m.deps.sessao.conversa = async () => ({ ...CONVERSA, identidades: [{ canal: 'PORTAL', identificador: 'novo@exemplo.com.br' }] })
+    expect(await m.enviar({ destinatario: visto })).toMatchObject({ status: 409, corpo: { erro: 'destinatario_mudou' } })
+    expect(m.chamadas).toMatchObject({ criar: 0, enviar: 0 })
+  })
+})
+
+describe('regressão — endereço completo na confirmação', () => {
+  it('quem pode enviar vê o endereço inteiro; quem não pode, nenhum', async () => {
+    expect((await mundo().pedir({ acao: 'preparar', threadId: T1 })).corpo['destinatario']).toBe(PARA)
+    for (const papel of ['Financeiro', 'Compras', 'Solicitante']) {
+      const r = await mundo({ usuario: { ...ADMIN, papel } }).pedir({ acao: 'preparar', threadId: T1 })
+      expect(r.status).toBe(403)
+      expect(JSON.stringify(r.corpo)).not.toContain('exemplo.com.br')
+    }
+    const inativo = await mundo({ usuario: { ...ADMIN, ativo: false } }).pedir({ acao: 'preparar', threadId: T1 })
+    expect(JSON.stringify(inativo.corpo)).not.toContain('exemplo.com.br')
+  })
+  it('conversa que a pessoa não enxerga (RLS) ou de outra organização não revela endereço', async () => {
+    for (const conversa of [null, { ...CONVERSA, organizacaoId: 'outra-org' }]) {
+      const r = await mundo({ conversa }).pedir({ acao: 'preparar', threadId: T1 })
+      expect(r.corpo).toMatchObject({ disponivel: false, motivo: 'conversa_nao_encontrada' })
+      expect(JSON.stringify(r.corpo)).not.toContain('exemplo.com.br')
+    }
+  })
+  it('o endereço nunca vai para o log, em nenhuma ação', async () => {
+    const m = mundo()
+    await m.pedir({ acao: 'preparar', threadId: T1 }); await m.enviar(); await m.enviar({ destinatario: 'outro@exemplo.org', intencao: INT2 })
+    expect(JSON.stringify(m.logs)).not.toMatch(/exemplo\.com\.br|exemplo\.org/)
+  })
+})
+
+describe('regressão — «não foi enviado» exige confirmação explícita', () => {
+  const desconhecida = async () => { const m = mundo({ envio: { tipo: 'tempo' } }); const r = await m.enviar(); return { m, id: r.corpo['entregaId'] as string } }
+  it('sem a confirmação (ou com outra) o pedido é 400 e a entrega continua UNKNOWN', async () => {
+    const { m, id } = await desconhecida()
+    for (const extra of [{}, { confirmacao: true }, { confirmacao: 'sim' }, { confirmacao: '' }]) {
+      expect((await m.pedir({ acao: 'reconciliar', entregaId: id, desfecho: 'nao_enviado', ...extra })).status).toBe(400)
+    }
+    expect(m.linhas[0]!.estado).toBe('UNKNOWN')
+    // e continua bloqueando novo envio: nenhum e-mail a mais saiu
+    expect(m.chamadas.enviar).toBe(1)
+  })
+  it('com a confirmação: FAILED, com quem declarou e o motivo no livro', async () => {
+    const { m, id } = await desconhecida()
+    const r = await m.pedir({ acao: 'reconciliar', entregaId: id, desfecho: 'nao_enviado', confirmacao: CONFIRMACAO_NAO_ENVIADO })
+    expect(r.corpo).toMatchObject({ estado: 'FAILED', reconciliada: true })
+    expect(m.linhas[0]).toMatchObject({ estado: 'FAILED', motivo: 'declarado_nao_enviado' })
+    expect(m.logs.at(-1)).toMatchObject({ acao: 'reconciliar', outcome: 'declarado_nao_enviado', entregaId: id })
+  })
+  it('«encontrei em Enviados» não aceita a chave de confirmação (forma fechada)', () => {
+    expect(lerPedido({ acao: 'reconciliar', entregaId: T1, desfecho: 'encontrado', confirmacao: CONFIRMACAO_NAO_ENVIADO })).toBeUndefined()
+    expect(lerPedido({ acao: 'reconciliar', entregaId: T1, desfecho: 'nao_enviado', confirmacao: CONFIRMACAO_NAO_ENVIADO })).toEqual({ acao: 'reconciliar', entregaId: T1, desfecho: 'nao_enviado' })
   })
 })
