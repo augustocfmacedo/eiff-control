@@ -3,6 +3,8 @@
 // As datas sao relativas a `agoraIso` para que SLA, ordem de trabalho e caixas facam sentido em qualquer dia.
 import { CONFIGURACAO_PADRAO, SETORES_PADRAO, type Atribuicao, type ContatoInbox, type Equipe, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type Setor, type ThreadEvent } from './tipos';
 import { slaDe } from './roteamento';
+import { prazoUtil } from './calendarioComercial';
+import { textoDaMensagem } from './formularioSite';
 
 const OBRA = 'OB-SF-CL-01';
 const RESPONSAVEL_PADRAO: Record<string, string> = { FINANCEIRO: 'u-fin', OBRAS: 'u-obra', COMPRAS: 'u-compras', ENGENHARIA: 'u-eng', COMERCIAL: 'u-augusto', FORNECEDORES: 'u-compras', ADMINISTRATIVO: 'u-admin', DIRETORIA: 'u-augusto', POS_VENDA: 'u-obra', SISTEMA: 'u-admin', FACTORY: 'u-admin' };
@@ -217,6 +219,64 @@ export function seedInbox(agoraIso: string): InboxDataset {
   evt({ threadId: t10.id, tipo: 'THREAD_CREATED', em: h(6), ator: sistema, detalhe: 'conversa aberta por email (EXTERNAL)' });
   evt({ threadId: t10.id, tipo: 'ROUTED', em: h(6), ator: sistema, detalhe: 'regra ROT-01: tema jurídico → Jurídico · nível C: humano obrigatório · setor sem responsável padrão' });
   atr({ threadId: t10.id, setorCodigo: 'JURIDICO', atribuidaEm: h(6), origem: 'roteamento' });
+
+  // ── Leads do site (formulário → Inbox): canal PORTAL, contexto EXTERNAL, setor COMERCIAL pela regra ROT-SITE ──
+  // O texto é escrito por `textoDaMensagem`, com as mesmas linhas rotuladas da gravação real (formularioGravacao), e o
+  // prazo é o do lead do site: 30 minutos ÚTEIS a partir do recebimento. Pessoas e empresas fictícias.
+  const lead = (p: {
+    n: number; contatoId: string; nome: string; empresa?: string; cidade: string; email: string; telefone: string; telefoneE164: string; formulario: string; recebidoHa: number;
+    status: InboxThread['status']; mensagem?: string; resumo?: string; linhas: string[]; assunto: string;
+  }): InboxThread => {
+    const em = h(p.recebidoHa);
+    contatos.push({ id: p.contatoId, nome: p.nome, empresaNome: p.empresa, tipoRelacao: 'lead', identidades: [{ canal: 'PORTAL', identificador: p.email, nomeInformado: p.nome, verificada: false }, { canal: 'WHATSAPP', identificador: p.telefoneE164, nomeInformado: p.nome, verificada: false }], obras: [], criadoEm: em });
+    const t: InboxThread = {
+      id: `THR-${String(p.n).padStart(5, '0')}`, canal: 'PORTAL', provider: 'MANUAL', contexto: 'EXTERNAL', contatoId: p.contatoId, assunto: p.assunto, status: p.status, prioridade: 'Normal', nivel: 'C',
+      setorCodigo: 'COMERCIAL', responsavelId: 'u-augusto', participantes: [], labels: ['site'], origem: 'MANUAL',
+      sla: { primeiraRespostaAte: prazoUtil(em, 30) }, abertaEm: em, ultimaMensagemEm: em, ultimaInboundEm: em,
+    };
+    threads.push(t);
+    msg({ threadId: t.id, direcao: 'inbound', tipo: 'texto', autor: contato(p.contatoId), em, externalMessageId: `site.exemplo.${p.n}`,
+      texto: textoDaMensagem({ nome: p.nome, empresa: p.empresa, cidade: p.cidade, email: p.email, telefone: p.telefone, resumo: p.resumo, mensagem: p.mensagem, linhas: [...p.linhas, `Origem: formulário "${p.formulario}" do site (eiff.com.br).`] }),
+      meta: { formulario: p.formulario, registroFonteId: `exemplo-${p.n}`, payloadFingerprint: `exemplo-${p.n}` } });
+    evt({ threadId: t.id, tipo: 'THREAD_CREATED', em, ator: sistema, detalhe: 'conversa aberta por portal (EXTERNAL)' });
+    evt({ threadId: t.id, tipo: 'ROUTED', em, ator: sistema, detalhe: 'regra ROT-SITE: solicitação recebida pelo formulário do site → Comercial · responsável padrão do setor' });
+    atr({ threadId: t.id, setorCodigo: 'COMERCIAL', usuarioId: 'u-augusto', atribuidaEm: em, origem: 'roteamento' });
+    return t;
+  };
+  const LEITURA = 'Mostrado ao visitante pela página (texto automático do site, não é orientação de engenharia da EIFF)';
+  const min = (horas: number, minutos: number) => new Date(agora - horas * 3_600_000 + minutos * 60_000).toISOString();
+
+  // L1 — acabou de chegar: aguardando a primeira resposta
+  lead({ n: 11, contatoId: 'CTI-00010', nome: 'Marina Teixeira', empresa: 'Grãos do Vale Armazéns', cidade: 'Rio Verde/GO', email: 'marina@graosdovale.exemplo', telefone: '(64) 90000-0111', telefoneE164: '5564900000111', formulario: 'simular-galpao', recebidoHa: 0.15, status: 'ATRIBUIDA',
+    assunto: 'Galpão de armazenagem 25 x 80 m', mensagem: 'Precisamos ampliar a armazenagem antes da próxima safra. Podem me ligar?', resumo: 'Galpão de armazenagem 25 x 80 m, pé-direito 10 m, 2.000 m²',
+    linhas: ['Especificação: Armazenagem de grãos ensacados', 'Medidas: vão 25 m · comprimento 80 m · pé-direito 10 m', 'Prazo informado: Até 6 meses', 'Escopo: Estrutura, cobertura e fechamento', `${LEITURA}: vão dentro do que já foi executado`] });
+
+  // L2 — chegou há horas e ninguém falou com a pessoa: uma tentativa sem sucesso (que NÃO cumpre o prazo)
+  const l2 = lead({ n: 12, contatoId: 'CTI-00011', nome: 'Rogério Antunes', empresa: 'Antunes Implementos', cidade: 'Anápolis/GO', email: 'rogerio@antunesimplementos.exemplo', telefone: '(62) 90000-0112', telefoneE164: '5562900000112', formulario: 'simular-galpao', recebidoHa: 5, status: 'ATRIBUIDA',
+    assunto: 'Galpão industrial 30 x 60 m com ponte rolante', resumo: 'Galpão industrial 30 x 60 m, pé-direito 12 m, 1.800 m²',
+    linhas: ['Especificação: Indústria com ponte rolante de 10 t', 'Medidas: vão 30 m · comprimento 60 m · pé-direito 12 m', 'Prazo informado: Até 3 meses', 'Escopo: Estrutura e cobertura', `${LEITURA}: acima do já projetado, exige estudo estrutural específico`] });
+  msg({ threadId: l2.id, direcao: 'interna', tipo: 'nota', autor: usuario('u-augusto'), texto: 'Liguei no número informado, caiu na caixa postal. Tento de novo depois do almoço.', em: h(4.5), registradaEm: h(4.5), meta: { contato: 'tentativa', contatoMeio: 'telefone' } });
+  evt({ threadId: l2.id, tipo: 'NOTE_ADDED', em: h(4.5), ator: usuario('u-augusto'), detalhe: 'tentativa de contato por telefone sem sucesso — não cumpre o SLA' });
+  l2.ultimaMensagemEm = h(4.5); l2.participantes = ['u-augusto'];
+
+  // L3 — respondido dentro do prazo (contato realizado por telefone) e com rascunho de e-mail que não saiu
+  const l3 = lead({ n: 13, contatoId: 'CTI-00012', nome: 'Helena Barros', empresa: 'Barros Logística', cidade: 'Aparecida de Goiânia/GO', email: 'helena@barroslog.exemplo', telefone: '(62) 90000-0113', telefoneE164: '5562900000113', formulario: 'simular-galpao', recebidoHa: 26, status: 'AGUARDANDO_CONTATO',
+    assunto: 'Centro de distribuição 40 x 100 m', mensagem: 'Estamos comparando propostas para o novo centro de distribuição.', resumo: 'Galpão logístico 40 x 100 m, pé-direito 12 m, 4.000 m²',
+    linhas: ['Especificação: Logística e armazenagem', 'Medidas: vão 40 m · comprimento 100 m · pé-direito 12 m', 'Prazo informado: Até 12 meses', 'Escopo: Estrutura, cobertura e fechamento', 'Campanha: google-galpao-logistico'] });
+  msg({ threadId: l3.id, direcao: 'outbound', tipo: 'texto', autor: usuario('u-augusto'), texto: 'Falei com a Helena. O terreno já está comprado; ela envia a planta do lote e a sondagem até sexta. Combinamos proposta preliminar na semana seguinte.', em: min(26, 12), registradaEm: min(26, 15), entrega: 'entregue', meta: { contato: 'realizado', contatoMeio: 'telefone' } });
+  evt({ threadId: l3.id, tipo: 'MESSAGE_REGISTERED', em: min(26, 15), ator: usuario('u-augusto'), detalhe: 'contato realizado por telefone — primeira resposta dentro do prazo' });
+  msg({ threadId: l3.id, direcao: 'outbound', tipo: 'texto', autor: usuario('u-augusto'), texto: 'E-mail (rascunho, NÃO enviado)\nPara: helena@barroslog.exemplo\nAssunto: EIFF · documentos para a proposta preliminar\n\nOlá, Helena.\n\nConforme combinamos por telefone, segue a lista do que precisamos: planta do lote e relatório de sondagem.\n\nAtenciosamente,\nAugusto Macedo\nEIFF', em: h(25), entrega: 'registrada' });
+  evt({ threadId: l3.id, tipo: 'MESSAGE_REGISTERED', em: h(25), ator: usuario('u-augusto'), detalhe: 'rascunho de resposta registrada: nenhum canal de saída ligado' });
+  evt({ threadId: l3.id, tipo: 'STATUS_CHANGED', em: h(25), ator: usuario('u-augusto'), detalhe: 'Em atendimento → Aguardando contato', antes: 'EM_ATENDIMENTO', depois: 'AGUARDANDO_CONTATO' });
+  l3.sla = { primeiraRespostaAte: l3.sla!.primeiraRespostaAte, primeiraRespostaEm: min(26, 12) }; l3.ultimaMensagemEm = h(25); l3.participantes = ['u-augusto'];
+
+  // L4 — outro formulário (iniciar-projeto), respondido FORA do prazo
+  const l4 = lead({ n: 14, contatoId: 'CTI-00013', nome: 'Caio Mendonça', cidade: 'Goiânia/GO', email: 'caio.mendonca@exemplo.invalido', telefone: '(62) 90000-0114', telefoneE164: '5562900000114', formulario: 'iniciar-projeto', recebidoHa: 76, status: 'EM_ATENDIMENTO',
+    assunto: 'Cobertura metálica para quadra', mensagem: 'Quero cobrir uma quadra poliesportiva de 20 x 40 m. Vocês fazem só a cobertura?',
+    linhas: ['Prazo informado: Sem prazo definido'] });
+  msg({ threadId: l4.id, direcao: 'outbound', tipo: 'texto', autor: usuario('u-augusto'), texto: 'Respondi ao Caio por e-mail confirmando que fazemos só a cobertura e pedi fotos do local e a medida entre apoios.', em: h(30), registradaEm: h(30), entrega: 'entregue', meta: { contato: 'realizado', contatoMeio: 'email' } });
+  evt({ threadId: l4.id, tipo: 'MESSAGE_REGISTERED', em: h(30), ator: usuario('u-augusto'), detalhe: 'contato realizado por e-mail — primeira resposta FORA do prazo' });
+  l4.sla = { primeiraRespostaAte: l4.sla!.primeiraRespostaAte, primeiraRespostaEm: h(30) }; l4.ultimaMensagemEm = h(30); l4.participantes = ['u-augusto'];
 
   return { setores, equipes: EQUIPES_SEED, membros: MEMBROS_SEED, contatos, threads, mensagens, eventos, atribuicoes, acoes, jobs, configuracao: cfg, origem: 'seed' };
 }
