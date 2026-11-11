@@ -455,7 +455,7 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   // observabilidade do Shadow Mode e o router determinístico APLICANDO em produção com dado de teste (§16.8). Estado
   // mutável (produção, flags, ambiente) sempre com `secao`: §15.2 é histórico ("setores vazios"), §16 é o vigente.
   m({
-    id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', rota: '/atendimento', rotas: ['/atendimento'],
+    id: 'INBOX', titulo: 'EIFF Inbox', dominio: 'CENTRAL', rota: '/atendimento', rotas: ['/atendimento', '/atendimento/leads'],
     dependeDe: ['CENTRAL_WHATSAPP', 'PLATAFORMA'],
     descricao: 'Central de comunicação, atendimento e decisão: a thread é a unidade; ingestão pela EIFF Central, Octopus Router (roteamento explícito e auditável, IA só como refino no servidor) e fronteiras fail-closed.',
     resumo: 'Central de comunicação, atendimento e decisão: a conversa é a unidade; recebe pela EIFF Central, roteia por regras explícitas (IA só como refino no servidor) e recusa por padrão o que não foi liberado.',
