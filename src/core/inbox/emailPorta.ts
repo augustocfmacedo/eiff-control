@@ -96,13 +96,14 @@ export function portaSessao(cfg: { url: string; anon: string }, fetchFn: typeof 
     },
     async conversa(authorization, threadId): Promise<ConversaLida | null> {
       if (!UUID.test(threadId)) return null
-      const t = ((await get(authorization, `inbox_thread?id=eq.${threadId}&select=id,organization_id,status,context,contact_id`)) ?? [])[0]
+      const t = ((await get(authorization, `inbox_thread?id=eq.${threadId}&select=id,organization_id,status,context,channel,contact_id`)) ?? [])[0]
       const id = texto(t?.['id']); const organizacaoId = texto(t?.['organization_id']); const contatoId = texto(t?.['contact_id'])
       if (!id || !organizacaoId || !contatoId) return null
       const ids = (await get(authorization, `inbox_contact_identity?contact_id=eq.${contatoId}&channel=in.(EMAIL,PORTAL)&select=channel,identifier`)) ?? []
-      // identidade de e-mail declarada como tal vem antes da do formulário
-      const emails = [...ids].sort((a, b) => (a['channel'] === 'EMAIL' ? 0 : 1) - (b['channel'] === 'EMAIL' ? 0 : 1)).map((i) => texto(i['identifier'])).filter((x): x is string => x !== undefined)
-      return { id, organizacaoId, contatoId, status: texto(t?.['status']) ?? '', contexto: texto(t?.['context']) ?? '', emails }
+      // SEM ordem de preferência aqui: a porta só entrega o que o banco tem; quem decide o endereço é
+      // `resolverDestinatario` (o canal da conversa vence; mais de um endereço possível é recusa)
+      const identidades = ids.flatMap((i) => { const canal = texto(i['channel']); const identificador = texto(i['identifier']); return canal && identificador ? [{ canal, identificador }] : [] })
+      return { id, organizacaoId, contatoId, status: texto(t?.['status']) ?? '', contexto: texto(t?.['context']) ?? '', canal: texto(t?.['channel']) ?? '', identidades }
     },
     async entrega(authorization, entregaId): Promise<EntregaLida | null> {
       if (!UUID.test(entregaId)) return null
