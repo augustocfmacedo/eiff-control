@@ -164,10 +164,16 @@ export interface AnexoInbox { nome: string; tipo: string; tamanhoBytes?: number;
 /** Metadados TECNICOS seguros (ids do provider, tipo original, janela). Nunca segredo, cabecalho ou payload bruto (CHECK no banco). */
 export type MetaMensagem = Record<string, string | number | boolean | null>;
 
+/**
+ * Provider de uma MENSAGEM. Alem dos providers de canal da conversa, a mensagem enviada pelo e-mail comercial
+ * (migration 0075) tem provider proprio; a conversa continua com o provider de origem.
+ */
+export type ProviderMensagem = CodigoProvider | 'GOOGLE_WORKSPACE';
+
 export interface InboxMessage {
   id: string;
   threadId: string;
-  provider: CodigoProvider;
+  provider: ProviderMensagem;
   direcao: DirecaoMensagem;
   tipo: TipoMensagem;
   autor: { tipo: TipoAutor; id?: string; nome: string };

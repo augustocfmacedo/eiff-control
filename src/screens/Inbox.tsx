@@ -13,6 +13,9 @@ import { RegraDeNegocioError, actions, pode, useStore } from '../data/store';
 import { Badge, Empty, Field, Input, KpiStrip, Link, Modal, PageHead, Select, Tabs, dataHora, useToast, type Tone } from '../ui/components';
 import { Icon } from '../ui/icons';
 import { navegar } from '../ui/router';
+import { EnvioEmail } from '../ui/EnvioEmail';
+import { NOME_SITUACAO_EMAIL, situacaoDoEmail } from '../core/inbox/emailTela';
+import { textoNaConversa } from '../core/inbox/emailMensagem';
 
 const NOME_CANAL: Record<CanalInbox, string> = { WHATSAPP: 'WhatsApp', EMAIL: 'E-mail', PORTAL: 'Portal', WEBCHAT: 'Webchat', SISTEMA: 'Sistema' };
 const TOM_PRIORIDADE: Record<Prioridade, Tone> = { Baixa: 'muted', Normal: 'info', Alta: 'warn', Urgente: 'bad' };
@@ -23,6 +26,8 @@ const TOM_SLA: Record<EstadoSla, Tone> = { sem_sla: 'muted', no_prazo: 'ok', ven
 const agoraLocal = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
 /** De quem é a fala e o que ela é: contato declarado, tentativa, nota interna ou rascunho que não saiu. */
 function rotuloDaMensagem(m: InboxMessage): string {
+  const email = situacaoDoEmail(m);
+  if (email) return `${NOME_SITUACAO_EMAIL[email]} · `;
   const c = contatoDaMensagem(m);
   if (c) return `${c.resultado === 'realizado' ? 'Contato realizado' : 'Tentativa sem sucesso'}${c.meio ? ` por ${NOME_MEIO[c.meio]}` : ''} · `;
   if (m.direcao === 'interna') return 'Nota interna · ';
@@ -57,10 +62,13 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
   const [resultado, setResultado] = useState<ResultadoContato>('realizado');
   const [meio, setMeio] = useState<MeioContato>('telefone');
   const [quando, setQuando] = useState(agoraLocal());
+  // E-mail ao contato: o mesmo texto do composer, com assunto. Rascunho continua sendo rascunho; o envio é do servidor.
+  const [modoEmail, setModoEmail] = useState(false);
+  const [assunto, setAssunto] = useState('');
   const [modal, setModal] = useState<null | 'triar' | 'acao' | 'resultado' | 'simular' | 'status'>(null);
   const [jobAlvo, setJobAlvo] = useState<InboxJob | null>(null);
   const [statusAlvo, setStatusAlvo] = useState<StatusThread | null>(null);
-  useEffect(() => { setTexto(''); setNota(false); setModoContato(false); setResultado('realizado'); setMeio('telefone'); setQuando(agoraLocal()); setAba('contexto'); }, [threadId]);
+  useEffect(() => { setTexto(''); setNota(false); setModoContato(false); setModoEmail(false); setAssunto(''); setResultado('realizado'); setMeio('telefone'); setQuando(agoraLocal()); setAba('contexto'); }, [threadId]);
 
   const podeConfigurar = pode(usuario, 'inbox_config');
   const caixas = useMemo(() => (inbox ? caixasVirtuais(inbox, usuario) : []), [inbox, usuario]);
@@ -112,7 +120,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
       return;
     }
     if (nota) tentar(() => { actions.inboxAnotar(thread.id, texto); setTexto(''); }, 'Nota registrada');
-    else tentar(async () => { const m = await actions.inboxResponder(thread.id, texto, { propostaId: sugestao && texto.trim() === sugestao.descricao.trim() ? sugestao.id : undefined }); setTexto(''); toast(m.entrega === 'registrada' ? 'Rascunho registrado. Nada foi enviado e o prazo de primeira resposta continua correndo.' : `Resposta ${m.entrega}`); });
+    else tentar(async () => { const m = await actions.inboxResponder(thread.id, modoEmail && assunto.trim() ? textoNaConversa(assunto, texto.trim()) : texto, { propostaId: sugestao && texto.trim() === sugestao.descricao.trim() ? sugestao.id : undefined }); setTexto(''); toast(m.entrega === 'registrada' ? 'Rascunho registrado. Nada foi enviado e o prazo de primeira resposta continua correndo.' : `Resposta ${m.entrega}`); });
   };
   const mudarStatus = (para: StatusThread) => {
     if (!thread) return;
@@ -210,7 +218,8 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
               <div className="inbox-composer">
                 <div className="actions small">
                   <label><input type="checkbox" checked={nota} disabled={modoContato} onChange={(e) => setNota(e.target.checked)} /> Nota interna (o contato não vê)</label>
-                  <label><input type="checkbox" checked={modoContato} onChange={(e) => { setModoContato(e.target.checked); if (e.target.checked) { setNota(false); setQuando(agoraLocal()); } }} /> Registrar contato já feito</label>
+                  <label><input type="checkbox" checked={modoContato} onChange={(e) => { setModoContato(e.target.checked); if (e.target.checked) { setNota(false); setModoEmail(false); setQuando(agoraLocal()); } }} /> Registrar contato já feito</label>
+                  {thread.contexto === 'EXTERNAL' && <label><input type="checkbox" checked={modoEmail} disabled={nota || modoContato} onChange={(e) => setModoEmail(e.target.checked)} /> E-mail ao contato</label>}
                   {!nota && !modoContato && <span className="muted">Rascunho de resposta: fica registrado na conversa, nada é enviado e <b>não conta como primeira resposta</b>.</span>}
                 </div>
                 {modoContato && (
@@ -222,9 +231,14 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                     <span className="muted">{resultado === 'realizado' ? 'Só este registro cumpre o prazo de primeira resposta. Fica gravado quem declarou e quando.' : 'Tentativa não cumpre o prazo: fica como nota interna.'}</span>
                   </div>
                 )}
-                <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} placeholder={modoContato ? 'Resumo do contato: com quem falou e o que ficou combinado…' : nota ? 'Anotar para a equipe…' : `Responder a ${contato?.nome ?? 'contato'}…`} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') enviar(); }} disabled={thread.status === 'FECHADA'} />
+                {modoEmail && !nota && !modoContato && <Input value={assunto} onChange={(e) => setAssunto(e.target.value)} placeholder="Assunto do e-mail" aria-label="Assunto do e-mail" disabled={thread.status === 'FECHADA'} />}
+                <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={modoEmail ? 7 : 3} placeholder={modoContato ? 'Resumo do contato: com quem falou e o que ficou combinado…' : nota ? 'Anotar para a equipe…' : `Responder a ${contato?.nome ?? 'contato'}…`} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') enviar(); }} disabled={thread.status === 'FECHADA'} />
+                {modoEmail && !nota && !modoContato && (
+                  <EnvioEmail threadId={thread.id} assunto={assunto} corpo={texto} mensagens={mensagens} nomeAtendente={usuario.nome} remoto={modo === 'remoto'} podeEnviar={pode(usuario, 'enviar_email')} desabilitado={thread.status === 'FECHADA'}
+                    aoConcluir={(a) => { if (a.desfecho === 'enviado') { setTexto(''); setAssunto(''); } toast(a.titulo); void actions.recarregar(); }} />
+                )}
                 <div className="actions">
-                  <button className="btn primary" onClick={enviar} disabled={!texto.trim() || thread.status === 'FECHADA'}>{modoContato ? (resultado === 'realizado' ? 'Registrar contato realizado' : 'Registrar tentativa') : nota ? 'Registrar nota interna' : 'Registrar rascunho de resposta'}</button>
+                  <button className={`btn ${modoEmail && !nota && !modoContato ? '' : 'primary'}`} onClick={enviar} disabled={!texto.trim() || thread.status === 'FECHADA'}>{modoContato ? (resultado === 'realizado' ? 'Registrar contato realizado' : 'Registrar tentativa') : nota ? 'Registrar nota interna' : 'Registrar rascunho de resposta'}</button>
                   <span className="muted small">Ctrl+Enter</span>
                   <div className="spacer" />
                   {thread.status === 'FECHADA' ? <button className="btn sm" onClick={() => mudarStatus('EM_ATENDIMENTO')}>Reabrir</button> : (

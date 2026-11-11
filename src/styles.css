@@ -1381,3 +1381,12 @@ tr.arrastando td { opacity: 0.55; }
   .meta-instante { white-space: normal; }
   .meta-acoes .btn { flex: 1 1 auto; }
 }
+
+/* Envio de e-mail comercial (src/ui/EnvioEmail.tsx): avisos do desfecho, entrega sem confirmacao e previa na confirmacao. */
+.envio-email { display: grid; gap: 8px; }
+.envio-email-aviso { padding: 8px 10px; border-radius: var(--radius-sm); border-left: 3px solid var(--border-strong); background: var(--surface-2); font-size: 13px; }
+.envio-email-aviso.enviado { border-left-color: var(--ok); background: var(--ok-bg); }
+.envio-email-aviso.nao_enviado { border-left-color: var(--bad); background: var(--bad-bg); }
+.envio-email-aviso.desconhecido, .envio-email-aviso.em_andamento { border-left-color: var(--warn); background: var(--warn-bg); }
+.envio-email-pendente { display: grid; gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--warn); background: var(--warn-bg); font-size: 13px; }
+.envio-email-previa { margin: 10px 0; padding: 10px 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
