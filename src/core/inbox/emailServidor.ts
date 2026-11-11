@@ -22,6 +22,7 @@
 import { MATRIZ } from '../permissoes'
 import type { Papel } from '../types'
 import {
+  CONFIRMACAO_NAO_ENVIADO,
   ERROS_EMAIL, autorizarDestino, erroDoMotivo, lerRespostaDoEnvio, lerRespostaDoToken,
   type CodigoErroEmail, type EstadoEntregaEmail, type ModoEmail, type MotivoEntrega, type RespostaGoogle,
 } from './emailEnvio'
@@ -125,8 +126,7 @@ export type PedidoEmail =
   | { acao: 'reconciliar'; entregaId: string; desfecho: 'encontrado' | 'nao_enviado' }
   | { acao: 'saude' }
 
-/** O que a tela tem de mandar junto de «não foi enviado»: a pessoa declara que conferiu a pasta Enviados. */
-export const CONFIRMACAO_NAO_ENVIADO = 'conferi_enviados_e_nao_esta_la'
+export { CONFIRMACAO_NAO_ENVIADO }
 
 /**
  * Chaves fechadas por ação. Qualquer chave a mais — `para`, `de`, `cc`, `remetente`… — é recusa.
