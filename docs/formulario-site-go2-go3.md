@@ -316,6 +316,12 @@ Um objeto que alegue trazer um erro seguro é **reconstruído campo a campo**, n
 confere cada campo de novo no momento de virar texto. Um teste compara os catálogos das RPCs com os códigos
 presentes nas migrations: código novo na RPC sem entrar no catálogo faz o teste falhar.
 
+O **motivo de uma falha de inteligência** segue a mesma regra (`classificarSeguro` em `src/core/inbox/fronteiras.ts`):
+o que o provedor devolve ou lança pode ecoar a resposta de um serviço externo. Só passa o que o próprio sistema
+escreve — um motivo fixo do catálogo (`MOTIVOS_DE_INTELIGENCIA`), `ia http NNN`, `ia timeout N ms` ou
+`ia falhou: <descrição segura>`; o resto vira `MOTIVO_NAO_CATALOGADO`. O fallback não muda: a mensagem continua
+ingerida e o roteamento determinístico é o mesmo de quando não há IA (provado por teste).
+
 A mesma classe de problema existia em dois pontos fora do formulário, no caminho de ingestão do Inbox (webhook da
 Meta, hoje sem credenciais): a mensagem bruta da exceção e o `erro` da RPC iam para `falhas` e para o log. Foram
 tratados com o mesmo utilitário (`src/core/inbox/ingestaoServidor.ts`).

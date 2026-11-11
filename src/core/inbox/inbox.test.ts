@@ -271,7 +271,8 @@ describe('resolução de thread e fallback sem IA', () => {
     expect((await classificarSeguro(undefined, entrada, AGORA)).ok).toBe(false);
     expect((await classificarSeguro(SEM_INTELIGENCIA, entrada, AGORA)).ok).toBe(false);
     const quebrada: IntelligenceProvider = { codigo: 'LLM', async analisar() { throw new Error('timeout'); } };
-    const q = await classificarSeguro(quebrada, entrada, AGORA); expect(q.ok).toBe(false); expect(!q.ok && q.motivo).toMatch(/timeout/);
+    // a mensagem da excecao nao e reproduzida: sai o diagnostico seguro (src/core/erroSeguro.ts)
+    const q = await classificarSeguro(quebrada, entrada, AGORA); expect(q.ok).toBe(false); expect(!q.ok && q.motivo).toBe('inteligência falhou: SEM_CODIGO');
     const tagarela: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'x', assunto: 'y', entidades: [], prioridade: 'Normal', confianca: 0.9, sinais: ['z'.repeat(500)], provedor: 'LLM', versao: 'v' } }; } };
     const tg = await classificarSeguro(tagarela, entrada, AGORA); expect(tg.ok).toBe(false); expect(!tg.ok && tg.motivo).toMatch(/raciocínio/);
     const boa: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'solicitar_orcamento', assunto: 'Mezanino', entidades: [], resumo: 'pede mezanino', prioridade: 'Normal', nivel: 'B', setorRecomendado: 'COMERCIAL', confianca: 0.8, sinais: ['pede prazo'], motivoOperacional: 'pedido comercial', provedor: 'LLM', versao: 'v1', modelo: 'm' } }; } };

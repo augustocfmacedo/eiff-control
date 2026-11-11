@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CAUSAS_CONHECIDAS, CODIGOS_DE_ERRO, CODIGO_NAO_CATALOGADO, ErroDeCredencial, RPCS_CONHECIDAS, TABELAS_CONHECIDAS, classificarErro, codigoDeCatalogo, descricaoSegura, erroHttp,
-  exigirCredencial, operacaoConhecida, textoDoErro, validarCredencial, type ErroSeguro,
+  ehDescricaoSegura, exigirCredencial, operacaoConhecida, textoDoErro, validarCredencial, type ErroSeguro,
 } from './erroSeguro'
 
 const TOKEN = 'tok_FICTICIO_9f3a7c21e5_NAO_PODE_VAZAR'
@@ -194,5 +194,18 @@ describe('operação · só de catálogo fechado, nunca reproduzida de fonte nã
     const catalogo = new Set(['somente_servidor', 'canal'])
     expect(codigoDeCatalogo('canal', catalogo)).toBe('canal')
     for (const v of [SEGREDO, 'Canal', 'canal ', '', 42, null, undefined, { toString: () => 'canal' }]) expect(codigoDeCatalogo(v, catalogo)).toBe(CODIGO_NAO_CATALOGADO)
+  })
+})
+
+describe('ehDescricaoSegura · só o que textoDoErro poderia ter escrito', () => {
+  it('aceita toda saída de textoDoErro e recusa texto livre com a mesma cara', () => {
+    for (const s of [
+      'SEM_CODIGO', 'ERRO_HTTP 503', 'ERRO_REDE ECONNRESET', 'CREDENCIAL_INVALIDA UND_ERR_INVALID_ARG', 'ERRO_HTTP 500 (rpc inbox_ingest)',
+      'ERRO_HTTP 403 (postgrest GET inbox_thread)', 'ERRO_REDE',
+    ]) expect(ehDescricaoSegura(s), s).toBe(true)
+    for (const s of [
+      'SEGREDO_FICTICIO_123456', 'ERRO_HTTP 503 SEGREDO_FICTICIO_123456', 'ERRO_REDE SEGREDO_FICTICIO', 'ERRO_HTTP 500 (rpc segredo_ficticio)',
+      'ERRO_HTTP 999', 'erro_http 500', 'SEM_CODIGO ', ' SEM_CODIGO', 'SEM_CODIGO\nSEGREDO', '', 7, null, undefined, 'ERRO_HTTP 500 (rpc inbox_ingest) x',
+    ]) expect(ehDescricaoSegura(s), JSON.stringify(s)).toBe(false)
   })
 })

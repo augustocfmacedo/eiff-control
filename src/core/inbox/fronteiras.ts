@@ -15,6 +15,7 @@
 //   mesma identidade + mesmo canal + mesmo contexto + thread nao FECHADA = reutiliza; so FECHADA = reabre; senao cria.
 import type { ChannelInboundEvent, CodigoProvider, CommunicationContext } from '../radar/canais';
 import { aoReceberMensagem } from './estados';
+import { descricaoSegura, ehDescricaoSegura } from '../erroSeguro';
 import { normalizarIdentificador, type CanalInbox, type Classificacao, type ContatoInbox, type EntidadeExtraida, type IdentidadeCanal, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type JobResult, type NivelAtendimento, type Prioridade, type ThreadEvent, type TipoRelacao } from './tipos';
 
 // ---------------------------------------------------------------------------
@@ -152,21 +153,44 @@ export function classificacaoAuditavel(c: Classificacao): { ok: boolean; motivo:
   return { ok: true, motivo: 'auditável' };
 }
 
+/** Motivos FIXOS que o proprio sistema produz quando a inteligencia nao entrega uma classificacao. */
+export const MOTIVOS_DE_INTELIGENCIA: ReadonlySet<string> = new Set([
+  'inteligência não configurada: triagem humana',
+  'saída da IA truncada', 'saída da IA não é JSON', 'saída da IA não é um objeto', 'saída da IA sem intenção ou assunto', 'confiança fora de 0-1',
+]);
+/** Marcador do motivo que nao e do sistema: o texto recebido nunca e reproduzido. */
+export const MOTIVO_NAO_CATALOGADO = 'MOTIVO_NAO_CATALOGADO';
+/**
+ * O motivo de um provedor de inteligencia NAO e fonte confiavel: pode ecoar a resposta de um servico externo, o texto
+ * de uma excecao ou um cabecalho. So passa o que o proprio sistema escreve — um motivo fixo do catalogo, `ia http NNN`,
+ * `ia timeout N ms` ou `ia falhou: <descricao segura>`; qualquer outra coisa vira o marcador fixo.
+ */
+export function motivoDeInteligencia(motivo: unknown): string {
+  if (typeof motivo !== 'string') return MOTIVO_NAO_CATALOGADO;
+  if (MOTIVOS_DE_INTELIGENCIA.has(motivo)) return motivo;
+  if (/^ia http [1-5]\d{2}$/.test(motivo) || /^ia timeout \d{1,7} ms$/.test(motivo)) return motivo;
+  const falhou = 'ia falhou: ';
+  if (motivo.startsWith(falhou) && ehDescricaoSegura(motivo.slice(falhou.length))) return motivo;
+  return MOTIVO_NAO_CATALOGADO;
+}
+
 /**
  * FALLBACK SEM IA: chama o provedor e converte QUALQUER falha (indisponivel, excecao, resultado nao auditavel) em
  * `{ ok: false }`. Nunca lanca. Quem chama ja persistiu a mensagem antes; sem classificacao a thread fica NOVA.
+ * O `motivo` devolvido e SEMPRE texto seguro: quem chama o registra em log (roteador e ingestao).
  */
 export async function classificarSeguro(provedor: IntelligenceProvider | undefined, entrada: InboxAnalysisInput, agoraIso: string): Promise<{ ok: true; classificacao: Classificacao; resumo?: string } | { ok: false; motivo: string }> {
   if (!provedor) return { ok: false, motivo: 'inteligência não configurada: triagem humana' };
   try {
     const r = await provedor.analisar(entrada);
-    if (!r.ok) return { ok: false, motivo: r.motivo };
+    if (!r.ok) return { ok: false, motivo: motivoDeInteligencia(r.motivo) };
     const c = classificacaoDe(r.resultado, entrada.mensagem.id, agoraIso);
     const a = classificacaoAuditavel(c);
     if (!a.ok) return { ok: false, motivo: `classificação recusada: ${a.motivo}` };
     return { ok: true, classificacao: c, resumo: r.resultado.resumo };
   } catch (e) {
-    return { ok: false, motivo: `inteligência falhou: ${(e as Error).message ?? 'erro'}` };
+    // nunca a mensagem bruta: a excecao de um cliente HTTP pode conter o valor de um cabecalho
+    return { ok: false, motivo: `inteligência falhou: ${descricaoSegura(e)}` };
   }
 }
 

@@ -243,5 +243,19 @@ export function textoDoErro(s: ErroSeguro): string {
   return operacao !== undefined ? `${partes.join(' ')} (${operacao})` : partes.join(' ')
 }
 
+/**
+ * Um texto É uma descrição segura quando é exatamente o que `textoDoErro` produziria: código do catálogo, status
+ * opcional, causa do catálogo opcional e operação conhecida opcional. Serve para um módulo aceitar de volta, de uma
+ * fonte que não controla, só aquilo que este módulo poderia ter escrito.
+ */
+export function ehDescricaoSegura(texto: unknown): boolean {
+  if (typeof texto !== 'string' || texto.length > 160) return false
+  const m = /^([A-Z_]{1,30})(?: ([1-5]\d{2}))?(?: ([A-Z][A-Z0-9_]{1,50}))?(?: \(([^()]{1,80})\))?$/.exec(texto)
+  if (m === null) return false
+  return (CODIGOS_DE_ERRO as readonly string[]).includes(m[1]!)
+    && (m[3] === undefined || CAUSAS_CONHECIDAS.has(m[3]))
+    && (m[4] === undefined || operacaoConhecida(m[4]) === m[4])
+}
+
 /** Atalho: classifica e descreve. É o que substitui `(e as Error).message` num log. */
 export const descricaoSegura = (e: unknown): string => textoDoErro(classificarErro(e))

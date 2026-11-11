@@ -120,12 +120,12 @@ export async function ingerirEventosCentral(organizationId: string, eventos: Cha
       const entrada = await portas.carregarParaAnalise(res.threadId, res.messageId);
       if (!entrada) { r.semInteligencia++; continue; }
       const c2 = await classificarSeguro(portas.inteligencia, { thread: entrada.thread, mensagem: entrada.mensagem, historico: entrada.historico.slice(-10), organizacaoId: organizationId, contexto: m.contexto, setoresDisponiveis: entrada.setores }, agora);
-      if (!c2.ok) { r.semInteligencia++; portas.log?.({ evento: 'inbox_inteligencia', outcome: 'indisponivel', motivo: c2.motivo.slice(0, 160), threadId: res.threadId }); continue; }
+      if (!c2.ok) { r.semInteligencia++; portas.log?.({ evento: 'inbox_inteligencia', outcome: 'indisponivel', motivo: c2.motivo, threadId: res.threadId }); continue; } // motivo ja saneado por classificarSeguro
       await portas.aplicarClassificacao(res.threadId, c2.classificacao, c2.resumo);
       r.classificados++;
     } catch (err) {
       r.semInteligencia++;
-      portas.log?.({ evento: 'inbox_inteligencia', outcome: 'falha', erro: ((err as Error).message ?? 'erro').slice(0, 160), threadId: res.threadId });
+      portas.log?.({ evento: 'inbox_inteligencia', outcome: 'falha', erro: descricaoSegura(err), threadId: res.threadId }); // nunca a mensagem bruta da excecao
     }
   }
   return r;

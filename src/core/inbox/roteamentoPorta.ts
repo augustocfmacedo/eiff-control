@@ -130,7 +130,7 @@ export async function rotearNoServidor(threadId: string, messageId: string, port
     if (portas.inteligencia) {
       const c = await classificarSeguro(portas.inteligencia(ctx), { thread: entrada.thread, mensagem: entrada.mensagem, historico: entrada.inbox.mensagens.slice(-10), contato: ctx.entrada.inbox.contatos[0], organizacaoId: '', contexto: entrada.thread.contexto, setoresDisponiveis: ctx.setores }, agora);
       if (c.ok) { classificacao = c.classificacao; resumo = c.resumo; classificado = true; }
-      else portas.log?.({ evento: 'inbox_inteligencia', outcome: 'indisponivel', motivo: c.motivo.slice(0, 160), threadId });
+      else portas.log?.({ evento: 'inbox_inteligencia', outcome: 'indisponivel', motivo: c.motivo, threadId }); // motivo ja saneado por classificarSeguro
     }
     const decisao = decidirRoteamento({ ...entrada, classificacaoIa: classificacao });
     const t = entrada.thread;

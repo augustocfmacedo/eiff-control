@@ -90,6 +90,28 @@ describe('rotearNoServidor: determinístico sempre, IA como refino, nunca lança
     expect(r2).toMatchObject({ ok: true, aplicado: true, origem: 'DETERMINISTICO', classificado: false });
     expect(logs.some((l) => l.evento === 'inbox_inteligencia' && l.outcome === 'indisponivel')).toBe(true);
   });
+  it('falha de inteligência com segredo (motivo, message ou cause): o roteamento determinístico segue igual e nada de fora vai ao log nem à resposta', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const texto = 'A NF 320 já foi paga?';
+    const base = aplicar();
+    const semIa = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', texto), aplicar: base.fn, agora: () => AGORA });
+    const casos: [string, { codigo: 'LLM'; analisar: () => Promise<{ ok: false; motivo: string }> }, string][] = [
+      ['motivo com segredo', { codigo: 'LLM', analisar: async () => ({ ok: false, motivo: `erro do provedor: ${SEGREDO}` }) }, 'MOTIVO_NAO_CATALOGADO'],
+      ['motivo forjado com forma de sistema', { codigo: 'LLM', analisar: async () => ({ ok: false, motivo: `ia falhou: ${SEGREDO}` }) }, 'MOTIVO_NAO_CATALOGADO'],
+      ['excecao com segredo em message', { codigo: 'LLM', analisar: async () => { throw new TypeError(`Headers.append: "x-api-key ${SEGREDO}" is an invalid header value.`); } }, 'inteligência falhou: CREDENCIAL_INVALIDA'],
+      ['excecao com segredo em cause', { codigo: 'LLM', analisar: async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error(`x-api-key: ${SEGREDO}`), { code: 'ECONNRESET' }) }); } }, 'inteligência falhou: ERRO_REDE ECONNRESET'],
+      ['motivo legítimo do sistema', { codigo: 'LLM', analisar: async () => ({ ok: false, motivo: 'ia timeout 8000 ms' }) }, 'ia timeout 8000 ms'],
+    ];
+    for (const [nome, ia, esperado] of casos) {
+      const a = aplicar(); const logs: Record<string, unknown>[] = [];
+      const r = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', texto), aplicar: a.fn, inteligencia: () => ia, log: (t) => logs.push(t), agora: () => AGORA });
+      // o determinístico não muda: mesma resposta e mesmo pedido à RPC de quando não há IA nenhuma
+      expect(r, nome).toEqual(semIa);
+      expect(a.pedidos, nome).toEqual(base.pedidos);
+      expect(logs.find((l) => l.evento === 'inbox_inteligencia'), nome).toMatchObject({ outcome: 'indisponivel', motivo: esperado });
+      expect(JSON.stringify([r, logs, a.pedidos]), nome).not.toContain(SEGREDO);
+    }
+  });
   it('baixa confiança → apply false (sugestão registrada, thread fica em Não atribuídos)', async () => {
     const a = aplicar();
     const r = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', 'oi'), aplicar: a.fn });
