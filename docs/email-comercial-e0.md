@@ -285,11 +285,10 @@ reconciliação automática (desligada), as 11 submissões históricas (retidas)
 
 ## 6. Decisões necessárias para iniciar a implementação
 
-Fechada nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria).
+Fechadas nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria) e **D-3** (quem administra o Google Workspace e executa o §1.2 e o §2: **Augusto Macedo**, decisão de 11/11/2026).
 
 | # | Decisão | Por que trava | Recomendação |
 |---|---|---|---|
-| **D-3** | Quem é a pessoa que administra o Google Workspace e executará o §1.2 e o §2 | Sem ela, nem a verificação da caixa acontece | Nomear uma pessoa |
 | **D-1** | Remetente, depois do resultado do §1.2 | Define quem consente e o que a tela mostra em «De» | `contato@eiff.com.br` como usuário próprio; se não for, criar a caixa |
 | **N-1** | Autorizar o início da implementação (passos I-1 a I-4), sem credencial e sem envio | É a autorização específica que o estudo exige | Autorizar I-1 a I-4 em PRs separados |
 | **N-2** | Autorizar a **criação do arquivo** da migration do livro de entregas (sem aplicar) e o código do provider `GOOGLE_WORKSPACE` | O repositório só recebe migration com necessidade comprovada e pedido | Autorizar a criação; a aplicação fica para depois |
@@ -301,7 +300,7 @@ Fechada nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria).
 Podem esperar a primeira entrega estar no ar: D-6 (e-mail devolvido e o SLA), D-8 (retenção e base legal, com o
 jurídico), D-9 (ler respostas no CRM) e D-10 (endurecer o DMARC).
 
-Ordem sugerida: D-3 → verificação do §1.2 → D-1; em paralelo, N-1, N-2, N-3, D-4, D-5 e D-7 liberam a implementação
+Ordem sugerida: verificação do §1.2 pelo Augusto → D-1; em paralelo, N-1, N-2, N-3, D-4, D-5 e D-7 liberam a implementação
 sem credencial.
 
 ---
