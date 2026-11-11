@@ -15,6 +15,7 @@
  * serviço não há política nenhuma para esquecer de passar — o que sobra é a
  * disciplina de filtrar, e ela está em cada chamada.
  */
+import { descricaoSegura, validarCredencial } from '../erroSeguro'
 import type { CodigoProvider } from './canais'
 import type { EstadoDoPrazo, FonteLida, PortasGravacao, ResumoContatoCompletado } from './formularioGravacao'
 import type { DadosDoContato } from '../inbox/formularioSite'
@@ -235,7 +236,7 @@ export function portasFormularioRest(
             }),
           }).then((r) => { identidades += r.length })
         } catch (e) {
-          log?.({ evento: 'formulario_identidade', outcome: 'ignorada', motivo: (e as Error).message })
+          log?.({ evento: 'formulario_identidade', outcome: 'ignorada', motivo: descricaoSegura(e) })
         }
       }
       return { campos: Object.keys(mudar), identidades }
@@ -274,6 +275,10 @@ export function montarPortasIntegracao(
 ): PortasIntegracao {
   const cfg = configPortaFormulario(env)
   if ('motivo' in cfg) return { ok: false, motivo: cfg.motivo }
+  // A chave de serviço vira cabeçalho em toda ida ao banco: recusada AQUI, antes de qualquer requisição, se
+  // tiver caractere que o HTTP não aceita. O motivo leva o nome da variável, nunca o valor.
+  const chave = validarCredencial(cfg.chave)
+  if (!chave.ok) return { ok: false, motivo: `${chave.codigo}: SUPABASE_SERVICE_ROLE_KEY` }
   // A conversa e o roteamento continuam sendo do Inbox, com os mesmos kill switches.
   const inbox = montarPortasInbox(env, { fetch: deps.fetch, log: deps.log })
   if (!inbox.ligado) return { ok: false, motivo: `inbox: ${inbox.motivo}` }

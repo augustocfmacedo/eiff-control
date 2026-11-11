@@ -30,6 +30,7 @@
  * passagem completa — o contrário (derrubar o pedido) faria o reenvio voltar
  * como IDEMPOTENTE e o contato nunca se completaria.
  */
+import { descricaoSegura } from '../erroSeguro'
 import { planejarGravacao, type EstadoAtual, type PlanoDeGravacao, type ResultadoBorda } from './formularioServidor'
 import { canonicoDaSubmissao, observacoesDoLead, pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
 import { validarIntake } from './leadEngineIntake'
@@ -315,6 +316,11 @@ export interface ResultadoGravacao {
   porque: string
 }
 
+/**
+ * `detalhe` é SEMPRE texto seguro: ou uma frase fixa deste arquivo, ou um código devolvido pelo banco, ou a
+ * `descricaoSegura` de uma exceção (código + status + operação). Nunca a mensagem bruta de uma exceção — ela
+ * pode conter o valor de um cabeçalho (src/core/erroSeguro.ts).
+ */
 export class ErroDeGravacao extends Error {
   constructor(readonly etapa: 'evidencia' | 'conversa' | 'prazo', readonly detalhe: string) {
     super(`gravação falhou na etapa ${etapa}: ${detalhe}`)
@@ -351,7 +357,7 @@ export async function gravarSubmissao(
   if (!fonteOk.ok) throw new ErroDeConfiguracao(fonteOk.motivo)
   // O alvo do prazo também vem antes: instante ilegível tem de falhar sem ter gravado nada.
   let alvoDoPrazo: string
-  try { alvoDoPrazo = prazoDoLead(s) } catch (e) { throw new ErroDeGravacao('prazo', (e as Error).message ?? 'erro') }
+  try { alvoDoPrazo = prazoDoLead(s) } catch (e) { throw new ErroDeGravacao('prazo', descricaoSegura(e)) }
 
   const registros = await portas.registrosDaSubmissao(fonteId, externoId)
   const conversaExiste = await portas.conversaExiste(PROVIDER_FORMULARIO, externoId)
@@ -366,7 +372,7 @@ export async function gravarSubmissao(
     try {
       registroFonteId = await portas.gravarEvidencia(linhaDeEvidencia(plano, organizacaoId))
     } catch (e) {
-      throw new ErroDeGravacao('evidencia', (e as Error).message ?? 'erro')
+      throw new ErroDeGravacao('evidencia', descricaoSegura(e))
     }
     if (registroFonteId === undefined || registroFonteId === '') {
       throw new ErroDeGravacao('evidencia', 'insert sem id na volta: gravação não confirmada')
@@ -392,7 +398,7 @@ export async function gravarSubmissao(
     try {
       ingest = await portas.ingerir(pedidoDaMensagem(organizacaoId, mensagem))
     } catch (e) {
-      throw new ErroDeGravacao('conversa', (e as Error).message ?? 'erro')
+      throw new ErroDeGravacao('conversa', descricaoSegura(e))
     }
     if (!ingest.ok) throw new ErroDeGravacao('conversa', ingest.erro ?? 'rpc recusou')
     if (ingest.threadId === undefined) throw new ErroDeGravacao('conversa', 'rpc sem thread na volta: gravação não confirmada')
@@ -427,7 +433,7 @@ export async function gravarSubmissao(
       r.contatoCompletado = await portas.completarContato(contatoId, dadosDoContato(resumo))
       r.contatoId = contatoId
     } catch (e) {
-      portas.log?.({ evento: 'formulario_contato', outcome: 'falhou', motivo: (e as Error).message ?? 'erro' })
+      portas.log?.({ evento: 'formulario_contato', outcome: 'falhou', motivo: descricaoSegura(e) })
     }
   }
 
@@ -442,7 +448,7 @@ export async function gravarSubmissao(
 async function ajustarPrazo(portas: PortasGravacao, externoId: string, alvoIso: string): Promise<ResultadoGravacao['prazo']> {
   let estado: EstadoDoPrazo | undefined
   try { estado = await portas.prazoDaConversa(PROVIDER_FORMULARIO, externoId) } catch (e) {
-    throw new ErroDeGravacao('prazo', (e as Error).message ?? 'erro')
+    throw new ErroDeGravacao('prazo', descricaoSegura(e))
   }
   if (estado === undefined) throw new ErroDeGravacao('prazo', 'conversa da submissão não encontrada para conferir o prazo')
   const decisao = decidirPrazo(estado, alvoIso)
@@ -451,7 +457,7 @@ async function ajustarPrazo(portas: PortasGravacao, externoId: string, alvoIso: 
   }
   let ficou: string | undefined
   try { ficou = await portas.definirPrazo(estado.threadId, decisao.venceEm) } catch (e) {
-    throw new ErroDeGravacao('prazo', (e as Error).message ?? 'erro')
+    throw new ErroDeGravacao('prazo', descricaoSegura(e))
   }
   if (ficou === undefined || Date.parse(ficou) !== Date.parse(decisao.venceEm)) {
     throw new ErroDeGravacao('prazo', 'vencimento não confirmado pelo banco')

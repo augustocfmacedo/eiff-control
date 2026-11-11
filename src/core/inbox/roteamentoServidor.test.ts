@@ -114,7 +114,8 @@ describe('rotearNoServidor: determinístico sempre, IA como refino, nunca lança
     expect(r).toMatchObject({ ok: false, aplicado: false, motivo: 'contexto indisponível' });
     const logs: Record<string, unknown>[] = [];
     const r2 = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', 'A NF 1 foi paga?'), aplicar: async () => { throw new Error('rpc inbox_apply_routing http 500'); }, log: (t) => logs.push(t) });
-    expect(r2.ok).toBe(false); expect(r2.motivo).toMatch(/http 500/); expect(JSON.stringify(logs)).not.toContain(CHAVE);
+    // o motivo e texto seguro (src/core/erroSeguro.ts): codigo + status + operacao, nunca a mensagem bruta da excecao
+    expect(r2.ok).toBe(false); expect(r2.motivo).toBe('ERRO_HTTP 500 (rpc inbox_apply_routing)'); expect(JSON.stringify(logs)).not.toContain(CHAVE);
   });
 });
 

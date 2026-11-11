@@ -10,6 +10,7 @@
  * `env` e `fetch` são injetados. Nenhum segredo nasce aqui e nenhum sai: o
  * que vai para log é identificador, impressão e resultado.
  */
+import { descricaoSegura } from '../erroSeguro'
 import { autorizar, validarCorpo } from './formularioServidor'
 import { corpoDaSubmissaoNetlify } from './formularioTransporte'
 import { ErroDeConfiguracao, ErroDeGravacao, gravarSubmissao } from './formularioGravacao'
@@ -104,7 +105,8 @@ export async function tratarPedidoFormulario(req: Request, deps: DepsBorda): Pro
     // Gravação exigida que não foi confirmada: 5xx, nada de sucesso. Quem chamou reenvia e o plano COMPLETA
     // o que faltou — e, se ninguém reenviar, o reconciliador traz a submissão de volta sem duplicar.
     const etapa = e instanceof ErroDeGravacao ? e.etapa : 'desconhecida'
-    log({ resultado: 'falhou', etapa, motivo: (e as Error).message ?? 'erro' })
+    // Só texto seguro: o detalhe da gravação já é código + status; qualquer outra exceção é classificada.
+    log({ resultado: 'falhou', etapa, motivo: e instanceof ErroDeGravacao ? e.detalhe : descricaoSegura(e) })
     return { status: 502, corpo: { erro: 'gravacao_falhou', etapa } }
   }
 }

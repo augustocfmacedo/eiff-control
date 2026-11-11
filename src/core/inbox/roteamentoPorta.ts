@@ -7,6 +7,7 @@
 //   configuracao, obra, perfis ativos) -> decidirRoteamento DETERMINISTICO -> [IA disponivel? classificarSeguro refina e
 //   decide de novo com a classificacao] -> thread ja roteada? reavaliar -> RPC inbox_apply_routing (persistir decisao,
 //   aplicar pela banda, eventos, numa transacao). Qualquer falha aqui NUNCA desfaz a ingestao: a mensagem ja esta no banco.
+import { descricaoSegura } from '../erroSeguro';
 import { classificarSeguro, type IntelligenceProvider } from './fronteiras';
 import { alvoDaDecisao, decidirRoteamento, reavaliar, type EntradaRoteador } from './roteador';
 import { CONFIGURACAO_PADRAO, inboxVazio, type Classificacao, type ConfiguracaoInbox, type ContatoInbox, type DecisaoOctopus, type Equipe, type InboxDataset, type InboxMessage, type InboxThread, type MembroSetor, type Setor } from './tipos';
@@ -138,7 +139,7 @@ export async function rotearNoServidor(threadId: string, messageId: string, port
     portas.log?.({ evento: 'inbox_roteamento', outcome: r.ok ? 'ok' : 'recusado', threadId, aplicado: r.aplicado === true, origem: d.origem, intencao: d.intencao, banda: d.banda, confianca: d.confianca, setor: d.setorCodigo, equipe: d.equipeId, responsavel: d.responsavelId, aplicacao: d.aplicacao, automacao: d.automacao.modo, prioridade: d.prioridade, nivel: d.nivel, sla: d.slaAte, classificado, override: !!d.override, reavaliacao: reav, erro: r.erro, motivo: r.motivo });
     return { ok: r.ok, aplicado: r.aplicado === true, origem: d.origem, setorCodigo: d.setorCodigo, banda: d.banda, confianca: d.confianca, reavaliacao: reav, motivo: r.erro ?? r.motivo, classificado };
   } catch (e) {
-    const motivo = ((e as Error).message ?? 'erro').slice(0, 160);
+    const motivo = descricaoSegura(e); // nunca a mensagem bruta: pode conter o valor de um cabecalho
     portas.log?.({ evento: 'inbox_roteamento', outcome: 'falha', threadId, erro: motivo });
     return { ok: false, aplicado: false, classificado: false, motivo };
   }

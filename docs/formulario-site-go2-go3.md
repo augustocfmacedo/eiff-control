@@ -287,6 +287,66 @@ Proposta:
 5. **Resultado estruturado.** Manter a linha única por rodada (`RECONCILIACAO_AGENDADA`) e acrescentar a ela o
    código do erro e a etapa (`leitura`, `estado`, `gravacao`), sem conteúdo de lead.
 
+#### 4.3.1 Etapa 1 implementada (PR de código, ainda não publicado)
+
+A proposta acima virou código na etapa 1 do GO-3. Enquanto o deploy não for publicado, a produção continua com
+o comportamento descrito na tabela desta seção.
+
+| Onde | O que mudou |
+|---|---|
+| `src/core/erroSeguro.ts` (novo) | `validarCredencial`, `classificarErro`, `descricaoSegura`. Módulo puro. A mensagem da exceção é lida para classificar e nunca é devolvida |
+| `src/core/radar/formularioAgendado.ts` | token validado antes do cabeçalho; leitura, estado e gravação registram código, etapa e status, nunca a mensagem bruta |
+| `src/core/radar/formularioGravacao.ts` | `ErroDeGravacao.detalhe` passa a ser sempre texto seguro |
+| `src/core/radar/formularioBorda.ts`, `formularioPorta.ts`, `src/core/inbox/roteamentoPorta.ts` | mesmos logs, com texto seguro; a chave de serviço do banco é validada antes de qualquer requisição |
+| `scripts/formulario-reconciliar.mts` | segredo e token validados antes de qualquer envio; falha de transporte imprime só o código; exceção na leitura não chega mais ao topo do processo |
+
+Catálogo de códigos: `CREDENCIAL_AUSENTE`, `CREDENCIAL_INVALIDA`, `ERRO_REDE`, `ERRO_HTTP`, `FALHA_LEITURA`,
+`FALHA_GRAVACAO`, `SEM_CODIGO`. O código técnico da causa só sai se estiver num catálogo fechado
+(`ECONNREFUSED`, `UND_ERR_INVALID_ARG`…); fora dele vira `CAUSA_NAO_CATALOGADA`.
+
+O que **não** mudou: o valor de uma credencial válida (só espaço e quebra de linha nas pontas são ignorados,
+como antes; nada no miolo é removido ou corrigido), o marco, a retenção das históricas, a idempotência, a
+elegibilidade, a recuperação de conversa incompleta, o roteamento, o prazo de 30 minutos úteis e o interruptor
+da reconciliação.
+
+Textos de log que mudaram de forma (quem lê log precisa saber):
+
+| Antes | Depois |
+|---|---|
+| `sem NETLIFY_AUTH_TOKEN` | `CREDENCIAL_AUSENTE: NETLIFY_AUTH_TOKEN` |
+| mensagem bruta em `erro_de_leitura` | `FALHA_LEITURA: ERRO_REDE ECONNREFUSED` (por exemplo) |
+| `gravação falhou na etapa evidencia: postgrest POST radar_source_record http 503` | `…: ERRO_HTTP 503 (postgrest POST radar_source_record)` |
+| `RECONCILIACAO_FALHA { motivo }` | `RECONCILIACAO_FALHA { codigo: 'FALHA_GRAVACAO', etapa, motivo }` |
+
+#### 4.3.2 Rodada com falhas responde HTTP 200 (comportamento atual, não alterado)
+
+A função agendada devolve o status pelo **desfecho da rodada**, não pela contagem de falhas:
+
+| Desfecho | Quando | Status |
+|---|---|---|
+| `desligada` | interruptor fora de `ativa` | 200 |
+| `concluida` | a rodada leu, planejou e percorreu a fila, **mesmo que alguma submissão tenha falhado** (`falhas > 0`) | 200 |
+| `nao_configurada` | falta marco, organização, fonte ou credencial | 503 |
+| `erro_de_leitura` | não conseguiu ler as submissões | 503 |
+
+Ou seja: uma rodada em que a leitura funcionou e a gravação de uma ou de todas as submissões falhou aparece
+como **sucesso** no painel de Functions. A falha só é visível na linha `RECONCILIACAO_AGENDADA` (campo
+`falhas`) e nas linhas `RECONCILIACAO_FALHA`. O script manual é diferente: sai com código 1 quando há falha.
+
+Por que está assim: a rodada foi desenhada para nunca lançar e para a próxima tentar de novo; o status foi
+pensado para «a rodada pôde rodar?», não para «tudo entrou?». A plataforma não usa o corpo nem reexecuta.
+
+Impacto de mudar para 5xx quando `falhas > 0`:
+
+- **A favor:** a falha de gravação passa a aparecer no painel e num eventual alerta nativo de função com
+  falha; fica coerente com o script manual.
+- **Contra:** uma rodada que recuperou 19 de 20 submissões apareceria como falha inteira; falhas passageiras
+  gerariam ruído; e, se a plataforma vier a tratar 5xx de função agendada de outro modo (a documentação
+  consultada não menciona reexecução), o comportamento mudaria sem controle nosso.
+- **Alternativa sem mudar o status:** o alerta da seção 4.4 lê o campo `falhas` do resumo, que já existe.
+
+Esta etapa **não alterou** a semântica. A decisão fica com a Direção, junto do canal de alerta (D3).
+
 ### 4.4 Alertas
 
 Destino: augusto@eiff.com.br. O canal de envio depende de autorização posterior; nada foi configurado.
