@@ -57,8 +57,14 @@ alteração da variável do segredo. Isso sustenta a decisão; não substitui a 
 | Fora do expediente | o prazo começa a contar às 8h do próximo dia útil; conferir a caixa na abertura |
 | Conferência diária | comparar Netlify Forms × Inbox no fim do dia |
 
-A conferência diária serve para **achar** submissão que não chegou ao CRM. Ela **não garante** o SLA de
-30 minutos: quem garante é o alerta por e-mail somado à rotina de 20 minutos.
+O prazo de primeira resposta continua sendo de **30 minutos úteis**. Nenhuma destas medidas o garante:
+
+- A conferência diária serve para **achar** submissão que não chegou ao CRM, não para cumprir prazo.
+- O alerta por e-mail e a rotina de 20 minutos **reduzem o risco** de um lead passar despercebido. O cumprimento
+  depende também de o e-mail chegar e ser visto, de o encaminhamento e o CRM estarem disponíveis e de haver
+  alguém livre para fazer o contato. No pior caso da rotina, um lead é visto 20 minutos depois de entrar e
+  sobram 10 para o contato.
+- O e-mail do Netlify não tem garantia de entrega (`docs/formulario-site-ativacao.md` §10).
 
 ### 1.4 Conferência da primeira submissão real
 
@@ -115,7 +121,7 @@ ativo**. Publicar outro deploy não desliga a integração.
 | # | Risco | Probabilidade | Impacto | Mitigação hoje | Fecha com |
 |---|---|---|---|---|---|
 | R1 | Submissão não chega ao CRM (função do site falha; o evento não tem reenvio) | baixa | alto: lead sem conversa nem prazo | e-mail de notificação + conferência diária | GO-3 (reconciliação) |
-| R2 | Lead chega e ninguém vê dentro de 30 minutos | média | alto: SLA vencido | rotina de 20 minutos | aviso de lead novo (outra frente) |
+| R2 | Lead chega e ninguém vê dentro de 30 minutos | média | alto: SLA vencido | alerta por e-mail e rotina de 20 minutos (reduzem o risco, não o eliminam) | aviso de lead novo (outra frente) |
 | R3 | Outra frente publica o site e muda o comportamento | média | médio | seção 1.6 | coordenação; revisão do processo de publicação |
 | R4 | Variável do segredo alterada em um lado só | baixa | alto: toda submissão recusada (401) | conferência de metadados antes de publicar | GO-3 (reconciliação recupera) + alerta |
 | R5 | Encaminhamento do deploy atual nunca foi exercitado por tráfego real | — | médio | seção 1.4 | primeira submissão real |
@@ -201,14 +207,24 @@ liberá-la.
 
 O prazo de primeira resposta é de 30 minutos úteis contados do instante **original** da submissão.
 
-| Frequência | Pior atraso até a submissão perdida virar conversa | Efeito no SLA de 30 min |
+| Frequência | Espera máxima até a próxima rodada começar | Efeito no SLA de 30 min |
 |---|---|---|
-| de hora em hora | 60 min | a conversa pode nascer já vencida |
-| a cada 10 minutos | 10 min | sobram pelo menos 20 minutos para atender |
+| de hora em hora | 60 min | a conversa recuperada pode nascer já vencida |
+| a cada 10 minutos | 10 min | no pior caso de espera restam até 20 minutos para o atendimento, menos a latência e o processamento descritos abaixo |
 | a cada 5 minutos | 5 min | ganho pequeno sobre a opção de 10 |
 
-De hora em hora foi escolhido quando o prazo era de um dia. Com 30 minutos, **só a rodada de 10 minutos é
-compatível com o SLA**.
+De hora em hora foi escolhido quando o prazo era de um dia. Com 30 minutos, a rodada de hora em hora não
+deixa margem; a de 10 minutos **reduz o atraso da recuperação**, mas **não garante** que a submissão
+recuperada seja atendida no prazo. A coluna do meio é só a espera pelo início da rodada. O tempo real até a
+conversa existir soma ainda:
+
+- a latência do agendador (a plataforma não promete o minuto exato);
+- a leitura da API do Netlify e a gravação no banco;
+- a disponibilidade dos dois serviços naquela rodada (se ela falhar, a próxima só vem 10 minutos depois);
+- a fila: o que passar do lote fica para a rodada seguinte.
+
+E, depois que a conversa existe, o prazo ainda depende de alguém vê-la e fazer o contato (seção 1.3). A
+reconciliação é rede de segurança contra perda, não mecanismo de cumprimento do SLA.
 
 | Item | De hora em hora | A cada 10 min | A cada 10 min, só no expediente |
 |---|---|---|---|
@@ -323,17 +339,29 @@ As variáveis da etapa 5 são criadas pela Direção no painel, em Production e 
 Nenhum teste novo é executado em produção nesta fase. Os de banco rodam em PostgreSQL descartável
 (`npm run smoke:formulario`, hoje com 40 provas); os de unidade usam `fetch`, ambiente e relógio injetados.
 
+**Dois mecanismos, duas coisas que cada um prova.** Os cenários abaixo dizem qual deles é a evidência.
+
+| Mecanismo | O que consulta | O que consegue afirmar |
+|---|---|---|
+| Simulação manual (`scripts/formulario-reconciliar.mts` sem `--executar`) | só as submissões (API do Netlify ou arquivo) e o marco | quais são **retidas** e quais são **elegíveis** a reenvio. **Não lê o banco**: não sabe o que já entrou e trata toda submissão posterior ao marco como «a reenviar» |
+| Rodada agendada (`formulario-reconciliar`, função do CRM) | as submissões, o marco **e o banco** (evidência da mesma impressão, conversa e prazo) | além de retidas e elegíveis, quais já estão inteiramente dentro (`jaDentro`) e não precisam de nada. Só ela distingue «elegível» de «a processar» |
+
+Com o baseline de 12 submissões (11 anteriores ao marco e o ensaio), a simulação manual mostra 11 retidas e
+**1 a reenviar**; a rodada agendada mostra 11 retidas, 1 elegível, **1 já dentro e 0 processadas**. Os dois
+resultados estão certos: a simulação não tem como saber que o ensaio já foi gravado. Se o reenvio manual for
+de fato executado, quem responde é o endpoint, com `IDEMPOTENTE` (provado em 10/11).
+
 | # | Cenário | Como se prova | Aceite |
 |---|---|---|---|
-| H1 | 11 históricos retidos | simulação com a credencial real, sem gravar; e teste de unidade | 11 retidas por «anterior ao marco»; zero a processar |
-| H2 | Ensaio reconhecido como já processado | mesma simulação | ensaio contado como «já dentro»; nenhuma gravação |
+| H1 | 11 históricos retidos | simulação manual (sem gravar, sobre arquivo exportado ou com a credencial) e teste de unidade do plano | lidas = 12; **retidas = 11**, todas pelo motivo «anterior ao marco»; **a reenviar = 1** (o ensaio, que a simulação não tem como saber que já entrou). Nada é enviado |
+| H2 | Ensaio reconhecido como já processado | **rodada agendada** (resumo `RECONCILIACAO_AGENDADA`) e teste de unidade com a porta de estado; a simulação manual **não** prova este cenário | elegíveis = 1; **jaDentro = 1**; processadas = 0; nenhuma gravação. Vale só se evidência da mesma impressão, conversa e prazo estiverem corretos; faltando um, a submissão deixa de ser «já dentro» e é processada (cenário H6) |
 | H3 | Recuperação idempotente | prova de banco (já existe) + D4 | reenvio devolve `IDEMPOTENTE`; banco idêntico |
 | H4 | Falha de credencial | teste de unidade: token ausente, inválido, recusado (401, 403) | desfecho `nao_configurada` ou `erro_de_leitura`, código registrado, **credencial ausente de toda saída**, resposta 503 |
 | H5 | Falha de rede | teste de unidade com `fetch` que lança | código da causa registrado; nada gravado; próxima rodada tenta de novo |
 | H6 | Falha parcial | prova de banco: evidência gravada, conversa não | a rodada seguinte **completa** a conversa; nenhuma duplicação |
 | H7 | Ausência de execução | observador da seção 4.4, com relógio injetado | alerta depois de duas janelas sem rodada |
 | H8 | Integridade do banco | fotografia antes e depois de cada rodada de homologação | nenhuma alteração além da submissão recuperada; zero empresa, zero oportunidade |
-| H9 | Primeira rodada real | leitura do resumo e do banco, com a Direção acompanhando | lidas = total do Netlify; a processar = 0; recuperadas = 0; falhas = 0; banco idêntico |
+| H9 | Primeira rodada real | resumo da **rodada agendada** e fotografia do banco antes e depois, com a Direção acompanhando | desfecho `concluida`; lidas = total das submissões dos dois formulários (12 no baseline, mais as reais que tiverem chegado); retidas = 11; elegíveis = total − 11; **jaDentro = elegíveis**; processadas = 0; restam = 0; recuperadas = 0; falhas = 0; banco idêntico. Se alguma submissão real não tiver entrado pelo caminho principal, processadas e recuperadas deixam de ser zero: é recuperação legítima, a conferir pelos oito itens da seção 1.4 |
 | H10 | 15 dias de acompanhamento | leitura diária dos resumos | nenhuma falha não explicada; toda recuperação investigada; nenhum alerta falso recorrente |
 
 A conferência de cada rodada usa o que o banco tem gravado, nunca a tela.
