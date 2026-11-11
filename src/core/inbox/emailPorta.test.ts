@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { lerRespostaDoEnvio, lerRespostaDoToken } from './emailEnvio'
+import { resolverDestinatario } from './emailServidor'
 import { ESCOPO_GMAIL, GMAIL_SEND_URL, GOOGLE_TOKEN_URL, VARIAVEIS_GOOGLE, ambienteEmail, argsAceitar, argsCriar, argsTransicionar, entregaDoJson, modoEfetivo, portaGoogle, portaLivro, portaSessao, recusaDoLivro } from './emailPorta'
 
 const SEGREDOS = { clientId: 'id-de-teste', clientSecret: 'SEGREDO-DO-CLIENTE', refreshToken: 'TOKEN-DE-ATUALIZACAO' }
@@ -134,9 +135,10 @@ describe('porta da sessão: leituras com o JWT do usuário', () => {
     expect(await portaSessao(cfg, fetchDe(() => json({ msg: 'invalid JWT' }, 401)).f).usuario('Bearer ruim')).toBeNull()
     expect(await portaSessao(cfg, fetchDe(() => json({ id: "x' or 1=1" })).f).usuario('Bearer jwt')).toBeNull()
   })
-  it('conversa: e-mails do contato vêm do banco, identidade EMAIL antes da do formulário; invisível é null', async () => {
-    const { f } = fetchDe((url) => (url.includes('inbox_thread') ? json([{ id: T1, organization_id: 'org', status: 'ATRIBUIDA', context: 'EXTERNAL', contact_id: UID }]) : json([{ channel: 'PORTAL', identifier: 'site@x.com' }, { channel: 'EMAIL', identifier: 'direto@x.com' }])))
-    expect(await portaSessao(cfg, f).conversa('Bearer jwt', T1)).toEqual({ id: T1, organizacaoId: 'org', contatoId: UID, status: 'ATRIBUIDA', contexto: 'EXTERNAL', emails: ['direto@x.com', 'site@x.com'] })
+  it('conversa: canal e identidades vêm do banco, na ordem em que vieram (sem preferência); invisível é null', async () => {
+    const { f } = fetchDe((url) => (url.includes('inbox_thread') ? json([{ id: T1, organization_id: 'org', status: 'ATRIBUIDA', context: 'EXTERNAL', channel: 'PORTAL', contact_id: UID }]) : json([{ channel: 'PORTAL', identifier: 'site@x.com' }, { channel: 'EMAIL', identifier: 'direto@x.com' }])))
+    expect(await portaSessao(cfg, f).conversa('Bearer jwt', T1)).toEqual({ id: T1, organizacaoId: 'org', contatoId: UID, status: 'ATRIBUIDA', contexto: 'EXTERNAL', canal: 'PORTAL', identidades: [{ canal: 'PORTAL', identificador: 'site@x.com' }, { canal: 'EMAIL', identificador: 'direto@x.com' }] })
+    expect(resolverDestinatario((await portaSessao(cfg, f).conversa('Bearer jwt', T1))!)).toEqual({ ok: true, destino: 'site@x.com' })
     expect(await portaSessao(cfg, fetchDe(() => json([])).f).conversa('Bearer jwt', T1)).toBeNull()
     const semChamada = fetchDe(() => json([]))
     expect(await portaSessao(cfg, semChamada.f).conversa('Bearer jwt', 'id=eq.1&select=*')).toBeNull()
