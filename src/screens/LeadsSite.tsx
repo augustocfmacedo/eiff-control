@@ -17,6 +17,8 @@ import { Badge, Empty, Field, Input, KpiHero, KpiStrip, Link, PageHead, Select, 
 import { Icon } from '../ui/icons';
 import { navegar } from '../ui/router';
 import { Tabela, type Coluna } from '../ui/Tabela';
+import { EnvioEmail } from '../ui/EnvioEmail';
+import { corpoComAssinatura } from '../core/inbox/emailMensagem';
 
 const TOM_STATUS: Record<StatusThread, Tone> = { NOVA: 'bad', TRIADA: 'warn', ATRIBUIDA: 'warn', EM_ATENDIMENTO: 'info', AGUARDANDO_CONTATO: 'muted', AGUARDANDO_INTERNO: 'warn', AGUARDANDO_APROVACAO: 'warn', RESOLVIDA: 'ok', FECHADA: 'muted' };
 const TOM_PRIORIDADE: Record<Prioridade, Tone> = { Baixa: 'muted', Normal: 'info', Alta: 'warn', Urgente: 'bad' };
@@ -24,7 +26,7 @@ const NOME_SLA: Record<EstadoSla, string> = { sem_sla: 'sem prazo', no_prazo: 'n
 const TOM_SLA: Record<EstadoSla, Tone> = { sem_sla: 'muted', no_prazo: 'ok', vencendo: 'warn', vencido: 'bad', cumprido: 'ok', atrasada: 'warn', sem_resposta: 'bad' };
 /** Peso só para ordenar a coluna do prazo quando o usuário clica no cabeçalho. */
 const ORDEM_SLA: Record<EstadoSla, number> = { vencido: 0, vencendo: 1, no_prazo: 2, sem_resposta: 3, atrasada: 4, cumprido: 5, sem_sla: 6 };
-const TOM_ITEM: Record<TipoItemHistorico, Tone> = { solicitacao: 'info', mensagem_recebida: 'info', contato_realizado: 'ok', resposta_enviada: 'ok', tentativa: 'warn', rascunho: 'muted', nota: 'muted', movimento: 'muted' };
+const TOM_ITEM: Record<TipoItemHistorico, Tone> = { solicitacao: 'info', mensagem_recebida: 'info', contato_realizado: 'ok', resposta_enviada: 'ok', tentativa: 'warn', rascunho: 'muted', email_nao_enviado: 'bad', email_sem_confirmacao: 'warn', nota: 'muted', movimento: 'muted' };
 const NOME_FORMULARIO: Record<string, string> = { 'simular-galpao': 'Simular galpão', 'iniciar-projeto': 'Iniciar projeto' };
 const nomeFormulario = (f?: string) => (f ? NOME_FORMULARIO[f] ?? f : 'não identificado');
 const agoraLocal = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
@@ -143,13 +145,15 @@ type AbaAcao = 'contato' | 'email' | 'nota';
 function DetalheLead({ lead, inbox, usuario, nomeUsuario, toast, onFechar }: { lead: LeadDoSite; inbox: InboxDataset; usuario: Usuario; nomeUsuario: (id?: string) => string; toast: (m: string) => void; onFechar: () => void }) {
   const t = lead.thread;
   const s = lead.solicitacao;
+  const { modo } = useStore();
+  const mensagensDaConversa = useMemo(() => inbox.mensagens.filter((m) => m.threadId === t.id), [inbox.mensagens, t.id]);
   const [aba, setAba] = useState<AbaAcao>('contato');
   // Contato declarado: o único gesto de pessoa que cumpre o prazo de primeira resposta.
   const [resultado, setResultado] = useState<ResultadoContato>('realizado');
   const [meio, setMeio] = useState<MeioContato>('telefone');
   const [quando, setQuando] = useState(agoraLocal());
   const [resumoContato, setResumoContato] = useState('');
-  const sugestao = useMemo(() => sugestaoDeEmail(lead, usuario.nome), [lead, usuario.nome]);
+  const sugestao = useMemo(() => sugestaoDeEmail(lead), [lead]);
   const [assunto, setAssunto] = useState(sugestao.assunto);
   const [corpo, setCorpo] = useState(sugestao.corpo);
   const [nota, setNota] = useState('');
@@ -157,7 +161,8 @@ function DetalheLead({ lead, inbox, usuario, nomeUsuario, toast, onFechar }: { l
   const acao = proximaAcao(lead);
   const links = linksDeContato(lead);
   const fechada = t.status === 'FECHADA';
-  const rascunho = { para: lead.email ?? '', assunto, corpo };
+  // rascunho e atalho do programa de e-mail levam a MESMA assinatura que o servidor põe no envio
+  const rascunho = { para: lead.email ?? '', assunto, corpo: corpo.trim() ? corpoComAssinatura(corpo, usuario.nome) : '' };
   const errosEmail = validarRascunhoDeEmail(rascunho);
   const setor = t.setorCodigo ? inbox.setores.find((x) => x.codigo === t.setorCodigo)?.nome ?? t.setorCodigo : 'sem setor';
   const naoVerificavel = origemPrimeiraResposta(t, inbox.mensagens) === 'anterior_a_regra';
@@ -272,16 +277,18 @@ function DetalheLead({ lead, inbox, usuario, nomeUsuario, toast, onFechar }: { l
       )}
       {aba === 'email' && (
         <div className="leads-acao">
-          <div className="leads-aviso small" role="note"><b>O EIFF Control ainda não envia e-mail.</b> O texto abaixo fica registrado na conversa como rascunho, nada sai daqui e <b>rascunho não conta como primeira resposta</b>. Se você enviar pelo seu programa de e-mail, volte e registre o contato realizado.</div>
+          <div className="leads-aviso small" role="note"><b>Rascunho não conta como primeira resposta.</b> O envio pelo sistema só acontece quando está ligado no servidor, com a sua confirmação, e só conta depois que o Google confirma o aceite. Se você enviar pelo seu programa de e-mail, volte e registre o contato realizado.</div>
           <div className="form">
             <Field label="Para" full><Input value={lead.email ?? ''} readOnly aria-readonly="true" /></Field>
             <Field label="Assunto" req full><Input value={assunto} onChange={(e) => setAssunto(e.target.value)} disabled={fechada} /></Field>
             <Field label="Mensagem" req full><textarea value={corpo} onChange={(e) => setCorpo(e.target.value)} rows={9} disabled={fechada} /></Field>
           </div>
           {errosEmail.length > 0 && <div className="small muted">{errosEmail[0]}</div>}
+          <EnvioEmail threadId={t.id} assunto={assunto} corpo={corpo} mensagens={mensagensDaConversa} nomeAtendente={usuario.nome} remoto={modo === 'remoto'} podeEnviar={pode(usuario, 'enviar_email')} desabilitado={fechada}
+            aoConcluir={(a) => { toast(a.titulo); void actions.recarregar(); }} />
           <div className="actions">
-            <button className="btn primary" disabled={errosEmail.length > 0 || fechada} onClick={registrarRascunho}>Registrar rascunho na conversa</button>
-            {lead.email && <a className="btn" href={linksDeContato(lead, { assunto, corpo }).email}>Abrir no meu programa de e-mail</a>}
+            <button className="btn" disabled={errosEmail.length > 0 || fechada} onClick={registrarRascunho}>Registrar rascunho na conversa</button>
+            {lead.email && <a className="btn" href={linksDeContato(lead, { assunto, corpo: rascunho.corpo }).email}>Abrir no meu programa de e-mail</a>}
             <button className="btn" disabled={fechada} onClick={jaEnviei} title="Leva para o registro de contato realizado por e-mail">Já enviei: registrar contato</button>
           </div>
         </div>

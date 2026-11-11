@@ -23,6 +23,7 @@
  * mensagem mudar, a leitura quebra no teste, não em silêncio na tela.
  */
 import { ehAberta } from './estados'
+import { situacaoDoEmail } from './emailTela'
 import { CANAL_FORMULARIO } from './formularioSite'
 import { contatoDaMensagem, ehRespostaEfetiva, situacaoPrimeiraResposta, type MeioContato, type SituacaoPrimeiraResposta } from './primeiraResposta'
 import { estadoSla, ordenarParaTrabalho, threadVisivel, visibilidadeDe, type EstadoSla } from './roteamento'
@@ -330,10 +331,11 @@ export function proximaAcao(l: LeadDoSite): ProximaAcao {
    5 · Histórico: mensagens, tentativas, contatos e movimentos
 --------------------------------------------------------------- */
 
-export type TipoItemHistorico = 'solicitacao' | 'mensagem_recebida' | 'contato_realizado' | 'tentativa' | 'rascunho' | 'resposta_enviada' | 'nota' | 'movimento'
+export type TipoItemHistorico = 'solicitacao' | 'mensagem_recebida' | 'contato_realizado' | 'tentativa' | 'rascunho' | 'resposta_enviada' | 'email_nao_enviado' | 'email_sem_confirmacao' | 'nota' | 'movimento'
 export const NOME_ITEM_HISTORICO: Record<TipoItemHistorico, string> = {
   solicitacao: 'Solicitação pelo site', mensagem_recebida: 'Mensagem recebida', contato_realizado: 'Contato realizado', tentativa: 'Tentativa sem sucesso',
-  rascunho: 'Rascunho (não enviado)', resposta_enviada: 'Resposta enviada', nota: 'Nota interna', movimento: 'Movimento',
+  rascunho: 'Rascunho (não enviado)', resposta_enviada: 'Resposta enviada', email_nao_enviado: 'E-mail NÃO enviado', email_sem_confirmacao: 'E-mail sem confirmação de envio',
+  nota: 'Nota interna', movimento: 'Movimento',
 }
 
 export interface ItemHistorico {
@@ -358,6 +360,10 @@ function tipoDaMensagem(m: InboxMessage): TipoItemHistorico {
   if (c) return c.resultado === 'realizado' ? 'contato_realizado' : 'tentativa'
   if (m.direcao === 'inbound') return typeof m.meta?.['formulario'] === 'string' ? 'solicitacao' : 'mensagem_recebida'
   if (m.direcao === 'interna') return 'nota'
+  // e-mail comercial: falha e resultado desconhecido têm nome próprio — não são rascunho comum nem resposta
+  const email = situacaoDoEmail(m)
+  if (email === 'falhou') return 'email_nao_enviado'
+  if (email === 'sem_confirmacao' || email === 'enviando') return 'email_sem_confirmacao'
   return ehRespostaEfetiva(m) ? 'resposta_enviada' : 'rascunho'
 }
 
@@ -404,12 +410,14 @@ export function linksDeContato(l: Pick<LeadDoSite, 'telefoneE164' | 'email'>, em
 export interface RascunhoDeEmail { para: string; assunto: string; corpo: string }
 
 /** Ponto de partida do e-mail: saudação, referência ao pedido e assinatura. O vendedor escreve o resto. */
-export function sugestaoDeEmail(l: LeadDoSite, remetente: string): Omit<RascunhoDeEmail, 'para'> {
+// SEM assinatura: quem assina («nome do atendente + EIFF») é `corpoComAssinatura`, igual no envio pelo servidor, no
+// rascunho e no atalho do programa de e-mail. Assinar aqui também duplicaria.
+export function sugestaoDeEmail(l: LeadDoSite): Omit<RascunhoDeEmail, 'para'> {
   const primeiroNome = l.nome === NOME_NAO_IDENTIFICADO ? '' : l.nome.trim().split(/\s+/)[0]
   const pedido = l.solicitacao.configuracao ? `Recebemos sua solicitação pelo site (${l.solicitacao.configuracao}).` : 'Recebemos sua solicitação pelo site.'
   return {
     assunto: 'EIFF · sua solicitação de galpão',
-    corpo: `${primeiroNome ? `Olá, ${primeiroNome}.` : 'Olá.'}\n\n${pedido}\n\n\n\nAtenciosamente,\n${remetente}\nEIFF`,
+    corpo: `${primeiroNome ? `Olá, ${primeiroNome}.` : 'Olá.'}\n\n${pedido}\n\n`,
   }
 }
 
