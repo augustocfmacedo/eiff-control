@@ -1038,6 +1038,10 @@ tr.arrastando td { opacity: 0.55; }
 .envio-email-aviso.desconhecido, .envio-email-aviso.em_andamento { border-left-color: var(--warn); background: var(--warn-bg); }
 .envio-email-pendente { display: grid; gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--warn); background: var(--warn-bg); font-size: 13px; }
 .envio-email-previa { margin: 10px 0; padding: 10px 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.envio-email-conferencia dd { overflow-wrap: anywhere; }
+.envio-email-conferencia [data-envio-email-para] { font-weight: 600; }
+.envio-email-conferi { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--warn); border-radius: var(--radius-sm); background: var(--warn-bg); font-size: 13px; }
+.envio-email-conferi input { margin-top: 2px; flex: none; }
 
 /* MC-CONSTRUCTION-1 — Central de Construção. Panorama de módulos (mcc-*) e Mapa vivo em SVG (mcm-*).
    Estado nunca depende só de cor: o ponto tem título/aria-label e o Badge traz o texto. Nenhuma regra de

@@ -3,8 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { chamarEmailComercial } from '../../data/emailComercial'
-import { ERROS_EMAIL } from './emailEnvio'
-import { NOME_SITUACAO_EMAIL, chaveDoConteudo, ehMensagemDeEmail, entregaSemDesfecho, lerDisponibilidade, lerRespostaDoEnvio, situacaoDoEmail } from './emailTela'
+import { CONFIRMACAO_NAO_ENVIADO, ERROS_EMAIL } from './emailEnvio'
+import { NOME_SITUACAO_EMAIL, chaveDoConteudo, ehMensagemDeEmail, entregaSemDesfecho, lerDisponibilidade, lerRespostaDoEnvio, pedeNovaConferenciaDoDestino, pedidoDeReconciliacao, situacaoDoEmail } from './emailTela'
 import { contatoDaMensagem, ehRespostaEfetiva } from './primeiraResposta'
 import type { InboxMessage } from './tipos'
 
@@ -118,10 +118,15 @@ describe('cliente do navegador e fronteiras da tela', () => {
   })
   const raiz = path.resolve(__dirname, '../../..')
   const ler = (f: string) => fs.readFileSync(path.join(raiz, f), 'utf8')
-  it('o pedido do navegador não tem campo de destinatário nem de remetente', () => {
+  it('o pedido do navegador não escolhe destino nem remetente: só devolve o endereço que o servidor mostrou', () => {
     const cliente = ler('src/data/emailComercial.ts')
     const tipo = cliente.slice(cliente.indexOf('export type PedidoEmailComercial'), cliente.indexOf('/** Chave pública'))
-    expect(tipo).not.toMatch(/\b(para|to|de|from|remetente|destinatario|cc|bcc)\s*[:?]/i)
+    expect(tipo).not.toMatch(/\b(para|to|de|from|remetente|cc|bcc)\s*[:?]/i)
+    // o único endereço que a tela manda é o que veio de `preparar`, nunca um campo que a pessoa digita
+    const tela = ler('src/ui/EnvioEmail.tsx')
+    expect(tela.match(/destinatario:/g)).toEqual(['destinatario:'])
+    expect(tela).toContain('destinatario: disp.destinatario }')
+    expect(tela).not.toMatch(/<input[^>]*(email|destinat)/i)
     expect(cliente).not.toMatch(/emailPorta|googleapis|SERVICE_ROLE|refresh/i)
   })
   it('a tela de envio tem os dois gestos, não oferece reenvio no desconhecido e não fala com o Google', () => {
@@ -129,7 +134,7 @@ describe('cliente do navegador e fronteiras da tela', () => {
     expect(tela).toContain('Enviar e-mail')
     expect(tela).toContain('Enviar agora')
     expect(tela).toContain('Encontrei em Enviados')
-    expect(tela).toContain('Não foi enviado')
+    expect(tela).toContain('Não foi enviado…')
     expect(tela).not.toMatch(/emailPorta|googleapis|fetch\(/)
     expect(tela).not.toMatch(/Tentar de novo|Reenviar/)
   })
@@ -137,5 +142,45 @@ describe('cliente do navegador e fronteiras da tela', () => {
     const inbox = ler('src/screens/Inbox.tsx')
     expect(inbox).toContain("thread.contexto === 'EXTERNAL' && <label><input type=\"checkbox\" checked={modoEmail}")
     expect(inbox).toContain("podeEnviar={pode(usuario, 'enviar_email')}")
+  })
+})
+
+describe('regressão — revisão final da Direção (11/11/2026)', () => {
+  const raiz = path.resolve(__dirname, '../../..')
+  const tela = fs.readFileSync(path.join(raiz, 'src/ui/EnvioEmail.tsx'), 'utf8')
+  it('a confirmação final mostra o endereço COMPLETO que o servidor devolveu, sem máscara e sem remeter a outra tela', () => {
+    const d = lerDisponibilidade(200, { disponivel: true, modo: 'ativo', remetente: 'contato@eiff.com.br', destinatario: 'marina@exemplo.com.br' })
+    expect(d).toMatchObject({ disponivel: true, destinatario: 'marina@exemplo.com.br' })
+    const modal = tela.slice(tela.indexOf('<Modal title="Confirmar o envio do e-mail"'), tela.indexOf('<Modal title="Declarar'))
+    expect(modal).toContain('<dd data-envio-email-para>{disp.destinatario}</dd>')
+    expect(modal).not.toMatch(/mascararEmail|está no contato da conversa/)
+  })
+  it('quem não pode enviar não recebe endereço: sem permissão a tela nem pergunta ao servidor', () => {
+    expect(tela).toContain('if (!remoto || !podeEnviar) return;')
+    expect(lerDisponibilidade(403, { erro: 'sem_permissao', mensagem: 'x' })).toMatchObject({ disponivel: false })
+    expect(lerDisponibilidade(403, { erro: 'sem_permissao' }).destinatario).toBeUndefined()
+  })
+  it('«não foi enviado» só vira pedido depois de marcar que conferiu a pasta Enviados', () => {
+    expect(pedidoDeReconciliacao('e1', 'nao_enviado', false)).toBeUndefined()
+    expect(pedidoDeReconciliacao('e1', 'nao_enviado', true)).toEqual({ acao: 'reconciliar', entregaId: 'e1', desfecho: 'nao_enviado', confirmacao: CONFIRMACAO_NAO_ENVIADO })
+    expect(pedidoDeReconciliacao('e1', 'encontrado', false)).toEqual({ acao: 'reconciliar', entregaId: 'e1', desfecho: 'encontrado' })
+  })
+  it('o botão da faixa só ABRE a confirmação; quem declara é o botão da janela, travado até a caixa ser marcada', () => {
+    const faixa = tela.slice(tela.indexOf('envio-email-pendente'), tela.indexOf('Verificando se o envio'))
+    expect(faixa).not.toContain("'nao_enviado'")
+    expect(faixa).toContain('setDeclarando(entregaParaConferir.entregaId)')
+    const janela = tela.slice(tela.indexOf('<Modal title="Declarar'))
+    expect(janela).toContain('disabled={ocupado || !conferiu}')
+    expect(janela).toContain('vai receber a mesma mensagem duas vezes')
+    expect(janela).toContain('Voltar sem declarar')
+    // a caixa nasce desmarcada a cada abertura
+    expect(faixa).toContain('setConferiu(false); setDeclarando(')
+  })
+  it('endereço mudou ou ficou ambíguo entre a confirmação e o envio: a tela busca o endereço atual', () => {
+    expect(pedeNovaConferenciaDoDestino({ erro: 'destinatario_mudou' })).toBe(true)
+    expect(pedeNovaConferenciaDoDestino({ erro: 'destinatario_ambiguo' })).toBe(true)
+    expect(pedeNovaConferenciaDoDestino({ erro: 'provedor_recusou' })).toBe(false)
+    expect(pedeNovaConferenciaDoDestino(null)).toBe(false)
+    expect(lerRespostaDoEnvio(409, { erro: 'destinatario_mudou' })).toMatchObject({ desfecho: 'nao_enviado', texto: ERROS_EMAIL.destinatario_mudou.mensagem })
   })
 })

@@ -1,12 +1,14 @@
 // Cliente de /api/email-comercial (navegador). Manda só intenção: conversa, assunto, corpo e a chave da intenção.
-// Destinatário, remetente, papel e organização são decididos no servidor — este arquivo nem os conhece.
+// Destinatário, remetente, papel e organização são decididos no servidor. O `destinatario` do envio NÃO escolhe o
+// destino: é o endereço que o servidor mostrou e a pessoa conferiu; se não for o do banco, o servidor recusa.
 // Nunca importa o módulo de portas do servidor: um teste de fronteira prende isso.
+import type { PedidoDeReconciliacao } from '../core/inbox/emailTela';
 import { tokenSessao } from './supabase';
 
 export type PedidoEmailComercial =
   | { acao: 'preparar'; threadId: string }
-  | { acao: 'enviar'; threadId: string; assunto: string; corpo: string; intencao: string }
-  | { acao: 'reconciliar'; entregaId: string; desfecho: 'encontrado' | 'nao_enviado' };
+  | { acao: 'enviar'; threadId: string; assunto: string; corpo: string; intencao: string; destinatario: string }
+  | PedidoDeReconciliacao;
 
 /** Chave pública (anônima) do Supabase do app, posta por src/data/ambiente.ts. Não é segredo. */
 const chaveAnonima = (): string => (globalThis as { __EIFF_SUPABASE__?: { chave?: string } }).__EIFF_SUPABASE__?.chave ?? '';

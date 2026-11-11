@@ -9,7 +9,7 @@
  *
  * Nada aqui decide se um e-mail pode ser enviado: quem decide é o servidor.
  */
-import { ERROS_EMAIL, type CodigoErroEmail } from './emailEnvio'
+import { CONFIRMACAO_NAO_ENVIADO, ERROS_EMAIL, type CodigoErroEmail } from './emailEnvio'
 import type { InboxMessage } from './tipos'
 
 export const PROVIDER_EMAIL = 'GOOGLE_WORKSPACE'
@@ -116,3 +116,22 @@ export function lerRespostaDoEnvio(status: number, corpo: unknown): AvisoDoEnvio
 
 /** Chave do conteúdo, para a tela saber se ainda é o MESMO pedido (mesma intenção) ou outro (intenção nova). */
 export const chaveDoConteudo = (threadId: string, assunto: string, corpo: string): string => JSON.stringify([threadId, assunto.trim(), corpo.replace(/\r\n?/g, '\n').trim()])
+
+/**
+ * O pedido de reconciliação que a tela pode mandar. «Não foi enviado» libera novo envio na conversa — se a declaração
+ * estiver errada, o cliente recebe o e-mail em dobro —, então só existe pedido depois de a pessoa marcar que conferiu
+ * a pasta Enviados. Sem isso, não há pedido (e o servidor também recusaria: a confirmação é exigida lá).
+ */
+export type PedidoDeReconciliacao =
+  | { acao: 'reconciliar'; entregaId: string; desfecho: 'encontrado' }
+  | { acao: 'reconciliar'; entregaId: string; desfecho: 'nao_enviado'; confirmacao: typeof CONFIRMACAO_NAO_ENVIADO }
+export function pedidoDeReconciliacao(entregaId: string, desfecho: 'encontrado' | 'nao_enviado', conferiuEnviados: boolean): PedidoDeReconciliacao | undefined {
+  if (desfecho === 'encontrado') return { acao: 'reconciliar', entregaId, desfecho }
+  return conferiuEnviados ? { acao: 'reconciliar', entregaId, desfecho, confirmacao: CONFIRMACAO_NAO_ENVIADO } : undefined
+}
+
+/** O servidor recusou porque o endereço da conversa não é (mais) o que a pessoa conferiu: a tela busca o atual. */
+export function pedeNovaConferenciaDoDestino(corpo: unknown): boolean {
+  const erro = corpo && typeof corpo === 'object' ? (corpo as Record<string, unknown>)['erro'] : undefined
+  return erro === 'destinatario_mudou' || erro === 'destinatario_ambiguo'
+}
