@@ -304,6 +304,22 @@ Catálogo de códigos: `CREDENCIAL_AUSENTE`, `CREDENCIAL_INVALIDA`, `ERRO_REDE`,
 `FALHA_GRAVACAO`, `SEM_CODIGO`. O código técnico da causa só sai se estiver num catálogo fechado
 (`ECONNREFUSED`, `UND_ERR_INVALID_ARG`…); fora dele vira `CAUSA_NAO_CATALOGADA`.
 
+Três catálogos fechados sustentam a regra «nada que vem de fora é reproduzido» (revisão da Direção no PR, 11/11/2026):
+
+| O que | De onde vem | Regra |
+|---|---|---|
+| Operação (`postgrest POST radar_source_record`, `rpc inbox_ingest`) | mensagem de exceção, ou objeto que alegue ser um erro seguro | só sai se for exatamente `<verbo conhecido> <recurso conhecido>` (`TABELAS_CONHECIDAS`, `RPCS_CONHECIDAS`); senão é **omitida**. «Ter forma de nome de tabela» não basta: `rpc segredo_ficticio` teria a forma certa |
+| Código de recusa da RPC `inbox_ingest` | campo `erro` da resposta do banco | só os cinco códigos da migration 0056 (`CODIGOS_RECUSA_INGEST`); outro texto vira `CODIGO_NAO_CATALOGADO` |
+| Código e motivo da RPC `inbox_apply_routing` | campos `erro` e `motivo` da resposta do banco | só os da migration 0057 (`CODIGOS_RECUSA_ROTEAMENTO`, `MOTIVOS_ROTEAMENTO`) |
+
+Um objeto que alegue trazer um erro seguro é **reconstruído campo a campo**, nunca devolvido; e `textoDoErro`
+confere cada campo de novo no momento de virar texto. Um teste compara os catálogos das RPCs com os códigos
+presentes nas migrations: código novo na RPC sem entrar no catálogo faz o teste falhar.
+
+A mesma classe de problema existia em dois pontos fora do formulário, no caminho de ingestão do Inbox (webhook da
+Meta, hoje sem credenciais): a mensagem bruta da exceção e o `erro` da RPC iam para `falhas` e para o log. Foram
+tratados com o mesmo utilitário (`src/core/inbox/ingestaoServidor.ts`).
+
 O que **não** mudou: o valor de uma credencial válida (só espaço e quebra de linha nas pontas são ignorados,
 como antes; nada no miolo é removido ou corrigido), o marco, a retenção das históricas, a idempotência, a
 elegibilidade, a recuperação de conversa incompleta, o roteamento, o prazo de 30 minutos úteis e o interruptor

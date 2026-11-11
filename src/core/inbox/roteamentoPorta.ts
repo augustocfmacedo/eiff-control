@@ -7,7 +7,7 @@
 //   configuracao, obra, perfis ativos) -> decidirRoteamento DETERMINISTICO -> [IA disponivel? classificarSeguro refina e
 //   decide de novo com a classificacao] -> thread ja roteada? reavaliar -> RPC inbox_apply_routing (persistir decisao,
 //   aplicar pela banda, eventos, numa transacao). Qualquer falha aqui NUNCA desfaz a ingestao: a mensagem ja esta no banco.
-import { descricaoSegura } from '../erroSeguro';
+import { codigoDeCatalogo, descricaoSegura } from '../erroSeguro';
 import { classificarSeguro, type IntelligenceProvider } from './fronteiras';
 import { alvoDaDecisao, decidirRoteamento, reavaliar, type EntradaRoteador } from './roteador';
 import { CONFIGURACAO_PADRAO, inboxVazio, type Classificacao, type ConfiguracaoInbox, type ContatoInbox, type DecisaoOctopus, type Equipe, type InboxDataset, type InboxMessage, type InboxThread, type MembroSetor, type Setor } from './tipos';
@@ -81,6 +81,17 @@ export function portaContextoRest(cfg: ConfigPortaRoteamento, fetchFn: typeof fe
 }
 
 export interface PedidoAplicarRoteamento { threadId: string; messageId?: string; routing: DecisaoOctopus; classification?: Classificacao; summary?: string; sectorCode?: string; teamId?: string; assigneeId?: string; priority: string; serviceLevel: string; apply: boolean }
+/**
+ * Codigos de recusa e motivos que a RPC `inbox_apply_routing` devolve (migration 0057). Catalogos FECHADOS: o que
+ * vem do banco nunca e copiado para log nem devolvido a quem chamou; fora do catalogo vira o marcador fixo.
+ */
+export const CODIGOS_RECUSA_ROTEAMENTO: ReadonlySet<string> = new Set([
+  'somente_servidor', 'routing_invalido', 'classificacao_invalida', 'prioridade_invalida', 'nivel_invalido', 'thread_nao_encontrada',
+  'mensagem_invalida', 'setor_invalido', 'equipe_invalida', 'responsavel_sem_setor', 'responsavel_fora_do_contexto',
+]);
+export const MOTIVOS_ROTEAMENTO: ReadonlySet<string> = new Set(['override_humano', 'sugestao_registrada', 'sem_mudanca']);
+const saneado = (v: unknown, catalogo: ReadonlySet<string>): string | undefined => (typeof v === 'string' && v !== '' ? codigoDeCatalogo(v, catalogo) : undefined);
+
 export interface ResultadoAplicarRoteamento { ok: boolean; aplicado?: boolean; motivo?: string; erro?: string; status?: string }
 /** Porta da RPC inbox_apply_routing (service_role). O erro carrega so o status HTTP. */
 export function portaAplicarRoteamentoRpc(cfg: ConfigPortaRoteamento, fetchFn: typeof fetch): (p: PedidoAplicarRoteamento) => Promise<ResultadoAplicarRoteamento> {
@@ -94,7 +105,7 @@ export function portaAplicarRoteamentoRpc(cfg: ConfigPortaRoteamento, fetchFn: t
     });
     if (!r.ok) throw new Error(`rpc inbox_apply_routing http ${r.status}`);
     const d = (await r.json().catch(() => ({}))) as Record<string, unknown>;
-    return { ok: d.ok === true, aplicado: d.aplicado === true, motivo: typeof d.motivo === 'string' ? d.motivo : undefined, erro: typeof d.erro === 'string' ? d.erro : undefined, status: typeof d.status === 'string' ? d.status : undefined };
+    return { ok: d.ok === true, aplicado: d.aplicado === true, motivo: saneado(d.motivo, MOTIVOS_ROTEAMENTO), erro: saneado(d.erro, CODIGOS_RECUSA_ROTEAMENTO), status: typeof d.status === 'string' ? d.status : undefined };
   };
 }
 
@@ -132,10 +143,12 @@ export async function rotearNoServidor(threadId: string, messageId: string, port
       if (apply) d = { ...d, aplicacao: 'ATRIBUIR_SETOR' };
     }
     const alvo = alvoDaDecisao(d);
-    const r = await portas.aplicar({
+    const bruto = await portas.aplicar({
       threadId, messageId, routing: d, classification: classificacao, summary: resumo,
       sectorCode: alvo?.setorCodigo ?? d.setorCodigo, teamId: alvo?.equipeId, assigneeId: alvo?.responsavelId, priority: d.prioridade, serviceLevel: d.nivel, apply: apply && !!alvo,
     });
+    // o que a porta devolve (a RPC, ou quem a implementa) passa pelo catalogo antes de ir para log e para quem chamou
+    const r: ResultadoAplicarRoteamento = { ...bruto, erro: saneado(bruto.erro, CODIGOS_RECUSA_ROTEAMENTO), motivo: saneado(bruto.motivo, MOTIVOS_ROTEAMENTO) };
     portas.log?.({ evento: 'inbox_roteamento', outcome: r.ok ? 'ok' : 'recusado', threadId, aplicado: r.aplicado === true, origem: d.origem, intencao: d.intencao, banda: d.banda, confianca: d.confianca, setor: d.setorCodigo, equipe: d.equipeId, responsavel: d.responsavelId, aplicacao: d.aplicacao, automacao: d.automacao.modo, prioridade: d.prioridade, nivel: d.nivel, sla: d.slaAte, classificado, override: !!d.override, reavaliacao: reav, erro: r.erro, motivo: r.motivo });
     return { ok: r.ok, aplicado: r.aplicado === true, origem: d.origem, setorCodigo: d.setorCodigo, banda: d.banda, confianca: d.confianca, reavaliacao: reav, motivo: r.erro ?? r.motivo, classificado };
   } catch (e) {

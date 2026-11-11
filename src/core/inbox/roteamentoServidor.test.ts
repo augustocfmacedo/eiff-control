@@ -117,6 +117,27 @@ describe('rotearNoServidor: determinístico sempre, IA como refino, nunca lança
     // o motivo e texto seguro (src/core/erroSeguro.ts): codigo + status + operacao, nunca a mensagem bruta da excecao
     expect(r2.ok).toBe(false); expect(r2.motivo).toBe('ERRO_HTTP 500 (rpc inbox_apply_routing)'); expect(JSON.stringify(logs)).not.toContain(CHAVE);
   });
+  it('texto devolvido pela RPC de roteamento (erro ou motivo) nunca vai para o log nem para quem chamou: só código de catálogo', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const ctx = async () => contextoDe(seed, 'THR-00007', 'A NF 1 foi paga?');
+    const casos: [{ ok: boolean; aplicado?: boolean; erro?: string; motivo?: string }, string | undefined][] = [
+      [{ ok: false, erro: SEGREDO }, 'CODIGO_NAO_CATALOGADO'],
+      [{ ok: true, aplicado: false, motivo: SEGREDO }, 'CODIGO_NAO_CATALOGADO'],
+      [{ ok: false, erro: 'setor_invalido' }, 'setor_invalido'],
+      [{ ok: true, aplicado: false, motivo: 'override_humano' }, 'override_humano'],
+    ];
+    for (const [resposta, esperado] of casos) {
+      const logs: Record<string, unknown>[] = [];
+      const r = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: ctx, aplicar: async () => resposta, log: (t) => logs.push(t) });
+      expect(r.motivo).toBe(esperado);
+      expect(JSON.stringify([r, logs])).not.toContain(SEGREDO);
+    }
+    // na fronteira HTTP: o que a RPC responde já sai saneado da porta
+    const fetchFn = (async () => new Response(JSON.stringify({ ok: false, erro: SEGREDO, motivo: SEGREDO, status: 'NOVA' }), { status: 200 })) as unknown as typeof fetch;
+    const p = await portaAplicarRoteamentoRpc({ url: 'https://x.supabase.co', chave: CHAVE, organizacaoId: 'org-1' }, fetchFn)({ threadId: 'T', routing: {}, priority: 'Normal', serviceLevel: 'B', apply: true } as unknown as PedidoAplicarRoteamento);
+    expect(p).toMatchObject({ ok: false, erro: 'CODIGO_NAO_CATALOGADO', motivo: 'CODIGO_NAO_CATALOGADO' });
+    expect(JSON.stringify(p)).not.toContain(SEGREDO);
+  });
 });
 
 describe('ingestão com a porta rotear (fase 3)', () => {

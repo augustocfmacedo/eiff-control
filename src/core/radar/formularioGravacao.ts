@@ -37,7 +37,7 @@ import { validarIntake } from './leadEngineIntake'
 import { prazoUtil } from '../inbox/calendarioComercial'
 import { PROVIDER_FORMULARIO, dadosDoContato, deSubmissaoDoSite, type DadosDoContato, type ResumoDaSubmissao } from '../inbox/formularioSite'
 import type { MensagemRecebida } from '../inbox/fronteiras'
-import type { PortasIngestao, ResultadoIngest } from '../inbox/ingestaoServidor'
+import { recusaDoIngest, type PortasIngestao, type ResultadoIngest } from '../inbox/ingestaoServidor'
 import type { CodigoProvider } from './canais'
 import type { RegistroFonte } from './types'
 
@@ -400,7 +400,9 @@ export async function gravarSubmissao(
     } catch (e) {
       throw new ErroDeGravacao('conversa', descricaoSegura(e))
     }
-    if (!ingest.ok) throw new ErroDeGravacao('conversa', ingest.erro ?? 'rpc recusou')
+    // `ingest.erro` vem da RPC (ou de quem implementa a porta): so sai um codigo do catalogo fechado. O texto
+    // recebido nunca chega ao detalhe, que a borda e a reconciliacao registram em log.
+    if (!ingest.ok) throw new ErroDeGravacao('conversa', `rpc recusou: ${recusaDoIngest(ingest.erro)}`)
     if (ingest.threadId === undefined) throw new ErroDeGravacao('conversa', 'rpc sem thread na volta: gravação não confirmada')
   }
 

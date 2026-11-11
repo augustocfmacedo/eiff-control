@@ -88,7 +88,24 @@ describe('ingestão de um webhook', () => {
     let n = 0;
     const { p } = portas({ async ingerir() { if (++n === 1) throw new Error('banco indisponível'); return { ok: true, threadId: 't', messageId: 'm' }; } });
     const r = await ingerirEventosCentral(ORG, [evento(), evento({ externalMessageId: 'wamid.2' })], [conteudo(), conteudo('wamid.2')], p);
-    expect(r.falhas).toEqual([{ externalMessageId: 'wamid.1', erro: 'banco indisponível' }]); expect(r.ingeridos).toBe(1);
+    // a mensagem bruta da exceção não é reproduzida: sai só o código seguro (src/core/erroSeguro.ts)
+    expect(r.falhas).toEqual([{ externalMessageId: 'wamid.1', erro: 'SEM_CODIGO' }]); expect(r.ingeridos).toBe(1);
+  });
+  it('texto devolvido pela RPC ou lançado pela porta nunca vai para `falhas` nem para o log: só código de catálogo', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const casos: [() => Promise<{ ok: boolean; erro?: string }>, string][] = [
+      [async () => ({ ok: false, erro: SEGREDO }), 'CODIGO_NAO_CATALOGADO'],
+      [async () => ({ ok: false, erro: 'somente_servidor' }), 'somente_servidor'],
+      [async () => ({ ok: false }), 'recusado'],
+      [async () => { throw new TypeError(`Headers.append: "Bearer ${SEGREDO}" is an invalid header value.`); }, 'CREDENCIAL_INVALIDA'],
+      [async () => { throw new Error('rpc inbox_ingest http 503'); }, 'ERRO_HTTP 503 (rpc inbox_ingest)'],
+    ];
+    for (const [ingerir, esperado] of casos) {
+      const { p, logs } = portas({ ingerir });
+      const r = await ingerirEventosCentral(ORG, [evento()], [conteudo()], p);
+      expect(r.falhas).toEqual([{ externalMessageId: 'wamid.1', erro: esperado }]);
+      expect(JSON.stringify([r, logs])).not.toContain(SEGREDO);
+    }
   });
   it('FALLBACK: inteligência quebrada não perde a mensagem — persistida, thread fica sem classificação', async () => {
     const ds = seedInbox('2026-09-23T12:00:00.000Z');

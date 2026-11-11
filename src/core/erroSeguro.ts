@@ -112,14 +112,50 @@ export const CAUSAS_CONHECIDAS: ReadonlySet<string> = new Set([
   // deste módulo
   'TEMPO_ESGOTADO', 'CAUSA_NAO_CATALOGADA',
 ])
-const FORMA_DE_CODIGO = { test: (c: string): boolean => CAUSAS_CONHECIDAS.has(c) }
 
 /**
- * Mensagens que o PRÓPRIO sistema monta, só com constantes e o status. O casamento
- * é da mensagem INTEIRA e com alfabeto fechado: se houver qualquer outra coisa no
- * texto, não casa e nada dele é aproveitado.
+ * Recursos do banco que o caminho do formulário e do Inbox acessa pelo servidor. Catálogo FECHADO, como o das
+ * causas: «ter forma de nome de tabela» não prova que o texto não é um segredo (`rpc segredo_ficticio_123456`
+ * teria a forma certa). Recurso novo entra aqui; fora daqui a operação simplesmente não é impressa.
  */
-const OPERACAO_INTERNA = /^((?:postgrest (?:GET|POST|PATCH|DELETE) [a-z0-9_/]{1,80})|(?:rpc [a-z0-9_]{1,60})) http (\d{3})$/
+export const TABELAS_CONHECIDAS: ReadonlySet<string> = new Set([
+  'radar_source', 'radar_source_record',
+  'inbox_thread', 'inbox_message', 'inbox_contact', 'inbox_contact_identity',
+  'inbox_sector', 'inbox_team', 'inbox_member', 'inbox_config', 'inbox_assignment', 'inbox_thread_event',
+])
+export const RPCS_CONHECIDAS: ReadonlySet<string> = new Set(['inbox_ingest', 'inbox_apply_routing', 'inbox_assign_thread'])
+const VERBOS_DE_TABELA: ReadonlySet<string> = new Set(['postgrest GET', 'postgrest POST', 'postgrest PATCH', 'postgrest DELETE', 'rest'])
+
+/**
+ * Uma operação só é reconhecida quando é EXATAMENTE `<verbo conhecido> <recurso conhecido>`: `postgrest POST
+ * radar_source_record`, `rest inbox_thread`, `rpc inbox_ingest`. Qualquer outro texto devolve `undefined` — e a
+ * operação é OMITIDA, nunca reproduzida. Vale para a mensagem de uma exceção e para um objeto que alegue ser
+ * `ErroSeguro`: nenhum dos dois é fonte confiável.
+ */
+export function operacaoConhecida(texto: unknown): string | undefined {
+  if (typeof texto !== 'string' || texto.length > 80) return undefined
+  const corte = texto.lastIndexOf(' ')
+  if (corte <= 0) return undefined
+  const verbo = texto.slice(0, corte)
+  const recurso = texto.slice(corte + 1)
+  if (verbo === 'rpc') return RPCS_CONHECIDAS.has(recurso) ? `rpc ${recurso}` : undefined
+  return VERBOS_DE_TABELA.has(verbo) && TABELAS_CONHECIDAS.has(recurso) ? `${verbo} ${recurso}` : undefined
+}
+
+/**
+ * Mensagens que o PRÓPRIO sistema monta: `<operação> http <status>`. A parte antes de ` http NNN` só é
+ * aproveitada se for uma operação do catálogo; senão sobra só o status.
+ */
+const MENSAGEM_COM_STATUS = /^(.{1,80}) http ([1-5]\d{2})$/
+
+/**
+ * Código devolvido por uma RPC (ou por qualquer fonte externa) só sai se estiver no catálogo informado. O que
+ * não está vira o marcador fixo: o texto recebido nunca é reproduzido.
+ */
+export const CODIGO_NAO_CATALOGADO = 'CODIGO_NAO_CATALOGADO'
+export function codigoDeCatalogo(valor: unknown, catalogo: ReadonlySet<string>): string {
+  return typeof valor === 'string' && catalogo.has(valor) ? valor : CODIGO_NAO_CATALOGADO
+}
 
 /** Erros de cabeçalho inválido que o Node lança ANTES de abrir conexão. Só para classificar. */
 const CABECALHO_INVALIDO = /invalid header value|invalid header name|is an invalid header|ByteString/i
@@ -139,8 +175,9 @@ const causaDe = (e: unknown): string | undefined => {
 export function classificarErro(e: unknown): ErroSeguro {
   try {
     if (e instanceof ErroDeCredencial) return { codigo: e.codigo }
-    const seguro = (e as { erroSeguro?: unknown } | null | undefined)?.erroSeguro
-    if (ehErroSeguro(seguro)) return seguro
+    // Um objeto que ALEGA trazer um erro seguro não é fonte confiável: é reconstruído campo a campo.
+    const alegado = erroSeguroSaneado((e as { erroSeguro?: unknown } | null | undefined)?.erroSeguro)
+    if (alegado !== undefined) return alegado
 
     const mensagem = typeof (e as { message?: unknown } | null | undefined)?.message === 'string'
       ? (e as { message: string }).message
@@ -148,8 +185,9 @@ export function classificarErro(e: unknown): ErroSeguro {
     const nome = typeof (e as { name?: unknown } | null | undefined)?.name === 'string' ? (e as { name: string }).name : ''
     const causa = causaDe(e)
 
-    const interna = OPERACAO_INTERNA.exec(mensagem)
-    if (interna !== null) return { codigo: 'ERRO_HTTP', http: Number(interna[2]), operacao: interna[1]! }
+    const interna = MENSAGEM_COM_STATUS.exec(mensagem)
+    const operacao = interna !== null ? operacaoConhecida(interna[1]) : undefined
+    if (interna !== null && operacao !== undefined) return { codigo: 'ERRO_HTTP', http: Number(interna[2]), operacao }
 
     // Outra mensagem com «http NNN»: aproveita SÓ os três dígitos (o resto do texto não sai).
     const status = /\bhttp ([1-5]\d{2})\b/.exec(mensagem)
@@ -168,18 +206,27 @@ export function classificarErro(e: unknown): ErroSeguro {
   }
 }
 
-function ehErroSeguro(v: unknown): v is ErroSeguro {
-  if (v === null || typeof v !== 'object') return false
+/**
+ * Reconstrói um `ErroSeguro` a partir de um objeto NÃO confiável. Nunca devolve o objeto recebido: monta um
+ * novo, só com o que passa em catálogo fechado. Código fora do catálogo invalida tudo (`undefined`); status
+ * fora de 100–599, causa fora do catálogo e operação desconhecida são OMITIDOS, nunca copiados.
+ */
+function erroSeguroSaneado(v: unknown): ErroSeguro | undefined {
+  if (v === null || typeof v !== 'object') return undefined
   const o = v as Record<string, unknown>
-  return (CODIGOS_DE_ERRO as readonly unknown[]).includes(o['codigo'])
-    && (o['http'] === undefined || (typeof o['http'] === 'number' && Number.isInteger(o['http']) && o['http'] >= 100 && o['http'] <= 599))
-    && (o['causa'] === undefined || (typeof o['causa'] === 'string' && FORMA_DE_CODIGO.test(o['causa'])))
-    && (o['operacao'] === undefined || (typeof o['operacao'] === 'string' && /^[a-zA-Z0-9_/ ]{1,100}$/.test(o['operacao'])))
+  const codigo = (CODIGOS_DE_ERRO as readonly unknown[]).includes(o['codigo']) ? (o['codigo'] as CodigoDeErro) : undefined
+  if (codigo === undefined) return undefined
+  const http = typeof o['http'] === 'number' && Number.isInteger(o['http']) && o['http'] >= 100 && o['http'] <= 599 ? o['http'] : undefined
+  const causa = typeof o['causa'] === 'string' && CAUSAS_CONHECIDAS.has(o['causa']) ? o['causa'] : undefined
+  const operacao = operacaoConhecida(o['operacao'])
+  return { codigo, ...(http !== undefined ? { http } : {}), ...(causa !== undefined ? { causa } : {}), ...(operacao !== undefined ? { operacao } : {}) }
 }
 
-/** Erro de resposta HTTP, quando o chamador tem o status em mãos. */
-export const erroHttp = (status: number, operacao?: string): ErroSeguro =>
-  ({ codigo: 'ERRO_HTTP', http: status, ...(operacao !== undefined ? { operacao } : {}) })
+/** Erro de resposta HTTP, quando o chamador tem o status em mãos. A operação só entra se for do catálogo. */
+export const erroHttp = (status: number, operacao?: string): ErroSeguro => {
+  const conhecida = operacaoConhecida(operacao)
+  return { codigo: 'ERRO_HTTP', http: status, ...(conhecida !== undefined ? { operacao: conhecida } : {}) }
+}
 
 /**
  * Uma linha curta para log e relatório, montada SÓ com os campos do `ErroSeguro`:
@@ -187,10 +234,13 @@ export const erroHttp = (status: number, operacao?: string): ErroSeguro =>
  * `CREDENCIAL_INVALIDA`, `SEM_CODIGO`.
  */
 export function textoDoErro(s: ErroSeguro): string {
-  const partes: string[] = [s.codigo]
-  if (s.http !== undefined) partes.push(String(s.http))
-  if (s.causa !== undefined) partes.push(s.causa)
-  return s.operacao !== undefined ? `${partes.join(' ')} (${s.operacao})` : partes.join(' ')
+  // Última barreira: o tipo `ErroSeguro` não impede alguém de montar o objeto à mão com texto livre. Cada campo
+  // é conferido de novo AQUI, no ponto em que vira texto; o que não é de catálogo não é impresso.
+  const partes: string[] = [(CODIGOS_DE_ERRO as readonly string[]).includes(s.codigo) ? s.codigo : 'SEM_CODIGO']
+  if (typeof s.http === 'number' && Number.isInteger(s.http) && s.http >= 100 && s.http <= 599) partes.push(String(s.http))
+  if (typeof s.causa === 'string' && CAUSAS_CONHECIDAS.has(s.causa)) partes.push(s.causa)
+  const operacao = operacaoConhecida(s.operacao)
+  return operacao !== undefined ? `${partes.join(' ')} (${operacao})` : partes.join(' ')
 }
 
 /** Atalho: classifica e descreve. É o que substitui `(e as Error).message` num log. */

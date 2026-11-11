@@ -9,10 +9,15 @@
  *
  * As credenciais são fictícias e reconhecíveis. Nenhuma requisição real é feita: `fetch` e portas são injetados.
  */
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { CODIGOS_RECUSA_INGEST } from '../inbox/ingestaoServidor'
+import { resultadoIngest } from '../inbox/ingestaoPorta'
+import { CODIGOS_RECUSA_ROTEAMENTO, MOTIVOS_ROTEAMENTO } from '../inbox/roteamentoPorta'
 import { corpoDaResposta, rodadaDeReconciliacao, type AmbienteAgendado, type DepsAgendado } from './formularioAgendado'
 import { tratarPedidoFormulario } from './formularioBorda'
-import { gravarSubmissao, type PortasGravacao } from './formularioGravacao'
+import { ErroDeGravacao, gravarSubmissao, type PortasGravacao } from './formularioGravacao'
 import { montarPortasIntegracao } from './formularioPorta'
 import { validarCorpo } from './formularioServidor'
 import { corpoDaSubmissaoNetlify } from './formularioTransporte'
@@ -57,7 +62,7 @@ const submissao = (id: string, criadoEm = '2026-11-11T10:00:00Z') => ({
   },
 })
 
-interface Falhas { estado?: () => Error; evidencia?: () => Error; conversa?: () => Error; prazoLer?: () => Error; prazoGravar?: () => Error; contato?: () => Error }
+interface Falhas { recusaIngest?: string; estado?: () => Error; evidencia?: () => Error; conversa?: () => Error; prazoLer?: () => Error; prazoGravar?: () => Error; contato?: () => Error }
 
 /** Portas em memória, com a falha pedida em cada etapa. */
 function portasCom(f: Falhas = {}) {
@@ -76,6 +81,7 @@ function portasCom(f: Falhas = {}) {
     },
     async ingerir(p) {
       if (f.conversa) throw f.conversa()
+      if (f.recusaIngest !== undefined) return { ok: false, erro: f.recusaIngest }
       conversas.add(p.externalMessageId)
       return { ok: true, duplicada: false, threadId: `THR-${p.externalMessageId}`, messageId: `MSG-${p.externalMessageId}`, contactId: 'CTI-1', novaThread: true }
     },
@@ -311,5 +317,88 @@ describe('borda /api/formulario-site · log e corpo de resposta', () => {
     const boa = montarPortasIntegracao(env, { fetch: fetchFn })
     expect(boa.ok).toBe(true)
     if (boa.ok) expect(boa.cfg.chave).toBe(CHAVE_BANCO)
+  })
+})
+
+/* =============================================================== código devolvido pela RPC */
+
+describe('texto devolvido pela RPC inbox_ingest nunca vai direto ao detalhe, ao log, ao relatório nem à resposta', () => {
+  const SEGREDO_RPC = 'SEGREDO_FICTICIO_123456'
+  const sub = (() => {
+    const t = corpoDaSubmissaoNetlify(submissao('s-rpc'), { formulariosAceitos: FORMULARIOS })
+    if (!t.ok) throw new Error('fixture')
+    const v = validarCorpo(t.corpo)
+    if (!v.ok) throw new Error('fixture')
+    return v.submissao
+  })()
+  const falhar = async (recusaIngest: string): Promise<ErroDeGravacao> => {
+    try { await gravarSubmissao(sub, FONTE, ORG, portasCom({ recusaIngest }).portas) } catch (e) { return e as ErroDeGravacao }
+    throw new Error('a gravação deveria ter falhado')
+  }
+
+  it('detalhe da exceção: o texto da RPC vira o marcador fixo', async () => {
+    const erro = await falhar(SEGREDO_RPC)
+    expect(erro).toBeInstanceOf(ErroDeGravacao)
+    expect(erro.etapa).toBe('conversa')
+    expect(erro.detalhe).toBe('rpc recusou: CODIGO_NAO_CATALOGADO')
+    semSegredos(tudo(erro.message, erro.detalhe, String(erro)), [SEGREDO_RPC])
+  })
+
+  it('código legítimo da RPC é preservado, e a ausência de código também tem texto fixo', async () => {
+    for (const codigo of CODIGOS_RECUSA_INGEST) expect((await falhar(codigo)).detalhe).toBe(`rpc recusou: ${codigo}`)
+    expect((await falhar('')).detalhe).toBe('rpc recusou: recusado')
+  })
+
+  it('reconciliação agendada: log da falha, resumo e corpo de resposta sem o texto da RPC', async () => {
+    const m = rodada({ falhas: { recusaIngest: SEGREDO_RPC } })
+    const { r, saida } = await m.executar()
+    expect(r.desfecho).toBe('concluida')
+    expect(r.falhas).toBe(1)
+    expect(m.logs.find((l) => l['evento'] === 'RECONCILIACAO_FALHA')).toMatchObject({ codigo: 'FALHA_GRAVACAO', etapa: 'conversa', motivo: 'rpc recusou: CODIGO_NAO_CATALOGADO' })
+    semSegredos(saida, [SEGREDO_RPC, EMAIL_DO_LEAD])
+  })
+
+  it('borda: a RPC responde { ok: false, erro: <texto> } e nem o log nem o corpo da resposta o reproduzem', async () => {
+    const logs: unknown[] = []
+    const ok = (d: unknown) => ({ ok: true, status: 200, json: async () => d } as unknown as Response)
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/rpc/inbox_ingest')) return ok({ ok: false, erro: SEGREDO_RPC })
+      if (u.includes('radar_source?')) return ok([{ id: 'FNT-SITE', code: 'WEBSITE', source_type: 'WEBSITE', active: true }])
+      if (u.includes('radar_source_record') && init?.method === 'POST') return ok([{ id: 'RF-1' }])
+      return ok([])
+    }) as unknown as typeof fetch
+    const req = new Request('https://eiffcontrol.com.br/api/formulario-site', { method: 'POST', headers: { 'content-type': 'application/json', 'x-eiff-form-secret': SEGREDO_BORDA }, body: JSON.stringify({ payload: submissao('nf-rpc') }) })
+    const r = await tratarPedidoFormulario(req, {
+      env: { EIFF_FORM_SECRET: SEGREDO_BORDA, EIFF_FORM_SOURCE_ID: 'FNT-SITE', SUPABASE_SERVICE_ROLE_KEY: CHAVE_BANCO, EIFF_INBOX_ORGANIZATION_ID: 'ORG-1', SUPABASE_URL: 'https://banco.exemplo', EIFF_INBOX_ROUTER_ENABLED: 'false' },
+      fetch: fetchFn, log: (t) => { logs.push(t) },
+    })
+    expect(r).toEqual({ status: 502, corpo: { erro: 'gravacao_falhou', etapa: 'conversa' } })
+    expect(logs).toContainEqual(expect.objectContaining({ resultado: 'falhou', etapa: 'conversa', motivo: 'rpc recusou: CODIGO_NAO_CATALOGADO' }))
+    semSegredos(tudo(r, logs), [SEGREDO_RPC, EMAIL_DO_LEAD])
+  })
+
+  it('na fronteira com a RPC o texto já sai saneado', () => {
+    expect(resultadoIngest({ ok: false, erro: SEGREDO_RPC }).erro).toBe('CODIGO_NAO_CATALOGADO')
+    expect(resultadoIngest({ ok: false, erro: 'canal' }).erro).toBe('canal')
+    expect(resultadoIngest({ ok: true }).erro).toBeUndefined()
+  })
+
+  it('os catálogos são exatamente os códigos que as RPCs devolvem nas migrations', () => {
+    const pasta = path.resolve('supabase', 'migrations')
+    const corpoDa = (arquivo: string, funcao: string): string => {
+      const sql = fs.readFileSync(path.join(pasta, arquivo), 'utf8')
+      const inicio = sql.indexOf(`create or replace function ${funcao}(`)
+      expect(inicio, funcao).toBeGreaterThan(-1)
+      return sql.slice(inicio, sql.indexOf('\n$$;', inicio))
+    }
+    const codigos = (texto: string, chave: string) => new Set([...texto.matchAll(new RegExp(`'${chave}', *'([a-z_]+)'`, 'g'))].map((x) => x[1]!))
+    const ingest = corpoDa('0056_inbox.sql', 'inbox_ingest')
+    expect(codigos(ingest, 'erro')).toEqual(new Set(CODIGOS_RECUSA_INGEST))
+    const roteamento = corpoDa('0057_inbox_octopus_router.sql', 'inbox_apply_routing')
+    expect(codigos(roteamento, 'erro')).toEqual(new Set(CODIGOS_RECUSA_ROTEAMENTO))
+    // motivos: os literais devolvidos e o que entra por variável (v_motivo := '…', coalesce(v_motivo, '…'))
+    const motivos = new Set([...codigos(roteamento, 'motivo'), ...[...roteamento.matchAll(/v_motivo(?: :=|,) *'([a-z_]+)'/g)].map((x) => x[1]!)])
+    expect(motivos).toEqual(new Set(MOTIVOS_ROTEAMENTO))
   })
 })

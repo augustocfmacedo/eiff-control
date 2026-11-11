@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  CAUSAS_CONHECIDAS, CODIGOS_DE_ERRO, ErroDeCredencial, classificarErro, descricaoSegura, erroHttp, exigirCredencial, textoDoErro, validarCredencial,
+  CAUSAS_CONHECIDAS, CODIGOS_DE_ERRO, CODIGO_NAO_CATALOGADO, ErroDeCredencial, RPCS_CONHECIDAS, TABELAS_CONHECIDAS, classificarErro, codigoDeCatalogo, descricaoSegura, erroHttp,
+  exigirCredencial, operacaoConhecida, textoDoErro, validarCredencial, type ErroSeguro,
 } from './erroSeguro'
 
 const TOKEN = 'tok_FICTICIO_9f3a7c21e5_NAO_PODE_VAZAR'
@@ -119,10 +120,11 @@ describe('classificarErro · nada da mensagem sai', () => {
 
   it('ErroDeCredencial e erro já classificado passam com o próprio código', () => {
     expect(classificarErro(new ErroDeCredencial('CREDENCIAL_AUSENTE', 'X'))).toEqual({ codigo: 'CREDENCIAL_AUSENTE' })
-    expect(classificarErro({ erroSeguro: erroHttp(429, 'rpc x') })).toEqual({ codigo: 'ERRO_HTTP', http: 429, operacao: 'rpc x' })
-    // um `erroSeguro` forjado com texto livre não é aceito como tal
-    expect(classificarErro({ erroSeguro: { codigo: 'ERRO_HTTP', causa: TOKEN } })).toEqual({ codigo: 'SEM_CODIGO' })
+    expect(classificarErro({ erroSeguro: erroHttp(429, 'rpc inbox_ingest') })).toEqual({ codigo: 'ERRO_HTTP', http: 429, operacao: 'rpc inbox_ingest' })
+    // um `erroSeguro` forjado: código fora do catálogo invalida tudo; causa e operação desconhecidas são OMITIDAS
     expect(classificarErro({ erroSeguro: { codigo: TOKEN } })).toEqual({ codigo: 'SEM_CODIGO' })
+    expect(classificarErro({ erroSeguro: { codigo: 'ERRO_HTTP', causa: TOKEN } })).toEqual({ codigo: 'ERRO_HTTP' })
+    expect(classificarErro({ erroSeguro: { codigo: 'ERRO_HTTP', http: 500, operacao: 'rpc x' } })).toEqual({ codigo: 'ERRO_HTTP', http: 500 })
   })
 })
 
@@ -137,5 +139,60 @@ describe('textoDoErro · montado só com os campos seguros', () => {
   it('o catálogo de causas é fechado e contém as que o diagnóstico de 10/11/2026 precisou', () => {
     for (const c of ['UND_ERR_INVALID_ARG', 'ECONNREFUSED', 'CAUSA_NAO_CATALOGADA', 'TEMPO_ESGOTADO']) expect(CAUSAS_CONHECIDAS.has(c)).toBe(true)
     for (const c of CAUSAS_CONHECIDAS) expect(c).toMatch(/^[A-Z][A-Z0-9_]+$/)
+  })
+})
+
+describe('operação · só de catálogo fechado, nunca reproduzida de fonte não confiável', () => {
+  const SEGREDO = 'SEGREDO_FICTICIO_123456'
+  const semO = (v: unknown) => { expect(JSON.stringify(v) + String(v)).not.toContain(SEGREDO); expect((JSON.stringify(v) + String(v)).toLowerCase()).not.toContain(SEGREDO.toLowerCase()) }
+
+  it('segredo em `erroSeguro.operacao`: a operação é omitida e o valor não aparece em nenhuma saída', () => {
+    for (const operacao of [SEGREDO, `rpc ${SEGREDO}`, `rpc ${SEGREDO.toLowerCase()}`, `postgrest GET ${SEGREDO.toLowerCase()}`, `${SEGREDO} inbox_thread`, `rest ${SEGREDO}`]) {
+      const e = { erroSeguro: { codigo: 'ERRO_HTTP', http: 500, operacao } }
+      const c = classificarErro(e)
+      expect(c, operacao).toEqual({ codigo: 'ERRO_HTTP', http: 500 })
+      expect(descricaoSegura(e)).toBe('ERRO_HTTP 500')
+      semO(c); semO(descricaoSegura(e)); semO(textoDoErro(c))
+    }
+  })
+
+  it('o objeto recebido nunca é devolvido: campos extras e getters hostis não passam', () => {
+    const hostil = { codigo: 'ERRO_REDE', causa: 'ECONNRESET', segredo: SEGREDO, get operacao() { return SEGREDO } }
+    const c = classificarErro({ erroSeguro: hostil })
+    expect(c).toEqual({ codigo: 'ERRO_REDE', causa: 'ECONNRESET' })
+    expect(c).not.toBe(hostil)
+    semO(c)
+  })
+
+  it('mensagem com forma de operação e recurso desconhecido: sobra só o status', () => {
+    for (const m of [`rpc ${SEGREDO.toLowerCase()} http 500`, `postgrest POST ${SEGREDO.toLowerCase()} http 403`, `${SEGREDO} http 401`]) {
+      const c = classificarErro(new Error(m))
+      expect(c.codigo).toBe('ERRO_HTTP'); expect(c.operacao).toBeUndefined()
+      semO(c); semO(descricaoSegura(new Error(m)))
+    }
+  })
+
+  it('textoDoErro é a última barreira: objeto montado à mão com texto livre não é impresso', () => {
+    const forjado = { codigo: SEGREDO, http: 500, causa: SEGREDO, operacao: SEGREDO } as unknown as ErroSeguro
+    expect(textoDoErro(forjado)).toBe('SEM_CODIGO 500')
+    expect(textoDoErro({ codigo: 'ERRO_HTTP', http: 99999, operacao: `rpc ${SEGREDO}` })).toBe('ERRO_HTTP')
+    expect(erroHttp(500, SEGREDO)).toEqual({ codigo: 'ERRO_HTTP', http: 500 })
+  })
+
+  it('operacaoConhecida: verbo e recurso exatos, e nada além', () => {
+    expect(operacaoConhecida('postgrest POST radar_source_record')).toBe('postgrest POST radar_source_record')
+    expect(operacaoConhecida('rest inbox_thread')).toBe('rest inbox_thread')
+    expect(operacaoConhecida('rpc inbox_apply_routing')).toBe('rpc inbox_apply_routing')
+    for (const v of ['rpc inbox_thread', 'postgrest GET inbox_ingest', 'postgrest PUT inbox_thread', 'rpc', 'inbox_thread', ' rpc inbox_ingest', 'rpc inbox_ingest ', 'rpc  inbox_ingest', 'RPC inbox_ingest', '', 7, null, undefined, 'x'.repeat(200)]) {
+      expect(operacaoConhecida(v), JSON.stringify(v)).toBeUndefined()
+    }
+    for (const t of TABELAS_CONHECIDAS) expect(t).toMatch(/^[a-z_]+$/)
+    for (const r of RPCS_CONHECIDAS) expect(r).toMatch(/^[a-z_]+$/)
+  })
+
+  it('codigoDeCatalogo: só o que está no catálogo sai; o resto vira o marcador fixo', () => {
+    const catalogo = new Set(['somente_servidor', 'canal'])
+    expect(codigoDeCatalogo('canal', catalogo)).toBe('canal')
+    for (const v of [SEGREDO, 'Canal', 'canal ', '', 42, null, undefined, { toString: () => 'canal' }]) expect(codigoDeCatalogo(v, catalogo)).toBe(CODIGO_NAO_CATALOGADO)
   })
 })

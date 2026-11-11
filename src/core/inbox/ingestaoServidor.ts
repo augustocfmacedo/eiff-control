@@ -16,6 +16,16 @@ import type { ChannelInboundEvent } from '../radar/canais';
 import { mascararTelefone } from '../radar/canais';
 import { classificarSeguro, deEventoCentral, type IntelligenceProvider, type MensagemRecebida } from './fronteiras';
 import type { Classificacao, InboxMessage, InboxThread } from './tipos';
+import { codigoDeCatalogo, descricaoSegura } from '../erroSeguro';
+
+/**
+ * Codigos de recusa que a RPC `inbox_ingest` devolve (migration 0056). Catalogo FECHADO: o campo `erro` vem do
+ * banco, e o que vem de fora nunca e copiado para log, relatorio ou resposta. Um codigo novo na RPC entra aqui
+ * (o teste formularioNaoVazamento.test.ts confere a lista contra a migration); fora daqui vira o marcador fixo.
+ */
+export const CODIGOS_RECUSA_INGEST: ReadonlySet<string> = new Set(['canal', 'contexto_indefinido', 'organizacao', 'parametros', 'somente_servidor']);
+/** O `erro` de um resultado de ingestao, pronto para sair: codigo do catalogo, marcador fixo, ou `recusado` quando a RPC nao disse nada. */
+export const recusaDoIngest = (erro: unknown): string => (erro === undefined || erro === null || erro === '' ? 'recusado' : codigoDeCatalogo(erro, CODIGOS_RECUSA_INGEST));
 
 /** Conteudo da mensagem, que a Central nao transporta no evento: chega separado, pela chave `externalMessageId`. */
 export interface ConteudoMensagem { externalMessageId: string; texto: string; replyToExternalId?: string; nomeInformado?: string }
@@ -91,8 +101,8 @@ export async function ingerirEventosCentral(organizationId: string, eventos: Cha
     if ('erro' in m) { r.ignorados.push({ motivo: m.erro }); portas.log?.({ evento: 'inbox_ingest', outcome: 'ignorado', motivo: m.erro, telefone: mascararTelefone(e.contactPhone) }); continue; }
     let res: ResultadoIngest;
     try { res = await portas.ingerir(pedidoDe(organizationId, m)); }
-    catch (err) { const erro = (err as Error).message ?? 'erro'; r.falhas.push({ externalMessageId: m.externalMessageId, erro }); portas.log?.({ evento: 'inbox_ingest', outcome: 'falha', erro: erro.slice(0, 200) }); continue; }
-    if (!res.ok) { r.falhas.push({ externalMessageId: m.externalMessageId, erro: res.erro ?? 'recusado' }); portas.log?.({ evento: 'inbox_ingest', outcome: 'recusado', erro: res.erro }); continue; }
+    catch (err) { const erro = descricaoSegura(err); r.falhas.push({ externalMessageId: m.externalMessageId, erro }); portas.log?.({ evento: 'inbox_ingest', outcome: 'falha', erro }); continue; } // nunca a mensagem bruta da excecao
+    if (!res.ok) { const erro = recusaDoIngest(res.erro); r.falhas.push({ externalMessageId: m.externalMessageId, erro }); portas.log?.({ evento: 'inbox_ingest', outcome: 'recusado', erro }); continue; }
     if (res.duplicada) { r.duplicados++; portas.log?.({ evento: 'inbox_ingest', outcome: 'duplicada', threadId: res.threadId }); continue; }
     r.ingeridos++;
     if (res.threadId && !r.threads.includes(res.threadId)) r.threads.push(res.threadId);
