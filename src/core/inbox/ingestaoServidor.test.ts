@@ -88,7 +88,24 @@ describe('ingestão de um webhook', () => {
     let n = 0;
     const { p } = portas({ async ingerir() { if (++n === 1) throw new Error('banco indisponível'); return { ok: true, threadId: 't', messageId: 'm' }; } });
     const r = await ingerirEventosCentral(ORG, [evento(), evento({ externalMessageId: 'wamid.2' })], [conteudo(), conteudo('wamid.2')], p);
-    expect(r.falhas).toEqual([{ externalMessageId: 'wamid.1', erro: 'banco indisponível' }]); expect(r.ingeridos).toBe(1);
+    // a mensagem bruta da exceção não é reproduzida: sai só o código seguro (src/core/erroSeguro.ts)
+    expect(r.falhas).toEqual([{ externalMessageId: 'wamid.1', erro: 'SEM_CODIGO' }]); expect(r.ingeridos).toBe(1);
+  });
+  it('texto devolvido pela RPC ou lançado pela porta nunca vai para `falhas` nem para o log: só código de catálogo', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const casos: [() => Promise<{ ok: boolean; erro?: string }>, string][] = [
+      [async () => ({ ok: false, erro: SEGREDO }), 'CODIGO_NAO_CATALOGADO'],
+      [async () => ({ ok: false, erro: 'somente_servidor' }), 'somente_servidor'],
+      [async () => ({ ok: false }), 'recusado'],
+      [async () => { throw new TypeError(`Headers.append: "Bearer ${SEGREDO}" is an invalid header value.`); }, 'CREDENCIAL_INVALIDA'],
+      [async () => { throw new Error('rpc inbox_ingest http 503'); }, 'ERRO_HTTP 503 (rpc inbox_ingest)'],
+    ];
+    for (const [ingerir, esperado] of casos) {
+      const { p, logs } = portas({ ingerir });
+      const r = await ingerirEventosCentral(ORG, [evento()], [conteudo()], p);
+      expect(r.falhas).toEqual([{ externalMessageId: 'wamid.1', erro: esperado }]);
+      expect(JSON.stringify([r, logs])).not.toContain(SEGREDO);
+    }
   });
   it('FALLBACK: inteligência quebrada não perde a mensagem — persistida, thread fica sem classificação', async () => {
     const ds = seedInbox('2026-09-23T12:00:00.000Z');
@@ -98,6 +115,30 @@ describe('ingestão de um webhook', () => {
     const r = await ingerirEventosCentral(ORG, [evento()], [conteudo()], p);
     expect(r.ingeridos).toBe(1); expect(r.semInteligencia).toBe(1); expect(r.classificados).toBe(0); expect(aplicou).toBe(0); expect(pedidos).toHaveLength(1);
     expect(logs.some((l) => l.evento === 'inbox_inteligencia' && l.outcome === 'indisponivel')).toBe(true);
+  });
+  it('FALLBACK sem vazamento: motivo ou excecao da inteligencia, e excecao de aplicarClassificacao, nunca levam texto de fora ao log nem ao relatorio', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const ds = seedInbox('2026-09-23T12:00:00.000Z');
+    const carregarParaAnalise = async () => ({ thread: ds.threads[6], mensagem: ds.mensagens[0], historico: [], setores: [] });
+    const boa: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'solicitar_orcamento', assunto: 'Mezanino', entidades: [], prioridade: 'Normal', confianca: 0.8, sinais: ['pede prazo'], provedor: 'LLM', versao: 'v' } }; } };
+    const comCausa = () => new TypeError('fetch failed', { cause: Object.assign(new Error(`authorization: Bearer ${SEGREDO}`), { code: 'UND_ERR_INVALID_ARG' }) });
+    const casos: [string, Partial<PortasIngestao>, string, Record<string, unknown>][] = [
+      ['provedor devolve motivo com segredo', { inteligencia: { codigo: 'LLM', async analisar() { return { ok: false, motivo: `resposta do servico: ${SEGREDO}` }; } } }, 'indisponivel', { motivo: 'MOTIVO_NAO_CATALOGADO' }],
+      ['provedor lanca com segredo em message', { inteligencia: { codigo: 'LLM', async analisar() { throw new TypeError(`Headers.append: "Bearer ${SEGREDO}" is an invalid header value.`); } } }, 'indisponivel', { motivo: 'inteligência falhou: CREDENCIAL_INVALIDA' }],
+      ['provedor lanca com segredo em cause', { inteligencia: { codigo: 'LLM', async analisar() { throw comCausa(); } } }, 'indisponivel', { motivo: 'inteligência falhou: CREDENCIAL_INVALIDA UND_ERR_INVALID_ARG' }],
+      ['motivo legitimo do sistema e preservado', { inteligencia: { codigo: 'LLM', async analisar() { return { ok: false, motivo: 'ia http 529' }; } } }, 'indisponivel', { motivo: 'ia http 529' }],
+      ['aplicarClassificacao lanca com segredo em message', { inteligencia: boa, async aplicarClassificacao() { throw new Error(`update inbox_thread falhou: apikey=${SEGREDO}`); } }, 'falha', { erro: 'SEM_CODIGO' }],
+      ['aplicarClassificacao lanca com segredo em cause', { inteligencia: boa, async aplicarClassificacao() { throw comCausa(); } }, 'falha', { erro: 'CREDENCIAL_INVALIDA UND_ERR_INVALID_ARG' }],
+      ['carregarParaAnalise lanca erro HTTP do sistema', { inteligencia: boa, async carregarParaAnalise() { throw new Error('rest inbox_thread http 503'); } }, 'falha', { erro: 'ERRO_HTTP 503 (rest inbox_thread)' }],
+    ];
+    for (const [nome, extra, outcome, esperado] of casos) {
+      const { p, pedidos, logs } = portas({ carregarParaAnalise, async aplicarClassificacao() { /* ok */ }, ...extra });
+      const r = await ingerirEventosCentral(ORG, [evento()], [conteudo()], p);
+      // o fallback continua funcional: a mensagem foi ingerida, nada lancou e a classificacao simplesmente nao aconteceu
+      expect(r.ingeridos, nome).toBe(1); expect(r.falhas, nome).toEqual([]); expect(r.classificados, nome).toBe(0); expect(r.semInteligencia, nome).toBe(1); expect(pedidos, nome).toHaveLength(1);
+      expect(logs.find((l) => l.evento === 'inbox_inteligencia'), nome).toMatchObject({ outcome, ...esperado });
+      expect(JSON.stringify([r, logs]), nome).not.toContain(SEGREDO);
+    }
   });
   it('inteligência disponível classifica e aplica; sem provedor configurado nada é chamado', async () => {
     const ds = seedInbox('2026-09-23T12:00:00.000Z');

@@ -36,7 +36,8 @@
  *    no meio não deixa nada pela metade — a submissão com evidência e sem
  *    conversa é o caso COMPLETADO, previsto e provado.
  */
-import { decidirPrazo, gravarSubmissao, prazoDoLead, type PortasGravacao } from './formularioGravacao'
+import { classificarErro, descricaoSegura, validarCredencial } from '../erroSeguro'
+import { ErroDeConfiguracao, ErroDeGravacao, decidirPrazo, gravarSubmissao, prazoDoLead, type PortasGravacao } from './formularioGravacao'
 import { planoDaReconciliacao, type ItemReconciliacao, type MotivoRetencao } from './formularioReconciliacao'
 import { montarPortasIntegracao, type AmbienteFormulario } from './formularioPorta'
 import { FORMULARIOS } from './formularioSite'
@@ -120,9 +121,12 @@ export async function lerSubmissoes(
   env: AmbienteAgendado,
   deps: DepsAgendado,
 ): Promise<{ ok: true; brutas: unknown[] } | { ok: false; motivo: string }> {
-  const token = (env.NETLIFY_AUTH_TOKEN ?? '').trim()
+  // A credencial é conferida ANTES de montar o cabeçalho: ausente ou com caractere que o HTTP não aceita,
+  // nenhuma requisição sai. O motivo leva o NOME da variável e o código, nunca o valor.
+  const credencial = validarCredencial(env.NETLIFY_AUTH_TOKEN)
+  if (!credencial.ok) return { ok: false, motivo: `${credencial.codigo}: NETLIFY_AUTH_TOKEN` }
+  const token = credencial.valor
   const site = (env.EIFF_FORM_NETLIFY_SITE ?? '').trim()
-  if (token === '') return { ok: false, motivo: 'sem NETLIFY_AUTH_TOKEN' }
   if (site === '') return { ok: false, motivo: 'sem EIFF_FORM_NETLIFY_SITE' }
   const cab = { authorization: `Bearer ${token}`, 'user-agent': 'eiff-control-reconciliador' }
 
@@ -191,7 +195,9 @@ export async function rodadaDeReconciliacao(env: AmbienteAgendado, deps: DepsAge
     if (!lidas.ok) return fechar({ desfecho: 'erro_de_leitura', motivo: lidas.motivo, marco, ...nada })
     brutas = lidas.brutas
   } catch (e) {
-    return fechar({ desfecho: 'erro_de_leitura', motivo: (e as Error).message ?? 'erro', marco, ...nada })
+    // Exceção na leitura (rede, cabeçalho, resposta ilegível): só o código. A mensagem bruta poderia
+    // trazer o cabeçalho `authorization`.
+    return fechar({ desfecho: 'erro_de_leitura', motivo: `FALHA_LEITURA: ${descricaoSegura(e)}`, marco, ...nada })
   }
 
   // 5 · o plano. `incluirAnteriores` NUNCA é passado: os leads históricos ficam fora, sem opção.
@@ -237,7 +243,7 @@ export async function rodadaDeReconciliacao(env: AmbienteAgendado, deps: DepsAge
     } catch (e) {
       // Sem o estado em lote a rodada continua: cada submissão ainda é idempotente
       // uma a uma. O que se perde é a fila andar quando há mais que o teto.
-      deps.log?.({ evento: 'RECONCILIACAO_ESTADO', outcome: 'indisponivel', motivo: (e as Error).message ?? 'erro' })
+      deps.log?.({ evento: 'RECONCILIACAO_ESTADO', outcome: 'indisponivel', etapa: 'estado', ...classificarErro(e), motivo: descricaoSegura(e) })
     }
   }
   const resultados: Record<string, number> = vazio()
@@ -255,8 +261,10 @@ export async function rodadaDeReconciliacao(env: AmbienteAgendado, deps: DepsAge
       if (entraram.includes(r.resultado)) recuperadas += 1
     } catch (e) {
       falhas += 1
-      // Motivo sem conteúdo: a mensagem de erro da gravação carrega etapa e status, não dado de lead.
-      deps.log?.({ evento: 'RECONCILIACAO_FALHA', motivo: (e as Error).message ?? 'erro' })
+      // Sem conteúdo de lead e sem mensagem bruta: etapa da gravação e texto seguro (código, status, operação).
+      const etapa = e instanceof ErroDeGravacao ? e.etapa : e instanceof ErroDeConfiguracao ? 'configuracao' : 'desconhecida'
+      const motivo = e instanceof ErroDeGravacao ? e.detalhe : e instanceof ErroDeConfiguracao ? e.motivo : descricaoSegura(e)
+      deps.log?.({ evento: 'RECONCILIACAO_FALHA', codigo: 'FALHA_GRAVACAO', etapa, motivo })
     }
     processadas += 1
   }

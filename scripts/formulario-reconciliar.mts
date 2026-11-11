@@ -52,6 +52,7 @@ import {
 } from '../src/core/radar/formularioReconciliacao';
 import { CABECALHO_SEGREDO } from '../src/core/radar/formularioServidor';
 import { FORMULARIOS } from '../src/core/radar/formularioSite';
+import { classificarErro, textoDoErro, validarCredencial } from '../src/core/erroSeguro';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const arg = (n: string, d = '') => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] ?? d : d; };
@@ -60,6 +61,11 @@ const flag = (n: string) => args.includes(`--${n}`);
 const falhar = (m: string): never => { console.error(`BLOQUEADO: ${m}`); process.exit(2); };
 
 const API = 'https://api.netlify.com/api/v1';
+/** O que fazer com cada recusa de credencial. Nunca cita o valor. */
+const DICA_DA_CREDENCIAL = {
+  CREDENCIAL_AUSENTE: 'Defina a variável de ambiente nesta sessão.',
+  CREDENCIAL_INVALIDA: 'O valor tem caractere que o HTTP não aceita em cabeçalho (controle ou fora do Latin-1): cole de novo, sem Ctrl+V em prompt oculto.',
+} as const;
 const CONFIRMACAO = 'FORMULARIO_SITE_V1';
 /** Processar submissão anterior ao marco é processar lead REAL: porta própria, separada da porta de reenvio. */
 const CONFIRMACAO_ANTERIORES = 'LEADS_REAIS_ANTES_DO_MARCO';
@@ -93,8 +99,10 @@ if (incluirAnteriores && executar) {
 /* ------------------------------------------------------------------ 1 · leitura das submissões */
 
 async function daApi(): Promise<unknown[]> {
-  const token = (process.env.NETLIFY_AUTH_TOKEN ?? '').trim();
-  if (token === '') falhar('sem NETLIFY_AUTH_TOKEN no ambiente (personal access token, só leitura de submissões).');
+  // Conferida ANTES de montar o cabeçalho: ausente ou com caractere que o HTTP não aceita, nada é enviado.
+  const credencial = validarCredencial(process.env.NETLIFY_AUTH_TOKEN);
+  if (!credencial.ok) falhar(`${credencial.codigo}: NETLIFY_AUTH_TOKEN (token de leitura das submissões). ${DICA_DA_CREDENCIAL[credencial.codigo]}`);
+  const token = (credencial as { valor: string }).valor;
   const cab = { authorization: `Bearer ${token}`, 'user-agent': 'eiff-control-reconciliador' };
   const formularios = await fetch(`${API}/sites/${encodeURIComponent(siteId)}/forms`, { headers: cab })
     .then(async (r) => (r.ok ? (await r.json()) as Record<string, unknown>[] : falhar(`API do Netlify recusou a lista de formulários: http ${r.status}`)));
@@ -119,7 +127,8 @@ const brutas: unknown[] = arquivo !== ''
     const d = JSON.parse(fs.readFileSync(arquivo, 'utf8')) as unknown;
     return Array.isArray(d) ? d : [d];
   })()
-  : await daApi();
+  // Exceção na leitura nunca chega ao topo: lá o Node imprimiria a mensagem bruta, que pode conter o cabeçalho.
+  : await daApi().catch((e: unknown) => falhar(`FALHA_LEITURA: ${textoDoErro(classificarErro(e))}`));
 
 /* ------------------------------------------------------------------ 2 · o plano (puro) */
 
@@ -152,8 +161,12 @@ if (modo === 'SIMULAÇÃO') {
 
 /* ------------------------------------------------------------------ 3 · reenvio pelo MESMO endpoint */
 
-const segredo = (process.env.EIFF_FORM_SECRET ?? '').trim();
-if (segredo === '') falhar('sem EIFF_FORM_SECRET no ambiente (o mesmo segredo que a borda exige).');
+// O segredo vira cabeçalho: conferido ANTES de qualquer envio. Valor com caractere de controle (o `^V` de um
+// Ctrl+V num prompt, por exemplo) faria o Node falhar com «fetch failed» sem sair da máquina — foi o que
+// aconteceu duas vezes em 10/11/2026. Aqui ele é recusado com o código, sem tocar a rede.
+const credencialDoSegredo = validarCredencial(process.env.EIFF_FORM_SECRET);
+if (!credencialDoSegredo.ok) falhar(`${credencialDoSegredo.codigo}: EIFF_FORM_SECRET (o mesmo segredo que a borda exige). ${DICA_DA_CREDENCIAL[credencialDoSegredo.codigo]}`);
+const segredo = (credencialDoSegredo as { valor: string }).valor;
 
 const respostas: RespostaDaBorda[] = [];
 for (const i of plano.enviar) {
@@ -170,8 +183,10 @@ for (const i of plano.enviar) {
     respostas.push(resposta);
     console.log(`  ${i.id} → ${r.status} ${resposta.resultado ?? resposta.motivo ?? ''}`);
   } catch (e) {
-    respostas.push({ id: i.id, status: 0, motivo: (e as Error).message });
-    console.log(`  ${i.id} → falha de rede: ${(e as Error).message}`);
+    // Só o código. A mensagem bruta NUNCA é impressa: em alguns erros de cabeçalho o Node põe o valor nela.
+    const motivo = textoDoErro(classificarErro(e));
+    respostas.push({ id: i.id, status: 0, motivo });
+    console.log(`  ${i.id} → falha de transporte: ${motivo}`);
   }
 }
 

@@ -6,7 +6,7 @@
 //   navegador, e nao sai daqui (nem em log, nem em erro: a mensagem de erro so carrega o status HTTP);
 // - `fetch` e injetado para o teste provar a chamada sem rede;
 // - o texto da mensagem vai no corpo da RPC e em lugar nenhum mais.
-import type { PedidoIngest, ResultadoIngest } from './ingestaoServidor';
+import { recusaDoIngest, type PedidoIngest, type ResultadoIngest } from './ingestaoServidor';
 
 export interface AmbienteIngest { SUPABASE_URL?: string; VITE_SUPABASE_URL?: string; SUPABASE_SERVICE_ROLE_KEY?: string; EIFF_INBOX_ORGANIZATION_ID?: string }
 export const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
@@ -37,7 +37,8 @@ export const argsIngest = (p: PedidoIngest): Record<string, unknown> => ({
 export const resultadoIngest = (d: Record<string, unknown>): ResultadoIngest => ({
   ok: d.ok === true, duplicada: d.duplicada === true, threadId: typeof d.thread_id === 'string' ? d.thread_id : undefined, messageId: typeof d.message_id === 'string' ? d.message_id : undefined,
   contactId: typeof d.contact_id === 'string' ? d.contact_id : undefined, novaThread: d.nova_thread === true, novoContato: d.novo_contato === true, reaberta: d.reaberta === true,
-  erro: typeof d.erro === 'string' ? d.erro : undefined,
+  // o texto devolvido pela RPC nunca segue adiante: so um codigo do catalogo fechado, ou o marcador fixo
+  erro: typeof d.erro === 'string' ? recusaDoIngest(d.erro) : undefined,
 });
 
 /** Porta da RPC inbox_ingest. Idempotente por (provider, external_message_id): a garantia esta no banco. */
