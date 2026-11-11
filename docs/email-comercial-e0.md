@@ -82,20 +82,43 @@ acesso ao painel do Netlify do `eiff-control`.
 
 ### 2.3 Cliente OAuth
 
-7. Credenciais › Criar credenciais › ID do cliente OAuth. O tipo depende de como o token será obtido (decisão N-3, §6):
-   - **caminho A, recomendado** — tipo «App para computador». O token é obtido por um pequeno script local, que a
-     pessoa roda no próprio computador (entregue na etapa E3, sem nenhuma credencial embutida);
-   - **caminho B** — tipo «Aplicativo da Web» com o URI de redirecionamento do OAuth Playground do Google, e o token é
-     obtido nessa ferramenta do próprio Google.
+7. Credenciais › Criar credenciais › ID do cliente OAuth › tipo **«App para computador»** (decisão N-3: o token é obtido
+   pelo script local, §2.4). Esse tipo não tem URI de redirecionamento para cadastrar: o Google aceita o retorno em
+   endereço de loopback (`http://127.0.0.1:<porta>`), que só existe na máquina de quem consente.
 8. O Google mostra o **ID do cliente** e o **segredo do cliente**. O segredo vai direto para o painel do Netlify
    (passo 12). Não colar em conversa, e-mail, documento ou repositório.
 
 ### 2.4 Consentimento da caixa (uma única vez)
 
 9. Sair de todas as contas Google no navegador e entrar **como a conta remetente** definida no §1.
-10. Iniciar o consentimento (script do caminho A ou Playground do caminho B) pedindo acesso offline. A tela do Google
-    deve mostrar **uma** permissão: «Enviar e-mails em seu nome». Se mostrar qualquer outra, parar: o escopo está errado.
-11. O resultado é o **token de atualização**. Ele aparece uma vez. Vai direto para o painel do Netlify.
+10. No próprio computador, numa cópia do repositório, rodar **no seu terminal** (nunca pelo assistente):
+
+    ```bash
+    node scripts/email-oauth-consentimento.mjs
+    ```
+
+    O script pede o ID do cliente e o segredo (digitação oculta), mostra o endereço de consentimento e espera o retorno.
+    A tela do Google deve mostrar **uma** permissão: «Enviar e-mails em seu nome». Se mostrar qualquer outra, cancelar:
+    o escopo está errado.
+11. O resultado é o **token de atualização**. Por padrão o script o coloca na área de transferência, sem imprimir, e a
+    limpa depois que você confirmar que colou no painel do Netlify. Com `--mostrar` ele é impresso uma vez.
+
+### 2.4.1 O script de consentimento (revisão da etapa E5)
+
+`scripts/email-oauth-consentimento.mjs`, com as partes puras em `scripts/lib/emailOauth.mjs`. **Preparado e não executado.**
+
+| Escolha | Motivo |
+|---|---|
+| Cliente «App para computador» + retorno em loopback `127.0.0.1` em porta aleatória | É o fluxo que o Google documenta para aplicativo instalado. Não exige URL pública nem página nossa recebendo o código; o servidor de retorno vive alguns minutos e só escuta na própria máquina. |
+| PKCE (`S256`) e `state` aleatório | O código de autorização só serve para quem tem o verificador, que nunca sai da máquina; retorno com `state` diferente é recusado. |
+| `access_type=offline` + `prompt=consent` | Sem os dois o Google pode não devolver token de atualização. |
+| Um escopo (`gmail.send`), conferido de novo na resposta | Se o Google conceder qualquer escopo a mais, ou não devolver token de atualização, o script recusa e manda revogar. |
+| Sem disco e sem variável de ambiente | O segredo do cliente é digitado com a entrada oculta; nada é gravado; o token vai para a área de transferência. |
+| Só terminal interativo | Rodado por automação (sem terminal), o script recusa e sai antes de abrir servidor ou falar com o Google. Um teste da suíte prende isso. |
+| Não envia e-mail | O script só obtém a credencial. O primeiro envio é o canário, com autorização própria. |
+
+Alternativa descartada: OAuth Playground do Google (cliente «Aplicativo da Web»). Funciona, mas o segredo do cliente
+teria de ser colado numa página de ferramenta, e o token apareceria nela.
 
 ### 2.5 Painel do Netlify (site `eiff-control`), variáveis de ambiente
 
@@ -107,7 +130,9 @@ acesso ao painel do Netlify do `eiff-control`.
 | `GOOGLE_OAUTH_CLIENT_SECRET` | segredo do cliente | segredo |
 | `GOOGLE_OAUTH_REFRESH_TOKEN` | token de atualização | segredo |
 | `EIFF_EMAIL_SENDER` | endereço remetente | resultado do §1 |
+| `EIFF_EMAIL_SENDER_NAME` | `EIFF` | opcional; é o padrão (D-4) |
 | `EIFF_EMAIL_SEND_MODE` | `disabled` | **começa desligado** |
+| `EIFF_INBOX_OUTBOUND_ENABLED` | ausente ou `false` | chave geral de saída do Inbox; sem ela `true`, o modo é sempre `disabled` |
 | `EIFF_EMAIL_CANARY_RECIPIENTS` | vazio | preenchido só na etapa do canário |
 | `EIFF_EMAIL_DAILY_LIMIT_USER` · `EIFF_EMAIL_DAILY_LIMIT_ORG` | conforme D-7 | |
 
@@ -285,24 +310,31 @@ reconciliação automática (desligada), as 11 submissões históricas (retidas)
 
 ---
 
-## 6. Decisões necessárias para iniciar a implementação
+## 6. Decisões (todas as que travavam o início estão fechadas)
 
-Fechadas nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria) e **D-3** (quem administra o Google Workspace e executa o §1.2 e o §2: **Augusto Macedo**, decisão de 11/11/2026) e **D-1** (remetente: `contato@eiff.com.br`, que é **usuário com caixa própria**, conforme a verificação do §1.2 informada pelo Augusto em 11/11/2026; o consentimento OAuth é feito pela própria conta e não há trabalho extra de «Enviar como»). Falta só confirmar que a verificação em duas etapas da conta está ligada (passo 14 do §2).
-
-| # | Decisão | Por que trava | Recomendação |
-|---|---|---|---|
-| **N-1** | Autorizar o início da implementação (passos I-1 a I-4), sem credencial e sem envio | É a autorização específica que o estudo exige | Autorizar I-1 a I-4 em PRs separados |
-| **N-2** | Autorizar a **criação do arquivo** da migration do livro de entregas (sem aplicar) e o código do provider `GOOGLE_WORKSPACE` | O repositório só recebe migration com necessidade comprovada e pedido | Autorizar a criação; a aplicação fica para depois |
-| **N-3** | Como o token será obtido: script local (A) ou OAuth Playground (B) | Define o tipo do cliente OAuth no passo 7 | A: o segredo não passa por nenhuma página além das do Google e do Netlify |
-| **D-4** | Nome exibido do remetente | Entra no contrato da mensagem | `EIFF <contato@eiff.com.br>` |
-| **D-5** | Assinatura padrão e eventual aviso de privacidade | Entra no texto que o servidor monta | Assinatura curta com o nome de quem envia; aviso a critério do jurídico |
-| **D-7** | Tetos diários | Entram no handler e nas variáveis | 30 por usuário, 100 por organização |
+Decisões da Direção de 11/11/2026 que fecham a preparação: **N-1** e **N-2** (implementação autorizada, com arquivo de
+migration, sem aplicar e sem envio real), **N-3** (script local de consentimento), **D-4** (nome exibido
+`EIFF <contato@eiff.com.br>`), **D-5** (assinatura: nome do atendente + EIFF) e **D-7** (30 envios por usuário e 100 por
+organização por dia). Fechadas antes: **D-2** (quem pode enviar: Administrador e Diretoria) e **D-3** (quem administra o Google Workspace e executa o §1.2 e o §2: **Augusto Macedo**, decisão de 11/11/2026) e **D-1** (remetente: `contato@eiff.com.br`, que é **usuário com caixa própria**, conforme a verificação do §1.2 informada pelo Augusto em 11/11/2026; o consentimento OAuth é feito pela própria conta e não há trabalho extra de «Enviar como»). Falta só confirmar que a verificação em duas etapas da conta está ligada (passo 14 do §2).
 
 Podem esperar a primeira entrega estar no ar: D-6 (e-mail devolvido e o SLA), D-8 (retenção e base legal, com o
 jurídico), D-9 (ler respostas no CRM) e D-10 (endurecer o DMARC).
 
-Ordem sugerida: a verificação da caixa está feita; em paralelo, N-1, N-2, N-3, D-4, D-5 e D-7 liberam a implementação
-sem credencial.
+A implementação (E1 a E5) está nos PRs #80 a #85. O que resta para um envio de teste está no §7.
+
+## 7. O que falta para o primeiro envio de teste (canário)
+
+Cada linha é um portão com autorização própria. Nenhuma foi executada.
+
+| # | Passo | Quem | Depende de |
+|---|---|---|---|
+| 1 | Mesclar os PRs da implementação (#80 a #85) | Direção autoriza, um a um | Quality Gate do GitHub verde em cada PR |
+| 2 | Aplicar a migration 0075 em produção | Direção autoriza | passo 1 |
+| 3 | Executar o §2 (projeto, tela de consentimento, cliente, script, variáveis no Netlify com o modo `disabled`) | Augusto | — |
+| 4 | Publicar o EIFF Control (a função passa a existir, desligada) | Direção autoriza | passos 1 a 3 |
+| 5 | `saude`: a credencial obtém token; nada é enviado | Augusto, na tela | passo 4 |
+| 6 | Canário: `EIFF_INBOX_OUTBOUND_ENABLED=true`, `EIFF_EMAIL_SEND_MODE=canary`, lista com endereços INTERNOS, novo deploy | Direção autoriza | passo 5 |
+| 7 | Um envio a um endereço interno; conferir De, SPF/DKIM/DMARC em «Mostrar original», pasta Enviados e a conversa | Augusto | passo 6 |
 
 ---
 
