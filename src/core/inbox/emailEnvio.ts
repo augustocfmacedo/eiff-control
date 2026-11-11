@@ -101,6 +101,9 @@ export const ERROS_EMAIL = {
 } as const
 export type CodigoErroEmail = keyof typeof ERROS_EMAIL
 
+/** O que a tela tem de mandar junto de «não foi enviado»: a pessoa declara que conferiu a pasta Enviados. */
+export const CONFIRMACAO_NAO_ENVIADO = 'conferi_enviados_e_nao_esta_la'
+
 /** Motivos gravados no livro quando a entrega termina em FAILED ou UNKNOWN. */
 export const MOTIVOS_ENTREGA = [
   'credencial_revogada', 'credencial_invalida', 'provedor_indisponivel', 'mensagem_recusada', 'acesso_recusado', 'limite_do_provedor',
