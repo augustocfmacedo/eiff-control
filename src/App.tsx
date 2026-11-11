@@ -10,6 +10,7 @@ import { trilhaDe } from './core/capacitacao';
 import { Assistente } from './ui/Assistente';
 import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
 import { resumoExecutivo } from './core/inbox';
+import { leadsDoSite, resumoLeads } from './core/inbox/leadsSite';
 import { Icon, Logotipo, Marca } from './ui/icons';
 import { Paleta, ROTAS_NAV, type AcaoPaleta } from './ui/Paleta';
 import { Tour, tourVisto } from './ui/Tour';
@@ -48,6 +49,7 @@ const Capacitacao = lazy(() => import('./screens/Capacitacao'));
 const MissionControl = lazy(() => import('./screens/MissionControl'));
 const Inbox = lazy(() => import('./screens/Inbox'));
 const InboxConfig = lazy(() => import('./screens/InboxConfig'));
+const LeadsSite = lazy(() => import('./screens/LeadsSite'));
 const RadarCommandCenter = lazy(() => import('./screens/radar/CommandCenter'));
 const RadarHoje = lazy(() => import('./screens/radar/Hoje'));
 const RadarEmpresas = lazy(() => import('./screens/radar/Empresas'));
@@ -125,6 +127,7 @@ export default function App() {
   const radarHoje = (ds.radar?.tarefas ?? []).filter((t) => t.status === 'Aberta' && t.venceEm.slice(0, 10) <= ds.params.dataBase).length;
   const radarAlertas = oportunidadesSemProximaAcao(ds.radar ?? radarVazio()).length + (ds.radar?.duplicatas ?? []).filter((d) => d.status === 'pendente').length;
   const inboxPrecisaDeMim = ds.inbox && pode(usuario, 'inbox') ? resumoExecutivo(ds.inbox, usuario, new Date().toISOString()).precisaDeMim : 0;
+  const leadsAguardando = ds.inbox && pode(usuario, 'inbox') ? resumoLeads(leadsDoSite(ds.inbox, usuario, new Date().toISOString())).aguardando : 0;
   const licoesPendentes = trilhaDe(usuario.papel).filter((l) => !ds.treinamentos.some((t) => t.usuarioId === usuario.id && t.licaoId === l.id)).length;
 
   const alternarSidebar = () => {
@@ -134,12 +137,13 @@ export default function App() {
   };
   // sidebar gerada da mesma lista da paleta (ROTAS_NAV): grupos recolhiveis e favoritos lembrados por navegador
   const contagens: Record<string, number> = {
-    '/inbox': pend + tarefas, '/atendimento': inboxPrecisaDeMim, '/capacitacao': licoesPendentes, '/orcamentos': ds.orcamentos.filter((o) => o.status === 'Rascunho' || o.status === 'Enviado').length,
+    '/inbox': pend + tarefas, '/atendimento': inboxPrecisaDeMim, '/atendimento/leads': leadsAguardando, '/capacitacao': licoesPendentes, '/orcamentos': ds.orcamentos.filter((o) => o.status === 'Rascunho' || o.status === 'Enviado').length,
     '/equipe': ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length, '/radar': radarAlertas, '/radar/hoje': radarHoje,
     '/compras': ds.pedidos.filter((p) => p.status === 'Emitido' || p.status === 'Recebido parcial').length, '/aprovacoes': ds.aprovacoes.filter((a) => a.status === 'Pendente').length,
   };
   const rotasVisiveis = ROTAS_NAV.filter((r) => !r.permissao || pode(usuario, r.permissao as never));
-  const ativa = (to: string) => rota.path === to || (to !== '/' && to !== '/radar' && rota.path.startsWith(to));
+  // uma rota filha que tambem esta no menu (ex.: /atendimento/leads) nao acende a mae
+  const ativa = (to: string) => rota.path === to || (to !== '/' && to !== '/radar' && rota.path.startsWith(to) && !ROTAS_NAV.some((r) => r.to.length > to.length && r.to.startsWith(to) && rota.path.startsWith(r.to)));
   const alternarFavorito = (to: string) => setFavoritos((f) => { const v = f.includes(to) ? f.filter((x) => x !== to) : [...f, to]; try { localStorage.setItem('eiff-control:favoritos', JSON.stringify(v)); } catch { /* ignore */ } return v; });
   const alternarGrupo = (g: string) => setGruposFechados((f) => { const v = f.includes(g) ? f.filter((x) => x !== g) : [...f, g]; try { localStorage.setItem('eiff-control:grupos', JSON.stringify(v)); } catch { /* ignore */ } return v; });
   const itemNav = (r: (typeof ROTAS_NAV)[number]) => (
@@ -167,7 +171,7 @@ export default function App() {
       break;
     // EIFF Inbox: autorizacao real da rota (nao so do menu), no padrao do Mission Control
     case 'atendimento': tela = pode(usuario, 'inbox')
-      ? (p1 === 'configuracao' ? <InboxConfig /> : <Inbox threadId={rota.query.get('t') ?? p1} query={rota.query} />)
+      ? (p1 === 'configuracao' ? <InboxConfig /> : p1 === 'leads' ? <LeadsSite query={rota.query} /> : <Inbox threadId={rota.query.get('t') ?? p1} query={rota.query} />)
       : <EstadoErro titulo="Acesso restrito" causa={<>O EIFF Inbox é visível para quem tem a permissão <code>inbox</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar atender conversas.</EstadoErro>;
       break;
     case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;

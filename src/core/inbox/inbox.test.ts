@@ -9,7 +9,7 @@ import {
   CONFIGURACAO_PADRAO, EXECUCAO_FACTORY_RESERVADA, EXECUCAO_MANUAL, FACTORY_INDISPONIVEL, PROVEDOR_MANUAL, SEM_INTELIGENCIA, SETORES_PADRAO, STATUS_THREAD, TRANSICOES_THREAD,
   aoReceberMensagem, aoResponder, aplicarStatus, caixasVirtuais, classificacaoAuditavel, deEventoCentral, escalacoesPendentes, estadoSla, identificadorMascarado, inboxVazio,
   nivelMaisRestritivo, nivelPara, ordenarParaTrabalho, provedorExecucao, receberMensagem, resumoExecutivo, rotear, seedInbox, statusAposAtribuicao, threadVisivel,
-  threadsDaCaixa, triagemHumana, validarTransicao, visibilidadeDe, classificarSeguro, eventoDaTransicao, normalizarIdentificador, podeAtribuir, podeMudarStatus, recorteDe, threadDoContato,
+  threadsDaCaixa, triagemHumana, validarTransicao, visibilidadeDe, classificarSeguro, contatoDaMensagem, eventoDaTransicao, normalizarIdentificador, podeAtribuir, podeMudarStatus, recorteDe, threadDoContato,
   type Classificacao, type InboxJob, type InboxThread, type IntelligenceProvider, type MensagemRecebida, type Relogio,
 } from './index';
 
@@ -174,8 +174,10 @@ describe('visibilidade e caixas virtuais', () => {
   });
   it('resumo executivo bate com as caixas', () => {
     const r = resumoExecutivo(ds, usuario('u-augusto', 'Diretoria'), AGORA);
-    expect(r.urgente).toBe(1); expect(r.iaResolveu).toBe(1); expect(r.aguardandoContato).toBe(1); expect(r.slaVencido).toBe(1); // THR-00010: Alta, 4 h, aberta ha 6 h
-    expect(r.precisaDeMim).toBe(2);
+    // O seed ganhou 4 leads do site (THR-00011..14, Comercial, responsavel u-augusto): THR-00013 aguarda o contato,
+    // THR-00012 esta com o prazo de 30 min uteis vencido, e THR-00011/12/14 sao dele e estao vivas (2 + 3 = 5).
+    expect(r.urgente).toBe(1); expect(r.iaResolveu).toBe(1); expect(r.aguardandoContato).toBe(2); expect(r.slaVencido).toBe(2); // THR-00010: Alta, 4 h, aberta ha 6 h
+    expect(r.precisaDeMim).toBe(5);
   });
 });
 
@@ -294,7 +296,8 @@ describe('seed e higiene', () => {
     expect(ds.origem).toBe('seed');
   });
   it('o seed não afirma envio: toda saída está apenas registrada e nenhum job foi à Factory', () => {
-    for (const m of ds.mensagens.filter((m) => m.direcao === 'outbound')) expect(m.entrega).toBe('registrada');
+    // contato DECLARADO por pessoa (telefone, e-mail externo) não é envio do sistema: fica fora desta checagem
+    for (const m of ds.mensagens.filter((m) => m.direcao === 'outbound' && !contatoDaMensagem(m))) expect(m.entrega).toBe('registrada');
     // evento nunca carrega corpo de mensagem nem telefone inteiro (regra espelhada no CHECK da 0056)
     for (const e of ds.eventos) { expect(e.detalhe.length).toBeLessThanOrEqual(500); expect(e.detalhe).not.toMatch(/[0-9]{9,}/); }
     for (const j of ds.jobs) { expect(j.provider).toBe('MANUAL'); expect(j.referenciaExterna).toBeUndefined(); }
