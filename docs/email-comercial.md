@@ -189,7 +189,9 @@ destinatário nem remetente, nunca vê token e nunca escreve no livro de entrega
 `UNKNOWN` é o caso «o Google pode ter aceitado e nós perdemos a resposta». **Nunca é reenviado automaticamente.**
 Na primeira entrega a reconciliação é humana: a tela pede para conferir a pasta Enviados da caixa e oferece
 «Encontrei em Enviados» (vira `ACCEPTED`, com quem declarou e quando) ou «Não foi enviado» (vira `FAILED` e libera
-novo envio). A reconciliação automática, comparando o `Message-ID` que o próprio servidor gerou, fica para a segunda
+novo envio). «Não foi enviado» pede uma **segunda confirmação**: a janela explica que uma declaração errada faz o
+cliente receber o e-mail em dobro, e o botão só libera depois de a pessoa marcar que conferiu a pasta Enviados; o
+servidor recusa (400) o pedido que chegar sem essa confirmação, e a declaração fica no livro com quem declarou. A reconciliação automática, comparando o `Message-ID` que o próprio servidor gerou, fica para a segunda
 entrega, quando a permissão de leitura existir de qualquer forma.
 
 ### 5.3 Peças novas (nenhuma criada neste estudo)
@@ -219,9 +221,9 @@ Outras ações, mesmas regras de autenticação:
 
 | `acao` | Corpo | Para quê |
 |---|---|---|
-| `preparar` | `{ threadId }` | Diz à tela se o envio está disponível para aquela conversa e aquele usuário: modo, remetente que será usado, destinatário **mascarado**, motivo quando indisponível. Não chama o Google. |
+| `preparar` | `{ threadId }` | Diz à tela se o envio está disponível para aquela conversa e aquele usuário: modo, remetente que será usado, destinatário **completo** (só chega aqui quem tem a permissão de envio e enxerga a conversa pela RLS; nunca vai para log), motivo quando indisponível. Não chama o Google. |
 | `enviar` | acima | Envia. |
-| `reconciliar` | `{ entregaId, desfecho: "encontrado" \| "nao_enviado" }` | Decisão humana sobre uma entrega `UNKNOWN`. |
+| `reconciliar` | `{ entregaId, desfecho: "encontrado" }` ou `{ entregaId, desfecho: "nao_enviado", confirmacao }` | Decisão humana sobre uma entrega `UNKNOWN`. «Não enviado» sem a confirmação explícita é 400. |
 | `saude` | `{}` | Só para quem configura: a credencial consegue obter token de acesso? Não envia nada. |
 
 Resposta de `enviar`:
@@ -369,7 +371,16 @@ vendedor registra o contato pela ação que já existe.
   jurídico** (D-8).
 - Não há operador novo: o e-mail já está no Google Workspace e a conversa já está no Supabase.
 - O livro de entregas não guarda endereço nem conteúdo. A auditoria guarda tamanho e impressão, não o texto.
-- A tela de `preparar` devolve o destinatário mascarado; o endereço completo já está na conversa para quem a enxerga.
+- `preparar` devolve o endereço completo do destinatário **somente** a quem tem a permissão `enviar_email` e enxerga a
+  conversa (leitura com o JWT do usuário, RLS): é o que a pessoa confere na confirmação final. A linha de apoio da
+  tela continua mascarada e o endereço nunca entra em log.
+- **Para qual endereço a conversa responde** (`resolverDestinatario`, revisão de 11/11/2026): vale o endereço do
+  CANAL DA CONVERSA — lead do formulário do site responde ao e-mail informado no formulário, mesmo que o contato tenha
+  outra identidade de e-mail. Não há preferência entre identidades: dois endereços possíveis sem critério seguro é
+  `destinatario_ambiguo` e nada é enviado até o contato ser corrigido.
+- O pedido de envio devolve ao servidor o endereço que a pessoa conferiu (`destinatario`). Esse campo **não escolhe**
+  o destino: o servidor resolve o endereço no banco e só segue se for o mesmo; se divergir, responde
+  `destinatario_mudou` antes de criar a entrega.
 
 ### 9.3 Permissões
 
@@ -441,7 +452,7 @@ Na aba «E-mail» da tela Leads do site (e no composer do Inbox, quando o destin
    - **Enviado**: «Enviado às 14:32. O Google confirmou o aceite.» O item entra no histórico como resposta enviada.
    - **Não enviado**: motivo de catálogo em linguagem humana; o texto continua no campo.
    - **Resultado desconhecido**: «Não sabemos se este e-mail saiu. Não envie de novo. Confira a pasta Enviados de
-     contato@.» com «Encontrei em Enviados» e «Não foi enviado».
+     contato@.» com «Encontrei em Enviados» e «Não foi enviado…» (este abre a janela de segunda confirmação).
 5. Enquanto houver entrega sem desfecho na conversa, o botão de enviar fica indisponível, dizendo por quê.
 
 Nada de «enviar para vários», modelos em lote ou agendamento.
