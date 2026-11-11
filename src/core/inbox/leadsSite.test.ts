@@ -9,7 +9,7 @@ import type { SubmissaoFormulario } from '../radar/formularioSite'
 import type { Usuario } from '../types'
 import { textoDaMensagem } from './formularioSite'
 import {
-  FILTROS_LEAD, MARCA_RASCUNHO_EMAIL, PRAZO_LEAD_DO_SITE_MIN, contarPorFiltro, ehLeadDoSite, filtrarLeads, formulariosPresentes, historicoDoLead, leadDoSite, leadsDoSite,
+  FILTROS_LEAD, MARCA_RASCUNHO_EMAIL, NOME_NAO_IDENTIFICADO, PRAZO_LEAD_DO_SITE_MIN, contarPorFiltro, ehLeadDoSite, filtrarLeads, formulariosPresentes, historicoDoLead, identificarContato, leadDoSite, leadsDoSite,
   lerSolicitacao, linksDeContato, proximaAcao, resumoLeads, sugestaoDeEmail, textoDoRascunhoDeEmail, validarRascunhoDeEmail,
 } from './leadsSite'
 import { estadoSla } from './roteamento'
@@ -106,11 +106,14 @@ describe('leadsDoSite: projeção sobre as conversas do Inbox', () => {
     expect(l.solicitacao.prazo).toBe('Até 6 meses')
     expect(l.solicitacao.leituraDaPagina.length).toBe(1)
   })
-  it('lead sem empresa: a cidade não é confundida com a empresa', () => {
+  it('lead sem empresa (duas partes na linha): nem empresa nem cidade são deduzidas', () => {
     const l = leads.find((x) => x.thread.id === 'THR-00014')!
+    expect(l.nome).toBe('Caio Mendonça')
     expect(l.empresa).toBeUndefined()
-    expect(l.cidade).toBe('Goiânia/GO')
+    expect(l.cidade).toBeUndefined()
     expect(l.formulario).toBe('iniciar-projeto')
+    // nada se perde: a linha inteira continua na solicitação e no histórico
+    expect(l.solicitacao.contato).toEqual(['Caio Mendonça', 'Goiânia/GO'])
   })
   it('o SLA é o do Inbox, nunca recalculado aqui', () => {
     for (const l of leads) {
@@ -147,6 +150,80 @@ describe('leadsDoSite: projeção sobre as conversas do Inbox', () => {
     expect(l.formulario).toBe('iniciar-projeto')
     expect(l.solicitacao.configuracao).toBe('Galpão 30 x 80 m')
     expect(l.recebidoEm).toBe(AGORA)
+  })
+})
+
+describe('identificarContato: empresa e cidade sem dedução', () => {
+  const contato = (p: { nome?: string; empresa?: string; informado?: string } = {}) => ({
+    nome: p.nome ?? NOME_NAO_IDENTIFICADO, empresaNome: p.empresa,
+    identidades: [{ canal: 'PORTAL' as const, identificador: 'a@b.com', verificada: false, ...(p.informado !== undefined ? { nomeInformado: p.informado } : {}) }],
+  })
+  const ANA = contato({ nome: 'Ana Lima', informado: 'Ana Lima' })
+
+  it('três partes começando pelo nome conhecido: nome, empresa e cidade pela ordem', () => {
+    expect(identificarContato(['Ana Lima', 'Lima Indústria', 'Goiânia/GO'], ANA)).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria', cidade: 'Goiânia/GO' })
+  })
+  it('três partes sem nenhum nome conhecido (contato ainda não completado): vale a ordem', () => {
+    expect(identificarContato(['Ana Lima', 'Lima Indústria', 'Goiânia/GO'], contato())).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria', cidade: 'Goiânia/GO' })
+    expect(identificarContato(['Ana Lima', 'Lima Indústria', 'Goiânia/GO'], undefined)).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria', cidade: 'Goiânia/GO' })
+  })
+  it('três partes, mas a 1ª não é o nome conhecido: não se rotula', () => {
+    expect(identificarContato(['Outra Pessoa', 'Lima Indústria', 'Goiânia/GO'], ANA)).toEqual({ nome: 'Ana Lima' })
+  })
+  it('nome + empresa (duas partes): a 2ª NÃO vira cidade', () => {
+    const r = identificarContato(['Ana Lima', 'Lima Indústria'], ANA)
+    expect(r).toEqual({ nome: 'Ana Lima' })
+  })
+  it('nome + cidade (duas partes): a 2ª NÃO vira empresa', () => {
+    const r = identificarContato(['Ana Lima', 'Goiânia/GO'], ANA)
+    expect(r.empresa).toBeUndefined()
+    expect(r.cidade).toBeUndefined()
+  })
+  it('as duas leituras de duas partes dão o MESMO resultado: é a prova de que nada é adivinhado', () => {
+    expect(identificarContato(['Ana Lima', 'Goiânia'], ANA)).toEqual(identificarContato(['Ana Lima', 'Goiânia Estruturas'], ANA))
+  })
+  it('empresa + cidade (sem nome): nada é rotulado, e o nome não é inventado', () => {
+    expect(identificarContato(['Lima Indústria', 'Goiânia/GO'], contato())).toEqual({ nome: NOME_NAO_IDENTIFICADO })
+  })
+  it('uma parte só: pode ser nome, empresa ou cidade — nenhuma é escolhida', () => {
+    expect(identificarContato(['Goiânia/GO'], contato())).toEqual({ nome: NOME_NAO_IDENTIFICADO })
+    expect(identificarContato(['Ana Lima'], ANA)).toEqual({ nome: 'Ana Lima' })
+  })
+  it('linha vazia: só as fontes rotuladas', () => {
+    expect(identificarContato([], contato())).toEqual({ nome: NOME_NAO_IDENTIFICADO })
+    expect(identificarContato([], contato({ nome: 'Ana Lima', empresa: 'Lima Indústria' }))).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria' })
+  })
+  it('a empresa do contato do Inbox é fonte rotulada: vale com qualquer linha, e a cidade segue não informada', () => {
+    const comEmpresa = contato({ nome: 'Ana Lima', empresa: 'Lima Indústria', informado: 'Ana Lima' })
+    expect(identificarContato(['Ana Lima', 'Goiânia/GO'], comEmpresa)).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria' })
+    expect(identificarContato(['Ana Lima', 'Lima Indústria'], comEmpresa)).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria' })
+  })
+  it('três partes com empresa diferente da do cadastro: prevalece a do Inbox, a cidade é a 3ª', () => {
+    const comEmpresa = contato({ nome: 'Ana Lima', empresa: 'Lima Indústria', informado: 'Ana Lima' })
+    expect(identificarContato(['Ana Lima', 'Outra Razão Social', 'Goiânia/GO'], comEmpresa)).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria', cidade: 'Goiânia/GO' })
+  })
+  it('contato antigo com outro nome: o nome informado no formulário identifica a 1ª parte', () => {
+    const antigo = contato({ nome: 'Ana L. (cliente)', informado: 'Ana Lima' })
+    expect(identificarContato(['Ana Lima', 'Lima Indústria', 'Goiânia/GO'], antigo)).toEqual({ nome: 'Ana L. (cliente)', empresa: 'Lima Indústria', cidade: 'Goiânia/GO' })
+  })
+  it('mais de três partes (algum campo tinha o separador): não se rotula', () => {
+    expect(identificarContato(['Ana Lima', 'Lima', 'Indústria', 'Goiânia/GO'], ANA)).toEqual({ nome: 'Ana Lima' })
+  })
+  it('nome ou empresa conhecidos contendo o separador: a linha não é confiável', () => {
+    const comSeparador = contato({ nome: 'Ana · Lima', informado: 'Ana · Lima' })
+    expect(identificarContato(['Ana', 'Lima', 'Goiânia/GO'], comSeparador)).toEqual({ nome: 'Ana · Lima' })
+    expect(identificarContato(['Ana Lima', 'Lima', 'Indústria'], contato({ nome: 'Ana Lima', empresa: 'Lima · Indústria' }))).toEqual({ nome: 'Ana Lima', empresa: 'Lima · Indústria' })
+  })
+  it('espaços em volta e partes vazias não mudam a leitura', () => {
+    expect(identificarContato([' Ana Lima ', '', ' Lima Indústria ', 'Goiânia/GO '], ANA)).toEqual({ nome: 'Ana Lima', empresa: 'Lima Indústria', cidade: 'Goiânia/GO' })
+  })
+  it('ida e volta com a gravação real: os três campos preenchidos são lidos; sem empresa, a cidade não é deduzida', () => {
+    const tres = lerSolicitacao(textoDaMensagem(resumoParaOInbox(SUB)))
+    expect(identificarContato(tres.contato, contato({ nome: 'Ana Lima (FICTÍCIO)', informado: 'Ana Lima (FICTÍCIO)' }))).toEqual({ nome: 'Ana Lima (FICTÍCIO)', empresa: 'Lima Indústria', cidade: tres.contato[2] })
+    const semEmpresa = Object.fromEntries(Object.entries(SUB.campos).filter(([k]) => k !== 'empresa'))
+    const dois = lerSolicitacao(textoDaMensagem(resumoParaOInbox({ ...SUB, campos: semEmpresa })))
+    expect(dois.contato.length).toBe(2)
+    expect(identificarContato(dois.contato, contato({ nome: 'Ana Lima (FICTÍCIO)', informado: 'Ana Lima (FICTÍCIO)' }))).toEqual({ nome: 'Ana Lima (FICTÍCIO)' })
   })
 })
 

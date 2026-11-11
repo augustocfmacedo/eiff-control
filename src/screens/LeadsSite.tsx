@@ -118,8 +118,8 @@ export default function LeadsSite({ query }: { query: URLSearchParams }) {
             csv={{ nome: 'leads-do-site', cabecalho: ['Nome', 'Empresa', 'Cidade', 'E-mail', 'Telefone', 'Formulário', 'Recebido em', 'Prazo até', 'Primeira resposta', 'Responsável', 'Status'], linha: (l) => [l.nome, l.empresa ?? '', l.cidade ?? '', l.email ?? '', l.telefone ?? '', l.formulario ?? '', dataHora(l.recebidoEm), dataHora(l.prazoAte), NOME_SLA[l.sla], nomeUsuario(l.thread.responsavelId), NOME_STATUS[l.thread.status]] }}
             linha={(l) => (
               <>
-                <td className={l.thread.id === threadId ? 'leads-sel' : undefined}><b>{l.nome}</b>{l.empresa && <div className="small muted">{l.empresa}</div>}</td>
-                <td className="leads-opc">{l.cidade ?? '—'}</td>
+                <td className={l.thread.id === threadId ? 'leads-sel' : undefined}><b>{l.nome}</b><div className="small muted">{l.empresa ?? 'empresa não informada'}</div></td>
+                <td className="leads-opc">{l.cidade ?? <span className="muted">não informada</span>}</td>
                 <td className="leads-opc leads-projeto" title={l.solicitacao.configuracao ?? l.thread.assunto}>{l.solicitacao.configuracao ?? l.thread.assunto}</td>
                 <td className="leads-opc"><Badge tone="muted">{nomeFormulario(l.formulario)}</Badge></td>
                 <td>{dataHora(l.recebidoEm)}</td>
@@ -187,7 +187,7 @@ function DetalheLead({ lead, inbox, usuario, nomeUsuario, toast, onFechar }: { l
         <div>
           <button className="btn sm leads-voltar" onClick={onFechar}><Icon name="seta" size={14} /> Lista</button>
           <h2>{lead.nome}</h2>
-          <div className="small muted">{[lead.empresa, lead.cidade].filter(Boolean).join(' · ') || 'empresa e cidade não informadas'}</div>
+          <div className="small muted">{lead.empresa ?? 'empresa não informada'} · {lead.cidade ?? 'cidade não informada'}</div>
         </div>
         <div className="actions">
           <Badge tone={TOM_STATUS[t.status]}>{NOME_STATUS[t.status]}</Badge>
@@ -228,7 +228,8 @@ function DetalheLead({ lead, inbox, usuario, nomeUsuario, toast, onFechar }: { l
             {s.medidas && <><dt>Medidas</dt><dd>{s.medidas}</dd></>}
             {s.prazo && <><dt>Prazo informado</dt><dd>{s.prazo}</dd></>}
             {s.escopo && <><dt>Escopo</dt><dd>{s.escopo}</dd></>}
-            <dt>Cidade</dt><dd>{lead.cidade ?? '—'}</dd>
+            <dt>Empresa</dt><dd>{lead.empresa ?? <span className="muted">não informada</span>}</dd>
+            <dt>Cidade</dt><dd>{lead.cidade ?? <span className="muted" title="A solicitação não permite distinguir a cidade com segurança. Veja o texto completo no histórico.">não informada</span>}</dd>
             {s.campanha && <><dt>Campanha</dt><dd>{s.campanha}</dd></>}
           </dl>
           {s.leituraDaPagina.map((x, i) => <div key={i} className="leads-leitura small"><b>Texto automático mostrado pelo site.</b> Não é orientação de engenharia da EIFF e não deve ser repetido ao cliente como parecer: {x}</div>)}

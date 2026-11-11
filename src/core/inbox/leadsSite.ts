@@ -132,6 +132,51 @@ export interface LeadDoSite {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+export const NOME_NAO_IDENTIFICADO = 'Contato não identificado'
+const SEPARADOR = ' · '
+
+/**
+ * Nome, empresa e cidade do lead — SEM adivinhar.
+ *
+ * A linha «Contato:» da mensagem é `nome · empresa · cidade`, mas só com as partes que a pessoa preencheu e sem
+ * rótulo em cada uma. Com duas partes, «Ana · Goiânia» e «Ana · Lima Indústria» são indistinguíveis; com uma, pode
+ * ser qualquer das três. Chamar cidade de empresa (ou o contrário) é pior do que não mostrar: o vendedor liga
+ * citando a empresa errada. Então a linha só é lida quando a posição de cada parte é CERTA:
+ *
+ *   fontes rotuladas (sempre valem)
+ *     nome      o do contato do Inbox; senão, o `nomeInformado` da identidade do formulário
+ *     empresa   a do contato do Inbox (`empresaNome`)
+ *
+ *   a linha «Contato:» (só neste caso)
+ *     exatamente 3 partes, e a 1ª é o nome conhecido (ou não há nome conhecido)
+ *                                       → nome, empresa, cidade, pela ordem em que a linha é escrita
+ *
+ *   qualquer outro caso                 → nada é lido da linha: a empresa é a do contato (se houver) e a cidade
+ *                                         fica «não informada» (undefined)
+ *
+ * Também é ambíguo quando o nome ou a empresa conhecidos contêm o próprio separador (a linha teria partes a mais).
+ * Consequência aceita: lead que não informou empresa aparece com a cidade «não informada», mesmo tendo digitado a
+ * cidade. O texto integral da solicitação continua no histórico: nada se perde, só não é rotulado por dedução.
+ * O conserto definitivo é a gravação escrever cada campo com rótulo próprio (mudança na integração, fora desta tela).
+ */
+export function identificarContato(partesDaLinha: readonly string[], contato: Pick<ContatoInbox, 'nome' | 'empresaNome' | 'identidades'> | undefined): { nome: string; empresa?: string; cidade?: string } {
+  const conhecido = (s: string | undefined) => (s !== undefined && s.trim() !== '' && s.trim() !== NOME_NAO_IDENTIFICADO ? s.trim() : undefined)
+  const nomeDoContato = conhecido(contato?.nome)
+  const nomeInformado = conhecido(contato?.identidades.find((i) => i.canal === CANAL_FORMULARIO)?.nomeInformado)
+  const empresaDoContato = conhecido(contato?.empresaNome)
+  const p = partesDaLinha.map((x) => x.trim()).filter((x) => x !== '')
+
+  const semDeducao = { nome: nomeDoContato ?? nomeInformado ?? NOME_NAO_IDENTIFICADO, ...(empresaDoContato !== undefined ? { empresa: empresaDoContato } : {}) }
+  if ([nomeDoContato, nomeInformado, empresaDoContato].some((x) => x?.includes(SEPARADOR.trim()))) return semDeducao
+  // Uma ou duas partes: não há como saber qual é qual. Mais de três: algum campo trazia o separador.
+  if (p.length !== 3) return semDeducao
+  // Três partes só existem quando os três campos vieram. Se há um nome conhecido e a 1ª parte não é ele, a linha não
+  // está no formato esperado (campo com separador e outro ausente, ou submissão com outro nome): não se rotula.
+  const haNomeConhecido = nomeDoContato !== undefined || nomeInformado !== undefined
+  if (haNomeConhecido && p[0] !== nomeDoContato && p[0] !== nomeInformado) return semDeducao
+  return { nome: nomeDoContato ?? nomeInformado ?? p[0], empresa: empresaDoContato ?? p[1], cidade: p[2] }
+}
+
 /** Monta o lead a partir da conversa. `mensagens` pode ser a lista inteira do Inbox. */
 export function leadDoSite(t: InboxThread, contato: ContatoInbox | undefined, mensagens: readonly InboxMessage[], agoraIso: string): LeadDoSite {
   const daConversa = mensagens.filter((m) => m.threadId === t.id)
@@ -146,18 +191,13 @@ export function leadDoSite(t: InboxThread, contato: ContatoInbox | undefined, me
   const email = [identidadePortal, ...solicitacao.canais].find((x) => x !== undefined && EMAIL.test(x))
   const digitado = solicitacao.canais.find((x) => !EMAIL.test(x))
   const telefoneE164 = normalizarTelefone(digitado) ?? contato?.identidades.find((i) => i.canal === 'WHATSAPP')?.identificador
-  const nome = contato && contato.nome.trim() !== '' && contato.nome !== 'Contato não identificado' ? contato.nome : solicitacao.contato[0] ?? contato?.nome ?? 'Contato não identificado'
-  // A linha «Contato:» é nome · empresa · cidade, sem rótulo por parte: a cidade é o que sobra depois de tirar o que
-  // já se conhece. Com duas sobras (contato antigo com outro nome), a cidade é a última — é a ordem em que a linha é escrita.
-  const sobras = solicitacao.contato.filter((x) => x !== nome && x !== contato?.empresaNome)
-  const empresa = contato?.empresaNome ?? (sobras.length > 1 ? sobras[0] : undefined)
-  const cidade = sobras.length > 0 ? sobras[sobras.length - 1] : undefined
+  const { nome, empresa, cidade } = identificarContato(solicitacao.contato, contato)
 
   const proprias = daConversa.filter((m) => m.direcao !== 'inbound')
   return {
     thread: t, contato, nome,
     ...(empresa !== undefined ? { empresa } : {}),
-    ...(cidade !== undefined && cidade !== empresa ? { cidade } : {}),
+    ...(cidade !== undefined ? { cidade } : {}),
     ...(email !== undefined ? { email } : {}),
     ...(digitado !== undefined || telefoneE164 !== undefined ? { telefone: digitado ?? `+${telefoneE164}` } : {}),
     ...(telefoneE164 !== undefined ? { telefoneE164 } : {}),
@@ -365,7 +405,7 @@ export interface RascunhoDeEmail { para: string; assunto: string; corpo: string 
 
 /** Ponto de partida do e-mail: saudação, referência ao pedido e assinatura. O vendedor escreve o resto. */
 export function sugestaoDeEmail(l: LeadDoSite, remetente: string): Omit<RascunhoDeEmail, 'para'> {
-  const primeiroNome = l.nome === 'Contato não identificado' ? '' : l.nome.trim().split(/\s+/)[0]
+  const primeiroNome = l.nome === NOME_NAO_IDENTIFICADO ? '' : l.nome.trim().split(/\s+/)[0]
   const pedido = l.solicitacao.configuracao ? `Recebemos sua solicitação pelo site (${l.solicitacao.configuracao}).` : 'Recebemos sua solicitação pelo site.'
   return {
     assunto: 'EIFF · sua solicitação de galpão',
