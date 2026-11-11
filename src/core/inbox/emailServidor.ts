@@ -26,7 +26,7 @@ import {
   type CodigoErroEmail, type EstadoEntregaEmail, type ModoEmail, type MotivoEntrega, type RespostaGoogle,
 } from './emailEnvio'
 import {
-  MensagemInvalida, NOME_EXIBIDO_PADRAO, corpoComAssinatura, emailValido, impressaoDoPedido, mascararEmail, messageIdDaEntrega, montarMensagem,
+  MensagemInvalida, NOME_EXIBIDO_PADRAO, corpoComAssinatura, emailValido, impressaoDoPedido, messageIdDaEntrega, montarMensagem,
   rawParaGmail, textoNaConversa, validarConteudo,
 } from './emailMensagem'
 
@@ -47,10 +47,13 @@ export interface AmbienteEmail {
 }
 
 export interface UsuarioDaSessao { id: string; nome?: string; papel: string; organizacaoId: string; ativo: boolean }
+export interface IdentidadeDoContato { canal: string; identificador: string }
 export interface ConversaLida {
   id: string; organizacaoId: string; status: string; contexto: string; contatoId: string
-  /** E-mails do contato no banco, na ordem de preferência (identidade EMAIL, depois PORTAL). */
-  emails: readonly string[]
+  /** Canal pelo qual a conversa chegou (PORTAL = formulário do site). */
+  canal: string
+  /** Identidades do contato no banco, SEM ordem de preferência: quem escolhe é `resolverDestinatario`. */
+  identidades: readonly IdentidadeDoContato[]
 }
 export interface EntregaLida { id: string; threadId: string; organizacaoId: string; estado: EstadoEntregaEmail; criadaEm: string; mensagemId?: string }
 
@@ -109,7 +112,7 @@ export const ACOES_EMAIL = ['preparar', 'enviar', 'reconciliar', 'saude'] as con
 export type AcaoEmail = (typeof ACOES_EMAIL)[number]
 const CHAVES: Record<AcaoEmail, readonly string[]> = {
   preparar: ['acao', 'threadId'],
-  enviar: ['acao', 'threadId', 'assunto', 'corpo', 'intencao'],
+  enviar: ['acao', 'threadId', 'assunto', 'corpo', 'intencao', 'destinatario'],
   reconciliar: ['acao', 'entregaId', 'desfecho'],
   saude: ['acao'],
 }
@@ -118,28 +121,39 @@ export const ESPERA_RECONCILIACAO_MS = 120_000
 
 export type PedidoEmail =
   | { acao: 'preparar'; threadId: string }
-  | { acao: 'enviar'; threadId: string; assunto: string; corpo: string; intencao: string }
+  | { acao: 'enviar'; threadId: string; assunto: string; corpo: string; intencao: string; destinatario: string }
   | { acao: 'reconciliar'; entregaId: string; desfecho: 'encontrado' | 'nao_enviado' }
   | { acao: 'saude' }
 
-/** Chaves fechadas por ação. Qualquer chave a mais — `para`, `de`, `cc`, `remetente`… — é recusa. */
+/** O que a tela tem de mandar junto de «não foi enviado»: a pessoa declara que conferiu a pasta Enviados. */
+export const CONFIRMACAO_NAO_ENVIADO = 'conferi_enviados_e_nao_esta_la'
+
+/**
+ * Chaves fechadas por ação. Qualquer chave a mais — `para`, `de`, `cc`, `remetente`… — é recusa.
+ * `destinatario` no envio NÃO escolhe o destino: é o endereço que a pessoa VIU na confirmação, e o servidor só segue se
+ * for o mesmo que ele próprio resolve no banco. `confirmacao` só existe (e é exigida) em «não foi enviado».
+ */
 export function lerPedido(body: unknown): PedidoEmail | undefined {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined
   const b = body as Record<string, unknown>
   const acao = b['acao']
   if (typeof acao !== 'string' || !(ACOES_EMAIL as readonly string[]).includes(acao)) return undefined
-  const permitidas = CHAVES[acao as AcaoEmail]
+  const declaraNaoEnviado = acao === 'reconciliar' && b['desfecho'] === 'nao_enviado'
+  const permitidas = declaraNaoEnviado ? [...CHAVES.reconciliar, 'confirmacao'] : CHAVES[acao as AcaoEmail]
   if (Object.keys(b).some((k) => !permitidas.includes(k)) || permitidas.some((k) => !(k in b))) return undefined
   const uuid = (k: string) => (typeof b[k] === 'string' && UUID.test(b[k] as string) ? (b[k] as string) : undefined)
   if (acao === 'saude') return { acao }
   if (acao === 'preparar') { const threadId = uuid('threadId'); return threadId ? { acao, threadId } : undefined }
   if (acao === 'reconciliar') {
     const entregaId = uuid('entregaId'); const d = b['desfecho']
-    return entregaId && (d === 'encontrado' || d === 'nao_enviado') ? { acao, entregaId, desfecho: d } : undefined
+    if (!entregaId || (d !== 'encontrado' && d !== 'nao_enviado')) return undefined
+    // declarar «não enviado» libera novo envio: sem a confirmação explícita, o pedido nem é lido
+    if (d === 'nao_enviado' && b['confirmacao'] !== CONFIRMACAO_NAO_ENVIADO) return undefined
+    return { acao, entregaId, desfecho: d }
   }
   const threadId = uuid('threadId'); const intencao = uuid('intencao')
-  if (!threadId || !intencao || typeof b['assunto'] !== 'string' || typeof b['corpo'] !== 'string') return undefined
-  return { acao: 'enviar', threadId, intencao, assunto: b['assunto'], corpo: b['corpo'] }
+  if (!threadId || !intencao || typeof b['assunto'] !== 'string' || typeof b['corpo'] !== 'string' || typeof b['destinatario'] !== 'string') return undefined
+  return { acao: 'enviar', threadId, intencao, assunto: b['assunto'], corpo: b['corpo'], destinatario: b['destinatario'] }
 }
 
 /* ---------------------------------------------------------------
@@ -162,6 +176,26 @@ async function autorizar(req: PedidoHttp, d: DepsEmail): Promise<{ authorization
 }
 const ehResposta = (x: unknown): x is RespostaHttp => !!x && typeof x === 'object' && 'status' in x && 'corpo' in x
 
+const CANAIS_COM_EMAIL = ['EMAIL', 'PORTAL'] as const
+
+/**
+ * Para QUAL endereço esta conversa responde. Regra única, sem preferência entre identidades:
+ *   1. o endereço do CANAL DA CONVERSA vence: conversa do formulário do site (PORTAL) responde ao e-mail informado no
+ *      formulário, mesmo que o contato tenha outra identidade de e-mail; conversa de e-mail responde ao e-mail dela;
+ *   2. sem endereço válido no canal da conversa (ou conversa de outro canal), só serve se o contato tiver UM endereço;
+ *   3. mais de um endereço possível e nenhum critério seguro = `destinatario_ambiguo`: não se escolhe, não se envia.
+ */
+export function resolverDestinatario(c: Pick<ConversaLida, 'canal' | 'identidades'>): { ok: true; destino: string } | { ok: false; erro: 'sem_email_valido' | 'destinatario_ambiguo' } {
+  const enderecos = (canais: readonly string[]) => [...new Set(c.identidades.filter((i) => canais.includes(i.canal)).map((i) => i.identificador.trim().toLowerCase()).filter((e) => emailValido(e)))]
+  const um = (lista: string[]) => (lista.length === 1 ? ({ ok: true, destino: lista[0]! } as const) : ({ ok: false, erro: 'destinatario_ambiguo' } as const))
+  if ((CANAIS_COM_EMAIL as readonly string[]).includes(c.canal)) {
+    const doCanal = enderecos([c.canal])
+    if (doCanal.length > 0) return um(doCanal)
+  }
+  const todos = enderecos(CANAIS_COM_EMAIL)
+  return todos.length === 0 ? { ok: false, erro: 'sem_email_valido' } : um(todos)
+}
+
 /** Conversa utilizável para envio, com o destinatário vindo do banco. */
 async function lerDestino(authorization: string, threadId: string, usuario: UsuarioDaSessao, d: DepsEmail): Promise<{ conversa: ConversaLida; destino: string } | RespostaHttp> {
   const conversa = await d.sessao.conversa(authorization, threadId)
@@ -169,9 +203,9 @@ async function lerDestino(authorization: string, threadId: string, usuario: Usua
   if (!conversa || conversa.organizacaoId !== usuario.organizacaoId) return erro('conversa_nao_encontrada')
   if (conversa.contexto !== 'EXTERNAL') return erro('conversa_interna')
   if (conversa.status === 'FECHADA') return erro('conversa_fechada')
-  const destino = conversa.emails.map((e) => e.trim().toLowerCase()).find((e) => emailValido(e))
-  if (!destino) return erro('sem_email_valido')
-  return { conversa, destino }
+  const r = resolverDestinatario(conversa)
+  if (!r.ok) return erro(r.erro)
+  return { conversa, destino: r.destino }
 }
 
 function resultadoDaEntrega(e: EntregaCriada, repetida: boolean): RespostaHttp {
@@ -211,7 +245,9 @@ export async function tratarEmailComercial(req: PedidoHttp, d: DepsEmail): Promi
     const lido = await lerDestino(authorization, pedido.threadId, usuario, d)
     const base = { modo: ambiente.modo, remetente: emailValido(ambiente.remetente) ? ambiente.remetente : null }
     if (ehResposta(lido)) return ok({ ...base, disponivel: false, motivo: lido.corpo['erro'], mensagem: lido.corpo['mensagem'] })
-    const destinatario = mascararEmail(lido.destino)
+    // Endereço COMPLETO: quem chega aqui tem a permissão de envio e leu a conversa com o próprio JWT (RLS), e precisa
+    // conferir para quem o e-mail vai antes de confirmar. Continua fora de qualquer log.
+    const destinatario = lido.destino
     if (ambiente.modo === 'disabled') return ok({ ...base, disponivel: false, motivo: 'envio_desligado', mensagem: ERROS_EMAIL.envio_desligado.mensagem, destinatario })
     if (!configurado) return ok({ ...base, disponivel: false, motivo: 'credencial_indisponivel', mensagem: ERROS_EMAIL.credencial_indisponivel.mensagem, destinatario })
     const destinoOk = autorizarDestino(ambiente.modo, ambiente.canario, lido.destino)
@@ -244,6 +280,8 @@ export async function tratarEmailComercial(req: PedidoHttp, d: DepsEmail): Promi
   const lido = await lerDestino(authorization, pedido.threadId, usuario, d)
   if (ehResposta(lido)) { log({ outcome: lido.corpo['erro'] }); return lido }
   const { conversa, destino } = lido
+  // o endereço que a pessoa confirmou na tela tem de ser o que o banco diz AGORA; divergiu, nada sai
+  if (pedido.destinatario.trim().toLowerCase() !== destino) { log({ outcome: 'destinatario_mudou' }); return erro('destinatario_mudou') }
   const problemas = validarConteudo(pedido)
   if (problemas.length > 0) return erro('pedido_invalido', { mensagem: problemas[0] })
   const destinoOk = autorizarDestino(ambiente.modo, ambiente.canario, destino)

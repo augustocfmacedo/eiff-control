@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 // @ts-expect-error — helper .mjs dos smokes (sem tipos)
 import { ADM_A, ADM_B, ENG_A, FIN_A, ORG_A, SEMENTE, SETOR_OBRAS, bancoDoEmail } from '../../../scripts/lib/emailBanco.mjs'
 import { GMAIL_SEND_URL, GOOGLE_TOKEN_URL, ambienteEmail, portaGoogle, portaLivro, portaSessao } from './emailPorta'
-import { tratarEmailComercial, type DepsEmail } from './emailServidor'
+import { CONFIRMACAO_NAO_ENVIADO, tratarEmailComercial, type DepsEmail } from './emailServidor'
 
 type Row = Record<string, unknown>
 interface Banco { query: (sql: string, p?: unknown[]) => Promise<{ rows: Row[] }>; exec: (sql: string) => Promise<unknown> }
@@ -67,8 +67,8 @@ async function conversa(): Promise<{ id: string; email: string }> {
   return { id: String(r['thread_id']), email }
 }
 const intencao = () => `eeeeeeee-0000-4000-8000-${String(++n).padStart(12, '0')}`
-const enviar = (t: { id: string }, p: { por?: string; intencao?: string; vars?: Record<string, string>; corpo?: string } = {}) =>
-  tratarEmailComercial({ authorization: `Bearer uid:${p.por ?? ADM_A}`, body: { acao: 'enviar', threadId: t.id, assunto: 'Sua solicitação de galpão', corpo: p.corpo ?? 'Olá.\n\nPodemos conversar amanhã?', intencao: p.intencao ?? intencao() } }, deps(p.vars))
+const enviar = (t: { id: string; email: string }, p: { por?: string; intencao?: string; vars?: Record<string, string>; corpo?: string; destinatario?: string } = {}) =>
+  tratarEmailComercial({ authorization: `Bearer uid:${p.por ?? ADM_A}`, body: { acao: 'enviar', threadId: t.id, assunto: 'Sua solicitação de galpão', corpo: p.corpo ?? 'Olá.\n\nPodemos conversar amanhã?', intencao: p.intencao ?? intencao(), destinatario: p.destinatario ?? t.email } }, deps(p.vars))
 const estado = (t: { id: string }) => um(`select t.status, t.sla_first_response_at, (select count(*)::int from inbox_email_delivery d where d.thread_id = t.id) entregas,
   (select string_agg(m.delivery_state, ',' order by m.occurred_at) from inbox_message m where m.thread_id = t.id and m.provider = 'GOOGLE_WORKSPACE') mensagens from inbox_thread t where t.id = $1`, [t.id])
 
@@ -165,13 +165,53 @@ describe('envio ponta a ponta (handler + portas de produção + PostgreSQL com a
     expect(google.enviar).toBe(0)
   })
 
-  it('preparar lê a conversa pelo banco e mascara o destinatário; saúde só pede o token', async () => {
+  it('preparar lê a conversa pelo banco e mostra o destinatário a quem pode enviar; saúde só pede o token', async () => {
     const t = await conversa()
     google.enviar = 0; google.token = 0
     const p = await tratarEmailComercial({ authorization: `Bearer uid:${ADM_A}`, body: { acao: 'preparar', threadId: t.id } }, deps())
-    expect(p.corpo).toEqual({ modo: 'ativo', remetente: 'contato@eiff.com.br', disponivel: true, destinatario: 'l•••@exemplo.invalido' })
+    expect(p.corpo).toEqual({ modo: 'ativo', remetente: 'contato@eiff.com.br', disponivel: true, destinatario: t.email })
     const s = await tratarEmailComercial({ authorization: `Bearer uid:${ADM_A}`, body: { acao: 'saude' } }, deps())
     expect(s.corpo).toMatchObject({ credenciais: 'presentes', token: 'ok' })
     expect(google).toMatchObject({ token: 1, enviar: 0 })
+  })
+
+  it('regressão: lead do site com OUTRA identidade de e-mail no contato — responde ao e-mail do formulário', async () => {
+    const t = await conversa()
+    const contato = (await um('select contact_id from inbox_thread where id = $1', [t.id]))['contact_id']
+    await db.query(`insert into inbox_contact_identity (organization_id, contact_id, channel, identifier, verified) values ($1, $2, 'EMAIL', $3, true)`, [ORG_A, contato, `antigo.${t.email}`])
+    google.enviar = 0
+    const p = await tratarEmailComercial({ authorization: `Bearer uid:${ADM_A}`, body: { acao: 'preparar', threadId: t.id } }, deps())
+    expect(p.corpo).toMatchObject({ disponivel: true, destinatario: t.email })
+    // o navegador insiste no outro endereço: recusa, nada criado, Google não chamado
+    expect(await enviar(t, { destinatario: `antigo.${t.email}` })).toMatchObject({ status: 409, corpo: { erro: 'destinatario_mudou' } })
+    expect(google.enviar).toBe(0)
+    expect((await estado(t))['entregas']).toBe(0)
+    expect((await enviar(t)).corpo['estado']).toBe('ACCEPTED')
+    expect(Buffer.from((JSON.parse(google.ultimoCorpo) as { raw: string }).raw, 'base64url').toString('utf8')).toContain(`To: ${t.email}`)
+  })
+
+  it('regressão: dois e-mails no formulário do mesmo contato — ambíguo, não envia', async () => {
+    const t = await conversa()
+    const contato = (await um('select contact_id from inbox_thread where id = $1', [t.id]))['contact_id']
+    await db.query(`insert into inbox_contact_identity (organization_id, contact_id, channel, identifier, verified) values ($1, $2, 'PORTAL', $3, false)`, [ORG_A, contato, `outro.${t.email}`])
+    google.enviar = 0
+    expect(await enviar(t)).toMatchObject({ status: 409, corpo: { erro: 'destinatario_ambiguo' } })
+    expect(google.enviar).toBe(0)
+    expect((await estado(t))['entregas']).toBe(0)
+  })
+
+  it('regressão: «não foi enviado» sem a confirmação explícita é 400 e a entrega segue sem desfecho', async () => {
+    const t = await conversa()
+    google.proximoEnvio = () => { throw new TypeError('fetch failed') }
+    const r = await enviar(t)
+    google.proximoEnvio = () => new Response(JSON.stringify({ id: 'gm-9', threadId: 'gt-9' }), { status: 200 })
+    expect(r.corpo['estado']).toBe('UNKNOWN')
+    const pedir = (extra: Record<string, unknown>) => tratarEmailComercial({ authorization: `Bearer uid:${ADM_A}`, body: { acao: 'reconciliar', entregaId: r.corpo['entregaId'], desfecho: 'nao_enviado', ...extra } }, deps())
+    expect((await pedir({})).status).toBe(400)
+    expect(await um('select status from inbox_email_delivery where id = $1', [r.corpo['entregaId']])).toEqual({ status: 'UNKNOWN' })
+    expect((await pedir({ confirmacao: CONFIRMACAO_NAO_ENVIADO })).corpo).toMatchObject({ estado: 'FAILED', reconciliada: true })
+    // trilha: o evento da declaração ficou no livro, com quem declarou
+    const ev = await um(`select to_status, reason, actor_id from inbox_email_delivery_event where delivery_id = $1 order by occurred_at desc limit 1`, [r.corpo['entregaId']])
+    expect(ev).toMatchObject({ to_status: 'FAILED', reason: 'declarado_nao_enviado', actor_id: ADM_A })
   })
 })

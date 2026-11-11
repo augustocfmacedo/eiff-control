@@ -86,6 +86,8 @@ export const ERROS_EMAIL = {
   conversa_interna: { http: 409, mensagem: 'E-mail comercial só vale para conversas externas.' },
   intencao_reutilizada: { http: 409, mensagem: 'Este envio já foi pedido com outro conteúdo. Revise e confirme de novo.' },
   entrega_pendente: { http: 409, mensagem: 'Há um envio sem desfecho nesta conversa. Resolva-o antes de enviar outro.' },
+  destinatario_ambiguo: { http: 409, mensagem: 'O contato tem mais de um e-mail e não há como saber qual é o desta conversa. Corrija o contato antes de enviar.' },
+  destinatario_mudou: { http: 409, mensagem: 'O e-mail do contato mudou desde a confirmação. Nada foi enviado; confira e confirme de novo.' },
   reconciliacao_indevida: { http: 409, mensagem: 'Este envio não está aguardando conferência.' },
   sem_email_valido: { http: 422, mensagem: 'O contato não tem e-mail válido.' },
   limite_usuario: { http: 429, mensagem: 'Você atingiu o limite diário de envios.' },
