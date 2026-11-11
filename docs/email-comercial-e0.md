@@ -35,6 +35,8 @@ No Admin Console (`admin.google.com`), nesta ordem. A verificação é só leitu
 Anotar o resultado em uma linha (por exemplo: «usuário próprio, verificação em duas etapas ligada»). Nenhuma senha,
 código ou captura de tela com dado de terceiro precisa ser compartilhado.
 
+**Resultado (11/11/2026, informado pelo Augusto): usuário com caixa própria.** Vale a primeira linha da tabela abaixo.
+
 ### 1.3 O que cada resultado muda
 
 | Resultado | Quem faz o consentimento OAuth | Remetente da mensagem | Trabalho extra |
@@ -285,11 +287,10 @@ reconciliação automática (desligada), as 11 submissões históricas (retidas)
 
 ## 6. Decisões necessárias para iniciar a implementação
 
-Fechadas nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria) e **D-3** (quem administra o Google Workspace e executa o §1.2 e o §2: **Augusto Macedo**, decisão de 11/11/2026).
+Fechadas nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria) e **D-3** (quem administra o Google Workspace e executa o §1.2 e o §2: **Augusto Macedo**, decisão de 11/11/2026) e **D-1** (remetente: `contato@eiff.com.br`, que é **usuário com caixa própria**, conforme a verificação do §1.2 informada pelo Augusto em 11/11/2026; o consentimento OAuth é feito pela própria conta e não há trabalho extra de «Enviar como»). Falta só confirmar que a verificação em duas etapas da conta está ligada (passo 14 do §2).
 
 | # | Decisão | Por que trava | Recomendação |
 |---|---|---|---|
-| **D-1** | Remetente, depois do resultado do §1.2 | Define quem consente e o que a tela mostra em «De» | `contato@eiff.com.br` como usuário próprio; se não for, criar a caixa |
 | **N-1** | Autorizar o início da implementação (passos I-1 a I-4), sem credencial e sem envio | É a autorização específica que o estudo exige | Autorizar I-1 a I-4 em PRs separados |
 | **N-2** | Autorizar a **criação do arquivo** da migration do livro de entregas (sem aplicar) e o código do provider `GOOGLE_WORKSPACE` | O repositório só recebe migration com necessidade comprovada e pedido | Autorizar a criação; a aplicação fica para depois |
 | **N-3** | Como o token será obtido: script local (A) ou OAuth Playground (B) | Define o tipo do cliente OAuth no passo 7 | A: o segredo não passa por nenhuma página além das do Google e do Netlify |
@@ -300,7 +301,7 @@ Fechadas nesta etapa: **D-2** (quem pode enviar: Administrador e Diretoria) e **
 Podem esperar a primeira entrega estar no ar: D-6 (e-mail devolvido e o SLA), D-8 (retenção e base legal, com o
 jurídico), D-9 (ler respostas no CRM) e D-10 (endurecer o DMARC).
 
-Ordem sugerida: verificação do §1.2 pelo Augusto → D-1; em paralelo, N-1, N-2, N-3, D-4, D-5 e D-7 liberam a implementação
+Ordem sugerida: a verificação da caixa está feita; em paralelo, N-1, N-2, N-3, D-4, D-5 e D-7 liberam a implementação
 sem credencial.
 
 ---
