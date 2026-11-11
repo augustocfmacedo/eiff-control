@@ -397,3 +397,12 @@ Netlify Forms contra o Inbox.
 - **Retomada**: depois do deploy do CRM com a correção, o GO-1 continua na MESMA conversa de ensaio, sem nova submissão:
   rascunho → contato realizado declarado para 17:20 de 10/11 (o registro terá o horário real da gravação) →
   idempotência → evidências para o GO-2. Lição para o checklist: conferir «gravado» no banco, nunca só na tela.
+
+## 14. Desfecho: GO-2 aprovado em 11/11/2026
+
+A homologação foi concluída no CRM-1d (`6af382b0`) com a correção do Inbox, a idempotência foi provada em produção
+em 10/11 às 18h56 e o site foi publicado em 11/11 às 08h40m19s (`6af3b1ba`, commit `311119e` do eiff-site), com
+60 minutos de janela supervisionada sem incidentes e sem nenhuma submissão real. O estado homologado, o
+procedimento da operação provisória, a matriz de riscos e o projeto do GO-3 estão em
+`docs/formulario-site-go2-go3.md`. Os identificadores de deploy das seções anteriores deste runbook são os da
+preparação e ficaram superados por aquele documento.
