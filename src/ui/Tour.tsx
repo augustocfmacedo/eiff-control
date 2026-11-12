@@ -19,6 +19,16 @@ const GERAL: PassoTour[] = [
 ];
 /** Exportado para teste: o conteudo do tour e parte do contrato da tela, nao so decoracao. */
 export const POR_ROTA: Record<string, PassoTour[]> = {
+  '/atendimento/leads': [
+    { seletor: '.content .page-head', titulo: 'Leads do site', texto: 'As solicitações de galpão que chegam pelo formulário de eiff.com.br. São as mesmas conversas do EIFF Inbox, vistas pelo lado do vendedor.' },
+    { seletor: '.content .kpi.hero', titulo: 'Quem espera o primeiro contato', texto: 'O prazo é de 30 minutos úteis a partir do recebimento. Vencido aparece em vermelho e vai para o topo da lista.' },
+    { seletor: '.content .leads-filtros', titulo: 'Filtros', texto: 'Em aberto, aguardando a primeira resposta, prazo vencido, já respondidos, meus, sem responsável e encerrados. O número é a quantidade em cada um.' },
+    { seletor: '.content .leads-lista .tabela', titulo: 'Lista de leads', texto: 'Na ordem de trabalho: prazo vencido primeiro. Clique em uma linha para abrir o lead; Exportar CSV leva o que está na tela.' },
+    { seletor: '.content .leads-prazo', titulo: 'Prazo e próxima ação', texto: 'A situação da primeira resposta e o que fazer agora. Rascunho, nota e tentativa não cumprem o prazo: só contato realizado.' },
+    { seletor: '.content .leads-contatos', titulo: 'Falar com a pessoa', texto: 'Ligar, WhatsApp ou e-mail abrem o seu aparelho ou programa. O sistema ainda não envia nada sozinho.' },
+    { seletor: '.content .leads-acao', titulo: 'Registrar o atendimento', texto: 'Depois de falar com a pessoa, registre o contato realizado com meio, data e resumo. Tentativa e nota ficam no histórico; o e-mail fica como rascunho.' },
+    { seletor: '.content .leads-historico', titulo: 'Histórico', texto: 'Solicitação, tentativas, contatos, rascunhos e movimentos da conversa, do mais recente para o mais antigo.' },
+  ],
   '/atendimento': [
     { seletor: '.content .page-head', titulo: 'EIFF Inbox', texto: 'Uma EIFF para quem está fora; setores e pessoas por dentro. Fundação: canal, IA e persistência entram nas próximas etapas.' },
     { seletor: '.content .strip', titulo: 'Visão executiva', texto: 'O que precisa de você, o que está urgente, SLA vencido, o que espera o contato ou a EIFF, e o que a IA resolveu.' },

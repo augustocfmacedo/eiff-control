@@ -1393,3 +1393,57 @@ tr.arrastando td { opacity: 0.55; }
   .meta-instante { white-space: normal; }
   .meta-acoes .btn { flex: 1 1 auto; }
 }
+
+/* Leads do site (#/atendimento/leads): lista + lead selecionado. Projecao sobre o EIFF Inbox; so tokens do sistema. */
+.leads-resumo > * { min-width: 0; }
+.leads-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 14px; align-items: start; }
+.leads-layout.com-detalhe { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+.leads-layout > .card + .card { margin-top: 0; }
+.leads-lista { display: grid; gap: 10px; min-width: 0; }
+.leads-lista .filters { margin-bottom: 0; }
+.leads-lista .filters label.field:first-child { flex: 1 1 240px; }
+.leads-filtros { display: flex; flex-wrap: wrap; gap: 6px; }
+.leads-filtros .chip { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 5px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.leads-filtros .chip:hover { border-color: var(--border-strong); }
+.leads-filtros .chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 700; }
+.leads-projeto { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.leads-lista td.leads-sel { box-shadow: inset 3px 0 0 var(--brand); }
+.leads-layout.com-detalhe .leads-opc { display: none; }
+.leads-detalhe { display: grid; gap: 12px; min-width: 0; }
+.leads-detalhe h3 { margin: 6px 0 0; }
+.leads-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+.leads-cab h2 { margin: 0 0 2px; font-size: var(--text-lg); }
+.leads-voltar { display: none; margin-bottom: 8px; }
+.leads-voltar .ico { transform: rotate(90deg); }
+.leads-prazo { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--radius-sm); border-left: 3px solid var(--border-strong); background: var(--surface-2); font-size: 13px; }
+.leads-prazo.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+.leads-prazo.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+.leads-prazo.bad { border-left-color: var(--bad); background: var(--bad-bg); }
+.leads-contatos { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+.leads-contatos > .small { flex-basis: 100%; }
+.leads-meio { display: grid; }
+.leads-meio b { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.leads-colunas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 22px; }
+.leads-colunas h3 { margin: 0 0 8px; }
+.leads-colunas .kv dd { overflow-wrap: anywhere; }
+.leads-mensagem { margin: 0 0 10px; padding: 8px 12px; border-left: 3px solid var(--brand); background: var(--surface-2); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: 13px; }
+.leads-leitura { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-2); }
+.leads-acao { display: grid; gap: 10px; }
+.leads-acao textarea { width: 100%; resize: vertical; }
+.leads-acao .filters { margin-bottom: 0; }
+.leads-aviso { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--warn-bg); border-left: 3px solid var(--warn); }
+.leads-historico { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.leads-historico li { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--surface-2); }
+.leads-historico li.movimento { background: transparent; border-style: dashed; }
+.leads-historico p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.leads-historico-topo { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.leads-cumpre { color: var(--ok); font-weight: 600; }
+@media (max-width: 1280px) {
+  .leads-layout.com-detalhe { grid-template-columns: minmax(0, 1fr); }
+  .leads-layout.com-detalhe .leads-lista { display: none; }
+  .leads-voltar { display: inline-flex; align-items: center; gap: 4px; }
+}
+@media (max-width: 800px) {
+  .leads-opc { display: none; }
+  .leads-contatos .actions .btn { flex: 1 1 auto; text-align: center; }
+}
