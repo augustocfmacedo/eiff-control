@@ -104,10 +104,12 @@ select 'APLICADA' as migration_0075,
 
 /** O SQL completo e o SHA-256 da migration e do envelope. */
 export function envelope() {
-  const migration = fs.readFileSync(MIGRATION, 'utf8');
+  // fim de linha normalizado: o hash tem de ser o mesmo em qualquer maquina (Windows troca LF por CRLF no checkout)
+  const lf = (t) => t.replace(/\r\n/g, '\n');
+  const migration = lf(fs.readFileSync(MIGRATION, 'utf8'));
   // a migration nao pode abrir nem fechar transacao por conta propria: quem controla e o envelope
   if (/^\s*(begin|commit|rollback)\s*;/im.test(migration)) throw new Error('a 0075 contem controle de transacao proprio: o envelope nao pode envolve-la');
-  const sql = `${ANTES}${migration}${DEPOIS}`;
+  const sql = lf(`${ANTES}${migration}${DEPOIS}`);
   const sha = (s) => createHash('sha256').update(s).digest('hex');
   return { sql, shaMigration: sha(migration), shaEnvelope: sha(sql) };
 }
