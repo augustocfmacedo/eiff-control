@@ -20,6 +20,7 @@
     "smoke:widget-token": "node scripts/pg-smoke-widget-token.mjs",
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
     "smoke:formulario": "vite-node scripts/pg-smoke-formulario.mts",
+    "smoke:email": "node scripts/pg-smoke-email.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
     "lint": "eslint src"

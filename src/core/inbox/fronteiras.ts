@@ -233,7 +233,7 @@ export interface ResultadoRecebimento {
   motivo: string;
 }
 
-const chaveMensagem = (m: { provider: CodigoProvider; externalMessageId?: string }) => (m.externalMessageId ? `${m.provider}|${m.externalMessageId}` : undefined);
+const chaveMensagem = (m: { provider: InboxMessage["provider"]; externalMessageId?: string }) => (m.externalMessageId ? `${m.provider}|${m.externalMessageId}` : undefined);
 export const mesmaIdentidade = (a: IdentidadeCanal, b: IdentidadeCanal): boolean => a.canal === b.canal && normalizarIdentificador(a.canal, a.identificador) === normalizarIdentificador(b.canal, b.identificador);
 
 export function contatoPorIdentidade(contatos: ContatoInbox[], i: IdentidadeCanal): ContatoInbox | undefined {
