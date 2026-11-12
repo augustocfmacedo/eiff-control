@@ -2,8 +2,14 @@
 // transacao, com conferencias ANTES (aborta se o banco nao estiver como o pre-flight encontrou) e DEPOIS (aborta e
 // desfaz tudo se o resultado nao for o esperado ou se algum dado preexistente tiver mudado).
 //
-// Este script NAO aplica nada e nao fala com banco nenhum: so escreve o arquivo e imprime o SHA-256 dele.
-//   node scripts/email-0075/envelope.mjs            -> scratch/0075-envelope.sql (pasta ignorada pelo git)
+// Este script NAO aplica nada e nao fala com banco nenhum: so escreve os arquivos e imprime o SHA-256.
+//   node scripts/email-0075/envelope.mjs  -> scratch/0075-envelope.sql            (o que se aplica)
+//                                        -> scratch/0075-ensaio-recusa.sql       (ensaio SEM a migration: pre-checks e
+//                                           erro proposital; a transacao e desfeita pelo banco)
+//                                        -> scratch/0075-ensaio-conclui.sql      (ensaio SEM a migration: pre-checks e
+//                                           ROLLBACK explicito; prova que o CLI devolve o resultado final)
+// Os ensaios rodam no banco real com o MESMO comando da aplicacao e nao deixam nada: nao contem a 0075, nao gravam em
+// tabela permanente e terminam em ROLLBACK. Servem para provar a sintaxe do CLI e os pre-checks antes do GO.
 // Roteiro e pre-flight: docs/email-comercial-0075-preflight.md
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -102,6 +108,25 @@ select 'APLICADA' as migration_0075,
   (select count(*) from inbox_email_delivery) as entregas, (select count(*) from inbox_message) as mensagens, (select count(*) from inbox_thread) as conversas;
 `;
 
+const ENSAIO_RECUSA = `
+-- ═══ ENSAIO: a migration NAO esta aqui. Erro proposital: o banco desfaz a transacao inteira. ═══
+do $ensaio$ begin raise exception 'ENSAIO 0075: pre-checks aprovados; erro proposital, nada foi aplicado'; end $ensaio$;
+commit;
+`;
+const ENSAIO_CONCLUI = `
+-- ═══ ENSAIO: a migration NAO esta aqui. Desfaz explicitamente e devolve uma linha de resultado. ═══
+rollback;
+select 'ENSAIO OK: pre-checks aprovados, nada aplicado' as ensaio_0075,
+  to_regclass('public.inbox_email_delivery') is null as livro_ausente,
+  (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'inbox_email%') as funcoes_inbox_email;
+`;
+
+/** Os dois ensaios (sem a migration), para provar o comando no banco real sem efeito. */
+export function ensaios() {
+  const lf = (t) => t.replace(/\r\n/g, '\n');
+  return { recusa: lf(`${ANTES}${ENSAIO_RECUSA}`), conclui: lf(`${ANTES}${ENSAIO_CONCLUI}`) };
+}
+
 /** O SQL completo e o SHA-256 da migration e do envelope. */
 export function envelope() {
   // fim de linha normalizado: o hash tem de ser o mesmo em qualquer maquina (Windows troca LF por CRLF no checkout)
@@ -119,6 +144,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(proces
   const destino = new URL('../../scratch/0075-envelope.sql', import.meta.url);
   fs.mkdirSync(new URL('../../scratch/', import.meta.url), { recursive: true });
   fs.writeFileSync(destino, e.sql);
+  const en = ensaios();
+  if (/0075_inbox_email_delivery|create table/i.test(en.recusa + en.conclui)) throw new Error('ensaio contaminado com a migration');
+  fs.writeFileSync(new URL('../../scratch/0075-ensaio-recusa.sql', import.meta.url), en.recusa);
+  fs.writeFileSync(new URL('../../scratch/0075-ensaio-conclui.sql', import.meta.url), en.conclui);
   console.log(`arquivo            : ${fileURLToPath(destino)}`);
   console.log(`sha256 da migration: ${e.shaMigration}`);
   console.log(`sha256 do envelope : ${e.shaEnvelope}`);

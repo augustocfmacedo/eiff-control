@@ -1,6 +1,7 @@
 # E-mail comercial — pré-flight de implantação da migration 0075
 
-**Data:** 12/11/2026 · **Base:** `main` em `9e5de09` · **Banco:** projeto `dduobppgomqyagjviwpx` (PostgreSQL 17.6)
+**Data:** 12/11/2026 (pré-flight) e 12/11/2026 (validação do CLI e do backup, seção 4.0) · **Base:** `main` em `9e5de09` ·
+**Banco:** projeto `dduobppgomqyagjviwpx` (PostgreSQL 17.6)
 
 **Parecer: APTO COM RESSALVAS.** A migration está tecnicamente pronta para ter a aplicação solicitada à Direção.
 As ressalvas são exigências operacionais do momento da aplicação (seção 6), não defeitos do código.
@@ -123,14 +124,79 @@ bloqueio consultivo dos limites e os índices únicos estão provados por constr
 
 **Só com autorização expressa da Direção para aplicar a 0075 em produção.**
 
+### 4.0 Validação do Supabase CLI e do backup (12/11/2026)
+
+**Versão.** Supabase CLI **2.116.0**, a do projeto: `package.json` fixa `^2.116.0` e o `npx supabase` usa a cópia de
+`node_modules` (não há instalação global). O CLI avisa que existe a 3.1.0: **não atualizar antes da aplicação**, porque
+os comandos abaixo foram validados na 2.116.0.
+
+**Comandos e parâmetros validados nesta versão:**
+
+| Uso | Comando | Validação |
+|---|---|---|
+| Leitura e aplicação de arquivo SQL | `npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f <arquivo>` | Executado com o retrato e com os dois ensaios (abaixo) |
+| Lista de backups | `npx supabase backups list --project-ref dduobppgomqyagjviwpx` | Executado |
+
+- `--linked` sozinho **falha** nesta máquina (`Cannot find project ref`): o projeto não está vinculado localmente.
+  Sempre passar `--project-ref`.
+- `db query --linked` executa pela **API de gerenciamento** do Supabase, como o usuário `postgres`, dono de
+  `inbox_message` (pode alterar a tabela e criar objetos no `public`; não é superusuário). Cada execução é uma única
+  requisição: o arquivo inteiro roda numa sessão, e `begin`/`commit`/`rollback` do arquivo valem.
+- Erro dentro do arquivo: o CLI devolve **código de saída 1** e a mensagem do banco; sucesso devolve **0** e a linha
+  do último `SELECT`.
+- **Não usar** `db push` nem `db reset`: há migrations pendentes de outras frentes (a 0074 está no repositório e não
+  no banco) e o projeto não tem ledger de migrations; os dois aplicariam ou apagariam mais do que a 0075.
+- **Não usar** `db dump --dry-run`: na 2.116.0 ele imprime na tela a senha do usuário temporário de login que o CLI
+  cria. O teste feito em 12/11 mostrou isso; o comando não entra no roteiro.
+- `backups restore` só faz recuperação **pontual (PITR)**, que está desligada neste projeto: não serve aqui.
+
+**Ensaios no banco real, sem a migration** (gerados por `envelope.mjs` junto com o envelope; mesmo comando da
+aplicação; nenhum contém a 0075, nenhum grava em tabela permanente):
+
+| Ensaio | O que faz | Resultado em 12/11 |
+|---|---|---|
+| `scratch/0075-ensaio-conclui.sql` | Pré-checks reais + tabela temporária + `ROLLBACK` + uma linha de resultado | Código 0; `ENSAIO OK: pre-checks aprovados, nada aplicado`, livro ausente, 0 funções |
+| `scratch/0075-ensaio-recusa.sql` | Pré-checks reais + erro proposital | Código 1; mensagem do banco; transação desfeita |
+
+Depois dos ensaios, conferido por leitura: nada da 0075 existe, a tabela temporária não sobrou, e as impressões das
+mensagens e das conversas são idênticas às do pré-flight.
+
+**Compatibilidade revalidada.** O retrato estrutural (242 itens) foi repetido em 12/11 e é **idêntico** ao de 11/11.
+
+**Backup.**
+
+| Item | Situação em 12/11/2026 19:06 UTC |
+|---|---|
+| Backup mais recente | **12/11/2026 05:31:27 UTC**, físico (WAL-G), `COMPLETED` |
+| Retenção visível | 8 backups diários, de 05/11 a 12/11, todos `COMPLETED` |
+| PITR | **Desligado** |
+| Cobertura do Inbox | Total: a última alteração de conversa é de 11/11 20:24 UTC e a última mensagem de 10/11 20:56 UTC, ambas anteriores ao backup |
+| Atividade depois do backup | 27 registros de auditoria em outros módulos (o último às 14:25 UTC) |
+| Tamanho do banco | 39 MB |
+
+**Recuperação disponível e limites:**
+1. **Primeira linha, sem perda:** `scripts/email-0075/recuperacao-0075.sql`, estrutural, com autorização própria.
+   Funciona enquanto o livro estiver vazio (provas P e Q da simulação). A 0075 não altera dado existente, então não
+   há dado a recuperar se ela der errado: o envelope desfaz tudo antes de confirmar.
+2. **Último recurso:** restaurar o backup diário pelo painel do Supabase (Database › Backups). Restaura o **projeto
+   inteiro** ao instante do backup, com o banco fora do ar durante a restauração, e **perde tudo o que foi gravado
+   depois dele em qualquer módulo** (em 12/11 às 19:06 UTC isso já eram 27 ações auditadas). Não é reversível.
+
+Por isso o backup de ontem não é garantia suficiente: o que conta é o backup do **mesmo dia**, e a aplicação deve
+ser feita **logo depois dele**, antes do expediente, para a perda num restauro de último recurso ser mínima.
+
 ### 4.1 Pré-requisitos
 
 1. `main` em `9e5de09` ou posterior, sem mudança no arquivo `supabase/migrations/0075_inbox_email_delivery.sql`.
    SHA-256 esperado da migration: `3a08e2642d9b943a8363e0f3725d288ddcc0671a1ee68acec9a3b4dc6e9522d3`.
-2. Backup do dia conferido (comando de leitura). Em 12/11 havia backup físico diário concluído até 11/11 05:32 UTC;
-   recuperação pontual (PITR) está desligada.
+2. **Backup do mesmo dia** com `status` `COMPLETED` (o diário roda por volta de 05:30 UTC = 02:30 em Brasília).
+   Anotar o `inserted_at`. Sem backup do dia, **não aplicar**.
    ```bash
    npx supabase backups list --project-ref dduobppgomqyagjviwpx
+   ```
+   E conferir que nada foi gravado depois dele (zero ou quase zero, no início da manhã):
+   ```bash
+   npx supabase db query --linked --project-ref dduobppgomqyagjviwpx "select now() as agora, (select count(*) from audit_log where occurred_at > '<inserted_at do backup>') as acoes_depois_do_backup"
    ```
 3. Deploy publicado do EIFF Control inalterado e travado (`6af4b249`, commit `267a0b5`). A 0075 entra **antes** de
    qualquer publicação do código de e-mail.
@@ -150,14 +216,23 @@ que foi simulado.
 
 ### 4.3 Ordem das operações
 
+0. **Versão do CLI** igual à validada (`2.116.0`):
+   ```bash
+   npx supabase --version
+   ```
+   E **ensaio final** sem a migration, que tem de terminar com código 0 e `ENSAIO OK`:
+   ```bash
+   npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f scratch/0075-ensaio-conclui.sql
+   ```
 1. **Retrato antes** (leitura) e guardar o resultado:
    ```bash
    npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f scripts/email-0075/retrato.sql
    ```
-2. **Aplicar** o envelope:
+2. **Aplicar** o envelope (este é o único comando que altera o banco):
    ```bash
    npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f scratch/0075-envelope.sql
    ```
+   Código de saída 0 = aplicada e conferida. Código 1 = nada mudou (o banco desfez a transação); ler a mensagem.
    O envelope, numa única transação:
    - define `lock_timeout = 5s` e `statement_timeout = 60s`;
    - guarda contagens e impressões dos dados do Inbox;
@@ -186,7 +261,7 @@ que foi simulado.
 | Erro em pré-check, na migration ou em pós-check | A transação é desfeita pelo próprio banco; **nada muda** | Ler a mensagem, não insistir; reportar |
 | `lock_timeout` (Inbox em uso) | Idem: nada muda | Repetir em outro momento |
 | Conexão cai no meio | Transação não confirmada é desfeita | Rodar o retrato e conferir que nada da 0075 existe |
-| Aplicou e é preciso desfazer, **com o livro vazio** | — | `scripts/email-0075/recuperacao-0075.sql`, com autorização própria |
+| Aplicou e é preciso desfazer, **com o livro vazio** | — | `scripts/email-0075/recuperacao-0075.sql` pelo mesmo comando `db query -f`, com autorização própria |
 | Aplicou e já existe entrega registrada | A recuperação **se recusa** (não apaga histórico de envio) | Desligar o envio pelas variáveis; o banco fica |
 
 A recuperação é manual, só estrutural e foi provada no banco descartável (provas P e Q). Ela não é executada por
@@ -206,15 +281,17 @@ mensagens dos providers atuais.
 ## 6. Ressalvas (exigências antes e durante a aplicação)
 
 - **R1 — Autorização.** Aplicação só com ordem expressa da Direção para a 0075 em produção.
-- **R2 — Backup.** Conferir, no momento da aplicação, que o backup diário do dia existe. PITR está desligado: o que
-  for gravado entre o backup e a aplicação não tem recuperação pontual. O risco é baixo porque a 0075 não altera
-  dado existente e o envelope confere isso antes de confirmar.
+- **R2 — Backup.** Aplicar só com o backup diário **do mesmo dia** concluído e logo depois dele, antes do expediente
+  (seção 4.0). PITR está desligado: restaurar o backup diário é o último recurso e perde tudo o que foi gravado
+  depois dele. O risco é baixo porque a 0075 não altera dado existente e o envelope confere isso antes de confirmar.
 - **R3 — Concorrência não simulada.** Corrida real entre transações não foi exercitada. A exposição é pequena
   (envio manual, 30 por usuário e 100 por organização por dia) e deve ser observada no canário.
 - **R4 — Ordem.** A 0075 entra antes de publicar o código de e-mail. Com a função publicada e sem a migration, o
   envio falharia fechado (nada sai), mas a tela mostraria erro.
 - **R5 — Momento.** Aplicar sem uso do Inbox, para o `lock_timeout` não abortar a tentativa.
 - **R6 — Hash.** Aplicar apenas o envelope cujo SHA-256 confere com o deste documento.
+- **R7 — CLI.** Aplicar com o Supabase CLI 2.116.0, sem atualizar antes, sem `db push`, `db reset` ou
+  `db dump --dry-run`, e só depois de o ensaio final terminar com código 0.
 
 ## 7. Próximo portão
 
@@ -227,6 +304,6 @@ EIFF Control, conferência da credencial, modo canário e um envio interno de te
 | Arquivo | Papel |
 |---|---|
 | `scripts/email-0075/retrato.sql` | Leitura da estrutura e das impressões dos dados (um `SELECT`) |
-| `scripts/email-0075/envelope.mjs` | Gera o SQL exato da aplicação e o hash; não fala com banco |
+| `scripts/email-0075/envelope.mjs` | Gera o SQL exato da aplicação, o hash e os dois ensaios sem a migration; não fala com banco |
 | `scripts/email-0075/simular.mjs` | Simulação em banco descartável (18 provas) |
 | `scripts/email-0075/recuperacao-0075.sql` | Recuperação manual; recusa-se se houver entrega registrada |
