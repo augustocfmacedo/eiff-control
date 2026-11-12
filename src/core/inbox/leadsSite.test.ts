@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { resumoParaOInbox, ROTULO_LEITURA_DA_PAGINA } from '../radar/formularioGravacao'
 import type { SubmissaoFormulario } from '../radar/formularioSite'
 import type { Usuario } from '../types'
+import { corpoComAssinatura } from './emailMensagem'
 import { textoDaMensagem } from './formularioSite'
 import {
   FILTROS_LEAD, MARCA_RASCUNHO_EMAIL, NOME_NAO_IDENTIFICADO, PRAZO_LEAD_DO_SITE_MIN, contarPorFiltro, ehLeadDoSite, filtrarLeads, formulariosPresentes, historicoDoLead, identificarContato, leadDoSite, leadsDoSite,
@@ -335,10 +336,12 @@ describe('meios de contato e rascunho de e-mail', () => {
     expect(linksDeContato(semFone).telefone).toBeUndefined()
   })
   it('a sugestão de e-mail cumprimenta pelo primeiro nome e cita o pedido, sem prometer nada', () => {
-    const s = sugestaoDeEmail(l, 'Augusto Macedo')
+    const s = sugestaoDeEmail(l)
     expect(s.corpo.startsWith('Olá, Marina.')).toBe(true)
     expect(s.corpo).toContain('Galpão de armazenagem 25 x 80 m')
-    expect(s.corpo).toContain('Augusto Macedo')
+    // quem assina é corpoComAssinatura (a mesma do envio pelo servidor): a sugestão não assina, para não duplicar
+    expect(s.corpo).not.toMatch(/EIFF|Atenciosamente/)
+    expect(corpoComAssinatura(s.corpo, 'Augusto Macedo').endsWith('\n\nAugusto Macedo\nEIFF')).toBe(true)
     expect(s.corpo).not.toMatch(/R\$|prazo de|garant/i)
   })
   it('valida o rascunho e escreve o texto que vai para a conversa dizendo que NÃO foi enviado', () => {
@@ -346,5 +349,17 @@ describe('meios de contato e rascunho de e-mail', () => {
     const r = { para: l.email!, assunto: ' Proposta ', corpo: ' Olá. ' }
     expect(validarRascunhoDeEmail(r)).toEqual([])
     expect(textoDoRascunhoDeEmail(r)).toBe(`${MARCA_RASCUNHO_EMAIL}\nPara: marina@graosdovale.exemplo\nAssunto: Proposta\n\nOlá.`)
+  })
+})
+
+describe('histórico: o e-mail comercial aparece com o que ele é', () => {
+  const base: Omit<InboxMessage, 'id'> = { threadId: 'T', provider: 'GOOGLE_WORKSPACE', direcao: 'outbound', tipo: 'texto', autor: { tipo: 'usuario', nome: 'Ana' }, texto: 'Assunto: x', anexos: [], em: '2026-11-11T18:00:00.000Z' }
+  const item = (entrega: InboxMessage['entrega'], estado: string) => historicoDoLead('T', [{ ...base, id: 'm', entrega, meta: { entregaId: 'e', entregaEstado: estado } }], [])[0]
+  it('enviado conta como resposta; preparado é rascunho; falha e sem confirmação têm nome próprio e não contam', () => {
+    expect(item('enviada', 'ACCEPTED')).toMatchObject({ tipo: 'resposta_enviada', cumpreSla: true })
+    expect(item('registrada', 'READY')).toMatchObject({ tipo: 'rascunho', cumpreSla: false })
+    expect(item('falhou', 'FAILED')).toMatchObject({ tipo: 'email_nao_enviado', cumpreSla: false })
+    expect(item('registrada', 'UNKNOWN')).toMatchObject({ tipo: 'email_sem_confirmacao', cumpreSla: false })
+    expect(item('registrada', 'REQUESTED')).toMatchObject({ tipo: 'email_sem_confirmacao', cumpreSla: false })
   })
 })
