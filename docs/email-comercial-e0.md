@@ -145,8 +145,10 @@ passam a valer no deploy seguinte, que é autorização separada.
 
 ### 2.6 Endurecimento (Admin Console)
 
-13. Segurança › Controles de API › Controles de acesso a apps: marcar o aplicativo como **confiável** e, se a política
-    do domínio permitir, restringir o acesso à API do Gmail a aplicativos confiáveis.
+13. ~~Marcar o aplicativo como confiável e restringir o Gmail a aplicativos confiáveis.~~ **Substituído em 13/11/2026**
+    (decisão da Direção): o app é configurado pelo ID do cliente com **Dados específicos do Google**, só com
+    `gmail.send`, e o Gmail da organização **não** é restringido nesta implantação. Ver
+    `docs/email-comercial-google-workspace.md` §6.
 14. Confirmar que a conta remetente tem **verificação em duas etapas** ligada.
 15. Anotar, fora do repositório, **quem** fez o consentimento e **quando**: é a informação necessária para revogar.
 

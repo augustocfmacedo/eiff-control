@@ -15,7 +15,7 @@ de cliente com segredo, segredo do cliente ou token pelo chat.**
 |---|---|---|
 | 1 | A tela de consentimento virou o **Google Auth Platform** (menu ☰ › Google Auth Platform), com as páginas **Branding**, **Audience**, **Data Access** e **Clients** | Os menus abaixo já usam os nomes novos. «Interno» é escolhido em **Audience**; o escopo entra em **Data Access** |
 | 2 | Desde junho de 2025, o **segredo do cliente só aparece uma vez**, na tela de criação. Depois fica mascarado | **Não feche a tela de criação** até o segredo estar no script e no painel do Netlify (passos 9 a 13). Perdeu? Não há como ver de novo: gera-se um segredo novo pela rotação de segredo do cliente |
-| 3 | No Admin Console, confiança de app fica em **Segurança › Acesso e controle de dados › Controles de API › Gerenciar acesso a apps**. Apps internos **não** são confiáveis automaticamente | O passo 15 marca o app como **Confiável** antes de qualquer restrição ao Gmail. Restringir o Gmail antes disso bloquearia o próprio app |
+| 3 | No Admin Console, o acesso de cada app fica em **Segurança › Acesso e controle de dados › Controles de API › Gerenciar acesso a apps**, com quatro níveis: Confiável, **Dados específicos do Google** (*Specific Google data*), Limitado e Bloqueado. Apps internos **não** recebem nível nenhum automaticamente. O app pode ser configurado **pelo ID do cliente** («Configurar novo app»), sem esperar que apareça na lista | O passo 15 configura o app pelo ID do cliente com **Dados específicos do Google**, só com `gmail.send`. **Não** se usa Confiável (dá acesso a todos os serviços) e **não** se restringe o Gmail da organização (§6) |
 | 4 | A revogação pelo usuário fica em **myaccount.google.com/linkedapps** (Acesso à sua Conta do Google) | Atualizado em §5 (como desfazer) |
 
 Confirmado sem mudança: Gmail API ativada em **APIs e serviços › Biblioteca**; cliente do tipo **App para computador**
@@ -118,15 +118,45 @@ Opcionais, com os valores padrão já decididos: `EIFF_EMAIL_SENDER_NAME` = `EIF
 Criar as variáveis **não muda nada no ar**: o código de envio não está publicado e o modo é `disabled`. Elas só são
 lidas depois de uma publicação, que é autorização separada.
 
-## 6. Endurecimento (Admin Console)
+## 6. Política de acesso do app (Admin Console)
 
-- [ ] **15.** **Segurança › Acesso e controle de dados › Controles de API › Gerenciar acesso a apps** (*Manage App
-      Access*): achar `EIFF Control — e-mail comercial` (aparece depois do consentimento do passo 12) ›
-      **Alterar acesso** › toda a organização › **Confiável** (*Trusted*).
-- [ ] **16. Opcional, só depois do 15.** **Controles de API › Gerenciar serviços do Google** › Gmail › **Restrito**.
-      Isso bloqueia apps não confiáveis no Gmail; feito antes do passo 15, bloquearia o nosso.
-- [ ] **17.** Anotar fora do repositório (gerenciador de senhas ou registro interno): quem fez o consentimento, data e
-      hora, nome do projeto e do cliente. É o que se precisa para revogar.
+**Escolha:** nível **Dados específicos do Google** (*Specific Google data*) com **um** escopo,
+`https://www.googleapis.com/auth/gmail.send`. Segundo a central de ajuda do Google, nesse nível o app «só pode pedir
+acesso aos escopos que você especificar ao configurá-lo», e isso vale também quando o Gmail da organização **não** está
+restrito. É compatível com o fluxo escolhido (cliente «App para computador», consentimento pela própria conta
+`contato@`, um único escopo): o app nunca pede nada além de `gmail.send`, e o script recusa qualquer escopo a mais.
+
+**Descartado:** **Confiável** (*Trusted*). Daria ao app acesso a todos os serviços e escopos do Workspace, inclusive os
+restritos. É mais do que o envio precisa.
+
+O ID do cliente fica visível a qualquer momento em **Google Auth Platform › Clients** (só o segredo é que some); não
+é segredo e pode ser copiado para este passo.
+
+- [ ] **15. Configurar o app pelo ID do cliente.** `admin.google.com` › **Segurança › Acesso e controle de dados ›
+      Controles de API › Gerenciar acesso a apps** (*Manage App Access*) › em **Apps configurados**, **Configurar novo
+      app** (*Configure new app*) › colar o **ID do cliente** › **Pesquisar** › clicar no app encontrado.
+      - **Escopo** (unidade organizacional): a de nível superior, ou só a unidade onde está `contato@`.
+      - **Acesso aos dados do Google**: **Dados específicos do Google** (*Specific Google data*).
+      - Escopos permitidos: **somente** `https://www.googleapis.com/auth/gmail.send`.
+      - **Continuar**, revisar, **Concluir**.
+
+      Pode ser feito logo depois da sessão do §5 (não envolve segredo). Se preferir que a política exista **antes** do
+      consentimento, faça-o entre os passos 9 e 11, numa outra aba, sem fechar a tela de criação do cliente.
+- [ ] **16. Se a tela não permitir isso**, pare **sem** escolher Confiável e me diga o que apareceu. Casos possíveis:
+      - a pesquisa pelo ID não encontra o app → confira se está no projeto `eiff-control-email` e se o ID foi colado
+        inteiro (termina em `.apps.googleusercontent.com`); se continuar sem achar, faça o passo 12 e procure de novo
+        na lista de apps acessados;
+      - a tela não deixa escolher o escopo, só serviços inteiros → **não** ampliar. A alternativa segura é **deixar o
+        app sem configuração** nesta implantação: o token só vale para `gmail.send`, porque foi o único escopo pedido e
+        concedido (o script confere), e a política fina fica para uma decisão própria;
+      - aparece um aviso de que `gmail.send` é escopo de **alto risco** → é esperado (o Google o lista entre os de alto
+        risco do Gmail). Escolha-o explicitamente e siga.
+- [ ] **17. Não fazer nesta implantação:** restringir o Gmail para a organização inteira (**Gerenciar serviços do
+      Google › Gmail › Restrito**), ligar «Limitar escopos de alto risco» do Gmail ou marcar «Confiar em apps
+      internos». Essas três mudanças valem para **todos** os apps e integrações do domínio e exigem autorização própria
+      da Direção.
+- [ ] **18.** Anotar fora do repositório (gerenciador de senhas ou registro interno): quem fez o consentimento, data e
+      hora, nome do projeto, **ID do cliente** e a política aplicada no passo 15. É o que se precisa para revogar.
 
 ## 7. Como desfazer
 
@@ -134,14 +164,15 @@ lidas depois de uma publicação, que é autorização separada.
   **Remover acesso**. O sistema passa a falhar fechado (nada sai).
 - **Trocar a credencial:** passos 9 a 13 de novo; o segredo novo vem da rotação de segredo do cliente ou de um
   cliente novo.
-- **Desmontar:** apagar o cliente e o projeto `eiff-control-email`; apagar as variáveis no Netlify.
+- **Desmontar:** apagar o cliente e o projeto `eiff-control-email`; apagar as variáveis no Netlify; no Admin
+  Console, remover a configuração do app (ou mudá-la para **Bloqueado**, que corta o acesso na hora).
 - **Atenção:** trocar a senha de `contato@` invalida o token. Correção: passos 10 a 13.
 
 ## 8. Quem faz o quê
 
 | Ação | Quem |
 |---|---|
-| Passos 2 a 17 (Admin Console, Cloud Console, script de consentimento, variáveis do Netlify) | **Augusto**, pessoalmente |
+| Passos 2 a 18 (Admin Console, Cloud Console, script de consentimento, variáveis do Netlify, política do app) | **Augusto**, pessoalmente |
 | Dizer no chat só o resultado de cada bloco («2 ok», «escopo único confirmado», «variáveis criadas») | Augusto |
 | Conferir, sem ver segredo, que nada foi publicado e que o banco segue intacto | Agente, por leitura |
 | Responder dúvida sobre uma tela diferente do descrito (sem prints com códigos ou segredos) | Agente |
@@ -152,6 +183,10 @@ lidas depois de uma publicação, que é autorização separada.
 O próximo portão é a **publicação do EIFF Control** (autorização própria: «PRODUCTION AUTORIZADA»). Só depois dela a
 ação de **saúde** confirma, sem enviar nada, que a credencial obtém token. O canário (modo `canary`, saída do Inbox
 ligada, lista de endereços internos) e o primeiro envio de teste vêm depois, cada um com autorização própria.
+
+Limite a conferir no primeiro teste: a política do passo 15 só é exercitada de fato quando o servidor pede um token.
+Por isso a ação de **saúde**, depois da publicação, é também a prova de que a política permite `gmail.send`; se ela
+falhar com acesso recusado, o primeiro suspeito é o escopo configurado no passo 15.
 
 Fontes consultadas em 13/11/2026: documentação do Google Workspace sobre configuração da tela de consentimento e
 criação de credenciais; documentação de OAuth para apps instalados e de expiração de tokens; anúncio do Google sobre
