@@ -927,7 +927,7 @@ alimentam este motor. Autoridade das medidas: `META_COMERCIAL` (acrescentada ao 
 
 Persistência versionada e auditável das metas, usando o motor da E1. Sem tela (a tela é a etapa D3-G).
 
-- **Migration 0068** (`supabase/migrations/0068_radar_commercial_goal.sql`, **não aplicada**): tabela
+- **Migration 0068** (`supabase/migrations/0068_radar_commercial_goal.sql`, **aplicada em produção em 14/10/2026 às 11:55:32 UTC**): tabela
   `radar_commercial_goal` — organização, mês (`period_month`, sempre dia 1), métrica `RECEITA_GANHA`, moeda `BRL`, escopo
   `ORGANIZACAO` (fixos por CHECK), valor `numeric(18,2)` positivo ou NULL (= retirada), versão, versão substituída
   (`supersedes_id`, obrigatória a partir da versão 2), motivo (3 a 500), autor e instante. Unique (organização, escopo,
@@ -975,13 +975,30 @@ Persistência versionada e auditável das metas, usando o motor da E1. Sem tela 
   dono do banco); integridade da tabela (versão repetida pela unique, versão 2 sem substituída, dia, valor, moeda) e
   rollback exato. Preflight com a fila inteira (0001..0068). Testes do app: `src/data/radar.meta.store.test.ts` e
   `src/data/radar.meta.persistencia.test.ts`.
-- **Limite conhecido (item do gate de implantação)**: concorrência real (duas sessões ao mesmo tempo) não roda no PGlite,
-  que tem uma conexão só, e esta máquina não tem PostgreSQL de verdade (Docker parado, sem imagem). A garantia é a trava
-  transacional por organização + mês (o smoke mostra a trava ativa em `pg_locks` até o fim da transação e prende a chave
-  no texto da migration) somada à unique da versão (testada com versão repetida). Antes de aplicar em produção, rodar o
-  teste de duas sessões num PostgreSQL real (por exemplo, um banco de branch do Supabase ou um container descartável).
+- **Concorrência real (gate de implantação) — PASS em 13/10/2026**: o PGlite tem uma conexão só, então o teste de duas
+  sessões rodou num PostgreSQL 17.6 descartável (binários extraídos do instalador oficial assinado da EnterpriseDB, sem
+  serviço, só em 127.0.0.1) com a 0068 do commit 469696e. 20 rodadas em READ COMMITTED com sobreposição forçada: a
+  primeira sessão grava e segura a trava, a segunda fica esperando em Lock/advisory (~290 ms, trava não concedida na mesma
+  chave, vista em `pg_locks`) e só termina depois do commit da primeira — versões 1 e 2 em sequência, a 2 apontando para a
+  1, os dois valores preservados (sem lost update), uma auditoria por versão; outra organização no mesmo mês grava sem
+  esperar e papéis sem permissão são recusados. Atomicidade 5/5 (falha na auditoria de quem espera e de quem segura a
+  trava; desistência com ROLLBACK de quem segura), rajadas de 8 sessões simultâneas 5/5 (versões 1–8, cadeia certa, nenhum
+  valor perdido), integridade global 107/107 e escrita direta negada. Observação de comportamento do PostgreSQL: o erro
+  dentro da transação solta a trava consultiva na hora (antes do ROLLBACK). Evidências guardadas fora do repositório.
 - **Implantação controlada** (cada passo com autorização própria): (1) merge; (2) publicar o build (código primeiro: sem a
   0068 o app carrega normalmente e a ação de meta recusa com mensagem; nenhuma tela usa a ação ainda); (3) conferência
   somente leitura (objetos da 0068 ausentes, número livre) e aplicar a 0068 numa transação com verificações internas;
   (4) smoke em produção só com recusas e leituras, em transação desfeita, sem consumir a sequência da auditoria.
   Rollback: o arquivo versionado (banco primeiro), depois, se preciso, o deploy anterior.
+- **Implantação executada**: código da E1/E2 publicado em 14/10/2026 (deploy 6aced730, depois seguido pelos deploys dos
+  widgets); validação pós-publicação PASS (Radar, Command Center, Financeiro, Obras e Inbox, banco sem a 0068: só o 404
+  esperado de `radar_commercial_goal`, nenhuma escrita). 0068 aplicada às 11:55:32 UTC numa transação com 18 verificações
+  internas (a primeira tentativa abortou numa verificação mal escrita — o texto do CHECK sai como
+  `(1000000000000)::numeric` — e nada foi aplicado); pós-check: tabela vazia, funções com `search_path` seguro, só a RPC
+  `security definer`, dois gatilhos, policy por organização, `authenticated` só SELECT + EXECUTE da RPC, `anon` sem
+  acesso; smoke de recusas (16/16 com o motivo certo: sem sessão, sem perfil, papel sem permissão, motivo, mês passado,
+  dia ≠ 1, valor zero/negativo/3 casas/acima do teto, retirada sem meta, insert/update diretos, anon lendo e chamando a
+  RPC, truncate) num bloco que sempre termina em erro; auditoria 1598 e sequência intactas, dados comerciais e financeiros
+  iguais antes e depois; o Radar passou a ler `radar_commercial_goal` com 200. Nenhuma meta real criada.
+- **Próxima etapa (E3)**: livro de desfechos por gatilho; a migration passa a ser a **0070** (a 0069 foi usada pelos
+  widgets do iPad).
