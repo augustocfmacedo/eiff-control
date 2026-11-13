@@ -3,11 +3,13 @@
 **Data:** 12/11/2026 (pré-flight) e 12/11/2026 (validação do CLI e do backup, seção 4.0) · **Base:** `main` em `9e5de09` ·
 **Banco:** projeto `dduobppgomqyagjviwpx` (PostgreSQL 17.6)
 
-**Parecer: APTO COM RESSALVAS.** A migration está tecnicamente pronta para ter a aplicação solicitada à Direção.
-As ressalvas são exigências operacionais do momento da aplicação (seção 6), não defeitos do código.
+> **SITUAÇÃO: APLICADA EM PRODUÇÃO em 13/11/2026, às 12:27 (Brasília).** Registro definitivo na seção 9. O deploy
+> publicado continua `6af4b249`, travado, e o envio de e-mail continua desligado.
 
-Este documento é só leitura, análise e simulação. **A migration 0075 não foi aplicada em produção.** Nada foi
-publicado, nenhuma variável foi configurada e nenhum e-mail foi enviado.
+**Parecer do pré-flight: APTO COM RESSALVAS.** As ressalvas eram exigências operacionais do momento da aplicação
+(seção 6), todas cumpridas em 13/11.
+
+As seções 1 a 8 são o pré-flight (só leitura, análise e simulação, feitas antes da aplicação).
 
 ---
 
@@ -242,7 +244,12 @@ que foi simulado.
    - **pós-checks** (aborta e desfaz tudo se faltar objeto, se privilégio ou RLS estiverem errados, se o livro não
      nascer vazio ou se qualquer dado preexistente tiver mudado);
    - `COMMIT`.
-3. **Retrato depois** (mesmo comando do passo 1) e comparar.
+3. **Retrato depois** (mesmo comando do passo 1) e comparar com o script de conferência:
+   ```bash
+   node scripts/email-0075/conferir.mjs <retrato-antes.json> <retrato-depois.json>
+   ```
+   Tem de terminar com `CONFERE` (código 0): uma alteração (a constraint de provider), dois objetos novos (o trigger e
+   a função dele), nenhum removido, dados do Inbox idênticos, livro presente com 8 funções.
 
 ### 4.4 Critérios objetivos de sucesso
 
@@ -295,9 +302,9 @@ mensagens dos providers atuais.
 
 ## 7. Próximo portão
 
-Autorização da Direção para **aplicar a migration 0075 em produção** pelo roteiro da seção 4. Depois dela, em ordem
-e cada um com autorização própria: configuração do Google Workspace (`docs/email-comercial-e0.md` §2), publicação do
-EIFF Control, conferência da credencial, modo canário e um envio interno de teste.
+A 0075 foi aplicada em 13/11/2026 (seção 9). Próximos, em ordem e cada um com autorização própria: configuração do
+Google Workspace (`docs/email-comercial-google-workspace.md`), publicação do EIFF Control, conferência da credencial,
+modo canário e um envio interno de teste.
 
 ## 8. Arquivos
 
@@ -307,3 +314,74 @@ EIFF Control, conferência da credencial, modo canário e um envio interno de te
 | `scripts/email-0075/envelope.mjs` | Gera o SQL exato da aplicação, o hash e os dois ensaios sem a migration; não fala com banco |
 | `scripts/email-0075/simular.mjs` | Simulação em banco descartável (18 provas) |
 | `scripts/email-0075/recuperacao-0075.sql` | Recuperação manual; recusa-se se houver entrega registrada |
+| `scripts/email-0075/conferir.mjs` | Conferência estrutural antes × depois (corrigida em 13/11; testes em `src/core/inbox/email0075Conferencia.test.ts`) |
+
+## 9. Registro da aplicação em produção (13/11/2026)
+
+**Autorização:** «APLICAÇÃO 0075 AUTORIZADA», dada pela Direção na sessão de trabalho de 13/11, depois do checklist
+final aprovado às 08:59.
+
+### 9.1 Linha do tempo (horário de Brasília)
+
+| Hora | O que aconteceu |
+|---|---|
+| 02:32 | Backup diário físico do Supabase concluído (`COMPLETED`). PITR desligado |
+| 08:59–09:00 | Checklist final: os sete controles aprovados; ensaio sem a migration com código 0 |
+| 09:01 | Exposição medida: **0** linhas criadas ou alteradas depois do backup, em 111 tabelas; 0 ações auditadas |
+| 12:26 | Checklist repetido imediatamente antes da aplicação: os sete controles aprovados de novo |
+| 12:27 | **Aplicação**: o envelope aprovado, uma única execução, código de saída 0 |
+| 12:28 | Conferência posterior por script: falso positivo (§9.3) |
+| 12:28–12:52 | Verificação independente por leitura: resultado conforme (§9.4) |
+
+### 9.2 O que foi executado
+
+- Comando: `npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f scratch/0075-envelope.sql`
+  (Supabase CLI 2.116.0), a partir da `main` em `484a0f3`.
+- Envelope: SHA-256 `10b82e451f5cb812f1793411c8b6479e4ca27c3f5666ec6fb53b974e4d3158ee`; migration dentro dele:
+  `3a08e2642d9b943a8363e0f3725d288ddcc0671a1ee68acec9a3b4dc6e9522d3`.
+- **Pré-checks transacionais aprovados** (livro ausente, constraint de provider esperada, nenhum provider fora do
+  catálogo, dependências presentes, trigger ainda inexistente).
+- **Pós-checks transacionais aprovados** dentro da mesma transação, antes do `COMMIT`: duas tabelas do livro, 8
+  funções, constraint validada com `GOOGLE_WORKSPACE`, trigger presente, RPCs só para `service_role`, navegador só
+  com leitura, RLS ligada, livro vazio e dados preexistentes do Inbox idênticos.
+- Saída do banco: `APLICADA`, `funcoes = 8`, `entregas = 0`, `mensagens = 5`, `conversas = 2`.
+
+### 9.3 Falso positivo da conferência posterior
+
+O script de conferência usado na aplicação (fora do repositório) marcou o resultado como **INTERROMPIDO**, com o motivo
+«mudanças em objetos existentes diferentes das três esperadas».
+
+**Causa:** o script comparava só objetos que **já existiam** antes da aplicação. Das três mudanças previstas, uma é
+alteração de objeto existente (a constraint de provider) e duas são objetos **novos** (o trigger
+`inbox_message_email_governada` e a função dele). Os dois novos caíram na lista de objetos novos, que o script não
+cruzava com o esperado, e a comparação viu uma mudança onde esperava três.
+
+**Efeito:** nenhum sobre o banco. O aviso veio depois do `COMMIT`; nada foi repetido nem desfeito.
+
+**Correção:** `scripts/email-0075/conferir.mjs` classifica cada diferença em alterada, nova ou removida e declara o
+esperado separadamente para alterados e novos. Onze testes de regressão em
+`src/core/inbox/email0075Conferencia.test.ts`, entre eles o caso exato de 13/11. Validado com os retratos reais de
+antes e depois da aplicação: **CONFERE**.
+
+### 9.4 Verificação independente por leitura
+
+| Verificação | Resultado |
+|---|---|
+| Objetos existentes alterados | 1: `inbox_message_provider_check`, agora com `GOOGLE_WORKSPACE` |
+| Objetos novos no escopo do retrato | 2: o trigger `inbox_message_email_governada` e a função dele |
+| Objetos removidos | 0. Os outros 241 itens estruturais estão idênticos (242 → 244) |
+| Dados preexistentes | Idênticos: 2 conversas, 5 mensagens, 2 contatos, 18 eventos; impressões iguais |
+| Livro de entregas | Criado e vazio: 0 entregas, 0 eventos, 0 mensagens de e-mail |
+| Segurança | RLS ligada; `authenticated` não executa as RPCs nem grava no livro; `service_role` executa |
+| Inbox com as permissões de um Administrador | 2 conversas, 5 mensagens e 2 contatos visíveis, 0 entregas (transação desfeita) |
+| Produção | Site 200; `/api/email-comercial` 404; deploy `6af4b249` (`267a0b5`) publicado e travado |
+
+Repetido às 12:52 com o script corrigido contra um retrato novo da produção: **CONFERE**.
+
+### 9.5 Estado depois da aplicação
+
+- Banco: infraestrutura do e-mail comercial pronta e **inerte** (ninguém chama as RPCs; nenhuma função publicada).
+- Deploy: `6af4b249`, travado. O código de envio está na `main` e não está publicado.
+- Envio de e-mail: **desligado**. Nenhuma credencial do Google criada, nenhuma variável configurada.
+- Evidências (retratos antes e depois, checklists, registro da aplicação): guardadas fora do repositório, nas notas da
+  sessão de trabalho de 13/11.

@@ -62,6 +62,10 @@ abrir a mensagem recebida e olhar o campo De.
 Para a pessoa nomeada em D-3. **Feito por pessoa, no navegador dela.** O assistente não cria conta, não clica em
 consentimento e não vê nem digita segredo. Nenhum passo abaixo foi executado.
 
+> **Revisão de 13/11/2026:** o Google mudou a interface e uma regra desde que este roteiro foi escrito. O procedimento
+> a seguir é `docs/email-comercial-google-workspace.md`, que traz os menus atuais e as quatro diferenças. A principal:
+> o **segredo do cliente só aparece uma vez**, na criação. Este §2 fica como registro do desenho.
+
 Pré-requisitos: acesso de superadministrador ao Workspace; acesso à conta da caixa remetente (resultado do §1);
 acesso ao painel do Netlify do `eiff-control`.
 
@@ -141,8 +145,10 @@ passam a valer no deploy seguinte, que é autorização separada.
 
 ### 2.6 Endurecimento (Admin Console)
 
-13. Segurança › Controles de API › Controles de acesso a apps: marcar o aplicativo como **confiável** e, se a política
-    do domínio permitir, restringir o acesso à API do Gmail a aplicativos confiáveis.
+13. ~~Marcar o aplicativo como confiável e restringir o Gmail a aplicativos confiáveis.~~ **Substituído em 13/11/2026**
+    (decisão da Direção): o app é configurado pelo ID do cliente com **Dados específicos do Google**, só com
+    `gmail.send`, e o Gmail da organização **não** é restringido nesta implantação. Ver
+    `docs/email-comercial-google-workspace.md` §6.
 14. Confirmar que a conta remetente tem **verificação em duas etapas** ligada.
 15. Anotar, fora do repositório, **quem** fez o consentimento e **quando**: é a informação necessária para revogar.
 
@@ -328,9 +334,9 @@ Cada linha é um portão com autorização própria. Nenhuma foi executada.
 
 | # | Passo | Quem | Depende de |
 |---|---|---|---|
-| 1 | Mesclar os PRs da implementação (#80 a #85) | Direção autoriza, um a um | Quality Gate do GitHub verde em cada PR |
-| 2 | Aplicar a migration 0075 em produção | Direção autoriza | passo 1 |
-| 3 | Executar o §2 (projeto, tela de consentimento, cliente, script, variáveis no Netlify com o modo `disabled`) | Augusto | — |
+| 1 | Mesclar os PRs da implementação (#80 a #85) | Direção autoriza, um a um | **Feito em 12/11/2026** (`main` `9e5de09`) |
+| 2 | Aplicar a migration 0075 em produção | Direção autoriza | **Feito em 13/11/2026, 12:27** (`docs/email-comercial-0075-preflight.md` §9) |
+| 3 | Executar o §2 (projeto, tela de consentimento, cliente, script, variáveis no Netlify com o modo `disabled`) | Augusto | procedimento assistido em `docs/email-comercial-google-workspace.md` |
 | 4 | Publicar o EIFF Control (a função passa a existir, desligada) | Direção autoriza | passos 1 a 3 |
 | 5 | `saude`: a credencial obtém token; nada é enviado | Augusto, na tela | passo 4 |
 | 6 | Canário: `EIFF_INBOX_OUTBOUND_ENABLED=true`, `EIFF_EMAIL_SEND_MODE=canary`, lista com endereços INTERNOS, novo deploy | Direção autoriza | passo 5 |
