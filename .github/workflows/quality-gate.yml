@@ -145,6 +145,13 @@ jobs:
       - name: PostgreSQL Smoke (e-mail comercial)
         run: npm run smoke:email
 
+      # scripts/pg-smoke-email-chave.mjs aplica a 0076 (chave central do e-mail comercial) num PGlite descartável e prova:
+      # sem linha = bloqueado, semente desligada, quem liga e desliga, criação e ida a REQUESTED barradas com a chave
+      # desligada (READY vira FAILED envio_bloqueado), aceite/UNKNOWN/reconciliação preservados, histórico imutável e a
+      # emergência que só desliga — 13 provas A–M, ROLLBACK ao final. Nenhuma rede, nenhum e-mail, nenhum segredo.
+      - name: PostgreSQL Smoke (chave central do e-mail)
+        run: npm run smoke:email-chave
+
       # scripts/pg-smoke-fin-reset.mjs aplica a fila INTEIRA de migrations num PGlite descartável e prova o FIN-RESET-01
       # (0061/0062): reset do extrato com lista fechada, reimportação do mesmo OFX sem FITID ativo duplicado, relançamento
       # sem colidir, desfazer e autoridade (só o dono do banco executa). Sai com código 1 se qualquer prova falhar.
