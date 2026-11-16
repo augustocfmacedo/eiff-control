@@ -26,7 +26,7 @@ O GO-3 não foi declarado.
 | Reconciliação automática | **desligada** |
 | Marco da reconciliação | `2026-11-10T01:21:02Z`, preservado |
 | Submissões históricas | 11, anteriores ao marco, **fora do processamento** |
-| Registros do ensaio | preservados (conversa aberta, candidato pendente) |
+| Registros do ensaio | preservados (conversa aberta, candidato pendente). Encerrados em 16/11/2026, sem apagar, ver §1.3.1 |
 
 ### 1.2 O que está provado e o que não está
 
@@ -65,6 +65,82 @@ O prazo de primeira resposta continua sendo de **30 minutos úteis**. Nenhuma de
   alguém livre para fazer o contato. No pior caso da rotina, um lead é visto 20 minutos depois de entrar e
   sobram 10 para o contato.
 - O e-mail do Netlify não tem garantia de entrega (`docs/formulario-site-ativacao.md` §10).
+
+### 1.3.1 Submissões de ensaio: exclusão obrigatória antes de ligar a reconciliação
+
+A reconciliação reenvia ao CRM toda submissão posterior ao marco que ainda não esteja inteiramente dentro. Um ensaio
+feito fora da produção (deploy preview, onde a função do site não tem o segredo e não encaminha) nunca entrou no CRM
+e, sem exclusão, **seria importado como lead na primeira rodada**: evidência pendente no Lead Engine, conversa aberta
+no Comercial, prazo de 30 minutos úteis contado da submissão original e já vencido.
+
+**Regra.** É proibido definir `FORMULARIO_RECONCILIACAO=ativa`, e é proibido rodar
+`scripts/formulario-reconciliar.mts` com `--executar`, sem que a lista de exclusão contenha **no mínimo** o id do
+ensaio E10.4. Antes de ligar, a simulação manual com a mesma lista tem de mostrar o ensaio retido (verificação
+abaixo). Sem essa evidência a reconciliação não é ligada.
+
+**Sintaxe exata** (conferida no código em 16/11/2026; não presumir outro formato):
+
+| Onde | Como | Leitura no código |
+|---|---|---|
+| Rodada agendada | variável `EIFF_FORM_EXCLUIDOS` no site do **eiffcontrol**: ids separados por vírgula, sem aspas | `formularioAgendado.ts`: `split(',')`, `trim()` de cada id, vazios descartados |
+| Reconciliação manual | `--excluidos <id1,id2,...>`: o valor é o argumento **seguinte**, separado por espaço. `--excluidos=<ids>` **não** é reconhecido e equivale a lista vazia | `scripts/formulario-reconciliar.mts`, mesma divisão por vírgula |
+| Decisão | comparação **exata** do id da submissão do Netlify, logo depois de a submissão ser lida e antes do marco e da validação do intake; o item vai para as retidas com o motivo `id_excluido` | `planoDaReconciliacao` em `formularioReconciliacao.ts` |
+
+Um id digitado errado não dá erro: simplesmente não casa com nada. Por isso a verificação é obrigatória.
+
+**Ensaios conhecidos** (submissões do formulário `simular-galpao`):
+
+| Id da submissão | Criada (UTC) | Origem | Situação no CRM | Lista de exclusão |
+|---|---|---|---|---|
+| `6af72bc662ddce941fc27637` | 2026-11-13 15:24:54 | deploy preview #8 do eiff-site (ensaio E10.4) | **nunca entrou**: a função registrou `nao_configurado`; contagem no banco em 13/11: zero evidência, zero mensagem. Posterior ao marco, **seria importado** | **obrigatória** |
+| `6af761a6cbe0316d6d3211b9` | 2026-11-13 19:14:46 | produção (ensaio E10.9) | entrou (`REGISTRADO`). Conversa `9118f1e4-065d-4848-b0cf-ebc7018eefd1` **fechada** em 13/11 e candidato `1c9979b4-d620-4bbb-b51b-b2ba89998fb4` **rejeitado** em 13/11, ambos com motivo e auditoria | recomendada |
+| `6af379040c7080bc34020601` | 2026-11-10 20:05:24 | produção (ensaio do GO-1) | entrou (`REGISTRADO`). Conversa `5ec4fc0c-64c5-4dfa-844d-8675d33faa41` **fechada** em 16/11 e candidato `a965c550-0ae4-4869-9874-e91ced8d12c3` **rejeitado** em 16/11, ambos com motivo e auditoria | recomendada |
+
+**Os dois ensaios que já entraram são duplicados para a reconciliação**, e nenhum dos dois volta a abrir nada:
+
+- Na **rodada agendada**, cada um está «já dentro» (`jaDentro`): há evidência com a mesma impressão, há conversa,
+  e o prazo é mantido (`decidirPrazo`: conversa já respondida ou encerrada nunca tem o prazo redefinido). Nada é
+  processado.
+- Na **simulação manual**, que não lê o banco, os dois aparecem como «a reenviar». Se o reenvio fosse executado, o
+  endpoint responderia `IDEMPOTENTE` (passos `NADA`). A classificação usa a impressão e **não depende da situação**
+  da evidência, rejeitada ou não.
+- O único caminho em que voltariam a gerar registro é o Netlify devolver o conteúdo da submissão diferente do que foi
+  gravado: a impressão mudaria e a submissão viraria `NOVA_OBSERVACAO`, ou seja, uma evidência **nova e pendente**
+  ao lado da rejeitada. É por isso que a inclusão dos dois na lista é recomendada: custa nada e fecha esse caminho.
+  Os registros existentes **não são apagados** em nenhuma hipótese.
+
+Valor recomendado, sem espaços:
+
+```
+EIFF_FORM_EXCLUIDOS=6af72bc662ddce941fc27637,6af761a6cbe0316d6d3211b9,6af379040c7080bc34020601
+```
+
+O mínimo obrigatório é `EIFF_FORM_EXCLUIDOS=6af72bc662ddce941fc27637`.
+
+**Verificação antes de ligar** (simulação manual, nada é enviado):
+
+```
+npx vite-node scripts/formulario-reconciliar.mts -- --site <site_id do eiff-site> --marco 2026-11-10T01:21:02Z --excluidos 6af72bc662ddce941fc27637,6af761a6cbe0316d6d3211b9,6af379040c7080bc34020601
+```
+
+Aceite: a linha `retidas · id_excluido` mostra **exatamente** o número de ids da lista (3 com o valor recomendado,
+1 com o mínimo), e nenhum id de ensaio aparece entre os «a reenviar». A simulação imprime só a contagem das retidas
+por motivo; a lista nominal é a dos «a reenviar». Depois de ligada, a mesma conferência vale para o campo
+`motivosRetencao.id_excluido` da linha `RECONCILIACAO_AGENDADA` da primeira rodada.
+
+**Ensaios futuros.** Todo ensaio de formulário feito fora da produção entra nesta tabela **no mesmo dia**, antes de
+qualquer outra ação, e na variável antes da rodada seguinte. Nenhuma submissão de ensaio é apagada do Netlify Forms
+sem autorização própria.
+
+**Histórico preservado.** Os dois ensaios que entraram estão encerrados, mas continuam no histórico do CRM: as duas
+conversas aparecem em «Concluídos» e as duas evidências rejeitadas ficam no Lead Engine. Não se alteram dados antigos
+para mexer artificialmente em indicadores. O ensaio de 10/11 tem primeira resposta registrada no prazo (a prova do
+CRM-1d, §1.2) e o E10.9 aparece como encerrado sem resposta. Ao fechar, o Inbox também preenche a data de resolução
+(`resolved_at`, com `resolved_by = humano`), embora a situação seja «Fechada» e não «Resolvida».
+
+**Limitação conhecida.** O CRM não tem uma classificação de «ensaio» que retire um registro de todas as métricas
+históricas. A conversa tem uma coluna de etiquetas, mas não há ação na tela para preenchê-la. Qualquer métrica
+futura de leads do site ou de cumprimento do prazo precisa excluir os ensaios **pelos ids desta tabela**.
 
 ### 1.4 Conferência da primeira submissão real
 
@@ -127,7 +203,8 @@ ativo**. Publicar outro deploy não desliga a integração.
 | R5 | Encaminhamento do deploy atual nunca foi exercitado por tráfego real | — | médio | seção 1.4 | primeira submissão real |
 | R6 | App mostra alteração local como gravada quando a sincronização falha | baixa | médio | conferir «sincronizado» no topo | correção de interface (outra frente) |
 | R7 | Reconciliador manual pode imprimir o valor de um cabeçalho em um tipo de erro | baixa | alto: exposição de segredo | usar a cópia de diagnóstico local; não usar o script em sessão compartilhada | GO-3 etapa 1 |
-| R8 | Conversa do ensaio e candidato pendente poluem as listas | certa | baixo | identificados como ensaio | limpeza com autorização própria |
+| R8 | Conversa do ensaio e candidato pendente poluem as listas | certa | baixo | os dois ensaios que entraram foram encerrados (conversa fechada e candidato rejeitado, com motivo) em 13 e 16/11 | fechado; o histórico permanece (§1.3.1) |
+| R9 | Ensaio feito fora da produção é importado como lead na primeira rodada da reconciliação | certa sem a lista de exclusão | médio: lead falso no Comercial com prazo vencido | reconciliação desligada | `EIFF_FORM_EXCLUIDOS` com o E10.4, verificada por simulação (§1.3.1) |
 
 ---
 
@@ -433,6 +510,13 @@ Com o baseline de 12 submissões (11 anteriores ao marco e o ensaio), a simulaç
 resultados estão certos: a simulação não tem como saber que o ensaio já foi gravado. Se o reenvio manual for
 de fato executado, quem responde é o endpoint, com `IDEMPOTENTE` (provado em 10/11).
 
+**Baseline atualizado em 16/11/2026.** Depois dos ensaios E10.4 e E10.9 (§1.3.1) são **14 submissões conhecidas**:
+11 anteriores ao marco e 3 ensaios, mais as reais que tiverem chegado desde então. Com a lista de exclusão
+recomendada (os 3 ensaios), a simulação manual mostra lidas = 14 + reais; retidas = 11 `anterior_ao_marco` +
+3 `id_excluido`; a reenviar = só as reais. Com o mínimo obrigatório (só o E10.4), os ensaios E10.9 e 10/11 aparecem
+entre os «a reenviar» na simulação e como `jaDentro` na rodada agendada. Os números dos cenários H1, H2 e H9 abaixo
+foram escritos para o baseline de 12 e valem com essa correção.
+
 | # | Cenário | Como se prova | Aceite |
 |---|---|---|---|
 | H1 | 11 históricos retidos | simulação manual (sem gravar, sobre arquivo exportado ou com a credencial) e teste de unidade do plano | lidas = 12; **retidas = 11**, todas pelo motivo «anterior ao marco»; **a reenviar = 1** (o ensaio, que a simulação não tem como saber que já entrou). Nada é enviado |
@@ -445,6 +529,7 @@ de fato executado, quem responde é o endpoint, com `IDEMPOTENTE` (provado em 10
 | H8 | Integridade do banco | fotografia antes e depois de cada rodada de homologação | nenhuma alteração além da submissão recuperada; zero empresa, zero oportunidade |
 | H9 | Primeira rodada real | resumo da **rodada agendada** e fotografia do banco antes e depois, com a Direção acompanhando | desfecho `concluida`; lidas = total das submissões dos dois formulários (12 no baseline, mais as reais que tiverem chegado); retidas = 11; elegíveis = total − 11; **jaDentro = elegíveis**; processadas = 0; restam = 0; recuperadas = 0; falhas = 0; banco idêntico. Se alguma submissão real não tiver entrado pelo caminho principal, processadas e recuperadas deixam de ser zero: é recuperação legítima, a conferir pelos oito itens da seção 1.4 |
 | H10 | 15 dias de acompanhamento | leitura diária dos resumos | nenhuma falha não explicada; toda recuperação investigada; nenhum alerta falso recorrente |
+| H11 | **Ensaios excluídos (pré-requisito de ligar)** | simulação manual com `--excluidos` igual ao valor de `EIFF_FORM_EXCLUIDOS` (§1.3.1), antes de definir `FORMULARIO_RECONCILIACAO=ativa`; depois, a linha `RECONCILIACAO_AGENDADA` da primeira rodada | `retidas · id_excluido` = número de ids da lista; `6af72bc662ddce941fc27637` **não** aparece entre os «a reenviar»; na primeira rodada, `motivosRetencao.id_excluido` igual. **Sem este cenário aprovado o GO-3 não liga** |
 
 A conferência de cada rodada usa o que o banco tem gravado, nunca a tela.
 
