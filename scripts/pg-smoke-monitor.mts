@@ -40,6 +40,17 @@
  *   B9  classificador: conflito com a conversa ainda ausente é «parcial»; a gravação seguinte completa
  *   B10 classificador: falha real da conversa é «erro de persistência», mesmo com a evidência gravada
  *
+ * ── PARTE C · ensaio D4 completo, descartável (E10.22) ───────────────────────────────────────────
+ *
+ *   C1  uma submissão legítima não chega ao CRM (o evento «falhou»): nada no banco
+ *   C2  o reconciliador identifica a ausência e recupera
+ *   C3  exatamente uma evidência, uma mensagem e uma conversa, com o id ORIGINAL do Netlify
+ *   C4  a data original é preservada (abertura da conversa e prazo contados da submissão, pelo calendário comercial)
+ *   C5  o monitor gera RECUPERACAO, entregue UMA vez por webhook assinado ao receptor de referência
+ *   C6  rodadas posteriores não duplicam registros nem o alerta
+ *   C7  encerramento administrativo: conversa FECHADA com motivo e candidato REJECTED com motivo, pelo usuário
+ *       (Diretoria), e a rodada seguinte não reabre nada
+ *
  * A porta de evidência desta parte traduz a violação de unicidade (23505) em «http 409», como o PostgREST faz; o
  * classificador está ligado à rodada desde a E10.19 (`docs/formulario-site-go3-monitor.md` §8).
  *
@@ -56,7 +67,9 @@ import { validarCorpo } from '../src/core/radar/formularioServidor'
 import { avaliarRodadas, configParaIntervalo, problemasDeDadoPessoal, registroDaRodada } from '../src/core/radar/formularioMonitor'
 import { ENTIDADE, portaMonitorRest } from '../src/core/radar/formularioMonitorPorta'
 import { JANELA_REIVINDICACAO_MIN, observar, registrarRodada } from '../src/core/radar/formularioObservador'
-import { canalSimulado } from '../src/core/radar/formularioAlertaCanais'
+import { canalDoAmbiente, canalSimulado } from '../src/core/radar/formularioAlertaCanais'
+import { memoriaEmProcesso, receptorHttp, type AlertaRecebido } from '../src/core/radar/formularioAlertaReceptor'
+import { portaMonitorMemoria } from '../src/core/radar/formularioMonitorPorta'
 import { classificarAposFalha } from '../src/core/radar/formularioConcorrencia'
 import { planoDaReconciliacao } from '../src/core/radar/formularioReconciliacao'
 import { PROVIDER_FORMULARIO } from '../src/core/inbox/formularioSite'
@@ -577,6 +590,80 @@ async function parteB() {
   prova('B10', 'a falha real da conversa (503) é ERRO DE PERSISTÊNCIA, mesmo com a evidência no banco: só o 409 da evidência abre a verificação',
     cB10.desfecho === 'ERRO_PERSISTENCIA', JSON.stringify({ erro: String((gParcial as Error | undefined)?.message), classificacao: cB10 }))
 
+
+  /* ═════════════ PARTE C · ensaio D4 completo (descartável) ═════════════ */
+  const ENSAIO_D4 = brutaNetlify('nf-d4-ensaio', '2026-11-20T13:42:00.000Z', 'ENSAIO D4 (FICTÍCIO)')
+  // C1 · está no Netlify, o evento não entregou: nada no CRM
+  noNetlify = [...noNetlify, ENSAIO_D4]
+  const antes = await estado('nf-d4-ensaio')
+  prova('C1', 'D4.1 · a submissão legítima existe no Netlify e não chegou ao CRM', antes.evidencias === 0 && antes.mensagens === 0, JSON.stringify(antes))
+
+  // monitor: porta em memória, canal webhook assinado → receptor de referência (em processo)
+  const pmon = portaMonitorMemoria()
+  const envMon = { FORMULARIO_MONITOR: 'ativo', FORMULARIO_INTERVALO_MIN: '10' }
+  const SEGREDO_D4 = 'segredo-do-ensaio-d4-descartavel-com-32-chars-ou-mais'
+  const recebidos: AlertaRecebido[] = []
+  const receptor = receptorHttp({ segredo: SEGREDO_D4, memoria: memoriaEmProcesso(), destino: { nome: 'chat-simulado', async encaminhar(a) { recebidos.push(a) } } })
+  const fetchReceptor = (async (_url: string, init?: RequestInit) => receptor(new Request('https://receptor.d4.invalido/alertas', init))) as unknown as typeof fetch
+  const canalD4 = canalDoAmbiente({ FORMULARIO_ALERTA_CANAL: 'webhook', FORMULARIO_ALERTA_WEBHOOK_URL: 'https://receptor.d4.invalido/alertas', FORMULARIO_ALERTA_WEBHOOK_SEGREDO: SEGREDO_D4 }, fetchReceptor, () => {})
+  const semRedeMon = (async () => { throw new Error('rede') }) as unknown as typeof fetch
+  const ciclo = async () => {
+    relogio += 10 * 60_000
+    const r = await rodada()
+    await registrarRodada(envMon, r, { fetch: semRedeMon, porta: pmon })
+    pmon.definirAgora(new Date(relogio + 60_000).toISOString())
+    const o = await observar(envMon, { fetch: semRedeMon, agoraIso: pmon.agora, canal: canalD4, porta: pmon })
+    return { r, o }
+  }
+
+  // C2 · a rodada identifica e recupera
+  const c2 = await ciclo()
+  prova('C2', 'D4.2-3 · o reconciliador identifica a ausência e recupera a submissão', c2.r.recuperadas === 1 && c2.r.falhas === 0,
+    JSON.stringify({ elegiveis: c2.r.elegiveis, jaDentro: c2.r.jaDentro, recuperadas: c2.r.recuperadas, resultados: c2.r.resultados }))
+  // C3 · exatamente uma vez, com o id original
+  const e3 = await estado('nf-d4-ensaio')
+  const idOriginal = await uma(`select r.external_id as ev, m.external_message_id as msg from radar_source_record r, inbox_message m where r.external_id = 'nf-d4-ensaio' and m.external_message_id = 'nf-d4-ensaio'`)
+  prova('C3', 'D4.4 · exatamente uma evidência, uma mensagem e uma conversa, com o id ORIGINAL do Netlify nas duas gravações',
+    umaVez(e3) && idOriginal?.['ev'] === 'nf-d4-ensaio' && idOriginal?.['msg'] === 'nf-d4-ensaio', JSON.stringify(e3))
+  // C4 · data original
+  const t4 = await uma(`select t.opened_at, t.sla_first_response_due, m.occurred_at from inbox_thread t join inbox_message m on m.thread_id = t.id where m.external_message_id = 'nf-d4-ensaio'`)
+  // O prazo é o do calendário comercial a partir da submissão ORIGINAL (20/11 é feriado nacional: vai para 23/11 08:30 em
+  // São Paulo), nunca a partir do instante da recuperação.
+  prova('C4', 'D4.5 · a data original é preservada: mensagem e abertura na data da submissão, prazo contado dela pelo calendário comercial',
+    iso(t4?.['occurred_at']) === '2026-11-20T13:42:00.000Z' && iso(t4?.['opened_at']) === '2026-11-20T13:42:00.000Z'
+    && iso(t4?.['sla_first_response_due']) === prazoDoLead(submissaoDe(ENSAIO_D4)),
+    JSON.stringify({ mensagem: iso(t4?.['occurred_at']), abertura: iso(t4?.['opened_at']), prazo: iso(t4?.['sla_first_response_due']), recuperadaEm: new Date(relogio).toISOString() }))
+  // C5 · alerta
+  const recuperacoes = recebidos.filter((a) => a.tipo === 'RECUPERACAO')
+  prova('C5', 'D4.6 · o monitor gera RECUPERACAO, entregue uma vez ao receptor (assinatura conferida), sem dado pessoal',
+    c2.o.tipos.includes('RECUPERACAO') && recuperacoes.length === 1 && recebidos.every((a) => problemasDeDadoPessoal(a).length === 0),
+    JSON.stringify({ observador: c2.o.tipos, recebidosNoReceptor: recebidos.map((a) => `${a.tipo}:${a.severidade}`) }))
+  // C6 · rodadas posteriores
+  const c6a = await ciclo()
+  const c6b = await ciclo()
+  prova('C6', 'D4.7 · duas rodadas posteriores: nada regravado, nenhum alerta repetido',
+    umaVez(await estado('nf-d4-ensaio')) && c6a.r.recuperadas + c6b.r.recuperadas === 0 && c6a.r.falhas + c6b.r.falhas === 0
+    && recebidos.filter((a) => a.tipo === 'RECUPERACAO').length === 1,
+    JSON.stringify({ c6a: { jaDentro: c6a.r.jaDentro, novos: c6a.o.novos }, c6b: { jaDentro: c6b.r.jaDentro, novos: c6b.o.novos } }))
+  // C7 · encerramento administrativo, como a tela faz: o usuário (Diretoria) fecha com motivo e rejeita o candidato
+  const ATENDENTE_B = consts['ATENDENTE']!
+  const MOTIVO = 'ENSAIO D4 descartável: homologação da recuperação; não é cliente.'
+  await db.exec(`set test.uid = '${ATENDENTE_B}'`)
+  let encerrou = true
+  try {
+    const th = await uma(`select t.id from inbox_thread t join inbox_message m on m.thread_id = t.id where m.external_message_id = 'nf-d4-ensaio'`)
+    await db.query(`update inbox_thread set status = 'FECHADA', closed_at = now(), resolved_at = now(), resolved_by = 'humano' where id = $1`, [th!['id']])
+    await db.query(`insert into inbox_thread_event (organization_id, thread_id, event_type, before_value, after_value, detail, actor_id, actor_kind, actor_name, occurred_at)
+                    select organization_id, id, 'CLOSED', status, 'FECHADA', $2, $3::uuid, 'usuario', 'Comercial', now() from inbox_thread where id = $1`, [th!['id'], MOTIVO, ATENDENTE_B])
+    await db.query(`update radar_source_record set intake_status = 'REJECTED', decision_reason = $1, decided_at = now(), decided_by = $2::uuid where external_id = 'nf-d4-ensaio'`, [MOTIVO, ATENDENTE_B])
+  } catch (e) { encerrou = false; console.error('C7', (e as Error).message) } finally { await db.exec(`set test.uid = ''`) }
+  const fechado = await uma(`select t.status, r.intake_status, r.decision_reason from inbox_thread t join inbox_message m on m.thread_id = t.id join radar_source_record r on r.external_id = m.external_message_id where m.external_message_id = 'nf-d4-ensaio'`)
+  const c7 = await ciclo()
+  const aposC7 = await uma(`select t.status from inbox_thread t join inbox_message m on m.thread_id = t.id where m.external_message_id = 'nf-d4-ensaio'`)
+  prova('C7', 'D4.8 · encerramento administrativo (conversa FECHADA e candidato REJECTED, com motivo) e a rodada seguinte não reabre nem regrava',
+    encerrou && fechado?.['status'] === 'FECHADA' && fechado?.['intake_status'] === 'REJECTED' && fechado?.['decision_reason'] === MOTIVO
+    && c7.r.recuperadas === 0 && c7.r.falhas === 0 && umaVez(await estado('nf-d4-ensaio')) && aposC7?.['status'] === 'FECHADA',
+    JSON.stringify({ status: fechado?.['status'], candidato: fechado?.['intake_status'], rodadaSeguinte: { jaDentro: c7.r.jaDentro, recuperadas: c7.r.recuperadas }, statusDepois: aposC7?.['status'] }))
   await db.close()
 }
 

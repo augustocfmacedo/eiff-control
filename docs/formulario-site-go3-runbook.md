@@ -4,7 +4,7 @@ Estado em 16/11/2026: código pronto na branch `feature/formulario-monitor-go3` 
 Reconciliação e monitor **desligados**. Nada abaixo foi executado. Cada fase pede autorização própria da Direção,
 e nenhuma acontece durante o congelamento do eiff-control.
 
-Referências: arquitetura e provas em `formulario-site-go3-monitor.md`; exclusão dos ensaios em
+Referências: checklist executivo em `formulario-site-go3-checklist.md`; arquitetura e provas em `formulario-site-go3-monitor.md`; exclusão dos ensaios em
 `formulario-site-go2-go3.md` §1.3.1; histórico da ativação do formulário em `formulario-site-ativacao.md`.
 
 ## 1. Arquitetura final
@@ -69,7 +69,7 @@ O token pessoal do Netlify **não tem escopo**: age com o papel do usuário que 
    - **Internal Builder**: não publica em produção nem altera variáveis.
    - **Developer**: dispara builds e edita configuração — evitar; só com aceitação expressa.
 3. Token desse usuário com **expiração** (90 dias recomendados) e data de rotação anotada.
-4. Teste de alcance, antes de criar a variável, só leitura: `GET /api/v1/sites/{eiff-site}/forms` e
+4. Teste de alcance, antes de criar a variável, só leitura (`scripts/netlify-alcance-token.mts`, token só no ambiente da sessão): `GET /api/v1/sites/{eiff-site}/forms` e
    `GET /api/v1/forms/{id}/submissions?per_page=1` respondem 200; `GET /api/v1/sites` lista **só** o eiff-site.
    O token nunca é colado em conversa, log ou repositório.
 5. Token pessoal administrativo (do Augusto): **não usar**.

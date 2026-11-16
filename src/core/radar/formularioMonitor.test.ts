@@ -25,7 +25,7 @@ import {
 import { menorId, portaMonitorMemoria, portaMonitorRest, rodadaDaLinha } from './formularioMonitorPorta'
 import { JANELA_REIVINDICACAO_MIN, canalSomenteRegistro, intervaloDe, observar, registrarRodada } from './formularioObservador'
 import { canalComRegistro, canalComposto, canalDoAmbiente, canalSimulado, canalWebhook, mensagemDoAlerta } from './formularioAlertaCanais'
-import { VERSAO_CONTRATO, estadoOperacional } from './formularioMonitorCentral'
+import { VERSAO_CONTRATO, estadoOperacional, estadoOperacionalDasLinhas, saudeExibivel } from './formularioMonitorCentral'
 import type { RegistroFonte } from './types'
 
 const H = 3_600_000
@@ -634,5 +634,28 @@ describe('frequência de 10 minutos (D2)', () => {
     expect(observadorFn).toContain("schedule: '*/10 * * * *'")
     // o observador não chama a rodada: só lê o que ela registrou
     expect(observadorFn).not.toMatch(/rodadaDeReconciliacao/)
+  })
+})
+
+describe('contrato da Central: leitura das linhas da auditoria e saúde exibível (E10.22)', () => {
+  it('linhas cruas → estado → saúde, sem dado pessoal; linhas estranhas são ignoradas', () => {
+    const linhas = [
+      { action: 'rodada', after_data: rodada(0, { recuperadas: 1, processadas: 1 }) },
+      { action: 'rodada', after_data: rodada(1) },
+      { action: 'alerta_entregue', entity_id: 'RECUPERACAO|-|aviso|x', occurred_at: iso(T0 + 0.2 * H) },
+      { action: 'alerta', entity_id: 'reivindicacao-nao-conta', occurred_at: iso(T0 + 0.3 * H) },
+      { action: 'rodada', after_data: { desfecho: 'inventado' } },
+      { action: 'salvar_lancamento', entity_id: 'L-1' },
+    ]
+    const e = estadoOperacionalDasLinhas(linhas, iso(T0 + 1.2 * H), C60)
+    expect(e).toMatchObject({ situacao: 'ok', recuperadas: 1, ultimoAlertaEm: iso(T0 + 0.2 * H), examinadas: 14 })
+    const s = saudeExibivel(e)
+    expect(s).toMatchObject({ situacao: 'ok', tom: 'ok' })
+    expect(problemasDeDadoPessoal(s)).toEqual([])
+  })
+  it('cada situação tem rótulo e tom próprios', () => {
+    const tons = (['sem_registro', 'desligada', 'ok', 'com_falha', 'ausente'] as const).map((situacao) => saudeExibivel({ ...estadoOperacional([], [], iso(T0)), situacao }))
+    expect(new Set(tons.map((t) => t.rotulo)).size).toBe(5)
+    expect(tons.find((t) => t.situacao === 'ausente')!.tom).toBe('critico')
   })
 })
