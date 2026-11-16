@@ -413,8 +413,8 @@ function TecnicoView({ motivo, dossieNegado }: { motivo: string; dossieNegado: b
         <h2>Solicitações de projeto encaminhadas à Engenharia</h2>
         <p className="small muted">O Comercial encaminha cada pedido como uma solicitação formal, vinculada à oportunidade; a Engenharia recebe só os dados técnicos, os documentos e as pendências. Nada do Inbox Comercial é aberto para isso.</p>
         <div className="actions" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>
-          <Link className="btn sm primary" to="/comercial/projetos?filtro=engenharia">Abrir solicitações com a Engenharia</Link>
-          <Link className="btn sm" to="/comercial/projetos?filtro=minhas">Atribuídas a mim</Link>
+          <Link className="btn sm primary" to="/comercial/projetos?filtro=triagem">Fila de triagem</Link>
+          <Link className="btn sm" to="/comercial/projetos?filtro=atribuidas">Atribuídas a mim</Link>
         </div>
       </div>
     </>

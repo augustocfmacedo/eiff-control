@@ -74,6 +74,15 @@ $$;
 create or replace function pp_engenharia_role() returns boolean language sql stable security definer set search_path = public, pg_temp as $$
   select has_role('Engenharia')
 $$;
+-- fila técnica (E11.2B): a Engenharia vê a fila de triagem (SOLICITADO) e o que está atribuído a ela; atribuída a outro
+-- engenheiro sai da vista. Lê project_request de OUTRA política (a de eventos) e da visão técnica — nunca da política de
+-- SELECT da própria tabela (regra do projeto: INSERT ... RETURNING não enxerga a linha nova).
+create or replace function pp_engenharia_ve(p_status text, p_owner uuid) returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select pp_engenharia_role() and (p_status = 'SOLICITADO' or p_owner = auth.uid())
+$$;
+create or replace function pp_engenharia_ve_pedido(p_id uuid) returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from project_request r where r.id = p_id and pp_engenharia_ve(r.status, r.technical_owner_id))
+$$;
 
 alter table project_request enable row level security;
 alter table project_request_event enable row level security;
@@ -81,7 +90,7 @@ drop policy if exists project_request_select on project_request;
 -- colunas da própria linha + helpers que leem só profile (regra do projeto para SELECT)
 create policy project_request_select on project_request for select using (organization_id = current_org() and pp_gestao_role());
 drop policy if exists project_request_event_select on project_request_event;
-create policy project_request_event_select on project_request_event for select using (organization_id = current_org() and (pp_gestao_role() or pp_engenharia_role()));
+create policy project_request_event_select on project_request_event for select using (organization_id = current_org() and (pp_gestao_role() or pp_engenharia_ve_pedido(request_id)));
 revoke all on project_request, project_request_event from anon;
 revoke insert, update, delete, truncate on project_request, project_request_event from authenticated;
 grant select on project_request, project_request_event to authenticated;
@@ -156,7 +165,7 @@ begin
   if coalesce(p_intencao, '') = '' then raise exception 'intenção ausente' using errcode = '22023'; end if;
   gestao := pp_gestao_role(); eng := pp_engenharia_role();
   select * into r from project_request where id = p_id and organization_id = eu.organization_id for update;
-  if r.id is null or not (gestao or eng) then raise exception 'solicitação não visível' using errcode = '42501'; end if;
+  if r.id is null or not (gestao or pp_engenharia_ve(r.status, r.technical_owner_id)) then raise exception 'solicitação não visível' using errcode = '42501'; end if;
   select request_id into existente from project_request_event where organization_id = eu.organization_id and intent = p_intencao;
   if existente = r.id then return r; end if;
   if r.status in ('ENCERRADO','CANCELADO') then raise exception 'estado final não admite alteração' using errcode = '23514'; end if;
@@ -182,7 +191,8 @@ begin
   if lado = 'engenharia' and not (gestao or eng) then raise exception 'ação da Engenharia' using errcode = '42501'; end if;
   if p_versao is distinct from r.version then raise exception 'versão desatualizada' using errcode = '40001'; end if;
   if p_acao in ('pedir_dados','reabrir','cancelar') and coalesce(length(motivo), 0) < 5 then raise exception 'motivo obrigatório' using errcode = '23514'; end if;
-  if p_acao in ('registrar_triagem','pedir_dados','assumir_desenvolvimento','registrar_andamento','entregar') and not gestao and r.technical_owner_id is not null and r.technical_owner_id <> eu.id then
+  -- fora da gestão comercial, a Engenharia só age em solicitação sem responsável ou atribuída a ela
+  if not gestao and r.technical_owner_id is not null and r.technical_owner_id <> eu.id then
     raise exception 'só o responsável técnico' using errcode = '42501'; end if;
 
   if p_acao in ('iniciar_triagem','atribuir') then
@@ -251,10 +261,10 @@ create or replace function pp_visao_tecnica() returns table (
   select r.id, r.code, r.type_version, coalesce(c.trade_name, c.legal_name), r.lead_origin, r.request_type, r.priority, r.requested_due, pc.name,
     r.technical_data, r.documents, r.technical_team, r.technical_owner_id, r.delivery_due, r.status, r.pending_items, r.delivery, r.reason, r.version, r.updated_at
   from project_request r join radar_company c on c.id = r.company_id join profile pc on pc.id = r.commercial_owner_id
-  where r.organization_id = current_org() and (pp_gestao_role() or pp_engenharia_role())
+  where r.organization_id = current_org() and (pp_gestao_role() or pp_engenharia_ve(r.status, r.technical_owner_id))
   order by r.updated_at desc
 $$;
 
-revoke all on function pp_criar(jsonb, text), pp_transicionar(uuid, text, jsonb, integer, text), pp_visao_tecnica(), pp_gestao_role(), pp_engenharia_role(), pp_dados_declarados(jsonb) from public, anon;
-grant execute on function pp_criar(jsonb, text), pp_transicionar(uuid, text, jsonb, integer, text), pp_visao_tecnica(), pp_gestao_role(), pp_engenharia_role() to authenticated;
+revoke all on function pp_criar(jsonb, text), pp_transicionar(uuid, text, jsonb, integer, text), pp_visao_tecnica(), pp_gestao_role(), pp_engenharia_role(), pp_dados_declarados(jsonb), pp_engenharia_ve(text, uuid), pp_engenharia_ve_pedido(uuid) from public, anon;
+grant execute on function pp_criar(jsonb, text), pp_transicionar(uuid, text, jsonb, integer, text), pp_visao_tecnica(), pp_gestao_role(), pp_engenharia_role(), pp_engenharia_ve(text, uuid), pp_engenharia_ve_pedido(uuid) to authenticated;
 revoke all on function project_request_coerencia(), project_request_event_imutavel() from public, anon, authenticated;

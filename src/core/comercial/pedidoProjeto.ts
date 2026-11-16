@@ -19,6 +19,7 @@ import type { InboxDataset } from '../inbox/tipos'
 import { ESTAGIOS, estagioAtivo, type Estagio, type RadarDataset } from '../radar/types'
 import type { Usuario } from '../types'
 import { SUBMISSOES_DE_ENSAIO } from './central'
+import { diasEntre } from './relogio'
 
 /* ------------------------------------------------------------------ catálogos */
 
@@ -171,7 +172,30 @@ export function ladosDe(u: Usuario): LadoPedido[] {
   if (pode(u, 'comercial_projetos')) return ['engenharia']
   return []
 }
-export const pedidoVisivel = (u: Usuario, p: Pick<PedidoProjeto, 'organizacaoId'>, organizacaoId: string): boolean => p.organizacaoId === organizacaoId && ladosDe(u).length > 0
+/**
+ * Quem vê a solicitação (E11.2B). Gestão comercial: todas da organização. Engenharia: a FILA DE TRIAGEM (Solicitado),
+ * aberta à equipe técnica, e as solicitações ATRIBUÍDAS a ela — atribuída a outro engenheiro sai da vista. Demais
+ * perfis: nada. É regra local; no banco a mesma regra está em pp_visao_tecnica / pp_transicionar (proposta).
+ */
+export function pedidoVisivel(u: Usuario, p: Pick<PedidoProjeto, 'organizacaoId' | 'situacao' | 'responsavelTecnicoId'>, organizacaoId: string): boolean {
+  if (p.organizacaoId !== organizacaoId) return false
+  const lados = ladosDe(u)
+  if (lados.includes('comercial')) return true
+  if (!lados.includes('engenharia')) return false
+  return p.situacao === 'SOLICITADO' || p.responsavelTecnicoId === u.id
+}
+
+export const FILAS_TECNICAS = ['triagem', 'atribuidas', 'devolvidas', 'encerradas'] as const
+export type FilaTecnica = (typeof FILAS_TECNICAS)[number]
+export const NOME_FILA_TECNICA: Record<FilaTecnica, string> = { triagem: 'Aguardando triagem', atribuidas: 'Atribuídas a mim', devolvidas: 'Devolvidas ao Comercial', encerradas: 'Encerradas' }
+/** Em que fila técnica a solicitação está para este engenheiro (undefined = não é dele nem da fila de triagem). */
+export function filaTecnica(p: Pick<PedidoProjeto, 'situacao' | 'responsavelTecnicoId'>, u: Pick<Usuario, 'id'>): FilaTecnica | undefined {
+  if (p.situacao === 'SOLICITADO') return 'triagem'
+  if (p.responsavelTecnicoId !== u.id) return undefined
+  if (SITUACOES_FINAIS.includes(p.situacao)) return 'encerradas'
+  if (p.situacao === 'DADOS_PENDENTES' || p.situacao === 'ENTREGUE') return 'devolvidas'
+  return 'atribuidas'
+}
 export const podeCriar = (u: Usuario) => ladosDe(u).includes('comercial')
 
 /** Ações disponíveis agora para este usuário (o que a tela mostra habilitado). */
@@ -188,8 +212,8 @@ export function motivoBloqueio(u: Usuario, p: Pick<PedidoProjeto, 'situacao' | '
   const recusa = acao === 'cancelar' && !lados.includes('comercial') && lados.includes('engenharia') && (p.situacao === 'SOLICITADO' || p.situacao === 'TRIAGEM_TECNICA')
   const documentoPelaEngenharia = acao === 'atualizar_documento' && lados.includes('engenharia')
   if (!lados.includes(regra.lado) && !recusa && !documentoPelaEngenharia) return `Ação do ${regra.lado === 'comercial' ? 'Comercial' : 'lado da Engenharia'}.`
-  const soResponsavel = ['registrar_triagem', 'pedir_dados', 'assumir_desenvolvimento', 'registrar_andamento', 'entregar'].includes(acao)
-  if (soResponsavel && !lados.includes('comercial') && p.responsavelTecnicoId && p.responsavelTecnicoId !== u.id) return 'Só o responsável técnico age nesta etapa.'
+  // fora da gestão comercial, a Engenharia só age em solicitação SEM responsável ou atribuída a ela
+  if (!lados.includes('comercial') && p.responsavelTecnicoId && p.responsavelTecnicoId !== u.id) return 'Só o responsável técnico age nesta solicitação.'
   return undefined
 }
 
@@ -429,14 +453,14 @@ export function aplicarAcao(p: PedidoProjeto, acao: (typeof ACOES_PEDIDO)[number
 
 export type SituacaoPrazo = 'concluido' | 'sem_prazo' | 'no_prazo' | 'vence_logo' | 'atrasado'
 export const NOME_SITUACAO_PRAZO: Record<SituacaoPrazo, string> = { concluido: 'Concluído', sem_prazo: 'Sem prazo', no_prazo: 'No prazo', vence_logo: 'Vence em até 2 dias', atrasado: 'Atrasado' }
-const dias = (de: string, ate: string) => Math.round((Date.parse(`${ate.slice(0, 10)}T12:00:00Z`) - Date.parse(`${de.slice(0, 10)}T12:00:00Z`)) / 86_400_000)
 /** Prazo que vale: o de entrega (Engenharia) ou, antes dele, o solicitado (Comercial). */
 export const prazoVigente = (p: Pick<PedidoProjeto, 'prazoEntrega' | 'prazoSolicitado'>) => p.prazoEntrega ?? p.prazoSolicitado
+/** `hoje` é a data OPERACIONAL (relogio.ts: hojeOperacional), nunca a data-base financeira. */
 export function situacaoPrazo(p: Pick<PedidoProjeto, 'situacao' | 'prazoEntrega' | 'prazoSolicitado'>, hoje: string): SituacaoPrazo {
   if (p.situacao === 'ENTREGUE' || SITUACOES_FINAIS.includes(p.situacao)) return 'concluido'
   const prazo = prazoVigente(p)
   if (!prazo) return 'sem_prazo'
-  const d = dias(hoje, prazo)
+  const d = diasEntre(hoje, prazo) // datas civis: vence no próprio dia, atrasa no seguinte
   return d < 0 ? 'atrasado' : d <= 2 ? 'vence_logo' : 'no_prazo'
 }
 

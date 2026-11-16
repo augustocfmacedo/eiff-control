@@ -3,16 +3,17 @@
 // Não há persistência homologada: no modo remoto a tela não grava nada (ações desabilitadas com o motivo) e este
 // módulo recusa escrever. Recarregar a página apaga tudo — é o comportamento esperado de uma demonstração, e a tela
 // diz isso. A troca para o Supabase acontece só com a migration aprovada (docs/propostas/pedido-projeto.proposta.sql).
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { demonstracaoCentral } from '../core/comercial/demonstracao'
 import { ErroPedido, type FontesVinculo } from '../core/comercial/pedidoProjeto'
 import { repositorioEmMemoria, type RepositorioPedidos } from '../core/comercial/pedidosRepositorio'
+import { hojeOperacional, relogioDoSistema, type Relogio } from '../core/comercial/relogio'
 import type { Dataset } from '../core/types'
 
 /** Organização da demonstração local (no modo local não existe organização do banco). */
 export const ORGANIZACAO_LOCAL = 'org-local-demonstracao'
 
-const memoria = repositorioEmMemoria()
+const memoria = repositorioEmMemoria({ agora: () => relogioDoSistema.agora() })
 
 /** O repositório só existe fora do modo remoto; no remoto, ler devolve vazio e escrever é recusado. */
 export function repositorioPedidos(modo: string): RepositorioPedidos {
@@ -31,6 +32,19 @@ export const PERSISTENCIA_PENDENTE = 'As solicitações de projeto ainda não t�
 /** Re-renderiza a tela quando a memória muda. */
 export function usePedidosVersao(): number {
   return useSyncExternalStore(memoria.assinar, memoria.versaoDados, memoria.versaoDados)
+}
+
+/**
+ * Data OPERACIONAL de hoje (São Paulo), revista a cada minuto para a tela virar o dia sozinha. Nunca a data-base
+ * financeira (`ds.params.dataBase`), que é parâmetro do caixa/DRE e pode estar parada no passado.
+ */
+export function useHojeOperacional(relogio: Relogio = relogioDoSistema): string {
+  const [hoje, setHoje] = useState(() => hojeOperacional(relogio))
+  useEffect(() => {
+    const t = window.setInterval(() => setHoje(hojeOperacional(relogio)), 60_000)
+    return () => window.clearInterval(t)
+  }, [relogio])
+  return hoje
 }
 
 /** Limpa a memória (botão da demonstração e testes). */

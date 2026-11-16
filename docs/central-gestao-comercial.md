@@ -600,3 +600,66 @@ vínculos; a Contabilidade recebe «Acesso restrito» nas três rotas, por URL.
 - **D2**: a Engenharia ainda tem `radar` e lê o Radar pelas outras telas; as solicitações não dependem disso.
 - O orçamento técnico vinculado no encerramento é escolhido pelo id na lista de orçamentos, porque ainda não existe
   vínculo oficial orçamento → empresa/oportunidade.
+
+## 13. E11.2B — Homologação funcional das solicitações de projeto (16/11/2026)
+
+Trabalho local sobre o PR #91 (`8741005`), sem commit. PRs #89 e #90 intocados.
+
+### 13.1 P0 — Relógio operacional separado da data-base financeira
+
+Defeito: a tela de solicitações usava `ds.params.dataBase` (data-base FINANCEIRA, parada em 01/09/2026 no seed) como
+«hoje», enquanto as solicitações eram criadas com o relógio real (novembro): prazos de setembro apareciam «No prazo».
+
+Correção (`src/core/comercial/relogio.ts`): relógio injetável (`Relogio`, `relogioDoSistema`, `relogioFixo`); «hoje» é
+a data CIVIL de America/Sao_Paulo derivada do instante (`dataOperacional`, `hojeOperacional`); prazos são datas sem
+horário comparadas como datas civis (`diasEntre`): vencem no próprio dia e atrasam no seguinte. A tela usa
+`useHojeOperacional()` (revisto a cada minuto, vira o dia sozinho) e diz «Hoje dd/mm/aaaa (data de operação, não a
+data-base financeira)». A data-base financeira continua só no topo e nos cálculos financeiros, intocados. O exemplo nasce
+com prazos relativos ao dia de operação; a única solicitação atrasada é a de propósito (prazo de ontem).
+
+Prova (`pedidoProjeto.filas.test.ts`): virada às 03:00Z (23:59 × 00:00 em São Paulo); réveillon; datas civis e meses;
+«vence logo» no próprio dia e «atrasado» no seguinte pela virada de São Paulo; o caso que motivou a correção (prazo
+10/09: «no prazo» com a data-base de 01/09, «atrasado» em 16/11); datas do exemplo coerentes.
+
+### 13.2 P1 — Fila técnica da Engenharia (decisão)
+
+| Fila | O que entra | Quem da Engenharia vê | Quem age |
+|---|---|---|---|
+| Aguardando triagem | Solicitado | toda a equipe técnica | qualquer engenheiro se não houver responsável; se pré-atribuída, só o responsável |
+| Atribuídas a mim | Triagem técnica e Em desenvolvimento com o engenheiro como responsável | só o responsável | o responsável |
+| Devolvidas ao Comercial | Dados pendentes e Entregue do engenheiro | só o responsável (acompanha) | o Comercial |
+| Encerradas | Encerrado e Cancelado do engenheiro | só o responsável | ninguém |
+
+Uma solicitação atribuída a outro engenheiro sai da vista (lista, detalhe e histórico). A Direção vê tudo, age pelos dois
+lados e reatribui. Um engenheiro pode atribuir a si uma solicitação sem responsável. Regras em `pedidoVisivel`,
+`filaTecnica` e `motivoBloqueio`; espelhadas na proposta SQL (`pp_engenharia_ve`, `pp_engenharia_ve_pedido`, visão
+técnica, política de eventos e `pp_transicionar`). **É regra local: não substitui RLS** até a migration ser aplicada.
+
+Prova: testes por perfil, atribuição e organização (`pedidoProjeto.filas.test.ts`) e a prova O do smoke em PostgreSQL
+descartável (pré-atribuída a ENG2: ENG vê e não age; depois da triagem só ENG2 vê, inclusive o histórico).
+
+### 13.3 P2 — Homologação da interface
+
+| Item | 1440 px | 800 px | 375 px |
+|---|---|---|---|
+| Lista e filtros | tabela; prazos coerentes | cartões (a tabela precisava de rolagem lateral: 897 px de conteúdo em 724 px) | cartões |
+| Formulário | ok | ok; erro orientador | sem estouro |
+| Detalhe, triagem, devolução, documentos, entrega, histórico | ok | ok | sem estouro; entrega feita na tela |
+| Teclado | setas e Enter na tabela; Enter abre a ação; foco preso na janela; Esc devolve o foco | — | — |
+
+Corrigido na homologação: tabela substituída por cartões até 1000 px; rótulos curtos nos indicadores da Engenharia
+(«Devolvidas ao Comercial» encostava no vizinho a 800 px); filtro vindo da URL não era aplicado com a lista já aberta
+(a rota agora remonta quando a consulta muda); mensagem do formulário vazio («Vínculo inválido…» virou «Escolha a
+empresa e a oportunidade…», com os dois campos marcados); texto da faixa da Engenharia atualizado para a fila técnica.
+
+Limite das capturas: o painel do navegador estava oculto, o que congela as animações (comportamento do navegador). As
+capturas finais foram feitas com movimento reduzido simulado na página (`matchMedia`), que é o caminho que o app usa para
+pular as animações e mostrar o estado final; a captura com as animações concluídas exige o painel visível. A 375 px a
+ferramenta de captura devolveu imagens duplicadas; ali a evidência é a medição no DOM (largura do documento = 375 px).
+
+### 13.4 Pendências de persistência e RLS
+
+- Adaptador `supabase` do repositório (RPCs) e armazenamento dos arquivos: não feitos (fora do escopo).
+- A fila técnica, a visibilidade por atribuição e a separação Engenharia × comercial só valem no banco depois de aplicar
+  S3 → comercial-acesso → pedido-projeto (§12.7). Até lá, a proteção é da tela e do repositório em memória.
+- Equipe técnica é um texto (sem cadastro de membros por equipe): «fila da equipe» hoje é a Engenharia inteira.

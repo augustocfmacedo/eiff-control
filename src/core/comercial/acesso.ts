@@ -35,7 +35,7 @@ export function escopoCentral(u: Usuario): EscopoCentral {
     return { nivel: 'integral', areas: TODAS, dossie: true, valores: true, contatos: true, demonstracao: true, motivo: `O perfil ${u.papel} tem a permissão comercial_gestao.` }
   }
   if (pode(u, 'comercial_projetos')) {
-    return { nivel: 'tecnico', areas: ['projetos'], dossie: false, valores: false, contatos: false, demonstracao: false, motivo: `O perfil ${u.papel} vê só os pedidos de projeto, sem valores, negociação nem contatos do cliente. Conversas do site entram aqui quando o EIFF Inbox já as mostra a você (setor ou atribuição).` }
+    return { nivel: 'tecnico', areas: ['projetos'], dossie: false, valores: false, contatos: false, demonstracao: false, motivo: `O perfil ${u.papel} vê só os pedidos de projeto, sem valores, negociação nem contatos do cliente. Você vê a fila de triagem e as solicitações atribuídas a você.` }
   }
   return { nivel: 'sem_acesso', areas: [], dossie: false, valores: false, contatos: false, demonstracao: false, motivo: `O perfil ${u.papel} não tem acesso à Central de Gestão Comercial.` }
 }

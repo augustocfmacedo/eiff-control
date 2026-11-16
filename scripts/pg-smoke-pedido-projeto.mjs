@@ -225,6 +225,17 @@ try {
   const outraAge = await agir(ADM2, outroTipo.valor.id, 'cancelar', { motivo: 'tentativa de outra organização' }, 1);
   prova('N outra organização não vê nem altera nada', outra === '0/0/0' && !!outraAge.erro, `${outra} · ${outraAge.erro}`);
 
+  // O. fila técnica (E11.2B): pré-atribuída a ENG2 na triagem — os dois veem, só ENG2 age; depois da triagem, só ENG2 vê
+  const fila = (await criar(P.Comercial, { ...pedido, tipo: 'Anteprojeto estrutural' })).valor;
+  const atr = await agir(P.Diretoria, fila.id, 'atribuir', { responsavelTecnicoId: P.Engenharia2 }, fila.version);
+  const veEng = (await como(P.Engenharia, async () => um(`select count(*)::int from pp_visao_tecnica() where id = $1`, [fila.id]))).valor;
+  const engTenta = await agir(P.Engenharia, fila.id, 'iniciar_triagem', {}, await versao(fila.id));
+  const eng2Tri = await agir(P.Engenharia2, fila.id, 'iniciar_triagem', {}, await versao(fila.id));
+  const veEngDepois = (await como(P.Engenharia, async () => `${await um(`select count(*)::int from pp_visao_tecnica() where id = $1`, [fila.id])}/${await um(`select count(*)::int from project_request_event where request_id = $1`, [fila.id])}`)).valor;
+  const veEng2 = (await como(P.Engenharia2, async () => `${await um(`select count(*)::int from pp_visao_tecnica() where id = $1`, [fila.id])}/${await um(`select count(*)::int from project_request_event where request_id = $1`, [fila.id])}`)).valor;
+  prova('O fila técnica: na triagem a equipe vê e só o responsável age; depois, só o responsável vê (visão e histórico)',
+    !atr.erro && veEng === 1 && !!engTenta.erro && !eng2Tri.erro && veEngDepois === '0/0' && veEng2 === '1/3', `ENG triagem=${veEng} tenta=${engTenta.erro} · depois ENG=${veEngDepois} ENG2=${veEng2}`);
+
   res.diagnostico.engenhariaLeRadar_D2 = { oportunidades: (await como(P.Engenharia, async () => um(`select count(*)::int from radar_opportunity`))).valor };
 } catch (e) {
   prova('execução', false, so(e));

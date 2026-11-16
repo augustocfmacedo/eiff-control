@@ -8,7 +8,7 @@ import React, { useMemo, useState } from 'react';
 import './central.css';
 import { escopoCentral } from '../../core/comercial/acesso';
 import {
-  ACOES_PEDIDO, CAMPOS_TECNICOS, COM_QUEM, EQUIPES_TECNICAS, ErroPedido, NOME_DOCUMENTO, NOME_ORIGEM_LEAD, NOME_RESULTADO, NOME_SITUACAO_DOCUMENTO, NOME_SITUACAO_PEDIDO,
+  ACOES_PEDIDO, CAMPOS_TECNICOS, COM_QUEM, FILAS_TECNICAS, NOME_FILA_TECNICA, filaTecnica, type FilaTecnica, EQUIPES_TECNICAS, ErroPedido, NOME_DOCUMENTO, NOME_ORIGEM_LEAD, NOME_RESULTADO, NOME_SITUACAO_DOCUMENTO, NOME_SITUACAO_PEDIDO,
   NOME_SITUACAO_PRAZO, ORIGENS_LEAD, PRIORIDADES, REGRAS_ACAO, SITUACOES_DOCUMENTO, SITUACOES_FINAIS, TIPOS_DOCUMENTO, TIPOS_SOLICITACAO, divergenciaDeEstagio,
   motivoBloqueio, prazoVigente, resumoPedidos, situacaoPrazo, visaoTecnica, type ChaveTecnica, type DadosAcao, type EntradaPedido, type EventoPedido, type OrigemLead,
   type PedidoProjeto, type PedidoTecnico, type Prioridade, type ResultadoEncerramento, type SituacaoDocumento, type SituacaoPedido, type SituacaoPrazo, type TipoDocumento, type TipoSolicitacao,
@@ -17,7 +17,7 @@ import { MARCA_EXEMPLO_PEDIDOS, semearExemploPedidos } from '../../core/comercia
 import { novaIntencao } from '../../core/comercial/pedidosRepositorio';
 import { NOME_ESTAGIO } from '../../core/radar/padroes';
 import type { Usuario } from '../../core/types';
-import { ORGANIZACAO_LOCAL, PERSISTENCIA_PENDENTE, fontesDosPedidos, limparDemonstracaoPedidos, repositorioPedidos, usePedidosVersao } from '../../data/pedidosProjeto';
+import { ORGANIZACAO_LOCAL, PERSISTENCIA_PENDENTE, fontesDosPedidos, limparDemonstracaoPedidos, repositorioPedidos, useHojeOperacional, usePedidosVersao } from '../../data/pedidosProjeto';
 import { useStore } from '../../data/store';
 import { Badge, Empty, Field, KpiStrip, Link, Modal, PageHead, Select, data, dataHora, useToast, type Tone } from '../../ui/components';
 import { Icon } from '../../ui/icons';
@@ -29,9 +29,12 @@ type Linha = PedidoTecnico & { oportunidadeTitulo?: string };
 
 const TOM_SITUACAO: Record<SituacaoPedido, Tone> = { SOLICITADO: 'info', TRIAGEM_TECNICA: 'info', DADOS_PENDENTES: 'warn', EM_DESENVOLVIMENTO: 'info', ENTREGUE: 'ok', ENCERRADO: 'muted', CANCELADO: 'muted' };
 const TOM_PRAZO: Record<SituacaoPrazo, Tone> = { concluido: 'muted', sem_prazo: 'muted', no_prazo: 'ok', vence_logo: 'warn', atrasado: 'bad' };
-const FILTROS = ['abertas', 'engenharia', 'comercial', 'atrasadas', 'minhas', 'encerradas', 'todas'] as const;
-type Filtro = (typeof FILTROS)[number];
-const NOME_FILTRO: Record<Filtro, string> = { abertas: 'Abertas', engenharia: 'Com a Engenharia', comercial: 'Com o Comercial', atrasadas: 'Atrasadas', minhas: 'Atribuídas a mim', encerradas: 'Encerradas ou canceladas', todas: 'Todas' };
+// filtros do Comercial (gestão) e filas da Engenharia (FILAS_TECNICAS): a Engenharia nunca vê os filtros comerciais
+const FILTROS_COMERCIAL = ['abertas', 'engenharia', 'comercial', 'atrasadas', 'encerradas', 'todas'] as const;
+type Filtro = (typeof FILTROS_COMERCIAL)[number] | FilaTecnica;
+const NOME_FILTRO: Record<Filtro, string> = { abertas: 'Abertas', engenharia: 'Com a Engenharia', comercial: 'Com o Comercial', atrasadas: 'Atrasadas', encerradas: 'Encerradas ou canceladas', todas: 'Todas', triagem: NOME_FILA_TECNICA.triagem, atribuidas: NOME_FILA_TECNICA.atribuidas, devolvidas: NOME_FILA_TECNICA.devolvidas };
+// rótulos curtos para a faixa de indicadores (cabem a 800 px); o nome completo vai na dica
+const ROTULO_CURTO_FILA: Record<FilaTecnica, string> = { triagem: 'A triar', atribuidas: 'Minhas', devolvidas: 'Com o Comercial', encerradas: 'Encerradas' };
 const rotaPedido = (id: string) => `/comercial/projetos/${encodeURIComponent(id)}`;
 const fmtDado = (c: (typeof CAMPOS_TECNICOS)[number], v: string | number) => (c.tipo === 'numero' ? `${Number(v).toLocaleString('pt-BR')}${'unidade' in c ? ` ${c.unidade}` : ''}` : String(v));
 const dataCurta = (s?: string) => (s ? (s.length > 10 ? dataHora(s) : data(s)) : '—');
@@ -45,7 +48,8 @@ export default function PedidosProjeto({ p2, query }: { p2?: string; query: URLS
   const remoto = repo.adaptador !== 'memoria';
   const { fontes, demonstracao } = useMemo(() => fontesDosPedidos(ds), [ds]);
   const org = ORGANIZACAO_LOCAL;
-  const hoje = ds.params.dataBase;
+  // data OPERACIONAL (São Paulo); a data-base financeira (ds.params.dataBase) não comanda prazos de solicitação
+  const hoje = useHojeOperacional();
   const nomeUsuario = (id?: string) => (id ? ds.usuarios.find((u) => u.id === id)?.nome ?? id : '—');
   const nomeEmpresa = (id: string) => { const e = fontes.radar.empresas.find((x) => x.id === id); return e ? e.nomeFantasia ?? e.razaoSocial : 'empresa não encontrada'; };
   const todos = repo.listar(usuario, org);
@@ -73,7 +77,7 @@ export default function PedidosProjeto({ p2, query }: { p2?: string; query: URLS
   }
   return (
     <div className="cgc">
-      <PageHead title="Solicitações de projeto" subtitle={<>Comercial → Engenharia → Comercial. Data-base {data(hoje)}.</>}>
+      <PageHead title="Solicitações de projeto" subtitle={<>Comercial → Engenharia → Comercial. Hoje {data(hoje)} (data de operação, não a data-base financeira).</>}>
         {integral && <button className="btn sm primary" disabled={remoto} title={remoto ? PERSISTENCIA_PENDENTE : undefined} onClick={() => navegar('/comercial/projetos/novo')}>Nova solicitação</button>}
         {!remoto && integral && todos.length === 0 && demonstracao && <button className="btn sm" onClick={() => {
           const eng = ds.usuarios.find((u) => u.papel === 'Engenharia' && u.ativo);
@@ -82,7 +86,7 @@ export default function PedidosProjeto({ p2, query }: { p2?: string; query: URLS
         {!remoto && todos.length > 0 && integral && <button className="btn sm" onClick={() => limparDemonstracaoPedidos()}>Limpar demonstração</button>}
       </PageHead>
       {faixa}
-      <Lista linhas={linhas} usuario={usuario} integral={integral} hoje={hoje} nomeUsuario={nomeUsuario} filtroInicial={(query.get('filtro') as Filtro) ?? (integral ? 'abertas' : 'engenharia')} />
+      <Lista linhas={linhas} usuario={usuario} integral={integral} hoje={hoje} nomeUsuario={nomeUsuario} filtroInicial={(query.get('filtro') as Filtro) ?? (integral ? 'abertas' : 'triagem')} />
     </div>
   );
 }
@@ -90,22 +94,25 @@ export default function PedidosProjeto({ p2, query }: { p2?: string; query: URLS
 /* ---------------------------------------------------------------- lista */
 
 function Lista({ linhas, usuario, integral, hoje, nomeUsuario, filtroInicial }: { linhas: Linha[]; usuario: Usuario; integral: boolean; hoje: string; nomeUsuario: (id?: string) => string; filtroInicial: Filtro }) {
-  const [filtro, setFiltro] = useState<Filtro>(FILTROS.includes(filtroInicial) ? filtroInicial : 'abertas');
+  const filtros: readonly Filtro[] = integral ? FILTROS_COMERCIAL : FILAS_TECNICAS;
+  const [filtro, setFiltro] = useState<Filtro>(filtros.includes(filtroInicial) ? filtroInicial : filtros[0]);
   const [busca, setBusca] = useState('');
   const [tipo, setTipo] = useState('');
   const r = resumoPedidos(linhas as unknown as PedidoProjeto[], hoje);
+  const atrasadasMinhas = linhas.filter((p) => filaTecnica(p, usuario) === 'atribuidas' && situacaoPrazo(p, hoje) === 'atrasado').length;
   const passa = (p: Linha, f: Filtro) => {
+    if (!integral) return filaTecnica(p, usuario) === f;
     const aberta = !SITUACOES_FINAIS.includes(p.situacao);
     switch (f) {
       case 'abertas': return aberta;
       case 'engenharia': return aberta && COM_QUEM[p.situacao] === 'Engenharia';
       case 'comercial': return aberta && COM_QUEM[p.situacao] === 'Comercial';
       case 'atrasadas': return aberta && situacaoPrazo(p, hoje) === 'atrasado';
-      case 'minhas': return aberta && p.responsavelTecnicoId === usuario.id;
       case 'encerradas': return !aberta;
       default: return true;
     }
   };
+  const vazio = linhas.length ? 'Nenhuma solicitação neste filtro.' : integral ? 'Nenhuma solicitação ainda. Abra a partir de uma oportunidade (botão «Nova solicitação» ou no dossiê da Central).' : 'Nenhuma solicitação na fila de triagem nem atribuída a você.';
   const termo = busca.trim().toLowerCase();
   const vis = linhas.filter((p) => passa(p, filtro) && (!tipo || p.tipo === tipo) && (!termo || `${p.codigo} ${p.empresaNome} ${p.oportunidadeTitulo ?? ''} ${p.tipo}`.toLowerCase().includes(termo)));
   const cols: Coluna<Linha>[] = [
@@ -115,19 +122,33 @@ function Lista({ linhas, usuario, integral, hoje, nomeUsuario, filtroInicial }: 
   ];
   return (
     <>
-      <KpiStrip itens={[
+      {integral ? <KpiStrip itens={[
         { label: 'Abertas', value: String(r.abertas) }, { label: 'Com a Engenharia', value: String(r.comEngenharia) }, { label: 'Com o Comercial', value: String(r.comComercial), hint: 'dados pendentes ou entrega a confirmar', tone: r.comComercial ? 'warn' : undefined },
         { label: 'Atrasadas', value: String(r.atrasadas), tone: r.atrasadas ? 'neg' : undefined }, { label: 'Vencem em 2 dias', value: String(r.venceLogo), tone: r.venceLogo ? 'warn' : undefined }, { label: 'Pendências abertas', value: String(r.pendenciasAbertas) },
-      ]} />
+      ]} /> : <KpiStrip itens={[
+        ...FILAS_TECNICAS.map((f) => ({ label: ROTULO_CURTO_FILA[f], hint: NOME_FILA_TECNICA[f], value: String(linhas.filter((p) => filaTecnica(p, usuario) === f).length) })),
+        { label: 'Minhas atrasadas', value: String(atrasadasMinhas), tone: atrasadasMinhas ? 'neg' : undefined },
+      ]} />}
       <div className="card">
         <div className="chips" role="group" aria-label="Filtrar solicitações">
-          {FILTROS.filter((f) => integral || f !== 'comercial').map((f) => <button key={f} className={`chip ${filtro === f ? 'on' : ''}`} aria-pressed={filtro === f} onClick={() => setFiltro(f)}>{NOME_FILTRO[f]}<span className="n">{linhas.filter((p) => passa(p, f)).length}</span></button>)}
+          {filtros.map((f) => <button key={f} className={`chip ${filtro === f ? 'on' : ''}`} aria-pressed={filtro === f} onClick={() => setFiltro(f)}>{NOME_FILTRO[f]}<span className="n">{linhas.filter((p) => passa(p, f)).length}</span></button>)}
         </div>
         <div className="cgc-busca-dossie" style={{ marginBottom: 10 }}>
           <input type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por código, empresa ou tipo" aria-label="Buscar solicitação" />
           <Select value={tipo} onChange={setTipo} options={[...TIPOS_SOLICITACAO]} allowEmpty="Todos os tipos" aria-label="Filtrar por tipo" />
         </div>
-        <Tabela colunas={cols} linhas={vis} chave={(p) => p.id} onLinha={(p) => navegar(rotaPedido(p.id))} vazio={linhas.length ? 'Nenhuma solicitação neste filtro.' : integral ? 'Nenhuma solicitação ainda. Abra a partir de uma oportunidade (botão «Nova solicitação» ou no dossiê da Central).' : 'Nenhuma solicitação encaminhada à Engenharia.'}
+        {/* tela estreita: cartões com o essencial e acesso ao detalhe; a tabela fica para telas largas */}
+        <ul className="pp-cartoes" aria-label="Solicitações">
+          {vis.length === 0 ? <li className="small muted">{vazio}</li> : vis.map((p) => { const pz = situacaoPrazo(p, hoje); const pend = p.pendencias.filter((x) => x.aberta).length; return (
+            <li key={p.id}><Link to={rotaPedido(p.id)} className="pp-cartao">
+              <span className="pp-cartao-topo"><b>{p.codigo}</b>{p.versaoTipo > 1 && <span className="small muted"> v{p.versaoTipo}</span>}<Badge tone={TOM_SITUACAO[p.situacao]}>{NOME_SITUACAO_PEDIDO[p.situacao]}</Badge></span>
+              <span className="pp-cartao-empresa">{p.empresaNome}</span>
+              <span className="small muted">{p.tipo} · {p.prioridade}{pend ? ` · ${pend} pendência(s)` : ''}</span>
+              <span className="small">com {COM_QUEM[p.situacao] === 'Comercial' ? 'o Comercial' : COM_QUEM[p.situacao] === 'Engenharia' ? 'a Engenharia' : '—'} · prazo {dataCurta(prazoVigente(p))} {pz !== 'concluido' && pz !== 'sem_prazo' && <Badge tone={TOM_PRAZO[pz]}>{NOME_SITUACAO_PRAZO[pz]}</Badge>}</span>
+            </Link></li>); })}
+        </ul>
+        <div className="pp-tabela">
+        <Tabela colunas={cols} linhas={vis} chave={(p) => p.id} onLinha={(p) => navegar(rotaPedido(p.id))} vazio={vazio}
           linha={(p) => { const pz = situacaoPrazo(p, hoje); return (<>
             <td><b>{p.codigo}</b>{p.versaoTipo > 1 && <span className="small muted"> v{p.versaoTipo}</span>}</td>
             <td>{p.empresaNome}{p.oportunidadeTitulo && <div className="small muted">{p.oportunidadeTitulo}</div>}</td>
@@ -139,6 +160,7 @@ function Lista({ linhas, usuario, integral, hoje, nomeUsuario, filtroInicial }: 
             <td className="small">{p.prioridade}</td>
             <td className="small" style={{ textAlign: 'right' }}>{p.pendencias.filter((x) => x.aberta).length || '—'}</td>
           </>); }} />
+        </div>
       </div>
     </>
   );
@@ -176,8 +198,12 @@ function Formulario({ query, usuario, fontes, remoto, hoje, usuarios }: { query:
   const evidencias = fontes.radar.registrosFonte.filter((r) => r.statusIntake === 'RESOLVED' && r.entidadeId === empresaId);
   const responsaveis = usuarios.filter((u) => u.ativo && (u.papel === 'Administrador' || u.papel === 'Diretoria'));
 
+  const [faltaVinculo, setFaltaVinculo] = useState(false);
   const enviar = (e: React.FormEvent) => {
     e.preventDefault();
+    // orientação antes da regra: sem empresa e oportunidade escolhidas, diz o que fazer (e marca os campos)
+    if (!empresaId || !oportunidadeId) { setFaltaVinculo(true); setErro('Escolha a empresa e a oportunidade do Radar a que a solicitação pertence.'); return; }
+    setFaltaVinculo(false);
     const entrada: EntradaPedido = {
       empresaId, oportunidadeId, origemLead: origem, tipo, prioridade, ...(prazo ? { prazoSolicitado: prazo } : {}), responsavelComercialId: responsavel, ...(equipe ? { equipeTecnica: equipe } : {}),
       vinculos: { ...(thread ? { inboxThreadId: thread } : {}), ...(registro ? { registroFonteId: registro } : {}), ...(submissao ? { submissaoId: submissao } : {}) },
@@ -210,8 +236,8 @@ function Formulario({ query, usuario, fontes, remoto, hoje, usuarios }: { query:
       <div className="card">
         <h2>Identificação</h2>
         <div className="form">
-          <Field label="Empresa (Radar)" req><Select value={empresaId} onChange={(v) => { setEmpresaId(v); setOportunidadeId(''); setThread(''); setRegistro(''); setSubmissao(''); }} options={empresas.map((e) => ({ value: e.id, label: e.nomeFantasia ?? e.razaoSocial }))} allowEmpty="escolha a empresa" /></Field>
-          <Field label="Oportunidade" req hint="só oportunidades ativas desta empresa"><Select value={oportunidadeId} onChange={setOportunidadeId} options={ops.map((o) => ({ value: o.id, label: `${o.titulo} · ${NOME_ESTAGIO[o.estagio]}` }))} allowEmpty={empresaId ? 'escolha a oportunidade' : 'escolha a empresa antes'} /></Field>
+          <Field label="Empresa (Radar)" req erro={faltaVinculo && !empresaId ? 'Escolha a empresa' : undefined}><Select value={empresaId} onChange={(v) => { setEmpresaId(v); setOportunidadeId(''); setThread(''); setRegistro(''); setSubmissao(''); }} options={empresas.map((e) => ({ value: e.id, label: e.nomeFantasia ?? e.razaoSocial }))} allowEmpty="escolha a empresa" /></Field>
+          <Field label="Oportunidade" req erro={faltaVinculo && !oportunidadeId ? 'Escolha a oportunidade' : undefined} hint="só oportunidades ativas desta empresa"><Select value={oportunidadeId} onChange={setOportunidadeId} options={ops.map((o) => ({ value: o.id, label: `${o.titulo} · ${NOME_ESTAGIO[o.estagio]}` }))} allowEmpty={empresaId ? 'escolha a oportunidade' : 'escolha a empresa antes'} /></Field>
           <Field label="Origem do lead" req><Select value={origem} onChange={(v) => setOrigem(v as OrigemLead)} options={ORIGENS_LEAD.map((o) => ({ value: o, label: NOME_ORIGEM_LEAD[o] }))} /></Field>
           <Field label="Tipo de solicitação" req><Select value={tipo} onChange={(v) => setTipo(v as TipoSolicitacao)} options={[...TIPOS_SOLICITACAO]} /></Field>
           <Field label="Responsável comercial" req><Select value={responsavel} onChange={setResponsavel} options={responsaveis.map((u) => ({ value: u.id, label: `${u.nome} · ${u.papel}` }))} /></Field>

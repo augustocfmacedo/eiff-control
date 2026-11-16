@@ -181,7 +181,7 @@ export default function App() {
     // Central de Gestao Comercial: autorizacao real da rota pelo escopo (src/core/comercial/acesso.ts): comercial_gestao
     // abre tudo, comercial_projetos abre so a visao tecnica; os demais perfis recebem o estado de acesso restrito.
     case 'comercial': tela = p1 === 'gestao' || p1 === 'projetos'
-      ? (escopoCentral(usuario).nivel !== 'sem_acesso' ? (p1 === 'projetos' ? <PedidosProjeto p2={p2} query={rota.query} key={p2 ?? 'lista'} /> : <CentralGestao query={rota.query} />) : <EstadoErro titulo="Acesso restrito" causa={<>A Central de Gestão Comercial é visível para a Direção (permissão <code>comercial_gestao</code>) e, só nos pedidos de projeto, para a Engenharia (<code>comercial_projetos</code>). Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
+      ? (escopoCentral(usuario).nivel !== 'sem_acesso' ? (p1 === 'projetos' ? <PedidosProjeto p2={p2} query={rota.query} key={p2 ?? `lista:${rota.query.toString()}`} /> : <CentralGestao query={rota.query} />) : <EstadoErro titulo="Acesso restrito" causa={<>A Central de Gestão Comercial é visível para a Direção (permissão <code>comercial_gestao</code>) e, só nos pedidos de projeto, para a Engenharia (<code>comercial_projetos</code>). Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
       : <div className="empty">Página não encontrada.</div>;
       break;
     // Radar: a permissao `radar` ja existia na MATRIZ, mas a rota nao a conferia (abria por URL para qualquer perfil)
