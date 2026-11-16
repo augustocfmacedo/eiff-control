@@ -70,7 +70,7 @@ Nenhuma foi feita. Cada linha precisa de autorização.
 | C1 | banco (Supabase) | `scripts/formulario-ativacao-producao.sql`: responsável padrão do COMERCIAL = Augusto (provisório) + regra `ROT-SITE`. Idempotente, uma transação, reversão no cabeçalho. Provado em PostgreSQL local; os gatilhos de auditoria de produção não foram exercidos | CRM-1 |
 | C2 | Netlify do **eiffcontrol** | `EIFF_FORM_SECRET` (novo, gerado por pessoa, fora de qualquer conversa) · `EIFF_FORM_SOURCE_ID` = `0e238b9c-01f1-4a33-9274-de7f1af8245f` · `EIFF_INBOX_ORGANIZATION_ID` = `e1a7e58f-29d1-4c22-b41e-597ebdeee86e`. `SUPABASE_SERVICE_ROLE_KEY` já existe | CRM-1 |
 | C3 | Netlify do **eiff-site** | `EIFF_FORM_SECRET` com o mesmo valor. **Só é criado na ativação** (etapa 9): enquanto não existir, a função do site é inerte. `EIFF_CRM_FORM_ENDPOINT` é opcional e não deve ser criado (o padrão já é o endpoint de produção) | Site-2 |
-| C4 | Netlify do **eiffcontrol** (rodada agendada) | credencial de leitura das submissões (§6.1) em `NETLIFY_AUTH_TOKEN` · `EIFF_FORM_NETLIFY_SITE` (site_id do eiff-site) · `EIFF_FORM_MARCO` (o instante da etapa 0) e, por último, `FORMULARIO_RECONCILIACAO=ativa`. `EIFF_FORM_EXCLUIDOS` é opcional | CRM-2 |
+| C4 | Netlify do **eiffcontrol** (rodada agendada) | credencial de leitura das submissões (§6.1) em `NETLIFY_AUTH_TOKEN` · `EIFF_FORM_NETLIFY_SITE` (site_id do eiff-site) · `EIFF_FORM_MARCO` (o instante da etapa 0) e, por último, `FORMULARIO_RECONCILIACAO=ativa`. `EIFF_FORM_EXCLUIDOS` é **obrigatória** e definida **antes** de `FORMULARIO_RECONCILIACAO=ativa`, com no mínimo o ensaio E10.4 (`6af72bc662ddce941fc27637`) e verificada por simulação (`formulario-site-go2-go3.md` §1.3.1) | CRM-2 |
 
 ### 3.3 Os seis estágios
 
@@ -187,6 +187,9 @@ GitHub Actions que existia como reserva manual nunca esteve ligado e saiu do rel
 - **Alerta**: a rodada que não pôde rodar responde 503 e aparece como falha no painel de Functions; a linha
   `RECONCILIACAO_AGENDADA` traz `falhas` e `recuperadas`. Não há notificação automática.
 - **Marco**: `EIFF_FORM_MARCO`. Tudo o que é anterior fica retido; a rodada agendada não tem como incluir anteriores.
+- **Ensaios**: o marco não protege ensaio feito **depois** dele. `EIFF_FORM_EXCLUIDOS` (ids separados por vírgula) é
+  obrigatória antes de ligar; sem ela o ensaio E10.4, que nunca entrou no CRM, seria importado como lead. Regra,
+  sintaxe e verificação em `formulario-site-go2-go3.md` §1.3.1.
 - **Mão humana**: `scripts/formulario-reconciliar.mts` (simulação por padrão), validado localmente com a submissão
   fictícia: simulação, retenção pelo marco e os três bloqueios (saída `2`).
 - **O que ela não faz**: avisar o comercial e cumprir o prazo de 30 minutos. Um lead recuperado pela rodada chega com o
@@ -361,6 +364,8 @@ Site-1 (§7); o que já entrou é preservado e atendido.
 Depois da **primeira execução agendada** da reconciliação e da conferência do resultado:
 
 - [ ] credencial definida conforme a §6.1 (B; ou A com aceitação expressa)
+- [ ] `EIFF_FORM_EXCLUIDOS` definida com os ensaios e a simulação mostrando o E10.4 retido como `id_excluido`
+  (`formulario-site-go2-go3.md` §1.3.1 e cenário H11)
 - [ ] CRM-2 publicado e travado; id anotado
 - [ ] linha `RECONCILIACAO_AGENDADA` da primeira rodada sem falha
 - [ ] nenhuma histórica reenviada; a submissão de teste reconhecida como já dentro
