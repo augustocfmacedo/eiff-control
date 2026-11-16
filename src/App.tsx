@@ -50,6 +50,8 @@ const MissionControl = lazy(() => import('./screens/MissionControl'));
 const Inbox = lazy(() => import('./screens/Inbox'));
 const InboxConfig = lazy(() => import('./screens/InboxConfig'));
 const LeadsSite = lazy(() => import('./screens/LeadsSite'));
+// E11.0: Central de Gestao Comercial (somente leitura; projeta Inbox, Radar e Orcamentos)
+const CentralGestao = lazy(() => import('./screens/comercial/CentralGestao'));
 const RadarCommandCenter = lazy(() => import('./screens/radar/CommandCenter'));
 const RadarHoje = lazy(() => import('./screens/radar/Hoje'));
 const RadarEmpresas = lazy(() => import('./screens/radar/Empresas'));
@@ -173,6 +175,11 @@ export default function App() {
     case 'atendimento': tela = pode(usuario, 'inbox')
       ? (p1 === 'configuracao' ? <InboxConfig /> : p1 === 'leads' ? <LeadsSite query={rota.query} /> : <Inbox threadId={rota.query.get('t') ?? p1} query={rota.query} />)
       : <EstadoErro titulo="Acesso restrito" causa={<>O EIFF Inbox é visível para quem tem a permissão <code>inbox</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar atender conversas.</EstadoErro>;
+      break;
+    // Central de Gestao Comercial: autorizacao real da rota (permissao `radar`, que esta contida em `inbox`)
+    case 'comercial': tela = p1 === 'gestao'
+      ? (pode(usuario, 'radar') ? <CentralGestao query={rota.query} /> : <EstadoErro titulo="Acesso restrito" causa={<>A Central de Gestão Comercial é visível para quem tem a permissão <code>radar</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
+      : <div className="empty">Página não encontrada.</div>;
       break;
     case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
     case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
