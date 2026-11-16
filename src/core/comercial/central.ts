@@ -351,7 +351,7 @@ export function retornos(fontes: FontesCentral, ctx: ContextoCentral, atendiment
     if (!l.aberta || l.ensaio || l.situacao !== 'aguardando' || !l.prazoAte) continue
     const hojeLocal = dia(ctx.agoraIso)
     itens.push({
-      id: `conversa:${l.threadId}`, tipo: 'primeiro_contato', descricao: l.proximaAcao, cliente: l.empresa ? `${l.nome} · ${l.empresa}` : l.nome,
+      id: `conversa:${l.threadId}`, tipo: 'primeiro_contato', descricao: l.proximaAcao, cliente: l.empresa ? `${l.nome} · ${l.empresa}` : l.nome, ...(l.empresa ? { empresaCliente: l.empresa } : {}),
       ...(l.responsavelId ? { responsavelId: l.responsavelId, responsavelNome: l.responsavelNome } : {}),
       venceEm: dia(l.prazoAte), situacao: l.sla === 'vencido' ? 'vencido' : situacaoDoPrazo(l.prazoAte, hojeLocal),
       diasAtraso: Math.max(0, diasEntre(l.prazoAte, hojeLocal)), dossie: l.dossie, link: l.link,
@@ -488,6 +488,8 @@ export type FonteSolicitacao = 'simulador_site' | 'oportunidade' | 'atividade'
 export const NOME_FONTE_SOLICITACAO: Record<FonteSolicitacao, string> = { simulador_site: 'Simulador do site', oportunidade: 'Oportunidade (estágio)', atividade: 'Resultado de atividade' }
 export interface SolicitacaoProjeto {
   id: string; fonte: FonteSolicitacao; tipo: string; cliente: string
+  /** Só a EMPRESA do cliente (nunca o nome da pessoa): é o que a visão técnica da Engenharia mostra. */
+  empresaCliente?: string
   dadosTecnicos: string[]; escopo?: string; solicitadaEm: string
   responsavelNome?: string; prazo?: string; situacao: string
   /** Documentos: não existe anexo comercial; sempre indisponível nesta versão. */
@@ -519,7 +521,7 @@ export function solicitacoesDeProjeto(fontes: FontesCentral, atendimentos?: read
     const tarefa = r.tarefas.filter((t) => t.oportunidadeId === o.id && t.status === 'Aberta').sort((a, b) => (a.venceEm < b.venceEm ? -1 : 1))[0]
     const desde = entrouNoEstagio(r, o) ?? o.atualizadoEm
     out.push({
-      id: `oportunidade:${o.id}`, fonte: 'oportunidade', tipo: p?.tipo ?? 'não informado', cliente: e ? nomeEmpresa(e) : 'empresa não encontrada',
+      id: `oportunidade:${o.id}`, fonte: 'oportunidade', tipo: p?.tipo ?? 'não informado', cliente: e ? nomeEmpresa(e) : 'empresa não encontrada', ...(e ? { empresaCliente: nomeEmpresa(e) } : {}),
       dadosTecnicos: p ? [p.nome, p.areaM2 ? `${p.areaM2.toLocaleString('pt-BR')} m²` : '', [p.cidade, p.uf].filter(Boolean).join('/')].filter((x) => x !== '') : [],
       ...(o.observacoes ? { escopo: o.observacoes } : {}), solicitadaEm: desde, responsavelNome: nomeDe(fontes, o.responsavelId),
       ...(tarefa ? { prazo: tarefa.venceEm } : o.proximaAcaoEm ? { prazo: o.proximaAcaoEm } : {}), situacao: NOME_ESTAGIO[o.estagio], documentos: 'indisponivel',
@@ -532,7 +534,7 @@ export function solicitacoesDeProjeto(fontes: FontesCentral, atendimentos?: read
     const e = r.empresas.find((x) => x.id === a.empresaId)
     const o = a.oportunidadeId ? r.oportunidades.find((x) => x.id === a.oportunidadeId) : undefined
     out.push({
-      id: `atividade:${a.id}`, fonte: 'atividade', tipo: a.resultado === 'REQUESTED_BUDGET' ? 'Pediu orçamento' : 'Pediu análise técnica', cliente: e ? nomeEmpresa(e) : 'empresa não encontrada',
+      id: `atividade:${a.id}`, fonte: 'atividade', tipo: a.resultado === 'REQUESTED_BUDGET' ? 'Pediu orçamento' : 'Pediu análise técnica', cliente: e ? nomeEmpresa(e) : 'empresa não encontrada', ...(e ? { empresaCliente: nomeEmpresa(e) } : {}),
       dadosTecnicos: [], ...(a.notas ? { escopo: a.notas } : {}), solicitadaEm: a.ocorreuEm, responsavelNome: nomeDe(fontes, o?.responsavelId ?? a.usuarioId),
       ...(o?.proximaAcaoEm ? { prazo: o.proximaAcaoEm } : {}), situacao: o ? NOME_ESTAGIO[o.estagio] : 'Sem oportunidade aberta', documentos: 'indisponivel',
       dossie: chaveEmpresa(a.empresaId), link: `/radar/empresas/${a.empresaId}`,

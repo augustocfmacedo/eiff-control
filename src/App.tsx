@@ -8,6 +8,7 @@ import Login from './screens/Login';
 import DefinirSenha from './screens/DefinirSenha';
 import { trilhaDe } from './core/capacitacao';
 import { Assistente } from './ui/Assistente';
+import { escopoCentral } from './core/comercial/acesso';
 import { oportunidadesSemProximaAcao, radarVazio } from './core/radar';
 import { resumoExecutivo } from './core/inbox';
 import { leadsDoSite, resumoLeads } from './core/inbox/leadsSite';
@@ -176,12 +177,14 @@ export default function App() {
       ? (p1 === 'configuracao' ? <InboxConfig /> : p1 === 'leads' ? <LeadsSite query={rota.query} /> : <Inbox threadId={rota.query.get('t') ?? p1} query={rota.query} />)
       : <EstadoErro titulo="Acesso restrito" causa={<>O EIFF Inbox é visível para quem tem a permissão <code>inbox</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar atender conversas.</EstadoErro>;
       break;
-    // Central de Gestao Comercial: autorizacao real da rota (permissao `radar`, que esta contida em `inbox`)
+    // Central de Gestao Comercial: autorizacao real da rota pelo escopo (src/core/comercial/acesso.ts): comercial_gestao
+    // abre tudo, comercial_projetos abre so a visao tecnica; os demais perfis recebem o estado de acesso restrito.
     case 'comercial': tela = p1 === 'gestao'
-      ? (pode(usuario, 'radar') ? <CentralGestao query={rota.query} /> : <EstadoErro titulo="Acesso restrito" causa={<>A Central de Gestão Comercial é visível para quem tem a permissão <code>radar</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
+      ? (escopoCentral(usuario).nivel !== 'sem_acesso' ? <CentralGestao query={rota.query} /> : <EstadoErro titulo="Acesso restrito" causa={<>A Central de Gestão Comercial é visível para a Direção (permissão <code>comercial_gestao</code>) e, só nos pedidos de projeto, para a Engenharia (<code>comercial_projetos</code>). Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
       : <div className="empty">Página não encontrada.</div>;
       break;
-    case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
+    // Radar: a permissao `radar` ja existia na MATRIZ, mas a rota nao a conferia (abria por URL para qualquer perfil)
+    case 'radar': tela = !pode(usuario, 'radar') ? <EstadoErro titulo="Acesso restrito" causa={<>O Radar é visível para quem tem a permissão <code>radar</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro> : p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
     case 'compras': tela = <Compras query={rota.query} key={rota.query.toString()} />; break;
     case 'orcamentos': tela = <Orcamentos id={p1} aba0={rota.query.get('aba') ?? undefined} key={p1 ?? 'lista'} />; break;
     case 'lancamentos': tela = p1 ? <LancamentoDetalhe id={p1} /> : <Lancamentos modo="todos" query={rota.query} key={rota.query.toString()} />; break;

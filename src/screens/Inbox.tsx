@@ -280,7 +280,7 @@ export default function Inbox({ threadId, query }: { threadId?: string; query: U
                     <dt>Relação</dt><dd>{contato?.tipoRelacao.replace('_', ' ')}</dd>
                     <dt>Canais</dt><dd>{contato?.identidades.map((i) => `${NOME_CANAL[i.canal]} ${identificadorMascarado(i)}${i.verificada ? ' ✓' : ''}`).join(' · ')}</dd>
                     <dt>Obras</dt><dd>{contato?.obras.length ? contato.obras.map((o) => <Link key={o} to={`/obras/${o}`}>{o}</Link>) : '—'}</dd>
-                    {contato?.empresaRadarId && <><dt>Radar</dt><dd><Link to={`/radar/empresas/${contato.empresaRadarId}`}>abrir empresa</Link></dd></>}
+                    {contato?.empresaRadarId && pode(usuario, 'radar') && <><dt>Radar</dt><dd><Link to={`/radar/empresas/${contato.empresaRadarId}`}>abrir empresa</Link></dd></>}
                     {contato?.observacoes && <><dt>Notas</dt><dd>{contato.observacoes}</dd></>}
                   </dl>
                   <h3>Classificação <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setModal('triar')}>{thread.classificacao ? 'Retriar' : 'Triar'}</button></h3>

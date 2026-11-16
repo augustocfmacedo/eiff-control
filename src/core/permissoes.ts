@@ -37,7 +37,9 @@ export type Acao =
   | 'inbox'
   | 'inbox_config'
   | 'enviar_email'
-  | 'pedir_pagamento';
+  | 'pedir_pagamento'
+  | 'comercial_gestao'
+  | 'comercial_projetos';
 
 export const MATRIZ: Record<Acao, Papel[]> = {
   // saldo, bancos, extrato, Caixa e o parecer do Diretor Financeiro: so o Administrador (decisao do Augusto em 13/10/2026)
@@ -74,6 +76,13 @@ export const MATRIZ: Record<Acao, Papel[]> = {
   // E-mail comercial (docs/email-comercial.md): enviar em nome da empresa pela caixa corporativa. Separada de `inbox`: atender uma
   // conversa nao da o direito de enviar. O servidor (/api/email-comercial) confere o papel no perfil do BANCO contra esta lista.
   enviar_email: ['Administrador', 'Diretoria'],
+  // Central de Gestao Comercial (E11.1E, docs/central-gestao-comercial.md §8): permissoes PROPRIAS, separadas de `radar`
+  // de proposito — `radar` alcanca Financeiro, Compras e Gestor de obra, que nao entram na Central. A visao integral
+  // (indicadores, valores, pipeline, dossies) e da Direcao; a Engenharia ve so os pedidos de projeto, sem valores,
+  // negociacao nem contatos. O papel operacional `Comercial` esta PROPOSTO (exige valor novo no enum role_kind e a
+  // migration de acesso) e entra nas duas listas quando for criado; ate la nenhum perfil o tem.
+  comercial_gestao: ['Administrador', 'Diretoria'],
+  comercial_projetos: ['Administrador', 'Diretoria', 'Engenharia'],
 };
 
 export function pode(usuario: Usuario, acao: Acao, codigoObra?: string): boolean {

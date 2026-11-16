@@ -17,6 +17,7 @@ import type {
 } from '../core/types';
 import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
+import { pode } from '../core/permissoes';
 import { carregarRadar, chamadaDaMeta, metaDoBanco, persistirRadar } from './radar.supabase';
 import type { VersaoMetaComercial } from '../core/radar/metaComercial';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
@@ -535,7 +536,10 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   ds.fotos = fotoRows.map((x) => ({ id: x.id, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? '' : '', referenciaTipo: x.ref_type, referenciaId: x.ref_id, tomadaEm: x.taken_at, tomadaPor: x.taken_by ?? '', nota: x.note ?? undefined, dataUrl: x.data_url ?? undefined, caminho: x.storage_path ?? undefined }));
   ds.funcoes = funcRows.map((x) => ({ id: x.id, nome: x.name, categoria: x.category, custoHoraPadrao: x.default_hourly_cost === null || x.default_hourly_cost === undefined ? undefined : Number(x.default_hourly_cost), descricao: x.description ?? '', ativa: !!x.active }));
   ds.alocacoes = alocRows.map((x) => ({ id: x.id, colaboradorId: x.worker_id, local: x.location, codigoObra: x.project_id ? r.obrasInv.get(x.project_id) ?? undefined : undefined, de: x.starts_on, ate: x.ends_on ?? undefined, percentual: Number(x.share), observacoes: x.notes ?? '' }));
-  ds.radar = await carregarRadar({ sel: selTodos, orgId: org.id });
+  // Minimizacao (E11.1E): o Radar so vem para o navegador de quem tem a permissao `radar`. Antes vinha para qualquer perfil
+  // (Contabilidade, Auditoria) e a tela apenas escondia. A RLS de leitura das tabelas radar_* ainda e por organizacao — a
+  // migration proposta em docs/central-gestao-comercial.md §8.6 fecha no banco. A carga de servidor (funcoes Netlify) segue igual.
+  ds.radar = servidor || pode(usuario, 'radar') ? await carregarRadar({ sel: selTodos, orgId: org.id }) : radarVazio();
   // EIFF Inbox (tabelas inbox_*, migration 0056): sem as tabelas no banco, o slice fica vazio e o app segue
   ds.inbox = await carregarInbox({ sel: selTodos, orgId: org.id, obraCodigo: (id) => (id ? r.obrasInv.get(id) : undefined) }).catch(() => undefined);
   ds.romaneios = romaneioRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', numero: x.number, data: x.shipped_on, transportadora: x.carrier ?? '', placa: x.plate ?? undefined, motorista: x.driver ?? undefined, destino: x.destination ?? '', itens: (x.items ?? []) as { conjuntoId: string; quantidade: number }[], status: x.status, entregueEm: x.delivered_on ?? undefined, observacoes: x.notes ?? '', criadoPor: x.created_by ?? '', criadoEm: x.created_at }));
