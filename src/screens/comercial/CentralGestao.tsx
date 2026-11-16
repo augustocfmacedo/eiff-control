@@ -9,7 +9,7 @@ import {
   contarAtendimentos, dossie as montarDossie, ehArea, filtrarAtendimentos, indiceDossies, retratoCentral,
   type AreaCentral, type Dossie, type FaseJornada, type SituacaoImplementacao, type FiltroAtendimento, type FontesCentral, type Indicador, type LinhaAtendimento, type RetratoCentral, type SituacaoPrazo,
 } from '../../core/comercial/central';
-import { areaNoEscopo, dossieNoEscopo, escopoCentral, solicitacoesTecnicas, type SolicitacaoTecnica } from '../../core/comercial/acesso';
+import { areaNoEscopo, dossieNoEscopo, escopoCentral } from '../../core/comercial/acesso';
 import { MARCA_DEMONSTRACAO, demonstracaoCentral } from '../../core/comercial/demonstracao';
 import type { EstadoSla } from '../../core/inbox';
 import { pode, useStore } from '../../data/store';
@@ -68,7 +68,6 @@ export default function CentralGestao({ query }: { query: URLSearchParams }) {
   const ctx = useMemo(() => ({ usuario, agoraIso: new Date().toISOString(), hoje: ds.params.dataBase, veInbox }), [usuario, ds.params.dataBase, veInbox, fontes]);
   const retrato = useMemo(() => retratoCentral(fontes, ctx), [fontes, ctx]);
   // visão técnica: a tela recebe SÓ a projeção técnica (nada do retrato comercial atravessa as props); índice e dossiê só na integral
-  const tecnicas = useMemo(() => (escopo.nivel === 'tecnico' ? solicitacoesTecnicas(retrato.solicitacoes) : []), [escopo.nivel, retrato]);
   const indice = useMemo(() => (escopo.dossie ? indiceDossies(fontes, retrato) : []), [escopo.dossie, fontes, retrato]);
   // o Revelar esconde o conteúdo durante a entrada (elemento invisível não recebe foco): tenta até a aba aceitar o foco
   useEffect(() => {
@@ -90,7 +89,7 @@ export default function CentralGestao({ query }: { query: URLSearchParams }) {
   );
 
   if (escopo.nivel === 'tecnico') {
-    return <div className="cgc">{cabecalho}<TecnicoView linhas={tecnicas} motivo={escopo.motivo} dossieNegado={!!dossiePedido} /></div>;
+    return <div className="cgc">{cabecalho}<TecnicoView motivo={escopo.motivo} dossieNegado={!!dossiePedido} /></div>;
   }
 
   if (chaveDossie) {
@@ -365,57 +364,57 @@ function PropostasView({ r }: { r: RetratoCentral }) {
 function ProjetosView({ r }: { r: RetratoCentral }) {
   const cols: Coluna<RetratoCentral['solicitacoes'][number]>[] = [
     { titulo: 'Solicitado em', ordenar: (s) => s.solicitadaEm, largura: 110 }, { titulo: 'Cliente', ordenar: (s) => s.cliente }, { titulo: 'Tipo', ordenar: (s) => s.tipo }, { titulo: 'Dados técnicos / escopo' },
-    { titulo: 'Fonte', ordenar: (s) => s.fonte }, { titulo: 'Responsável', ordenar: (s) => s.responsavelNome ?? '' }, { titulo: 'Prazo', ordenar: (s) => s.prazo ?? '' }, { titulo: 'Situação', ordenar: (s) => s.situacao }, { titulo: 'Documentos' },
+    { titulo: 'Fonte', ordenar: (s) => s.fonte }, { titulo: 'Responsável', ordenar: (s) => s.responsavelNome ?? '' }, { titulo: 'Prazo', ordenar: (s) => s.prazo ?? '' }, { titulo: 'Situação', ordenar: (s) => s.situacao }, { titulo: 'Formalizar' },
   ];
   return (
+    <>
     <div className="card">
-      <h2>Solicitações de projeto <Badge tone="muted">sinais, sem entidade própria</Badge></h2>
-      <p className="small muted">Juntas três fontes, sem duplicar: lead do site com configuração do simulador, oportunidade em «Projeto recebido» ou «Engenharia» e atividade com resultado «pediu orçamento / análise técnica».</p>
+      <h2>Solicitações formais à Engenharia</h2>
+      <p className="small muted">O pedido de projeto agora é uma solicitação própria, com responsável técnico, prazo, pendências, entrega e histórico (Comercial → Engenharia → Comercial).</p>
+      <div className="actions" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>
+        <Link className="btn sm primary" to="/comercial/projetos">Abrir solicitações de projeto</Link>
+        <Link className="btn sm" to="/comercial/projetos/novo">Nova solicitação</Link>
+      </div>
+    </div>
+    <div className="card" style={{ marginTop: 'var(--space-4)' }}>
+      <h2>Sinais de pedido de projeto <Badge tone="muted">ainda não formalizados</Badge></h2>
+      <p className="small muted">Juntas três fontes, sem duplicar: lead do site com configuração do simulador, oportunidade em «Projeto recebido» ou «Engenharia» e atividade com resultado «pediu orçamento / análise técnica». Formalize a partir da oportunidade.</p>
       <Tabela colunas={cols} linhas={r.solicitacoes} chave={(s) => s.id} onLinha={(s) => navegar(rotaDossie(s.dossie))} vazio="Nenhuma solicitação de projeto identificada."
         linha={(s) => (<>
           <td className="small">{data(s.solicitadaEm.slice(0, 10))}</td><td><b>{s.cliente}</b></td><td className="small">{s.tipo}</td>
           <td className="small">{s.dadosTecnicos.length ? s.dadosTecnicos.join(' · ') : <span className="muted">não informados</span>}{s.escopo && <div className="muted">{s.escopo}</div>}</td>
           <td className="small">{NOME_FONTE_SOLICITACAO[s.fonte]}</td><td className="small">{s.responsavelNome ?? <span className="muted">—</span>}</td>
-          <td className="small">{s.prazo ? (s.prazo.length > 10 ? dataHora(s.prazo) : data(s.prazo)) : '—'}</td><td className="small">{s.situacao}</td><td className="small muted">indisponível</td>
+          <td className="small">{s.prazo ? (s.prazo.length > 10 ? dataHora(s.prazo) : data(s.prazo)) : '—'}</td><td className="small">{s.situacao}</td>
+          <td className="small" onClick={(e) => e.stopPropagation()}>{s.fonte === 'oportunidade'
+            ? <Link to={`/comercial/projetos/novo?empresa=${encodeURIComponent(s.dossie.replace(/^empresa:/, ''))}&oportunidade=${encodeURIComponent(s.id.replace(/^oportunidade:/, ''))}`}>Abrir solicitação</Link>
+            : s.dossie.startsWith('empresa:') ? <Link to={`/comercial/projetos/novo?empresa=${encodeURIComponent(s.dossie.replace(/^empresa:/, ''))}`}>Abrir solicitação</Link>
+              : <span className="muted" title="Sem empresa no Radar: promova o candidato no Lead Engine antes">promover o lead antes</span>}</td>
         </>)} />
       <div className="actions" style={{ marginTop: 10, gap: 16, flexWrap: 'wrap' }}>
-        <SemContrato rotulo="Registrar pedido de projeto" motivo="Não existe entidade de pedido de projeto (tipo, escopo, responsável técnico, prazo, situação). Precisa de contrato e migration antes de gravar." />
-        <SemContrato rotulo="Anexar documentos" motivo="Não há armazenamento de documentos comerciais (planta, sondagem, memorial). Os anexos existentes são financeiros." />
+        <SemContrato rotulo="Anexar documentos" motivo="Ainda não há armazenamento de documentos de projeto: a solicitação registra a situação de cada documento; os arquivos vêm com a persistência." />
       </div>
     </div>
+    </>
   );
 }
 
 /* ---------------------------------------------------------------- Visão técnica (Engenharia) */
 
 /**
- * O que a Engenharia vê: só a projeção técnica dos pedidos de projeto (solicitacoesTecnicas). Sem dossiê, sem links
+ * O que a Engenharia vê na Central: o atalho para as solicitações formais (PedidosProjeto.tsx). Sem dossiê, sem links
  * para a conversa ou para a empresa no Radar, sem valores, sem nome da pessoa, sem observações comerciais.
  */
-function TecnicoView({ linhas, motivo, dossieNegado }: { linhas: SolicitacaoTecnica[]; motivo: string; dossieNegado: boolean }) {
-  const cols: Coluna<SolicitacaoTecnica>[] = [
-    { titulo: 'Solicitado em', ordenar: (s) => s.solicitadaEm, largura: 110 }, { titulo: 'Cliente', ordenar: (s) => s.cliente }, { titulo: 'Tipo', ordenar: (s) => s.tipo },
-    { titulo: 'Dados técnicos' }, { titulo: 'Origem', ordenar: (s) => s.origem }, { titulo: 'Responsável comercial', ordenar: (s) => s.responsavelComercial ?? '' },
-    { titulo: 'Prazo', ordenar: (s) => s.prazo ?? '' }, { titulo: 'Situação', ordenar: (s) => s.situacao }, { titulo: 'Documentos' },
-  ];
+function TecnicoView({ motivo, dossieNegado }: { motivo: string; dossieNegado: boolean }) {
   return (
     <>
       <div className="cgc-lacuna" role="note"><b>Visão técnica.</b> {motivo}</div>
-      {dossieNegado && <div className="cgc-lacuna" role="alert" style={{ marginTop: 8 }}>O dossiê comercial não está disponível para o seu perfil; abrimos a lista de pedidos de projeto.</div>}
+      {dossieNegado && <div className="cgc-lacuna" role="alert" style={{ marginTop: 8 }}>O dossiê comercial não está disponível para o seu perfil.</div>}
       <div className="card" style={{ marginTop: 'var(--space-4)' }}>
-        <h2>Solicitações de projeto <Badge tone="muted">sinais, sem entidade própria</Badge></h2>
-        <p className="small muted">Dados técnicos como o cliente informou (declaração preliminar, não verificada). Ainda não existe atribuição a um responsável técnico: a E11.2 cria o pedido formal e o encaminhamento.</p>
-        <Tabela colunas={cols} linhas={linhas} chave={(s) => s.id} vazio="Nenhuma solicitação de projeto identificada."
-          linha={(s) => (<>
-            <td className="small">{data(s.solicitadaEm.slice(0, 10))}</td><td><b>{s.cliente}</b></td><td className="small">{s.tipo}</td>
-            <td className="small">{s.dadosTecnicos.length ? s.dadosTecnicos.join(' · ') : <span className="muted">não informados</span>}</td>
-            <td className="small">{NOME_FONTE_SOLICITACAO[s.origem]}</td><td className="small">{s.responsavelComercial ?? <span className="muted">—</span>}</td>
-            <td className="small">{s.prazo ? (s.prazo.length > 10 ? dataHora(s.prazo) : data(s.prazo)) : '—'}</td><td className="small">{s.situacao}</td><td className="small muted">indisponível</td>
-          </>)} />
-        <div className="actions" style={{ marginTop: 10, gap: 16, flexWrap: 'wrap' }}>
-          <SemContrato rotulo="Aceitar na triagem técnica" motivo="Depende do pedido de projeto formal (E11.2): contrato e migration ainda não autorizados." />
-          <SemContrato rotulo="Pedir dados pendentes" motivo="Depende do pedido de projeto formal (E11.2)." />
-          <SemContrato rotulo="Anexar documentos" motivo="Não há armazenamento de documentos de projeto. Os anexos existentes são financeiros." />
+        <h2>Solicitações de projeto encaminhadas à Engenharia</h2>
+        <p className="small muted">O Comercial encaminha cada pedido como uma solicitação formal, vinculada à oportunidade; a Engenharia recebe só os dados técnicos, os documentos e as pendências. Nada do Inbox Comercial é aberto para isso.</p>
+        <div className="actions" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>
+          <Link className="btn sm primary" to="/comercial/projetos?filtro=engenharia">Abrir solicitações com a Engenharia</Link>
+          <Link className="btn sm" to="/comercial/projetos?filtro=minhas">Atribuídas a mim</Link>
         </div>
       </div>
     </>
@@ -510,7 +509,7 @@ function DossieView({ d }: { d: Dossie }) {
       <div className="card" style={{ marginTop: 'var(--space-4)' }}>
         <h2>Oportunidades, orçamentos e pedidos de projeto</h2>
         {d.oportunidades.length === 0 ? <p className="small muted">Nenhuma oportunidade no Radar.</p>
-          : <ul className="cgc-lista">{d.oportunidades.map((o) => <li key={o.id}><span>{o.titulo}<span className="sub">{NOME_ESTAGIO[o.estagio]} · prob. {pct(o.probabilidade)}{o.previsaoFechamento ? ` · previsão ${data(o.previsaoFechamento)}` : ''}{o.responsavelNome ? ` · ${o.responsavelNome}` : ''}</span></span><span className="small">{o.valorFechado !== undefined ? <>fechado {money(o.valorFechado, true)}</> : o.valorEstimado !== undefined ? money(o.valorEstimado, true) : <span className="muted">sem valor</span>}</span></li>)}</ul>}
+          : <ul className="cgc-lista">{d.oportunidades.map((o) => <li key={o.id}><span>{o.titulo}<span className="sub">{NOME_ESTAGIO[o.estagio]} · prob. {pct(o.probabilidade)}{o.previsaoFechamento ? ` · previsão ${data(o.previsaoFechamento)}` : ''}{o.responsavelNome ? ` · ${o.responsavelNome}` : ''}</span></span><span className="small">{o.valorFechado !== undefined ? <>fechado {money(o.valorFechado, true)}</> : o.valorEstimado !== undefined ? money(o.valorEstimado, true) : <span className="muted">sem valor</span>}{!['WON', 'LOST', 'NURTURE'].includes(o.estagio) && d.empresa && <> · <Link to={`/comercial/projetos/novo?empresa=${encodeURIComponent(d.empresa.id)}&oportunidade=${encodeURIComponent(o.id)}`}>abrir solicitação técnica</Link></>}</span></li>)}</ul>}
         <div className="cgc-lacuna">Orçamentos: não há vínculo canônico entre orçamento e empresa/oportunidade; procure em <Link to="/orcamentos">Orçamentos e composições</Link>.</div>
         {d.solicitacoes.length > 0 && <ul className="cgc-lista">{d.solicitacoes.map((s) => <li key={s.id}><span>Pedido de projeto · {s.tipo}<span className="sub">{s.dadosTecnicos.join(' · ') || 'dados técnicos não informados'} · {NOME_FONTE_SOLICITACAO[s.fonte]}</span></span><span className="small muted">{s.situacao}</span></li>)}</ul>}
       </div>
