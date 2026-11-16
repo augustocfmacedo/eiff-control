@@ -61,6 +61,7 @@ import { classificarAposFalha } from '../src/core/radar/formularioConcorrencia'
 import { planoDaReconciliacao } from '../src/core/radar/formularioReconciliacao'
 import { PROVIDER_FORMULARIO } from '../src/core/inbox/formularioSite'
 import { consultaAuditoria } from '../src/data/supabase'
+import { SemRealtime } from '../src/data/clienteServidor'
 import { createClient } from '@supabase/supabase-js'
 import type { SubmissaoFormulario } from '../src/core/radar/formularioSite'
 
@@ -325,6 +326,8 @@ async function parteA() {
   // A11 · a CORREÇÃO: a consulta oficial da tela (supabase-js de verdade → URL → banco), como Administrador logado
   const clienteApp = createClient('https://prova.supabase.local', 'chave-anon-de-prova', {
     auth: { persistSession: false, autoRefreshToken: false },
+    // Node 20 (CI e funções) não tem WebSocket nativo: sem isto o createClient recusa nascer (ver clienteServidor.ts)
+    realtime: { transport: SemRealtime as unknown as never },
     global: { fetch: criarShim('authenticated', ADMIN) },
   })
   const { data: tela, error: erroTela } = await consultaAuditoria(clienteApp.from('audit_log').select('*'))

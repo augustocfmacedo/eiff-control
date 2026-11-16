@@ -10,12 +10,15 @@ import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ENTIDADE } from '../core/radar/formularioMonitorPorta'
+import { SemRealtime } from './clienteServidor'
 import { LIMITE_AUDITORIA, consultaAuditoria } from './supabase'
 
 async function urlDaConsulta(): Promise<URL> {
   let capturada = ''
   const cliente = createClient('https://projeto.supabase.invalido', 'chave-anon-de-teste', {
     auth: { persistSession: false, autoRefreshToken: false },
+    // Node 20 (CI e funções) não tem WebSocket nativo: sem isto o createClient recusa nascer (ver clienteServidor.ts)
+    realtime: { transport: SemRealtime as unknown as never },
     global: {
       fetch: (async (url: string) => {
         capturada = String(url)
