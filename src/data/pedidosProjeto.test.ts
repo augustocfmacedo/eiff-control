@@ -1,5 +1,7 @@
 // E11.2A — no modo remoto não há persistência homologada: o adaptador nunca grava nem finge que gravou; a demonstração
 // local usa o Radar fictício só quando o dataset não tem oportunidades; a rota da lista exige comercial_projetos.
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ErroPedido } from '../core/comercial/pedidoProjeto'
 import { ROTAS_NAV } from '../ui/Paleta'
@@ -25,5 +27,11 @@ describe('Solicitações de projeto no app', () => {
   })
   it('menu e paleta: a lista de solicitações exige comercial_projetos', () => {
     expect(ROTAS_NAV.find((r) => r.to === '/comercial/projetos')?.permissao).toBe('comercial_projetos')
+  })
+  it('a persistência Supabase continua DESLIGADA: nenhum código do app instancia o adaptador (só o teste de integração)', () => {
+    const achados: string[] = []
+    const varrer = (dir: string) => { for (const f of fs.readdirSync(dir, { withFileTypes: true })) { const c = path.join(dir, f.name); if (f.isDirectory()) varrer(c); else if (/\.(ts|tsx)$/.test(f.name) && !/\.test\.tsx?$/.test(f.name) && fs.readFileSync(c, 'utf8').includes('repositorioSupabase(')) achados.push(c.split(path.sep).join('/')) } }
+    varrer(path.resolve('src'))
+    expect(achados).toEqual([expect.stringMatching(/src\/data\/pedidosProjeto\.supabase\.ts$/)])
   })
 })
