@@ -1,6 +1,9 @@
 # S1 — Chave de serviço do Supabase: compatibilidade com `sb_secret` (R1) e roteiro de rotação
 
-> **R1: código pronto, NÃO mesclado.** Nenhuma credencial foi criada, trocada ou revogada. Os portões seguem separados:
+> **Estado em 17/11/2026:** R2 feita; R3A homologada; R3B parcialmente homologada (convite e recuperação pendentes de envio e
+> entrega); R4 em plano para aprovação. Nenhuma variável, deploy ou credencial mudou.
+>
+> **R1: código pronto, NÃO mesclado.** Só a `sb_secret` `netlifyfunctions` foi criada (R2); nenhuma foi trocada no Netlify nem revogada. Os portões seguem separados:
 > «MERGE AUTORIZADO» (este PR), R2 (criar as chaves novas), R3A (validar sem escrita), R3B (escritas em ambiente descartável), R4 em diante (trocar, publicar, desativar
 > as legadas), cada um com autorização própria da Direção.
 
@@ -95,7 +98,7 @@ falham ou o controle falha → NO-GO.
 **O que a R3A não homologa:** criar, atualizar, convidar e recuperar. Essas rotas têm a mesma porta de administrador que a
 R3A atravessa, mas escrevem — ficam para a R3B.
 
-### R3B — escritas do Auth em projeto DESCARTÁVEL (plano aprovado com condições e identificador autorizado em 17/11/2026; execução NÃO autorizada)
+### R3B — escritas do Auth em projeto DESCARTÁVEL (executada em 17/11/2026: PARCIALMENTE HOMOLOGADA; resultado no fim desta seção)
 
 **Estado da R3A (17/11/2026):** PASS nas seis provas obrigatórias, controles negativos com 401 — leitura do banco e do Auth
 admin homologada com a `sb_secret` `netlifyfunctions`.
@@ -185,21 +188,58 @@ qualquer ação manual.
 **O que nem a R3B prova** (fica para a R4, no primeiro uso real da tela de Usuários, com autorização): o projeto de produção
 especificamente e o envio real de convite/recuperação pela configuração de e-mail da produção.
 
-### R4 — trocar nas Functions (Augusto + publicação autorizada)
-1. «MERGE AUTORIZADO» deste PR.
-2. No Netlify, recriar `SUPABASE_SERVICE_ROLE_KEY` com o valor `sb_secret_…`, **escopo só Functions, valor só em
-   Production** (aproveita para tirar Builds/Runtime).
-3. Um build de produção da `main`, conferência e «PRODUCTION AUTORIZADA».
-4. Fumaça sem efeito: e-mail `saude` sem login → 401 e envio sem login → 403 (desligado); widget sem token → 401;
-   formulário em verificação; usuários «listar» pela tela; Diretor Financeiro (veredito) pela tela; webhook da Meta com
-   assinatura inválida → recusado.
-5. Retorno: republicar o deploy anterior (ainda com a legada, válida até a R6).
+#### Resultado da R3B (executada em 17/11/2026; decisão da Direção: PARCIALMENTE HOMOLOGADA)
 
-### R5 — navegador
+Executada pelo Augusto no projeto descartável `lygduprbdmmnczkhxrcn`, no commit `40b0d1e`, com a `sb_secret` do próprio
+descartável. O procedimento previa **uma** rodada; houve **duas**. A segunda criou e apagou outro usuário de teste do
+ensaio, sem efeito fora do descartável. Registro como aconteceu.
+
+| Etapa | Rodada 1 | Rodada 2 |
+|---|---|---|
+| 0 projeto vazio | 200, 0 usuários | 200, 0 usuários |
+| 1 criar · 2 buscar · 3 atualizar | 200 · 200 · 200 | 200 · 200 · 200 |
+| 4 convidar | 400 `email_address_invalid` | 429 `over_email_send_rate_limit` |
+| 5 recuperar | 400 `email_address_invalid` | 429 `over_email_send_rate_limit` |
+| 6 limpeza · 7 conferida | 200 · 0 usuários | 200 · 0 usuários |
+| Resultado do script | NO-GO (4 e 5 fora do esperado) | NO-GO (idem) |
+
+**Estado depois das rodadas** (consulta só de leitura, `set transaction read only`, só contagens): `auth.users` 0,
+`auth.identities` 0, `auth.sessions` 0, `auth.one_time_tokens` 0 (nenhum link de convite ou recuperação ficou valendo),
+`auth.flow_state` 0. `auth.audit_log_entries` vazia: projetos novos não gravam a auditoria do Auth no banco. **Os logs do
+Auth no painel NÃO foram acessados** (o painel pede login e o agente não entra pela Direção); a afirmação «nenhum e-mail
+aceito para envio» vem do código do Auth e das respostas, não dos logs.
+
+**Premissa do script que estava errada.** O plano esperava `email_address_not_authorized` (o SMTP padrão recusando o
+destinatário) para `@example.com`. O Auth recusa antes, na validação do endereço (`email_address_invalid`), e na segunda
+rodada o limite de envio do SMTP padrão (2 por hora) respondeu primeiro. O script classificou corretamente como NO-GO, e
+nenhum ensaio corrigido foi autorizado: a Direção encerrou a R3 aqui.
+
+**O que o código do Auth mostra** (supabase/auth, `internal/api/api.go` e `invite.go`): `/invite` passa por
+`requireAdminCredentials` **antes** do handler; validação do endereço, criação do usuário e envio rodam numa única
+transação, que desfaz o usuário se o envio falhar. `/recover` é **pública** (limite de envio, captcha, provedor de e-mail).
+
+| Camada | Convite | Recuperação |
+|---|---|---|
+| L1 chave aceita como administrador | **comprovada**: 400/429 só existem depois da porta de administrador | não se aplica (rota pública); a chave no formato B foi aceita pelo gateway |
+| L2 validação do endereço | não passou (`example.com` recusado) | idem |
+| L3 limite de envio | atingido na rodada 2 | idem |
+| L4 envio aceito pelo Auth | **não homologado** | **não homologado** |
+| L5 entrega na caixa de entrada | **não homologada** | **não homologada** |
+
+**Decisão (17/11/2026).** R3A homologada. R3B **parcialmente homologada**: criar, buscar e atualizar pelo Auth admin com a
+`sb_secret` no formato do código. Convite e recuperação **pendentes de homologação de envio e entrega**; a R3B **não** é
+homologação de entrega de e-mails. Send Email Hook e novos ensaios de e-mail **não autorizados**. O projeto e a organização
+descartáveis ficam **intactos** até a decisão de exclusão. `REF_AUTORIZADO` voltou a vazio (o script recusa tudo de novo).
+
+### R4 — trocar nas Functions (plano para aprovação)
+Plano operacional completo, com inventário, dependências, sequência, matriz de fumaça, retorno, R5, critérios da R6,
+homologação separada de convite/recuperação e ordem com a S3: **`docs/s1-r4-plano-operacional.md`**. Nada dele foi executado.
+
+### R5 — navegador (detalhe no plano da R4, seção 7)
 `VITE_SUPABASE_ANON_KEY` recebe a `sb_publishable_…`; build e publicação; conferir login, telas, tempo real. O código
 do navegador não precisa mudar (o supabase-js 2.114 trata a chave publicável).
 
-### R6 — desativar as legadas (Augusto, painel do Supabase)
+### R6 — desativar as legadas (Augusto, painel do Supabase; critérios no plano da R4, seção 8)
 Só depois de R4 e R5 no ar e conferidos. **Efeito:** todo deploy antigo (pré-visualizações e produção) perde o acesso ao
 banco — falha fechada; scripts locais com a chave antiga param (trocar no `.env.local`). Reversível pelo painel
 (reativar as legadas). Novo ponto de retorno = o deploy da R5.
@@ -213,7 +253,7 @@ build; revogar as antigas na origem.
 | Risco | Tratamento |
 |---|---|
 | O projeto recusar a chave nova só no `apikey` no banco | R3A mostra antes de qualquer troca; correção de uma linha |
-| Auth admin com a chave nova (sem documentação) | R3A mede leitura nos dois formatos; R3B mede as escritas em ambiente descartável |
+| Auth admin com a chave nova (sem documentação) | R3A: leitura homologada; R3B: criar/buscar/atualizar homologados; convite e recuperação com L1 comprovada e envio/entrega pendentes |
 | Escrever no Auth de produção para testar | proibido: a R3A só faz HEAD/GET; a R3B só aceita o projeto descartável autorizado e recusa os operacionais |
 | Chave publicável colada no lugar da secreta | falha fechada no código (sem requisição) |
 | Desativar as legadas antes da R5 | derruba o navegador: ordem obrigatória R4 → R5 → R6 |
