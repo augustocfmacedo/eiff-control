@@ -239,23 +239,42 @@ describe('guarda: credencial real fora dos testes, do CI e do repositório', () 
     expect(t).not.toMatch(/admin\/users',|\/invite|\/recover|delivery_transition|delivery_create|reserve_vibe|update_vibe|inbox_ingest|apply_routing/)
   })
 
-  it('R3B (escrita no Auth) só roda no projeto descartável autorizado, ainda NÃO autorizado nesta versão', () => {
+  it('R3B (escrita no Auth): bloqueada por padrão e presa ao identificador exato do projeto descartável', () => {
     const t = ler('ensaio-auth-escrita.mjs')
-    // nenhum projeto autorizado: preencher exige commit revisado depois da aprovação da Direção
-    expect(t).toMatch(/^const REF_AUTORIZADO = '';/m)
+    const OPER = ['dduobppgomqyagjviwpx', 'htromxizctbknkwqxuvc', 'cbulkfgkqkuwcckgfwqc', 'wxtozqtxrathmftxacen']
+    // a constante é vazia (bloqueio por padrão) OU, depois do commit de autorização, um identificador de 20 letras não operacional
+    const m = t.match(/^const REF_AUTORIZADO = '([a-z]*)';/m)
+    expect(m).not.toBeNull()
+    const ref = m![1]
+    expect(ref === '' || (/^[a-z]{20}$/.test(ref) && !OPER.includes(ref))).toBe(true)
     expect(t).toMatch(/if \(!REF_AUTORIZADO\) recusar/)
     expect(t).toMatch(/if \(ref !== REF_AUTORIZADO\) recusar/)
-    // todos os projetos operacionais da conta ficam fora, mesmo que a constante seja preenchida errado
-    for (const r of ['dduobppgomqyagjviwpx', 'htromxizctbknkwqxuvc', 'cbulkfgkqkuwcckgfwqc', 'wxtozqtxrathmftxacen']) expect(t).toMatch(new RegExp(`OPERACIONAIS = \\[[^\\]]*'${r}'`))
+    const lista = t.match(/^const OPERACIONAIS = \[([^\]]*)\];/m)
+    expect(lista).not.toBeNull()
+    for (const r of OPER) expect(lista![1]).toContain(`'${r}'`)
     expect(t).toMatch(/OPERACIONAIS\.includes\(REF_AUTORIZADO\) \|\| OPERACIONAIS\.includes\(ref\)\) recusar/)
     expect(t).toMatch(/FRASE = 'ENSAIO_AUTH_DESCARTAVEL'/)
-    expect(t).not.toMatch(/--url/)
-    // ordem: portões → chave → requisições; projeto vazio antes da primeira escrita; limpeza conferida no PASS
+    expect(t).not.toMatch(/--url|--email-real/)
+    // toda requisição vai para o host do projeto autorizado
+    expect(t).toContain('const HOST = `${REF_AUTORIZADO}.supabase.co`;')
+    expect(t).toMatch(/if \(alvo\.host !== HOST\) throw/)
+    // ordem: portões → chave → requisições; projeto vazio antes da primeira escrita
     const i = (s: string) => t.indexOf(s)
     expect(i('if (!REF_AUTORIZADO) recusar')).toBeLessThan(i('lerOculto('))
     expect(i('lerOculto(')).toBeLessThan(i('await fetch('))
-    expect(i("'0_projeto_vazio'")).toBeLessThan(i("'1_criar'"))
-    expect(t).toMatch(/if \(pronto\) \{\s*const c = await etapa\('1_criar'/)
-    expect(t).toMatch(/const ok = pronto && falhas === 0 && conferida/)
+    expect(t).toMatch(/if \(pronto\) \{\s*const c = await escrita\('1_criar'/)
+    // escritas sem repetição: o formato A só aparece na função de leitura (GET)
+    expect(t.match(/chamar\('A'/g)).toHaveLength(1)
+    expect(t).toMatch(/const a = await chamar\('A', 'GET', caminho\)/)
+    expect(t).toMatch(/if \(r\.rede\) \{ resultado = 'INDETERMINADA'; interromper = true; \}/)
+    // e-mail: só @example.com, sem modo de envio real; 2xx em convite/recuperação é alerta
+    expect(t).toMatch(/const DOMINIO = '@example\.com';/)
+    expect(t).toMatch(/else if \(email && r\.ok\) \{ resultado = 'CONCLUIDA'; alertaEnvio = true; \}/)
+    expect(t).toMatch(/'4_convidar': 'PORTA_ACEITA_EMAIL_RECUSADO', '5_recuperar': 'PORTA_ACEITA_EMAIL_RECUSADO'/)
+    // exclusão só depois de reler o usuário com e-mail e metadado do ensaio; PASS exige zero usuários no fim
+    expect(t).toMatch(/const ehDoEnsaio = u\.ok && doEnsaio\(u\.c\) && u\.c\?\.user_metadata\?\.s1_r3b === true;/)
+    expect(i("const ehDoEnsaio")).toBeLessThan(i("chamar('B', 'DELETE'"))
+    expect(t).toMatch(/const ok = pronto && falhas === 0 && faltando === 0 && !alertaEnvio;/)
+    expect(t).toMatch(/'7_limpeza_conferida': 'CONCLUIDA'/)
   })
 })

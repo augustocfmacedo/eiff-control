@@ -1,33 +1,39 @@
 // S1/R3B — ENSAIO das rotas de ESCRITA do Auth admin com a chave secreta nova (criar, atualizar, convidar, recuperar), SÓ
-// no projeto Supabase DESCARTÁVEL explicitamente autorizado pela Direção. Preparado; EXECUÇÃO exige autorização própria.
+// no projeto Supabase DESCARTÁVEL cujo identificador exato a Direção autorizou. EXECUÇÃO exige «EXECUÇÃO R3B AUTORIZADA».
 // O agente não roda; nenhum teste ou CI roda. Plano completo em docs/s1-chave-servico-supabase.md (R3B).
 //
 //   node scripts/s1/ensaio-auth-escrita.mjs --ref <ref> --confirmar ENSAIO_AUTH_DESCARTAVEL
-//   (opcional, autorização à parte) ... --email-real <endereço do membro da organização> --confirmar-email ENVIAR_DOIS_EMAILS
 //
-// PORTÕES (todos antes de pedir a chave e antes de qualquer requisição):
-//   - REF_AUTORIZADO vazio → recusa. Ele só é preenchido por um commit revisado DEPOIS de a Direção aprovar o projeto criado;
-//   - --ref diferente de REF_AUTORIZADO → recusa (aceita SÓ aquele projeto, não "qualquer um que não seja produção");
-//   - --ref entre os projetos operacionais da conta → recusa (defesa extra, mesmo que alguém preencha errado a constante);
-//   - sem a frase de confirmação → recusa.
-// PORTÃO DO PROJETO (depois da chave, antes de qualquer escrita): GET admin/users tem de dar 200 e ZERO usuários. Uma chave
-// de outro projeto (inclusive a de produção) dá 401 ali e o ensaio para sem escrever; um projeto com qualquer usuário também.
+// BLOQUEIO POR PADRÃO: REF_AUTORIZADO vazio recusa tudo. Só um commit revisado de autorização o preenche com o identificador
+// EXATO do projeto descartável (conferido por metadados: organização descartável, não operacional). O teste de guarda aceita
+// a constante vazia OU um identificador de 20 letras fora da lista operacional — nunca outra coisa.
 //
-// E-MAIL: o SMTP padrão do Supabase só entrega a membros da equipe da organização; para qualquer outro endereço o Auth
-// responde `email_address_not_authorized` e nada é enviado. Modo padrão: convite e recuperação para @example.com, e o
-// código `email_address_not_authorized` conta como "porta de administrador atravessada, envio recusado" (nenhum e-mail sai).
-// Modo --email-real: convite e recuperação para o endereço informado (membro da equipe), no máximo 2 e-mails, para provar o
-// caminho de sucesso com envio.
+// PORTÕES, antes de pedir a chave e de qualquer requisição: constante preenchida; --ref idêntico a ela; nenhum dos dois na
+// lista operacional; frase de confirmação. PORTÃO DO PROJETO, depois da chave e antes de qualquer escrita: GET admin/users
+// tem de dar 200 com ZERO usuários (a chave de outro projeto, inclusive a de produção, dá 401 e nada é escrito).
 //
-// LIMPEZA CONFERIDA: apaga os usuários criados e, depois, qualquer usuário do projeto com e-mail do ensaio; o PASS exige que
-// a listagem final volte a ZERO usuários. Imprime só etapa, formato, status, código e veredito.
+// ESCRITAS SEM REPETIÇÃO: cada POST/PUT/DELETE é feito UMA vez, só no formato do código (B = apikey + Authorization
+// idêntico). Erro de rede/timeout numa escrita NÃO é "nada foi escrito": vira INDETERMINADA, interrompe as escritas
+// seguintes e a limpeza conferida procura o que possa ter sido criado. Só as LEITURAS (GET) ganham uma segunda tentativa
+// no formato A, para diagnóstico.
+//
+// TRÊS RESULTADOS por escrita: CONCLUIDA (2xx: a operação aconteceu); PORTA_ACEITA_EMAIL_RECUSADO (o Auth aceitou a chave
+// de administrador e o SMTP padrão recusou o destinatário: `email_address_not_authorized`, nada enviado); NAO_HOMOLOGADA
+// (qualquer outra resposta) ou INDETERMINADA (sem resposta).
+//
+// SEM E-MAIL REAL: convite e recuperação só para @example.com (domínio reservado pela RFC 2606, sem caixa de entrada) e o
+// SMTP padrão do Supabase só entrega a membros da equipe da organização. Não existe modo de envio real neste script. Se
+// convite ou recuperação responderem 2xx (o que indicaria um envio), o resultado é NO-GO com ALERTA.
+//
+// EXCLUSÃO CONFERIDA: antes de cada DELETE, confere que a requisição vai para o projeto autorizado e relê o usuário pelo id:
+// só apaga se o e-mail for do ensaio (s1-r3b-…@example.com) E o metadado s1_r3b for verdadeiro. O PASS exige a listagem
+// final com ZERO usuários. Imprime só etapa, formato, status, código e resultado.
 import { randomBytes } from 'node:crypto';
 import { lerOculto } from './entradaOculta.mjs';
 
-const REF_AUTORIZADO = ''; // preencher por commit revisado, só depois da aprovação do projeto descartável pela Direção
+const REF_AUTORIZADO = ''; // preenchido SÓ pelo commit de autorização, com o identificador exato do projeto descartável
 const OPERACIONAIS = ['dduobppgomqyagjviwpx', 'htromxizctbknkwqxuvc', 'cbulkfgkqkuwcckgfwqc', 'wxtozqtxrathmftxacen'];
 const FRASE = 'ENSAIO_AUTH_DESCARTAVEL';
-const FRASE_EMAIL = 'ENVIAR_DOIS_EMAILS';
 const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : undefined; };
 const recusar = (m) => { console.error(`Recusado: ${m}. Nada foi chamado.`); process.exit(2); };
 
@@ -37,11 +43,8 @@ if (OPERACIONAIS.includes(REF_AUTORIZADO) || OPERACIONAIS.includes(ref)) recusar
 if (!/^[a-z]{20}$/.test(ref)) recusar('--ref precisa ser o identificador de 20 letras do projeto descartável');
 if (ref !== REF_AUTORIZADO) recusar('--ref não é o projeto descartável autorizado');
 if (arg('--confirmar') !== FRASE) recusar(`falta --confirmar ${FRASE}`);
-const emailReal = arg('--email-real');
-if (emailReal !== undefined && (arg('--confirmar-email') !== FRASE_EMAIL || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailReal))) {
-  recusar(`--email-real exige um endereço válido e --confirmar-email ${FRASE_EMAIL}`);
-}
-const URL_ENSAIO = `https://${ref}.supabase.co`;
+const HOST = `${REF_AUTORIZADO}.supabase.co`;
+const URL_ENSAIO = `https://${HOST}`;
 
 let chave;
 try { chave = (await lerOculto(`Chave sb_secret_ do projeto DESCARTÁVEL ${ref} (oculta) e Enter: `)).trim(); }
@@ -50,10 +53,17 @@ if (!/^sb_secret_[A-Za-z0-9_-]{8,}$/.test(chave)) recusar('não é uma chave sb_
 
 const cab = (modo) => (modo === 'A' ? { apikey: chave, 'content-type': 'application/json' } : { apikey: chave, authorization: `Bearer ${chave}`, 'content-type': 'application/json' });
 const codigoDe = (c) => (c && typeof c === 'object' ? String(c.error_code ?? c.code ?? c.error ?? '') : '');
+/** Uma requisição, sem repetição. Sem resposta → { status: 0, rede: true }. */
 const chamar = async (modo, metodo, caminho, corpo) => {
-  const r = await fetch(`${URL_ENSAIO}/auth/v1/${caminho}`, { method: metodo, headers: cab(modo), body: corpo ? JSON.stringify(corpo) : undefined });
-  let c = null; try { c = await r.json(); } catch { /* corpo vazio */ }
-  return { status: r.status, ok: r.ok, c };
+  const alvo = new URL(`${URL_ENSAIO}/auth/v1/${caminho}`);
+  if (alvo.host !== HOST) throw new Error('requisição fora do projeto autorizado');
+  try {
+    const r = await fetch(alvo, { method: metodo, headers: cab(modo), body: corpo ? JSON.stringify(corpo) : undefined });
+    let c = null; try { c = await r.json(); } catch { /* corpo vazio */ }
+    return { status: r.status, ok: r.ok, c, rede: false };
+  } catch {
+    return { status: 0, ok: false, c: null, rede: true };
+  }
 };
 const listar = async () => {
   const r = await chamar('B', 'GET', 'admin/users?per_page=50');
@@ -61,23 +71,51 @@ const listar = async () => {
 };
 
 const sufixo = randomBytes(4).toString('hex');
-const emailCriado = `s1-r3b-${sufixo}@example.com`;
-const emailConvite = emailReal ?? `s1-r3b-convite-${sufixo}@example.com`;
-const doEnsaio = (u) => typeof u?.email === 'string' && (u.email.startsWith('s1-r3b-') || u.email === emailReal);
+const PREFIXO = 's1-r3b-';
+const DOMINIO = '@example.com';
+const emailCriado = `${PREFIXO}${sufixo}${DOMINIO}`;
+const emailConvite = `${PREFIXO}convite-${sufixo}${DOMINIO}`;
+const doEnsaio = (u) => typeof u?.email === 'string' && u.email.startsWith(PREFIXO) && u.email.endsWith(DOMINIO);
 const SMTP_RECUSOU = 'email_address_not_authorized';
 const linhas = [];
-const criados = [];
+const criados = new Set();
+let interromper = false;
+let alertaEnvio = false;
 
-// Etapa no formato do código (B). Falhou → repete só ela em A, como diagnóstico. `aceitaSmtp`: no modo padrão, a recusa do
-// SMTP padrão também prova que a porta de administrador foi atravessada (nada é enviado).
-const etapa = async (id, metodo, caminho, corpo, aceitaSmtp = false) => {
-  const b = await chamar('B', metodo, caminho, corpo);
-  const smtp = aceitaSmtp && codigoDe(b.c) === SMTP_RECUSOU;
-  linhas.push({ id, modo: 'B', status: b.status, codigo: b.ok ? '' : codigoDe(b.c), veredito: b.ok ? 'PASS' : smtp ? 'PASS (porta; e-mail não enviado)' : 'FALHOU' });
-  if (b.ok || smtp) return b;
-  const a = await chamar('A', metodo, caminho, corpo);
-  linhas.push({ id: `${id} (diagnóstico)`, modo: 'A', status: a.status, codigo: a.ok ? '' : codigoDe(a.c), veredito: a.ok ? 'PASS' : 'FALHOU', informativa: true });
-  return a;
+/** Leitura: formato B; se não passar, uma segunda tentativa em A só para diagnóstico. */
+const leitura = async (id, caminho, esperado) => {
+  const b = await chamar('B', 'GET', caminho);
+  linhas.push({ id, modo: 'B', status: b.status, codigo: b.ok ? '' : codigoDe(b.c), resultado: b.status === esperado ? 'CONCLUIDA' : b.rede ? 'INDETERMINADA' : 'NAO_HOMOLOGADA' });
+  if (b.status !== esperado) {
+    const a = await chamar('A', 'GET', caminho);
+    linhas.push({ id: `${id} (diagnóstico)`, modo: 'A', status: a.status, codigo: a.ok ? '' : codigoDe(a.c), resultado: a.status === esperado ? 'CONCLUIDA' : 'NAO_HOMOLOGADA', informativa: true });
+  }
+  return b;
+};
+
+/** Escrita: UMA vez, formato B, sem repetição. `email`: convite/recuperação, em que 2xx significaria envio. */
+const escrita = async (id, metodo, caminho, corpo, email = false) => {
+  if (interromper) { linhas.push({ id, modo: 'B', status: '-', codigo: 'não tentada', resultado: 'NAO_HOMOLOGADA' }); return null; }
+  const r = await chamar('B', metodo, caminho, corpo);
+  let resultado;
+  if (r.rede) { resultado = 'INDETERMINADA'; interromper = true; }
+  else if (email && r.ok) { resultado = 'CONCLUIDA'; alertaEnvio = true; }
+  else if (r.ok) resultado = 'CONCLUIDA';
+  else if (email && codigoDe(r.c) === SMTP_RECUSOU) resultado = 'PORTA_ACEITA_EMAIL_RECUSADO';
+  else resultado = 'NAO_HOMOLOGADA';
+  linhas.push({ id, modo: 'B', status: r.status, codigo: r.ok ? '' : r.rede ? 'sem resposta' : codigoDe(r.c), resultado });
+  if (r.c?.id) criados.add(r.c.id);
+  return r;
+};
+
+/** Exclusão conferida: projeto autorizado + usuário relido pelo id com e-mail e metadado do ensaio. */
+const apagarConferido = async (id) => {
+  const u = await chamar('B', 'GET', `admin/users/${id}`);
+  if (u.status === 404) return; // não existe (convite recusado não cria usuário, por exemplo)
+  const ehDoEnsaio = u.ok && doEnsaio(u.c) && u.c?.user_metadata?.s1_r3b === true;
+  if (!ehDoEnsaio) { linhas.push({ id: '6_limpeza', modo: 'B', status: u.status, codigo: 'identidade não conferida', resultado: 'NAO_HOMOLOGADA' }); return; }
+  const d = await chamar('B', 'DELETE', `admin/users/${id}`);
+  linhas.push({ id: '6_limpeza', modo: 'B', status: d.status, codigo: d.ok ? '' : d.rede ? 'sem resposta' : codigoDe(d.c), resultado: d.ok ? 'CONCLUIDA' : d.rede ? 'INDETERMINADA' : 'NAO_HOMOLOGADA' });
 };
 
 let pronto = false;
@@ -85,47 +123,45 @@ try {
   // 0 — PORTÃO DO PROJETO: chave deste projeto e projeto vazio, antes de qualquer escrita.
   const antes = await listar();
   pronto = antes.status === 200 && antes.usuarios !== null && antes.usuarios.length === 0;
-  linhas.push({ id: '0_projeto_vazio', modo: 'B', status: antes.status, codigo: antes.status === 200 ? `${antes.usuarios?.length ?? '?'} usuário(s)` : '', veredito: pronto ? 'PASS' : 'FALHOU' });
+  linhas.push({ id: '0_projeto_vazio', modo: 'B', status: antes.status, codigo: antes.status === 200 ? `${antes.usuarios?.length ?? '?'} usuário(s)` : '', resultado: pronto ? 'CONCLUIDA' : 'NAO_HOMOLOGADA' });
   if (pronto) {
-    const c = await etapa('1_criar', 'POST', 'admin/users', { email: emailCriado, password: randomBytes(18).toString('base64url'), email_confirm: true, user_metadata: { s1_r3b: true } });
-    if (c.c?.id) criados.push(c.c.id);
-    if (c.c?.id) {
-      await etapa('2_buscar', 'GET', `admin/users/${c.c.id}`);
-      await etapa('3_atualizar', 'PUT', `admin/users/${c.c.id}`, { password: randomBytes(18).toString('base64url'), user_metadata: { s1_r3b: true, trocar_senha: false } });
+    const c = await escrita('1_criar', 'POST', 'admin/users', { email: emailCriado, password: randomBytes(18).toString('base64url'), email_confirm: true, user_metadata: { s1_r3b: true } });
+    const id = c?.ok ? c.c?.id : undefined;
+    if (id) {
+      await leitura('2_buscar', `admin/users/${id}`, 200);
+      await escrita('3_atualizar', 'PUT', `admin/users/${id}`, { password: randomBytes(18).toString('base64url'), user_metadata: { s1_r3b: true, trocar_senha: false } });
+    } else {
+      linhas.push({ id: '2_buscar', modo: 'B', status: '-', codigo: 'sem usuário criado', resultado: 'NAO_HOMOLOGADA' });
+      linhas.push({ id: '3_atualizar', modo: 'B', status: '-', codigo: 'sem usuário criado', resultado: 'NAO_HOMOLOGADA' });
     }
-    const v = await etapa('4_convidar', 'POST', 'invite', { email: emailConvite }, !emailReal);
-    if (v.c?.id) criados.push(v.c.id);
-    await etapa('5_recuperar', 'POST', 'recover', { email: emailReal ?? emailCriado }, !emailReal);
+    await escrita('4_convidar', 'POST', 'invite', { email: emailConvite, data: { s1_r3b: true } }, true);
+    await escrita('5_recuperar', 'POST', 'recover', { email: emailCriado }, true);
   }
-} catch (e) {
-  linhas.push({ id: 'rede', modo: '-', status: 0, codigo: String(e?.message ?? e).replaceAll(chave, '[oculta]').slice(0, 60), veredito: 'FALHOU' });
 } finally {
   if (pronto) {
-    // 6 — LIMPEZA: os ids criados e, por garantia, qualquer usuário do ensaio que a listagem mostrar.
-    try {
-      const ids = new Set(criados);
-      for (const u of (await listar()).usuarios ?? []) if (doEnsaio(u)) ids.add(u.id);
-      for (const id of ids) {
-        const d = await chamar('B', 'DELETE', `admin/users/${id}`);
-        linhas.push({ id: '6_limpeza', modo: 'B', status: d.status, codigo: d.ok ? '' : codigoDe(d.c), veredito: d.ok ? 'PASS' : 'FALHOU' });
-      }
-      const depois = await listar();
-      const zero = depois.status === 200 && depois.usuarios?.length === 0;
-      linhas.push({ id: '7_limpeza_conferida', modo: 'B', status: depois.status, codigo: `${depois.usuarios?.length ?? '?'} usuário(s)`, veredito: zero ? 'PASS' : 'FALHOU' });
-    } catch {
-      linhas.push({ id: '7_limpeza_conferida', modo: '-', status: 0, codigo: 'rede', veredito: 'FALHOU' });
-    }
+    // 6/7 — LIMPEZA CONFERIDA: ids devolvidos + qualquer usuário do ensaio na listagem (cobre escrita INDETERMINADA).
+    const ids = new Set(criados);
+    for (const u of (await listar()).usuarios ?? []) if (doEnsaio(u)) ids.add(u.id);
+    for (const id of ids) await apagarConferido(id);
+    const depois = await listar();
+    const zero = depois.status === 200 && depois.usuarios?.length === 0;
+    linhas.push({ id: '7_limpeza_conferida', modo: 'B', status: depois.status, codigo: `${depois.usuarios?.length ?? '?'} usuário(s)`, resultado: zero ? 'CONCLUIDA' : 'NAO_HOMOLOGADA' });
   }
   chave = undefined;
 }
 
-console.log(`\nprojeto descartável: ${ref} · e-mail: ${emailReal ? 'real (membro da equipe), até 2 envios' : 'nenhum envio (@example.com)'}`);
-console.log('etapa                         modo  HTTP  código                          veredito');
-for (const l of linhas) console.log(`${l.id.padEnd(29)} ${l.modo.padEnd(5)} ${String(l.status).padEnd(5)} ${(l.codigo || '-').slice(0, 31).padEnd(31)} ${l.veredito}`);
-const falhas = linhas.filter((l) => !l.informativa && !l.veredito.startsWith('PASS')).length;
-const conferida = linhas.some((l) => l.id === '7_limpeza_conferida' && l.veredito === 'PASS');
-const ok = pronto && falhas === 0 && conferida;
+// Critério: etapas 0, 1, 2, 3, 7 CONCLUIDA; 4 e 5 PORTA_ACEITA_EMAIL_RECUSADO; limpezas CONCLUIDA; nenhum alerta de envio.
+const ESPERADO = { '0_projeto_vazio': 'CONCLUIDA', '1_criar': 'CONCLUIDA', '2_buscar': 'CONCLUIDA', '3_atualizar': 'CONCLUIDA', '4_convidar': 'PORTA_ACEITA_EMAIL_RECUSADO', '5_recuperar': 'PORTA_ACEITA_EMAIL_RECUSADO', '6_limpeza': 'CONCLUIDA', '7_limpeza_conferida': 'CONCLUIDA' };
+const obrigatorias = linhas.filter((l) => !l.informativa);
+const falhas = obrigatorias.filter((l) => l.resultado !== ESPERADO[l.id]).length;
+const faltando = Object.keys(ESPERADO).filter((k) => k !== '6_limpeza' && !obrigatorias.some((l) => l.id === k)).length;
+const ok = pronto && falhas === 0 && faltando === 0 && !alertaEnvio;
+
+console.log(`\nprojeto descartável: ${ref} · e-mail: nenhum envio (@example.com, SMTP padrão)`);
+console.log('etapa                        modo  HTTP  código                         resultado');
+for (const l of linhas) console.log(`${l.id.padEnd(28)} ${l.modo.padEnd(5)} ${String(l.status).padEnd(5)} ${(l.codigo || '-').slice(0, 30).padEnd(30)} ${l.resultado}`);
+if (alertaEnvio) console.log('\nALERTA: convite ou recuperação responderam 2xx — o Auth pode ter tentado enviar e-mail. Pare e avise a Direção.');
 console.log(ok
-  ? '\nRESULTADO R3B: PASS — escritas do Auth admin funcionam com a chave nova no formato do código, e o projeto voltou a zero usuários.'
-  : `\nRESULTADO R3B: NO-GO — ${!pronto ? 'portão do projeto não passou (chave de outro projeto ou projeto não vazio); nada foi escrito' : `${falhas} etapa(s) falharam${conferida ? '' : '; limpeza NÃO conferida: apague os usuários no painel do descartável'}`}.`);
+  ? '\nRESULTADO R3B: PASS — criar, buscar e atualizar concluídos; convite e recuperação com a porta de administrador aceita e o e-mail recusado pelo SMTP; projeto de volta a zero usuários.'
+  : `\nRESULTADO R3B: NO-GO — ${!pronto ? 'portão do projeto não passou (chave de outro projeto ou projeto não vazio); nada foi escrito' : `${falhas + faltando} etapa(s) fora do esperado${linhas.some((l) => l.id === '7_limpeza_conferida' && l.resultado === 'CONCLUIDA') ? '' : '; limpeza NÃO conferida: não apague nada à mão sem conferir o projeto; avise a Direção'}`}.`);
 process.exit(ok ? 0 : 1);
