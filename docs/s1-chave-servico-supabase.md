@@ -53,8 +53,8 @@ chave publicável recusada antes de qualquer requisição na ingestão, no formu
 **guarda** que varre `src/` e `netlify/` e falha se algum arquivo voltar a montar à mão `apikey` + `Authorization` com a
 mesma variável; e três guardas de credencial: nenhum arquivo do repositório tem chave `sb_` real (só fictícias marcadas),
 o CI e o `package.json` nunca citam os scripts da R3 nem `sb_secret`, a chave só entra pelo teclado de terminal interativo e
-nunca é impressa, a R3A tem uma única função de requisição que só aceita HEAD/GET, e a R3B recusa a URL de produção antes
-de pedir a chave.
+nunca é impressa, a R3A tem uma única função de requisição que só aceita HEAD/GET, e a R3B só aceita o projeto descartável autorizado
+(nenhum nesta versão) e recusa os projetos operacionais antes de pedir a chave.
 
 ## 4. Procedimento das chaves novas (R2 → R6) — cada passo com autorização própria
 
@@ -95,26 +95,80 @@ falham ou o controle falha → NO-GO.
 **O que a R3A não homologa:** criar, atualizar, convidar e recuperar. Essas rotas têm a mesma porta de administrador que a
 R3A atravessa, mas escrevem — ficam para a R3B.
 
-### R3B — homologação das ESCRITAS do Auth em ambiente DESCARTÁVEL (autorização própria; preparado, não executado)
-```powershell
-node scripts/s1/ensaio-auth-escrita.mjs --url https://<ref-descartavel>.supabase.co --confirmar ENSAIO_AUTH_DESCARTAVEL
-```
-Recusa, antes de pedir a chave e antes de qualquer requisição: sem a frase; URL que contenha o ref de produção
-(`dduobppgomqyagjviwpx`); URL que não seja `https://<ref de 20 letras>.supabase.co` ou a pilha local `http://127.0.0.1:54321`.
-Pede a `sb_secret` **do ambiente descartável** (oculta). Ambiente recomendado: um projeto Supabase hospedado criado só para o
-ensaio (mesmo gateway que trata a chave nova em produção) e apagado depois; a pilha local é aceita mas menos fiel.
+### R3B — escritas do Auth em projeto DESCARTÁVEL (plano para aprovação específica; NÃO executado)
 
-| Etapa | Requisição (formato B) | Espera | Rota do código coberta |
-|---|---|---|---|
-| 1 criar | POST `admin/users` (e-mail `s1-r3b-…@example.com`, senha aleatória, confirmado) | 200 | `criar` |
-| 2 buscar | GET `admin/users/{id}` | 200 | `editar`/`definir_senha` (leitura antes) |
-| 3 atualizar | PUT `admin/users/{id}` (senha e metadados) | 200 | `definir_senha`/`editar` |
-| 4 convidar | POST `invite` (outro e-mail @example.com) | 200 | `convidar`/`reenviar` |
-| 5 recuperar | POST `recover` (e-mail criado) | 200 | `reenviar` para confirmado |
-| 6 limpeza | DELETE `admin/users/{id}` dos dois usuários | 200 | — (o ambiente volta ao que era) |
+**Estado da R3A (17/11/2026):** PASS nas seis provas obrigatórias, controles negativos com 401 — leitura do banco e do Auth
+admin homologada com a `sb_secret` `netlifyfunctions`.
 
-Etapa que falhar em B é repetida só ela em A, como diagnóstico. Saída só com etapa, formato, status e código. E-mails
-para `@example.com` não são entregáveis. Se a limpeza não confirmar, o script avisa para apagar no painel do descartável.
+**Ambiente.** Recomendado: **uma organização Supabase NOVA, no plano Free, com um único projeto** (`s1-r3b`), sem nenhum
+projeto operacional e sem outro membro além do Augusto. A organização atual tem quatro projetos ativos (EIFF Control,
+modolab, Locus tracker, Retiro SJST), todos excluídos do ensaio. Alternativa menos isolada: projeto na organização atual
+(paga), ~US$ 0,01344/h de compute (cobra hora cheia; para de cobrar ao apagar) — dividiria organização com os operacionais.
+
+**Custo.** Organização Free + projeto Nano: US$ 0 (a documentação dá dois projetos gratuitos por pessoa, contando as
+organizações em que ela é dona/administradora; o painel mostra o preço antes de confirmar — se aparecer qualquer valor,
+parar). Alternativa paga: ~US$ 0,03 para duas horas.
+
+**Dependências.** Conta do Augusto no painel do Supabase; Node local (v24, já instalado); a pasta do PR #95; um commit
+revisado preenchendo `REF_AUTORIZADO` com o identificador do projeto criado (público, não é segredo). Não usa Netlify, chave
+de produção, SMTP externo nem variável de ambiente.
+
+**Script (`scripts/s1/ensaio-auth-escrita.mjs`).** Aceita SÓ o projeto em `REF_AUTORIZADO` (vazio nesta versão: recusa tudo)
+e recusa os quatro projetos operacionais mesmo que a constante seja preenchida errado; frase `ENSAIO_AUTH_DESCARTAVEL`;
+tudo antes de pedir a chave. Depois da chave, **portão do projeto**: GET `admin/users` precisa dar 200 com **zero**
+usuários — a chave de outro projeto (inclusive a de produção) dá 401 e o ensaio para sem escrever.
+
+**E-mail.** O SMTP padrão do Supabase só entrega a membros da equipe da organização; qualquer outro endereço recebe
+`email_address_not_authorized` e nada sai (limite de 2 e-mails/hora no SMTP padrão).
+- Modo padrão (recomendado): convite e recuperação para `@example.com` → o código `email_address_not_authorized` prova que a
+  porta de administrador foi atravessada; **nenhum e-mail é enviado**.
+- Modo `--email-real <endereço> --confirmar-email ENVIAR_DOIS_EMAILS` (autorização à parte): convite e recuperação para o
+  endereço do Augusto (único membro da organização nova) → no máximo 2 e-mails, do remetente padrão do Supabase, a ele.
+
+**Isolamento e limpeza.** Usuários de ensaio com e-mail `s1-r3b-<aleatório>@example.com` (ou o endereço real, no modo
+opcional) e metadado `s1_r3b`. No fim: apaga os ids criados e qualquer usuário de ensaio que a listagem mostrar; o PASS exige
+a listagem final com **zero** usuários (`7_limpeza_conferida`). Depois o projeto e a organização inteiros são apagados.
+
+| Etapa | Requisição (formato B) | PASS |
+|---|---|---|
+| 0 projeto vazio | GET `admin/users` | 200 e 0 usuários |
+| 1 criar | POST `admin/users` (confirmado, senha aleatória) | 200 |
+| 2 buscar | GET `admin/users/{id}` | 200 |
+| 3 atualizar | PUT `admin/users/{id}` (senha e metadados) | 200 |
+| 4 convidar | POST `invite` | 200, ou `email_address_not_authorized` no modo padrão |
+| 5 recuperar | POST `recover` | 200, ou `email_address_not_authorized` no modo padrão |
+| 6 limpeza | DELETE `admin/users/{id}` | 200 |
+| 7 limpeza conferida | GET `admin/users` | 200 e 0 usuários |
+
+Etapa que falhar em B é repetida em A (diagnóstico). Simulação offline (Auth falso em memória, sem rede) conferiu os quatro
+caminhos: tudo certo → PASS; chave de outro projeto → 1 GET, nada escrito; projeto com usuário → 1 GET, nada escrito;
+apagar falha → NO-GO com aviso de limpeza manual.
+
+**Checklist de execução (cada passo com a Direção)**
+1. Aprovação deste plano.
+2. Augusto: painel › *New organization* (Free, «EIFF ensaio descartável») › *New project* `s1-r3b` (Nano; senha do banco
+   gerada e descartada; qualquer região). Conferir US$ 0 antes de confirmar.
+3. Augusto informa só o **identificador do projeto** (20 letras, público). Eu confiro por metadados que ele está na
+   organização nova, sozinho, e não é operacional.
+4. Commit no PR #95 preenchendo `REF_AUTORIZADO`; Quality Gate; revisão da Direção.
+5. Augusto copia a chave `sb_secret` **do projeto descartável** (*Settings › API Keys*, a `default` serve) para o
+   gerenciador de senhas, numa entrada marcada DESCARTÁVEL. Nunca a chave de produção.
+6. Autorização de execução (modo padrão; o modo e-mail real só com autorização à parte).
+7. Augusto roda, na pasta do PR: `node scripts/s1/ensaio-auth-escrita.mjs --ref <ref> --confirmar ENSAIO_AUTH_DESCARTAVEL`
+   e cola a tabela.
+8. Exclusão: *Project settings › General › Delete project*; depois *Organization settings › Delete organization*; apagar a
+   entrada do gerenciador. Eu confiro por metadados que o projeto sumiu da lista.
+9. Commit voltando `REF_AUTORIZADO` para vazio.
+
+**Retorno.** Nada da produção muda em nenhum passo; o retorno é apagar o projeto e a organização (passo 8). Se a limpeza não
+for conferida, apaga-se o projeto inteiro do mesmo jeito.
+
+**Critérios.** PASS = etapas 0 a 7 PASS no formato B (4 e 5 aceitam a recusa do SMTP padrão) e saída 0. NO-GO = qualquer
+outra coisa. Se B falhar e A passar numa escrita, a correção é `cabecalhosAuthAdmin` mandar só `apikey` (commit no PR,
+R3A e R3B de novo). Portão 0 falhando = nada foi escrito; conferir a chave e o projeto.
+
+**O que nem a R3B prova** (fica para a R4, no uso real pela tela de Usuários, com autorização): o projeto de produção
+especificamente (a R3B roda na mesma plataforma, outro projeto) e a entrega de e-mail pela configuração de SMTP da produção.
 
 ### R4 — trocar nas Functions (Augusto + publicação autorizada)
 1. «MERGE AUTORIZADO» deste PR.
@@ -145,7 +199,7 @@ build; revogar as antigas na origem.
 |---|---|
 | O projeto recusar a chave nova só no `apikey` no banco | R3A mostra antes de qualquer troca; correção de uma linha |
 | Auth admin com a chave nova (sem documentação) | R3A mede leitura nos dois formatos; R3B mede as escritas em ambiente descartável |
-| Escrever no Auth de produção para testar | proibido: a R3A só faz HEAD/GET; a R3B recusa a URL de produção |
+| Escrever no Auth de produção para testar | proibido: a R3A só faz HEAD/GET; a R3B só aceita o projeto descartável autorizado e recusa os operacionais |
 | Chave publicável colada no lugar da secreta | falha fechada no código (sem requisição) |
 | Desativar as legadas antes da R5 | derruba o navegador: ordem obrigatória R4 → R5 → R6 |
 | Scripts locais com a chave antiga | param na R6; trocar no `.env.local` |

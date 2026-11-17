@@ -239,13 +239,23 @@ describe('guarda: credencial real fora dos testes, do CI e do repositório', () 
     expect(t).not.toMatch(/admin\/users',|\/invite|\/recover|delivery_transition|delivery_create|reserve_vibe|update_vibe|inbox_ingest|apply_routing/)
   })
 
-  it('R3B (escrita no Auth) recusa produção e exige a frase de confirmação', () => {
+  it('R3B (escrita no Auth) só roda no projeto descartável autorizado, ainda NÃO autorizado nesta versão', () => {
     const t = ler('ensaio-auth-escrita.mjs')
-    expect(t).toMatch(/PRODUCAO_REF = 'dduobppgomqyagjviwpx'/)
-    expect(t).toMatch(/includes\(PRODUCAO_REF\)\) recusar/)
+    // nenhum projeto autorizado: preencher exige commit revisado depois da aprovação da Direção
+    expect(t).toMatch(/^const REF_AUTORIZADO = '';/m)
+    expect(t).toMatch(/if \(!REF_AUTORIZADO\) recusar/)
+    expect(t).toMatch(/if \(ref !== REF_AUTORIZADO\) recusar/)
+    // todos os projetos operacionais da conta ficam fora, mesmo que a constante seja preenchida errado
+    for (const r of ['dduobppgomqyagjviwpx', 'htromxizctbknkwqxuvc', 'cbulkfgkqkuwcckgfwqc', 'wxtozqtxrathmftxacen']) expect(t).toMatch(new RegExp(`OPERACIONAIS = \\[[^\\]]*'${r}'`))
+    expect(t).toMatch(/OPERACIONAIS\.includes\(REF_AUTORIZADO\) \|\| OPERACIONAIS\.includes\(ref\)\) recusar/)
     expect(t).toMatch(/FRASE = 'ENSAIO_AUTH_DESCARTAVEL'/)
-    // as recusas vêm antes de pedir a chave e antes de qualquer requisição
-    expect(t.indexOf("recusar('esta é a URL de PRODUÇÃO")).toBeLessThan(t.indexOf('lerOculto('))
-    expect(t.indexOf('lerOculto(')).toBeLessThan(t.indexOf('await fetch('))
+    expect(t).not.toMatch(/--url/)
+    // ordem: portões → chave → requisições; projeto vazio antes da primeira escrita; limpeza conferida no PASS
+    const i = (s: string) => t.indexOf(s)
+    expect(i('if (!REF_AUTORIZADO) recusar')).toBeLessThan(i('lerOculto('))
+    expect(i('lerOculto(')).toBeLessThan(i('await fetch('))
+    expect(i("'0_projeto_vazio'")).toBeLessThan(i("'1_criar'"))
+    expect(t).toMatch(/if \(pronto\) \{\s*const c = await etapa\('1_criar'/)
+    expect(t).toMatch(/const ok = pronto && falhas === 0 && conferida/)
   })
 })
