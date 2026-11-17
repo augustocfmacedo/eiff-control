@@ -191,5 +191,13 @@ jobs:
       - name: PostgreSQL Smoke (papel Solicitante)
         run: node scripts/pg-smoke-solicitante.mjs
 
+      # scripts/pg-smoke-views.mjs aplica a fila INTEIRA sem a 0077 num PGlite descartável, reproduz o incidente S3 (views
+      # sem security_invoker lidas por Solicitante, outra organização e anon; escrita pela view) e prova a 0077: leitura
+      # recortada pela RLS para cada papel, sem regressão para quem já lia, anon fora de views, tabelas e funções, as três
+      # funções definer sem checagem de organização fechadas, privilégio padrão sem anon (objeto novo nasce fechado e view
+      # nova sem security_invoker é apontada), idempotência, independência da 0074 e reversão exata pelo retrato.
+      - name: PostgreSQL Smoke (Segurança S3 — views e privilégios)
+        run: node scripts/pg-smoke-views.mjs
+
       - name: Full Migration Preflight
         run: node scripts/pg-preflight-central.mjs --ordem-corrigida
