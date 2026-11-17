@@ -17,7 +17,11 @@
 
 ## 1. Inventário das Functions
 
-13 funções em `netlify/functions/`. Usam a chave de serviço: **8**.
+13 funções em `netlify/functions/`. Usam a chave de serviço: **9**. Oito leem `SUPABASE_SERVICE_ROLE_KEY` diretamente
+(`usuarios`, `widget-caixa`, `diretor-financeiro`, `formulario-site`, `formulario-reconciliar`, `channel-octadesk`,
+`email-comercial`, `vibe`). A 9ª, `channel-meta-webhook`, usa a chave **indiretamente**: o arquivo da função não cita a
+variável, mas entrega `process.env` a `montarPortasInbox` (`src/core/inbox/ativacao.ts`), que lê a chave dali para as
+portas de ingestão (`ingestaoPorta.ts`) e de roteamento (`roteamentoPorta.ts`) do Inbox.
 
 | Função | Rota | Onde usa a chave | Formato | Quando a chave é usada de fato |
 |---|---|---|---|---|
@@ -26,7 +30,7 @@
 | `diretor-financeiro` | `/api/diretor-financeiro` | `carregarComoServidor` | A | só `acao: veredicto` (quem não vê caixa) |
 | `formulario-site` | `/api/formulario-site` | evidência no Lead Engine, `inbox_ingest`, prazo | A | cada submissão real do site (escreve) |
 | `formulario-reconciliar` | agendada `@hourly` | as mesmas portas do formulário | A | **nunca hoje**: desligada (sem `FORMULARIO_RECONCILIACAO` nada é lido) |
-| `channel-meta-webhook` | `/api/channel/meta/webhook` | `inbox_ingest`, `inbox_apply_routing` | A | **nunca hoje**: sem as variáveis da Meta não entra mensagem |
+| `channel-meta-webhook` (indireta) | `/api/channel/meta/webhook` | `inbox_ingest`, `inbox_apply_routing`, pela porta do Inbox | A | **nunca hoje**: sem as variáveis da Meta não entra mensagem |
 | `channel-octadesk` | `/api/channel/octadesk` | RPCs `radar_delivery_*` | A | só no envio (modo `disabled`) |
 | `email-comercial` | `/api/email-comercial` | livro de entregas | A | só no envio (modo comercial em NO-GO) |
 | `vibe` | `/api/vibe` | RPCs de reserva/consumo | A | só em ação paga (sem ordem de consumo) |
