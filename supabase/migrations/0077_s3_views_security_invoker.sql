@@ -13,7 +13,11 @@
 --
 -- O que esta migration faz, num único bloco (atômico com ou sem transação explícita):
 --   1. pré-condição: PostgreSQL 15+, inventário de views de public+mart EXATAMENTE igual às 25 abaixo, todas do papel
---      que aplica, e as três funções fechadas no passo 4 existentes. Qualquer divergência aborta sem alterar nada;
+--      que aplica, e as três funções fechadas no passo 4 existentes. Também aborta (R9) se o catálogo mostrar papel
+--      interno dependendo de PUBLIC: política dirigida a papel que não seja PUBLIC/anon/authenticated/service_role, ou
+--      DEFAULT/CHECK/view fora de public/mart chamando função do dono. Nada é concedido a papel interno: quem ficar sem
+--      acesso só por PUBLIC (supabase_auth_admin, supabase_storage_admin...) aparece no inventário do pré-voo
+--      (docs/seguranca/s3-0077-verificacao.sql, item 17) para decisão humana. Qualquer divergência aborta sem alterar nada;
 --   2. retrato do privilégio EFETIVO de authenticated e service_role em toda relação e função do dono em public/mart
 --      (inclui o que vinha por PUBLIC): é ele que os passos 3 e 4 preservam e que a pós-condição confere (R1);
 --   3. views: security_invoker = true nas 25 (inclui as 3 do Radar, que a proposta comercial-acesso também tocaria: lá
@@ -24,19 +28,21 @@
 --   4. demais objetos do papel que aplica em public/mart:
 --        - tabelas e sequências: PUBLIC e anon sem privilégio nenhum — repõe a intenção da 0003 ("revoke all on all
 --          tables in schema public from anon"), desfeita pelo privilégio padrão. Antes de tirar PUBLIC, o que
---          authenticated e service_role tinham de fato vira concessão explícita (nada além disso) (R1);
+--          authenticated e service_role tinham de fato vira concessão explícita (nada além disso) (R1). Outros papéis
+--          (internos do Supabase) que dependiam de PUBLIC perdem esse acesso: ver o passo 1 e o item 17 do pré-voo (R9);
 --        - funções: EXECUTE sai de PUBLIC e de anon, com a mesma preservação de authenticated e service_role, e três
 --          exceções fechadas também para authenticated: fn_cancel_entry, fn_close_period e fn_reopen_period (0003).
 --          São SECURITY DEFINER, não conferem a organização do título/empresa/fechamento e nenhum código do app, das
 --          funções Netlify ou dos scripts as chama; service_role mantém;
---   5. prevenção (privilégio padrão do papel que aplica) (R2, R4):
---        - schema public: tabelas, sequências e funções novas não dão mais nada a anon;
---        - global (vale para public, mart, schemas novos e funções de extensões instaladas por este papel): funções
---          novas deixam de dar EXECUTE a PUBLIC — o PostgreSQL só aceita tirar PUBLIC no padrão global — e passam a dar
---          EXECUTE explícito a authenticated e service_role, que antes o recebiam por PUBLIC. Assim nenhuma função nova
---          fica executável por anon, e nenhuma deixa de ser executável pelos papéis da aplicação e do servidor. Papéis
---          internos do Supabase que dependessem de PUBLIC em função NOVA precisam de concessão própria (documentado);
---        - qualquer padrão do papel, em qualquer schema ou global, que ainda conceda a anon é removido;
+--   5. prevenção (privilégio padrão do papel que aplica), por MENOR PRIVILÉGIO (R2, R4, R10):
+--        - schema public: tabelas e sequências novas não dão mais nada a anon (authenticated segue recebendo o padrão de
+--          tabelas, que a RLS protege);
+--        - funções novas, em QUALQUER schema (public, mart, schemas novos, extensões instaladas por este papel): EXECUTE
+--          só para o dono e service_role. Nem PUBLIC, nem anon, nem authenticated. Função que o cliente precisa chamar
+--          recebe `grant execute ... to authenticated` explícito na própria migration (regra no CLAUDE.md; o Quality
+--          Gate confere a lista de SECURITY DEFINER executáveis por authenticated). Revogar PUBLIC só no schema não
+--          neutraliza o padrão global do PostgreSQL; por isso a revogação é global;
+--        - qualquer outro padrão do papel que conceda a anon, ou EXECUTE de função a authenticated, é removido;
 --      View nova continua nascendo SEM security_invoker: isso é barrado pelo Quality Gate (scripts/pg-smoke-views.mjs,
 --      prova G) e pela regra no CLAUDE.md;
 --   6. pós-condição: confere tudo acima pelo privilégio EFETIVO (has_*_privilege, que inclui PUBLIC e herança), compara
@@ -72,6 +78,8 @@ declare
   svc_tinha boolean;
   ruins text[] := '{}';
 begin
+  -- espera no máximo 5 s por bloqueio (ALTER VIEW pega AccessExclusiveLock); se não conseguir, aborta sem gravar nada
+  perform set_config('lock_timeout', '5s', true);
   -- 1. pré-condição ------------------------------------------------------------------------------------------------
   if current_setting('server_version_num')::int < 150000 then
     raise exception 'S3/0077: security_invoker exige PostgreSQL 15+ (servidor %)', current_setting('server_version');
@@ -96,6 +104,32 @@ begin
   if array_position(fechadas, null) is not null then
     raise exception 'S3/0077: funções esperadas ausentes (fn_cancel_entry, fn_close_period, fn_reopen_period): %', fechadas;
   end if;
+
+  -- R9: dependências de papéis internos que o catálogo mostra e que a retirada de PUBLIC quebraria. Aborta (falha
+  -- fechada) em vez de conceder algo a um papel interno: a decisão é humana, pelo inventário do pré-voo.
+  --   a) política (public, mart, storage) dirigida a papel que não seja PUBLIC/anon/authenticated/service_role: ela
+  --      avalia funções do dono com os direitos desse papel;
+  select array_agg(format('%s.%s política %s', n.nspname, c.relname, p.polname)) into ruins
+  from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname in ('public', 'mart', 'storage')
+    and exists (select 1 from unnest(p.polroles) x where x <> 0 and x not in (anon_oid, 'authenticated'::regrole, 'service_role'::regrole));
+  if ruins is not null then raise exception 'S3/0077: políticas dirigidas a papéis internos (avaliar no pré-voo): %', ruins; end if;
+  --   b) DEFAULT, CHECK ou view FORA de public/mart que chama função do dono em public/mart (DEFAULT e CHECK conferem
+  --      EXECUTE de quem grava; view de outro schema roda com os direitos do dono dela). Gatilhos não entram: o
+  --      PostgreSQL não confere EXECUTE quando o gatilho dispara.
+  select array_agg(distinct format('%s -> %s', ct.oid::regclass, d.refobjid::regprocedure)) into ruins
+  from pg_depend d
+  join pg_proc pf on pf.oid = d.refobjid join pg_namespace nf on nf.oid = pf.pronamespace
+  left join pg_attrdef ad on d.classid = 'pg_attrdef'::regclass and ad.oid = d.objid
+  left join pg_constraint co on d.classid = 'pg_constraint'::regclass and co.oid = d.objid
+  left join pg_rewrite rw on d.classid = 'pg_rewrite'::regclass and rw.oid = d.objid
+  join pg_class ct on ct.oid = coalesce(ad.adrelid, co.conrelid, rw.ev_class)
+  join pg_namespace nt on nt.oid = ct.relnamespace
+  where d.refclassid = 'pg_proc'::regclass and nf.nspname in ('public', 'mart') and pf.proowner = eu
+    and d.classid in ('pg_attrdef'::regclass, 'pg_constraint'::regclass, 'pg_rewrite'::regclass)
+    and nt.nspname not in ('public', 'mart');
+  if ruins is not null then raise exception 'S3/0077: objetos fora de public/mart dependem de funções do dono (avaliar no pré-voo): %', ruins; end if;
+  ruins := '{}';
 
   -- 2. retrato do privilégio efetivo de authenticated e service_role (o que os passos 3 e 4 têm de preservar) ----
   select coalesce(jsonb_object_agg(p.oid::text, jsonb_build_array(
@@ -147,18 +181,19 @@ begin
            order by 2 loop
     auth_tinha := (antes_fn -> r.oid::text ->> 0)::boolean and not r.oid = any(fechadas);
     svc_tinha := (antes_fn -> r.oid::text ->> 1)::boolean;
-    if auth_tinha then execute format('grant execute on function %s to authenticated', r.sig); end if;
-    if svc_tinha then execute format('grant execute on function %s to service_role', r.sig); end if;
-    execute format('revoke execute on function %s from public, anon', r.sig);
-    if not auth_tinha then execute format('revoke execute on function %s from authenticated', r.sig); end if;
+    if auth_tinha then execute format('grant execute on routine %s to authenticated', r.sig); end if;
+    if svc_tinha then execute format('grant execute on routine %s to service_role', r.sig); end if;
+    execute format('revoke execute on routine %s from public, anon', r.sig);
+    if not auth_tinha then execute format('revoke execute on routine %s from authenticated', r.sig); end if;
   end loop;
 
   -- 5. prevenção: privilégio padrão do papel que aplica -----------------------------------------------------------
   execute format('alter default privileges for role %I in schema public revoke all on tables from anon', current_user);
   execute format('alter default privileges for role %I in schema public revoke all on sequences from anon', current_user);
-  execute format('alter default privileges for role %I in schema public revoke all on functions from anon', current_user);
+  execute format('alter default privileges for role %I in schema public revoke all on functions from anon, authenticated', current_user);
   execute format('alter default privileges for role %I revoke execute on functions from public', current_user);
-  execute format('alter default privileges for role %I grant execute on functions to authenticated, service_role', current_user);
+  execute format('alter default privileges for role %I revoke execute on functions from anon, authenticated', current_user);
+  execute format('alter default privileges for role %I grant execute on functions to service_role', current_user);
   -- qualquer outro padrão do papel (outro schema ou global) que ainda conceda a anon
   for r in select distinct d.defaclnamespace, d.defaclobjtype from pg_default_acl d, aclexplode(d.defaclacl) a
            where d.defaclrole = eu and a.grantee = anon_oid loop
@@ -166,6 +201,11 @@ begin
                    case when r.defaclnamespace = 0 then '' else format(' in schema %I', r.defaclnamespace::regnamespace) end,
                    case r.defaclobjtype when 'r' then 'tables' when 'S' then 'sequences' when 'f' then 'functions'
                                         when 'T' then 'types' when 'n' then 'schemas' when 'L' then 'large objects' end);
+  end loop;
+  -- e qualquer padrão de funções do papel, em outro schema, que conceda EXECUTE a authenticated (R10)
+  for r in select distinct d.defaclnamespace from pg_default_acl d, aclexplode(d.defaclacl) a
+           where d.defaclrole = eu and d.defaclobjtype = 'f' and d.defaclnamespace <> 0 and a.grantee = 'authenticated'::regrole loop
+    execute format('alter default privileges for role %I in schema %I revoke execute on functions from authenticated', current_user, r.defaclnamespace::regnamespace);
   end loop;
 
   -- 6. pós-condição (privilégio efetivo) ---------------------------------------------------------------------------
@@ -215,11 +255,14 @@ begin
            case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end, d.defaclobjtype)), '{}') into ruins
   from pg_default_acl d, aclexplode(d.defaclacl) a
   where d.defaclrole = eu and a.grantee = anon_oid;
+  select ruins || coalesce(array_agg(format('padrão de funções %s ainda concede EXECUTE a authenticated',
+           case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end)), '{}') into ruins
+  from pg_default_acl d, aclexplode(d.defaclacl) a
+  where d.defaclrole = eu and d.defaclobjtype = 'f' and a.grantee = 'authenticated'::regrole;
   if not exists (select 1 from pg_default_acl d where d.defaclrole = eu and d.defaclnamespace = 0 and d.defaclobjtype = 'f'
                  and not exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 0)
-                 and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'authenticated'::regrole and a.privilege_type = 'EXECUTE')
                  and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'service_role'::regrole and a.privilege_type = 'EXECUTE')) then
-    ruins := ruins || 'padrão global de funções: PUBLIC ainda executa ou authenticated/service_role sem EXECUTE'::text;
+    ruins := ruins || 'padrão global de funções: PUBLIC ainda executa ou service_role sem EXECUTE'::text;
   end if;
 
   if cardinality(ruins) > 0 then

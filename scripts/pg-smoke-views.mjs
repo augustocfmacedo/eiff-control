@@ -27,8 +27,14 @@
 //   H      anon: nenhum privilégio em relação nenhuma de public/mart e EXECUTE em função nenhuma; chamadas reais negadas
 //   I      funções: authenticated e service_role executam exatamente o que executavam, menos as três fechadas
 //   R1     relação cujo acesso vinha por PUBLIC continua acessível a authenticated e service_role, e sem anon
-//   J      prevenção: tabela, view e função NOVAS (public, mart e um schema novo) sem nada para anon nem EXECUTE para
-//          PUBLIC, e executáveis por authenticated e service_role; view nova sem security_invoker é apontada pela guarda G
+//   J      prevenção por menor privilégio (R10): função NOVA em public, mart, schema novo, SECURITY DEFINER ou de extensão
+//          só executa para o dono e service_role; cliente e anon negados até concessão explícita; tabela/view novas sem
+//          anon; view nova sem security_invoker é apontada pela guarda G
+//   R10    SECURITY DEFINER executáveis pelo cliente = lista explícita (scripts/lib/s3Permissoes.mjs); só do servidor fechadas
+//   R9     papéis internos do Supabase: nenhuma concessão nova; Storage, PostgREST, gatilho do Auth, hook com concessão
+//          explícita e leitura por pg_read_all_data funcionam; política a papel interno ou DEFAULT fora de public/mart
+//          abortam a 0077
+//   R6     retrato em autocommit e com search_path estranho dá as mesmas assinaturas qualificadas
 //   K      reaplicar a 0077 não muda nada (idempotente)
 //   R3     a reversão RECUSA retrato anterior à C1, posterior à 0077, antigo, sem schema ou com concedente estranho, e a
 //          execução de uma reversão adulterada que reabriria a C1 é desfeita
@@ -45,6 +51,7 @@ import { pathToFileURL } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { bancoComFila } from './lib/pgliteFila.mjs';
+import { DEFINER_CLIENTE, SOMENTE_SERVIDOR } from './lib/s3Permissoes.mjs';
 
 const AQUI = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
 const RAIZ = path.join(AQUI, '..');
@@ -55,6 +62,24 @@ const SQL_0077 = fs.readFileSync(arg('--migracao') ?? path.join(RAIZ, 'supabase'
 const SQL_C1 = fs.readFileSync(path.join(RAIZ, 'docs', 'seguranca', 's3-c1-contencao.sql'), 'utf8');
 const { RETRATO_SQL, gerarReversao, VIEWS_S3 } = await import(pathToFileURL(arg('--reversao') ?? path.join(AQUI, 'lib', 's3Reversao.mjs')).href);
 const FECHADAS = ['fn_cancel_entry(uuid,text)', 'fn_close_period(uuid,character)', 'fn_reopen_period(uuid,text)'];
+// R9: papéis internos como no Supabase (atributos e participações equivalentes): o Auth grava em auth.* como
+// supabase_auth_admin; o Storage conecta como supabase_storage_admin e avalia as políticas com SET ROLE authenticated;
+// o PostgREST conecta como authenticator e troca para anon/authenticated/service_role; supabase_read_only_user lê tudo
+// por pg_read_all_data. Mais um gatilho em auth.users que chama função de public (padrão "novo usuário") e um hook com
+// concessão EXPLÍCITA a supabase_auth_admin (o que a documentação do Supabase exige para hooks).
+const SQL_PAPEIS_INTERNOS = `
+  create role supabase_auth_admin noinherit createrole nologin;
+  create role supabase_storage_admin noinherit nologin; grant anon, authenticated, service_role to supabase_storage_admin;
+  create role authenticator noinherit nologin; grant anon, authenticated, service_role to authenticator;
+  create role supabase_read_only_user nologin bypassrls; grant pg_read_all_data to supabase_read_only_user;
+  create role leitor_sem_bypass nologin; grant pg_read_all_data to leitor_sem_bypass;
+  grant usage on schema auth to supabase_auth_admin; grant select, insert on auth.users to supabase_auth_admin;
+  create function public.f_smoke_novo_usuario() returns trigger language plpgsql security definer as $f$ begin return new; end $f$;
+  create trigger smoke_novo_usuario after insert on auth.users for each row execute function public.f_smoke_novo_usuario();
+  create function public.f_smoke_hook(e jsonb) returns jsonb language sql stable as 'select e';
+  revoke all on function public.f_smoke_hook(jsonb) from public, anon, authenticated;
+  grant execute on function public.f_smoke_hook(jsonb) to supabase_auth_admin;`;
+const INTERNOS = ['supabase_auth_admin', 'supabase_storage_admin', 'authenticator', 'supabase_read_only_user', 'leitor_sem_bypass'];
 
 const res = { migrations: {}, views: [], antes: {}, depois: {}, diferencas: {}, provas: {} };
 let falhas = 0;
@@ -199,7 +224,9 @@ try {
     if (['Financeiro', 'Contabilidade', 'Auditoria', 'Compras', 'Solicitante'].includes(papel)) await q(`insert into user_scope (organization_id, profile_id, company_id, project_id) values ($1,$2,$3,null)`, [org, uid, cia]);
     if (['Gestor de obra', 'Engenharia'].includes(papel)) await q(`insert into user_scope (organization_id, profile_id, company_id, project_id) values ($1,$2,$3,$4)`, [org, uid, cia, obra1]);
   }
-  await q(`insert into training_progress (organization_id, user_id, lesson_id) values ($1, $2, 'licao-smoke'), ($1, $3, 'licao-smoke')`, [org, ATORES.Administrador, ATORES.Engenharia]);
+  await q(`insert into training_progress (organization_id, user_id, lesson_id) values ($1, $2, 'licao-smoke'), ($1, $3, 'licao-smoke'), ($1, $4, 'licao-smoke'), ($1, $5, 'licao-smoke')`,
+    [org, ATORES.Administrador, ATORES.Engenharia, ATORES.Contabilidade, ATORES.Auditoria]);
+  await db.exec(SQL_PAPEIS_INTERNOS);
   // R1: tabela cujo acesso de authenticated e service_role vem SÓ por PUBLIC (como um grant feito pelo painel)
   await db.exec(`create table public.t_smoke_publico (id int); revoke all on public.t_smoke_publico from anon, authenticated, service_role;
     grant select on public.t_smoke_publico to public; insert into public.t_smoke_publico values (1);`);
@@ -234,6 +261,26 @@ try {
   await db.exec('begin; drop view public.v_smoke_intrusa; commit;');
   prova('P pré-condição: inventário de views diferente aborta a 0077 e nada muda',
     /inventário de views divergente/.test(errP ?? '') && normal(await retrato()) === normal(retratoAntes), `${(errP ?? 'aplicou!').slice(0, 90)}…`);
+
+  // ---- R9 antes: o que os papéis internos têm hoje só por PUBLIC; guardas da 0077 contra dependência de papel interno ----
+  const internoAntes = {};
+  await db.exec('begin;');
+  internoAntes.authOrg = (await q(`select has_function_privilege('supabase_auth_admin', 'public.current_org()', 'EXECUTE') x`))[0].x;
+  // leitor com pg_read_all_data SEM bypassrls: a RLS chama current_org(), que para ele devolve nulo — lia 0 linhas
+  await db.exec('savepoint lr; set local role leitor_sem_bypass;');
+  internoAntes.leitorSemBypass = await um(`select count(*)::int from financial_entry`);
+  await db.exec('rollback to savepoint lr;');
+  internoAntes.aclInternos = await um(`select count(*)::int from (select relacl acl from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname in ('public','mart')
+      union all select proacl from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('public','mart')) o, aclexplode(o.acl) a
+    where a.grantee in (select oid from pg_roles where rolname = any($1))`, [INTERNOS]);
+  await db.exec('rollback;');
+  await db.exec(`begin; create policy smoke_interna on public.t_smoke_publico for select to supabase_auth_admin using (true); commit;`);
+  const errR9a = await emTransacao(SQL_0077);
+  await db.exec('begin; drop policy smoke_interna on public.t_smoke_publico; commit;');
+  await db.exec(`begin; create table auth.t_smoke_dep (o uuid default public.current_org()); commit;`);
+  const errR9b = await emTransacao(SQL_0077);
+  await db.exec('begin; drop table auth.t_smoke_dep; commit;');
+  const intactoR9 = normal(await retrato()) === normal(retratoAntes);
 
   // ---- 0077 (transação própria, como em produção) e reaplicação ----
   const err1 = await emTransacao(SQL_0077);
@@ -286,10 +333,10 @@ try {
   for (const a of ['Contabilidade', 'Auditoria']) {
     const r = await como(ATORES[a], async () => (await q(`select (select count(*)::int from v_training_progress) v,
       (select count(*)::int from v_training_progress where user_id <> auth.uid()) outros, (select count(*)::int from training_progress) t`))[0]);
-    c3.push({ a, ok: r.valor && r.valor.outros === 0 && r.valor.v <= r.valor.t, d: `${a}: view ${r.valor?.v ?? r.erro} (de outros: ${r.valor?.outros}) · tabela ${r.valor?.t} · antes pela view ${linhas(res.antes[a]['public.v_training_progress'])}` });
+    c3.push({ a, ok: r.valor && r.valor.outros === 0 && r.valor.v === 1 && r.valor.t === 1, d: `${a}: view ${r.valor?.v ?? r.erro} (de outros: ${r.valor?.outros}) · tabela ${r.valor?.t} · antes pela view ${linhas(res.antes[a]['public.v_training_progress'])}` });
   }
   await db.exec('rollback;');
-  prova('C3 v_training_progress: Contabilidade e Auditoria passam a ver só o próprio progresso, como a RLS da tabela (tp_select)',
+  prova('C3 v_training_progress: Contabilidade e Auditoria passam a ver o próprio progresso (1 linha) e nada dos outros, como a RLS da tabela (tp_select)',
     c3.every((x) => x.ok) && c3.every((x) => linhas(res.antes[x.a]['public.v_training_progress']) > 0), c3.map((x) => x.d).join(' · '));
   prova('C2 mart.cash_weekly passa a mostrar o fluxo da organização de quem consulta (antes: a "primeira" organização, arbitrária)',
     c2.every((x) => x.endsWith('ok')), `${c2.join(' · ')} · antes (Administrador): ${JSON.stringify(res.antes.Administrador['mart.cash_weekly'])}`);
@@ -433,14 +480,19 @@ try {
     r1.auth.valor === 1 && r1.svc.valor === 1 && negado(r1.anon.erro) && !/(^|[{,])=/.test(r1acl),
     `authenticated ${r1.auth.valor ?? r1.auth.erro} · service_role ${r1.svc.valor ?? r1.svc.erro} · anon ${r1.anon.erro ? 'negado' : r1.anon.valor} · ACL ${r1acl}`);
 
-  // J. prevenção: objetos novos criados pelo dono depois da 0077, em public, mart e num schema novo
+  // J. prevenção por menor privilégio (R10): objetos novos do dono depois da 0077, em public, mart, num schema novo e
+  //    de uma extensão instalada depois. Função nova só executa para o dono e service_role; o cliente só depois de
+  //    concessão explícita. Inclui SECURITY DEFINER "só do servidor".
   await db.exec('begin;');
   await db.exec(`create schema extra_smoke; grant usage on schema extra_smoke to authenticated, service_role, anon;
     create table public.t_smoke_nova (id int); create view public.v_smoke_nova as select 1 x;
     create function public.f_smoke_nova() returns int language sql as 'select 1';
     create function mart.f_smoke_nova() returns int language sql as 'select 1';
-    create function extra_smoke.f_smoke_nova() returns int language sql as 'select 1';`);
-  const fnNovas = ['public.f_smoke_nova()', 'mart.f_smoke_nova()', 'extra_smoke.f_smoke_nova()'];
+    create function extra_smoke.f_smoke_nova() returns int language sql as 'select 1';
+    create function public.f_smoke_servidor() returns int language sql security definer as 'select 2';
+    create function mart.f_smoke_servidor() returns int language sql security definer as 'select 2';
+    create function extra_smoke.f_smoke_servidor() returns int language sql security definer as 'select 2';`);
+  const fnNovas = ['public.f_smoke_nova()', 'mart.f_smoke_nova()', 'extra_smoke.f_smoke_nova()', 'public.f_smoke_servidor()', 'mart.f_smoke_servidor()', 'extra_smoke.f_smoke_servidor()'];
   const novaT = (await q(`select
       (select bool_or(has_table_privilege('anon', 'public.t_smoke_nova', p)) from unnest(array['SELECT','INSERT','UPDATE','DELETE']) p) anon_tabela,
       (select bool_or(has_table_privilege('anon', 'public.v_smoke_nova', p)) from unnest(array['SELECT','INSERT','UPDATE','DELETE']) p) anon_view,
@@ -450,25 +502,77 @@ try {
     const x = (await q(`select has_function_privilege('anon', $1::regprocedure, 'EXECUTE') anon, has_function_privilege('authenticated', $1::regprocedure, 'EXECUTE') auth,
       has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') svc,
       exists (select 1 from pg_proc p, aclexplode(p.proacl) a where p.oid = $1::regprocedure and a.grantee = 0) publico`, [f]))[0];
-    novaF.push({ f, ...x });
+    const cli = await como(ATORES.Administrador, async () => um(`select ${f}`));
+    const anonCh = await como(null, async () => um(`select ${f}`), 'anon');
+    const svcCh = await como(null, async () => um(`select ${f}`), 'service_role');
+    novaF.push({ f, ...x, cliente: cli.erro ? (negado(cli.erro) ? 'negado' : cli.erro) : cli.valor, anonCh: anonCh.erro ? (negado(anonCh.erro) ? 'negado' : anonCh.erro) : anonCh.valor, svcCh: svcCh.valor ?? svcCh.erro });
   }
-  const chamaExtra = await como(ATORES.Administrador, async () => um(`select extra_smoke.f_smoke_nova()`));
+  // concessão explícita libera o cliente (o caminho certo para RPC do app)
+  await db.exec(`grant execute on function extra_smoke.f_smoke_nova() to authenticated;`);
+  const comGrant = await como(ATORES.Administrador, async () => um(`select extra_smoke.f_smoke_nova()`));
   // extensão instalada pelo dono DEPOIS da 0077 (o pgcrypto da fila é removido e recriado num schema novo, só aqui)
   let ext;
   try {
     await db.exec(`savepoint ext; drop extension pgcrypto; create extension pgcrypto schema extra_smoke;`);
     ext = (await q(`select pg_get_userbyid(p.proowner) dono, has_function_privilege('anon', p.oid, 'EXECUTE') anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') svc from pg_proc p where p.oid = 'extra_smoke.gen_random_bytes(integer)'::regprocedure`))[0];
-    const chamaExt = await como(ATORES.Administrador, async () => um(`select length(extra_smoke.gen_random_bytes(4))`));
-    ext.chamada = chamaExt.valor ?? chamaExt.erro;
+    const svcExt = await como(null, async () => um(`select length(extra_smoke.gen_random_bytes(4))`), 'service_role');
+    ext.servidor = svcExt.valor ?? svcExt.erro;
     await db.exec('rollback to savepoint ext;');
   } catch (e) { ext = { erro: so(e) }; try { await db.exec('rollback to savepoint ext;'); } catch { /* */ } }
   const guardaVe = (await semInvoker()).includes('public.v_smoke_nova');
   await db.exec('rollback;');
-  const jOk = !novaT.anon_tabela && !novaT.anon_view && novaT.auth_tabela && guardaVe && chamaExtra.valor === 1
-    && novaF.every((x) => !x.anon && x.auth && x.svc && !x.publico) && ext.auth && ext.svc && !ext.anon && ext.chamada === 4;
-  prova('J prevenção: tabela/view/função NOVAS (public, mart, schema novo e extensão) sem nada para anon nem EXECUTE para PUBLIC, executáveis por authenticated e service_role; view nova sem invoker é apontada',
-    jOk, `${JSON.stringify(novaT)} · ${novaF.map((x) => `${x.f}: anon ${x.anon} auth ${x.auth} svc ${x.svc} PUBLIC ${x.publico}`).join(' · ')} · chamada real (Administrador, schema novo): ${chamaExtra.valor ?? chamaExtra.erro} · extensão instalada depois (pgcrypto): ${JSON.stringify(ext)} · guarda G aponta a view nova: ${guardaVe}`);
+  const jOk = !novaT.anon_tabela && !novaT.anon_view && novaT.auth_tabela && guardaVe && comGrant.valor === 1
+    && novaF.every((x) => !x.anon && !x.auth && x.svc && !x.publico && x.cliente === 'negado' && x.anonCh === 'negado'
+      && (x.f.startsWith('mart.') ? /permission denied for schema mart/.test(String(x.svcCh)) : (x.svcCh === 1 || x.svcCh === 2)))
+    && !ext.auth && ext.svc && !ext.anon && ext.servidor === 4;
+  prova('J prevenção por menor privilégio: função NOVA (public, mart, schema novo, SECURITY DEFINER e extensão) só executa para o dono e service_role; cliente e anon negados até concessão explícita; em mart o service_role segue sem USAGE no schema, como em F2; tabela/view novas sem anon; view sem invoker apontada',
+    jOk, `${JSON.stringify(novaT)} · ${novaF.map((x) => `${x.f}: anon ${x.anon} auth ${x.auth} svc ${x.svc} PUBLIC ${x.publico} | chamada cliente ${x.cliente}, anon ${x.anonCh}, servidor ${x.svcCh}`).join(' · ')} · com grant explícito o cliente executa: ${comGrant.valor ?? comGrant.erro} · extensão instalada depois (pgcrypto): ${JSON.stringify(ext)} · guarda G aponta a view nova: ${guardaVe}`);
+
+  // R10. lista explícita das SECURITY DEFINER executáveis pelo cliente (scripts/lib/s3Permissoes.mjs) e das só do servidor
+  const definerCli = (await q(`select p.oid::regprocedure::text f from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public','mart') and p.prosecdef and p.prorettype <> 'trigger'::regtype and has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`)).map((r) => r.f);
+  const sobra = definerCli.filter((f) => !DEFINER_CLIENTE.includes(f));
+  const falta = DEFINER_CLIENTE.filter((f) => !definerCli.includes(f));
+  const servAberto = [];
+  for (const f of SOMENTE_SERVIDOR) {
+    const x = (await q(`select to_regprocedure($1) is not null existe, coalesce(has_function_privilege('authenticated', to_regprocedure($1), 'EXECUTE'), false) auth,
+      coalesce(has_function_privilege('anon', to_regprocedure($1), 'EXECUTE'), false) anon, coalesce(has_function_privilege('service_role', to_regprocedure($1), 'EXECUTE'), false) svc`, [f]))[0];
+    if (!x.existe || x.auth || x.anon || !x.svc) servAberto.push(`${f}: ${JSON.stringify(x)}`);
+  }
+  prova('R10 SECURITY DEFINER executáveis pelo cliente = lista explícita (scripts/lib/s3Permissoes.mjs); as só do servidor fechadas para authenticated e anon e abertas ao service_role',
+    sobra.length === 0 && falta.length === 0 && servAberto.length === 0,
+    [sobra.length ? `fora da lista: ${sobra.join(', ')}` : '', falta.length ? `na lista mas não executável: ${falta.join(', ')}` : '', servAberto.length ? `só servidor com problema: ${servAberto.join(' · ')}` : ''].filter(Boolean).join(' | ')
+      || `${definerCli.length} DEFINER do cliente conferidas · ${SOMENTE_SERVIDOR.length} só do servidor fechadas`);
+
+  // R9. papéis internos depois da 0077: nada concedido a eles; os fluxos reais do Supabase continuam funcionando
+  await db.exec('begin;');
+  const r9 = {};
+  r9.aclInternos = await um(`select count(*)::int from (select relacl acl from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname in ('public','mart')
+      union all select proacl from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('public','mart')) o, aclexplode(o.acl) a
+    where a.grantee in (select oid from pg_roles where rolname = any($1))`, [INTERNOS]);
+  const passo = async (nome, sql) => {
+    await db.exec('savepoint r9;');
+    try { const v = (await db.exec(sql)).at(-1).rows[0]; await db.exec('rollback to savepoint r9;'); r9[nome] = v ? Object.values(v)[0] : 'ok'; }
+    catch (e) { await db.exec('rollback to savepoint r9;'); r9[nome] = negado(so(e)) ? 'negado' : `ERRO ${so(e)}`; }
+  };
+  await passo('storage', `set local role supabase_storage_admin; set local role authenticated; select set_config('test.uid', '${ATORES.Administrador}', true);
+    select (select count(*) from storage.objects) >= 0 and anexo_pode_ver(null) is not distinct from anexo_pode_ver(null) ok;`);
+  await passo('postgrestCliente', `set local role authenticator; set local role authenticated; select set_config('test.uid', '${ATORES.Administrador}', true); select current_org() = '${org}' ok;`);
+  await passo('postgrestAnon', `set local role authenticator; set local role anon; select current_org();`);
+  await passo('authGatilho', `set local role supabase_auth_admin; insert into auth.users (id, email) values (gen_random_uuid(), 'novo@smoke') returning true ok;`);
+  await passo('authHook', `set local role supabase_auth_admin; select public.f_smoke_hook('{"a":1}'::jsonb) ->> 'a' ok;`);
+  await passo('authSemGrant', `set local role supabase_auth_admin; select public.current_org();`);
+  await passo('leitura', `set local role supabase_read_only_user; select count(*) > 0 ok from financial_entry;`);
+  await passo('leituraSemBypass', `set local role leitor_sem_bypass; select count(*) from financial_entry;`);
+  await db.exec('rollback;');
+  const r9ok = r9.aclInternos === internoAntes.aclInternos && r9.storage === true && r9.postgrestCliente === true && r9.postgrestAnon === 'negado'
+    && r9.authGatilho === true && r9.authHook === '1' && r9.authSemGrant === 'negado' && r9.leitura === true && internoAntes.authOrg === true
+    && internoAntes.leitorSemBypass === 0 && r9.leituraSemBypass === 'negado'
+    && /políticas dirigidas a papéis internos/.test(errR9a ?? '') && /objetos fora de public\/mart dependem/.test(errR9b ?? '') && intactoR9;
+  prova('R9 papéis internos: nenhuma concessão nova a eles; Storage (SET ROLE authenticated), PostgREST, gatilho do Auth, hook com concessão explícita e leitura por pg_read_all_data com BYPASSRLS funcionam; o que só vinha por PUBLIC sai (supabase_auth_admin em current_org; leitor sem BYPASSRLS, que já lia 0 linhas, passa a receber negado); política dirigida a papel interno ou DEFAULT fora de public/mart abortam a 0077',
+    r9ok, `ACL de papéis internos antes ${internoAntes.aclInternos} → depois ${r9.aclInternos} · ${JSON.stringify(r9)} · supabase_auth_admin executava current_org antes: ${internoAntes.authOrg} · leitor sem BYPASSRLS antes: ${internoAntes.leitorSemBypass} linha(s) · guarda política: ${(errR9a ?? 'APLICOU').slice(0, 70)} · guarda dependência: ${(errR9b ?? 'APLICOU').slice(0, 70)} · nada mudou nas tentativas: ${intactoR9}`);
 
   // R3. guardas da reversão: geração recusa retratos perigosos; execução recusa resultado que reabriria a C1
   const recusa = (nome, r, op = {}) => { try { gerarReversao(r, op); return `${nome}: GEROU`; } catch (e) { return `${nome}: recusado (${so(e).replace(/^retrato recusado; nenhuma reversão gerada:/, '').trim() || so(e.message.split('\n')[1] ?? '')})`; } };
@@ -483,10 +587,26 @@ try {
   const valida = gerarReversao(retratoAntes);
   const adulterada = valida.replace('do $c1$', 'grant select on table public.v_aging to anon;\ndo $c1$');
   const errAdult = await (async () => { try { await db.exec(adulterada); return null; } catch (e) { try { await db.exec('rollback;'); } catch { /* */ } return so(e); } })();
+  const adultMaint = valida.replace('do $c1$', 'grant maintain on table public.v_aging to anon;\ndo $c1$');
+  const errMaint = await (async () => { try { await db.exec(adultMaint); return null; } catch (e) { try { await db.exec('rollback;'); } catch { /* */ } return so(e); } })();
+  await db.exec('begin; create table public.t_smoke_depois_do_retrato (id int); commit;');
+  const errDepois = await (async () => { try { await db.exec(valida); return null; } catch (e) { try { await db.exec('rollback;'); } catch { /* */ } return so(e); } })();
+  await db.exec('begin; drop table public.t_smoke_depois_do_retrato; commit;');
   const intacto = normal(await retrato()) === normal(retratoDepois);
-  prova('R3 a reversão recusa retrato anterior à C1, posterior à 0077, antigo, sem schema, de versão antiga ou com concedente estranho; reversão adulterada que reabriria a C1 é desfeita',
-    casos.every((c) => c.includes('recusado')) && /reabriria o que a C1 fechou/.test(errAdult ?? '') && intacto,
-    `${casos.join(' · ')} · execução adulterada: ${(errAdult ?? 'EXECUTOU').slice(0, 90)} · estado intacto: ${intacto}`);
+  prova('R3 a reversão recusa retrato anterior à C1, posterior à 0077, antigo, sem schema, de versão antiga ou com concedente estranho; na execução, reversão adulterada (SELECT ou MAINTAIN para anon) e objeto criado depois do retrato desfazem tudo',
+    casos.every((c) => c.includes('recusado')) && /reabriria o que a C1 fechou/.test(errAdult ?? '') && /reabriria o que a C1 fechou/.test(errMaint ?? '')
+      && /criados depois do retrato/.test(errDepois ?? '') && intacto,
+    `${casos.join(' · ')} · adulterada SELECT: ${(errAdult ?? 'EXECUTOU').slice(0, 60)} · adulterada MAINTAIN: ${(errMaint ?? 'EXECUTOU').slice(0, 60)} · objeto novo: ${(errDepois ?? 'EXECUTOU').slice(0, 70)} · estado intacto: ${intacto}`);
+
+  // R6. retrato independente do search_path e de transação: em autocommit e com search_path estranho, mesmas assinaturas
+  await db.exec(`set search_path = mart, pg_catalog;`);
+  let autoc;
+  try { autoc = (await db.exec(RETRATO_SQL)).at(-1).rows[0].retrato; } finally { await db.exec('reset search_path;'); }
+  const assinaturas = (r) => r.funcoes.map((f) => f.assinatura).join('|');
+  const qualificadas = autoc.funcoes.every((f) => /^(public|mart)\./.test(f.assinatura));
+  const viaReg = (await q(`select count(*)::int c from unnest($1::text[]) x where to_regprocedure(x) is null`, [autoc.funcoes.map((f) => f.assinatura)]))[0].c;
+  prova('R6 retrato em autocommit e com search_path = mart: assinaturas idênticas às de dentro da transação, todas com schema, e todas resolvem por to_regprocedure',
+    assinaturas(autoc) === assinaturas(retratoDepois) && qualificadas && viaReg === 0, `${autoc.funcoes.length} funções · qualificadas ${qualificadas} · não resolvidas ${viaReg} · ex.: ${autoc.funcoes.find((f) => f.assinatura.includes('[]'))?.assinatura}`);
 
   // M. recuperação: reversão gerada do retrato (pós-C1), aplicada, e 0077 de novo
   res.reversao_linhas = valida.split('\n').length;
@@ -504,6 +624,7 @@ try {
   const dbOrdem = db;
   ({ db } = await bancoComFila(RAIZ, { excluir: ['0074', NUM] }));
   await db.exec('begin; create table public.t_smoke_publico (id int); revoke all on public.t_smoke_publico from anon, authenticated, service_role; grant select on public.t_smoke_publico to public; commit;');
+  await db.exec(`begin; ${SQL_PAPEIS_INTERNOS} commit;`);
   const eC1 = await (async () => { try { await db.exec(SQL_C1); return null; } catch (e) { return so(e); } })();
   const e77 = await emTransacao(SQL_0077);
   const arq74 = fs.readdirSync(path.join(RAIZ, 'supabase', 'migrations')).find((f) => f.startsWith('0074_'));
@@ -515,7 +636,7 @@ try {
 
   // N. dono NÃO superusuário (como o postgres do Supabase): banco mínimo com as 25 views
   const n = await provaDonoComum();
-  prova('N dono não superusuário: 0077 aplica; acesso por PUBLIC preservado; funções novas (public, mart, schema novo) executáveis por authenticated/service_role e não por anon; grant a anon de OUTRO concedente aborta',
+  prova('N dono não superusuário: 0077 aplica; acesso por PUBLIC preservado; funções novas (public, mart, schema novo) só para o dono e service_role (nem authenticated, nem anon); grant a anon de OUTRO concedente aborta',
     n.ok, n.detalhe);
 } catch (e) {
   prova('EXECUCAO', false, so(e));
@@ -569,7 +690,7 @@ async function provaDonoComum() {
     const fs2 = (await b1.query(`select p.oid::regprocedure::text f, pg_get_userbyid(p.proowner) dono, has_function_privilege('anon', p.oid, 'EXECUTE') anon,
         has_function_privilege('authenticated', p.oid, 'EXECUTE') auth, has_function_privilege('service_role', p.oid, 'EXECUTE') svc
       from pg_proc p where p.oid in ('public.nova()'::regprocedure, 'mart.nova()'::regprocedure, 'extra.nova()'::regprocedure)`)).rows;
-    const okR2 = fs2.length === 3 && fs2.every((f) => f.auth && f.svc && !f.anon && f.dono === 'dono_app');
+    const okR2 = fs2.length === 3 && fs2.every((f) => !f.auth && f.svc && !f.anon && f.dono === 'dono_app');
     ok &&= okR2;
     det.push(`N2 funções novas: ${fs2.map((f) => `${f.f} (dono ${f.dono}) anon ${f.anon} auth ${f.auth} svc ${f.svc}`).join(' · ')} → ${okR2 ? 'ok' : 'FALHA'}`);
   }

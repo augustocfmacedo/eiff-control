@@ -29,14 +29,48 @@ itens(ordem, item, esperado, nomes) as (
   union all select 10, 'privilégio padrão do dono que ainda concede a anon (qualquer schema ou global)', '0', array(select distinct
     case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end || '/' || d.defaclobjtype::text from pg_default_acl d, aclexplode(d.defaclacl) a
     where d.defaclrole = (select oid from eu) and a.grantee = (select oid from pg_roles where rolname = 'anon'))
-  union all select 11, 'padrão global de funções do dono: PUBLIC executa ou authenticated/service_role sem EXECUTE', '0', case when exists (select 1 from pg_default_acl d
+  union all select 11, 'padrão global de funções do dono: PUBLIC executa ou service_role sem EXECUTE', '0', case when exists (select 1 from pg_default_acl d
     where d.defaclrole = (select oid from eu) and d.defaclnamespace = 0 and d.defaclobjtype = 'f'
       and not exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 0)
-      and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'authenticated'::regrole and a.privilege_type = 'EXECUTE')
       and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'service_role'::regrole and a.privilege_type = 'EXECUTE')) then array[]::text[] else array['global (funções)'] end
   union all select 15, 'relações do dono com grant a PUBLIC (antes da 0077: avaliar; depois: 0)', '0', array(select distinct nome from rel join pg_class c on c.oid = rel.oid, aclexplode(c.relacl) a
     where rel.relowner = (select oid from eu) and a.grantee = 0 order by 1)
   union all select 16, 'informativo: service_role com USAGE no schema mart', 'informativo', case when has_schema_privilege('service_role', 'mart', 'USAGE') then array['sim'] else array[]::text[] end
+  -- R9: papéis internos (supabase_auth_admin, supabase_storage_admin, dashboard_user, pgbouncer...) que acessam objetos do
+  -- dono SÓ por PUBLIC. A 0077 tira PUBLIC e NÃO concede nada a eles: cada linha aqui, ANTES de aplicar, é uma decisão
+  -- (sem uso legítimo = aceitar a perda; com uso = concessão explícita revisada). Depois da 0077: 0.
+  union all select 17, 'papéis internos que acessam objetos do dono só por PUBLIC (antes: decidir; depois: 0)', '0 depois', array(
+    select format('%s (login %s, bypassrls %s): %s funções, %s relações', r.rolname, r.rolcanlogin, r.rolbypassrls, k.nf, k.nr)
+    from pg_roles r,
+    lateral (select
+      (select count(*) from fn where fn.proowner = (select oid from eu)
+         and exists (select 1 from pg_proc p2 where p2.oid = fn.oid and (p2.proacl is null or exists (select 1 from aclexplode(p2.proacl) a where a.grantee = 0)))
+         and not exists (select 1 from pg_proc p2, aclexplode(p2.proacl) a where p2.oid = fn.oid and a.grantee <> 0 and pg_has_role(r.oid, a.grantee, 'USAGE'))) nf,
+      (select count(*) from rel join pg_class c on c.oid = rel.oid where rel.relowner = (select oid from eu)
+         and exists (select 1 from aclexplode(c.relacl) a where a.grantee = 0)
+         and not exists (select 1 from aclexplode(c.relacl) a where a.grantee <> 0 and pg_has_role(r.oid, a.grantee, 'USAGE'))) nr) k
+    where r.rolname !~ '^pg_' and r.rolname not in ('anon', 'authenticated', 'service_role') and not r.rolsuper
+      and r.oid <> (select oid from eu) and not pg_has_role(r.oid, (select oid from eu), 'USAGE') and k.nf + k.nr > 0
+    order by 1)
+  union all select 18, 'informativo: procedures do dono em public/mart (a 0077 trata como rotina)', 'informativo', array(
+    select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public', 'mart') and p.prokind = 'p' and p.proowner = (select oid from eu) order by 1)
+  union all select 19, 'políticas dirigidas a papel interno (public/mart/storage) — a 0077 aborta se houver', '0', array(
+    select format('%s.%s %s', n.nspname, c.relname, p.polname) from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('public', 'mart', 'storage')
+      and exists (select 1 from unnest(p.polroles) x where x <> 0 and x not in ('anon'::regrole, 'authenticated'::regrole, 'service_role'::regrole)) order by 1)
+  union all select 20, 'DEFAULT/CHECK/view fora de public/mart que usa função do dono — a 0077 aborta se houver', '0', array(
+    select distinct format('%s -> %s', ct.oid::regclass, d.refobjid::regprocedure) from pg_depend d
+    join pg_proc pf on pf.oid = d.refobjid join pg_namespace nf on nf.oid = pf.pronamespace
+    left join pg_attrdef ad on d.classid = 'pg_attrdef'::regclass and ad.oid = d.objid
+    left join pg_constraint co on d.classid = 'pg_constraint'::regclass and co.oid = d.objid
+    left join pg_rewrite rw on d.classid = 'pg_rewrite'::regclass and rw.oid = d.objid
+    join pg_class ct on ct.oid = coalesce(ad.adrelid, co.conrelid, rw.ev_class) join pg_namespace nt on nt.oid = ct.relnamespace
+    where d.refclassid = 'pg_proc'::regclass and nf.nspname in ('public', 'mart') and pf.proowner = (select oid from eu)
+      and d.classid in ('pg_attrdef'::regclass, 'pg_constraint'::regclass, 'pg_rewrite'::regclass) and nt.nspname not in ('public', 'mart'))
+  union all select 21, 'padrão de funções do dono que concede EXECUTE a authenticated (R10)', '0', array(select distinct
+    case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end from pg_default_acl d, aclexplode(d.defaclacl) a
+    where d.defaclrole = (select oid from eu) and d.defaclobjtype = 'f' and a.grantee = 'authenticated'::regrole)
   union all select 12, 'informativo: relações de OUTRO dono com privilégio de anon', 'informativo', array(select distinct nome || ' (' || pg_get_userbyid(rel.relowner) || ')' from rel, privs
     where rel.relowner <> (select oid from eu) and rel.relkind <> 'S' and has_table_privilege('anon', rel.oid, privs.p) order by 1)
   union all select 13, 'informativo: funções de OUTRO dono executáveis por anon', 'informativo', array(select nome || ' (' || pg_get_userbyid(proowner) || ')' from fn

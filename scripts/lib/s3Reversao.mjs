@@ -110,7 +110,7 @@ export function conferirRetrato(r, { agora = new Date(), idadeMaximaHoras = 24 }
   }
   for (const f of r.funcoes) {
     const m = ASSINATURA_QUALIFICADA.exec(f.assinatura ?? '');
-    if (!m || !['public', 'mart'].includes(semAspas(m[1]))) motivos.push(`assinatura sem schema (retrato tirado sem search_path = pg_catalog?): ${f.assinatura}`);
+    if (!m || !['public', 'mart'].includes(semAspas(m[1]))) motivos.push(`assinatura sem schema (retrato de versão antiga?): ${f.assinatura}`);
   }
   // concedente e itens ilegíveis
   try {
@@ -135,7 +135,7 @@ export function gerarReversao(retrato, opcoes = {}) {
     `-- Reversão da 0077 gerada do retrato de ${r.tirado_em} (papel ${dono}, banco ${r.banco ?? '?'}) por scripts/s3-0077-reversao.mjs.`,
     '-- Volta ao estado do retrato (pós-C1). Executar só com autorização; qualquer guarda que falhe desfaz tudo.',
     'begin;',
-    'set local search_path = pg_catalog;',
+    'set local search_path = pg_catalog;',  // nomes do retrato já vêm qualificados; nada depende do search_path
     "set local lock_timeout = '5s';",
     'do $pre$',
     'declare faltam text[];',
@@ -148,6 +148,15 @@ export function gerarReversao(retrato, opcoes = {}) {
     "  if faltam is not null then raise exception 'S3/reversão: relações do retrato ausentes (houve mudança depois do retrato): %', faltam; end if;",
     `  select array_agg(x) into faltam from unnest(${lista(objetosFn)}) x where to_regprocedure(x) is null;`,
     "  if faltam is not null then raise exception 'S3/reversão: funções do retrato ausentes (houve mudança depois do retrato): %', faltam; end if;",
+    // objeto do dono criado DEPOIS do retrato = houve migration no meio: a reversão sobrescreveria ajustes dela; recusa
+    `  select array_agg(n.nspname || '.' || c.relname) into faltam from pg_class c join pg_namespace n on n.oid = c.relnamespace`,
+    `    where c.relkind in ('r', 'p', 'v', 'm', 'f', 'S') and n.nspname in ('public', 'mart') and c.relowner = (select oid from pg_roles where rolname = ${sqlTexto(dono)})`,
+    `      and c.oid <> all (array(select to_regclass(x) from unnest(${lista(objetosRel)}) x));`,
+    `  select coalesce(faltam, '{}') || coalesce(array_agg(p.oid::regprocedure::text), '{}') into faltam from pg_proc p join pg_namespace n on n.oid = p.pronamespace`,
+    `    where n.nspname in ('public', 'mart') and p.proowner = (select oid from pg_roles where rolname = ${sqlTexto(dono)})`,
+    "      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')",
+    `      and p.oid <> all (array(select to_regprocedure(x) from unnest(${lista(objetosFn)}) x));`,
+    "  if cardinality(faltam) > 0 then raise exception 'S3/reversão: objetos criados depois do retrato (houve migration no meio; tirar retrato novo e reavaliar): %', faltam; end if;",
     'end $pre$;',
   ];
   for (const v of r.views) {
@@ -173,7 +182,9 @@ export function gerarReversao(retrato, opcoes = {}) {
     'begin',
     "  select array_agg(distinct n.nspname || '.' || c.relname || ' ' || papel || ' ' || pv) into ruins",
     '  from pg_class c join pg_namespace n on n.oid = c.relnamespace',
-    "  cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) pv cross join unnest(array['anon','authenticated']) papel",
+    "  cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']",
+    "    || case when current_setting('server_version_num')::int >= 170000 then array['MAINTAIN'] else array[]::text[] end) pv",
+    "  cross join unnest(array['anon','authenticated']) papel",
     "  where c.relkind = 'v' and n.nspname in ('public', 'mart')",
     "    and ((papel = 'anon' and has_table_privilege('anon', c.oid, pv)) or (papel = 'authenticated' and pv <> 'SELECT' and has_table_privilege('authenticated', c.oid, pv)));",
     "  if ruins is not null then raise exception 'S3/reversão: o resultado reabriria o que a C1 fechou: %', ruins; end if;",
