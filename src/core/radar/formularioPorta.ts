@@ -21,6 +21,7 @@ import type { EstadoDoPrazo, FonteLida, PortasGravacao, ResumoContatoCompletado 
 import type { DadosDoContato } from '../inbox/formularioSite'
 import type { RegistroFonte } from './types'
 import { montarPortasInbox, type AmbienteAtivacao } from '../inbox/ativacao'
+import { cabecalhosServico, chaveServicoValida } from '../chaveServico'
 
 export interface ConfigPortaFormulario {
   url: string
@@ -76,7 +77,7 @@ export function portasFormularioRest(
   fetchFn: typeof fetch,
   log?: (t: Record<string, unknown>) => void,
 ): PortasGravacao {
-  const base = { apikey: cfg.chave, authorization: `Bearer ${cfg.chave}`, 'content-type': 'application/json' }
+  const base = cabecalhosServico(cfg.chave, { 'content-type': 'application/json' })
   const org = `organization_id=eq.${encodeURIComponent(cfg.organizacaoId)}`
   const q = (v: string) => encodeURIComponent(v)
 
@@ -279,6 +280,8 @@ export function montarPortasIntegracao(
   // tiver caractere que o HTTP não aceita. O motivo leva o nome da variável, nunca o valor.
   const chave = validarCredencial(cfg.chave)
   if (!chave.ok) return { ok: false, motivo: `${chave.codigo}: SUPABASE_SERVICE_ROLE_KEY` }
+  // S1/R1: chave publicável ou `sb_…` desconhecido no lugar da de serviço: recusada antes de qualquer requisição
+  if (!chaveServicoValida(cfg.chave)) return { ok: false, motivo: 'credencial_invalida: SUPABASE_SERVICE_ROLE_KEY' }
   // A conversa e o roteamento continuam sendo do Inbox, com os mesmos kill switches.
   const inbox = montarPortasInbox(env, { fetch: deps.fetch, log: deps.log })
   if (!inbox.ligado) return { ok: false, motivo: `inbox: ${inbox.motivo}` }

@@ -7,6 +7,7 @@
 //   no navegador, nunca em logs) DEPOIS de validar o JWT do usuario; o saldo passado a RPC vem de /v2/credits no servidor.
 import { CUSTO_VIBE, PRIORIDADE_DECISORES, normalizarEnriquecimentoVibe, payloadEnriquecimentoVibe } from '../../src/core/radar/vibe';
 import { POOL_JOB_DEPARTMENT, POOL_JOB_LEVEL, TITULOS_ESPECIFICOS, classificarErro, filtrosPool, filtrosValidados, hashRequisicao, proximaPagina, tamanhoPaginaServidor, verificarConfiguracaoServidor, type CatalogoFiltros, type TipoOperacao } from '../../src/core/radar/vibeServidor';
+import { cabecalhosServico, chaveServicoValida } from '../../src/core/chaveServico';
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
 const BASE = process.env.VIBE_API_BASE ?? 'https://api.explorium.ai';
@@ -42,7 +43,8 @@ export default async (req: Request): Promise<Response> => {
   const perfil = ((await perfilR.json().catch(() => [])) as { role?: string; organization_id?: string }[])[0];
   if (!perfil?.role) return json({ erro: 'sem_perfil' }, 403);
   // RPCs de leitura: com o JWT do usuario (current_org). RPCs mutaveis: com service_role, so depois do JWT validado acima.
-  const cabServidor = { apikey: service, authorization: `Bearer ${service}`, 'content-type': 'application/json' };
+  // chave de serviço: legada (JWT) ou nova (sb_secret); publicável ou formato desconhecido = sem chave (falha fechada)
+  const cabServidor = chaveServicoValida(service) ? cabecalhosServico(service, { 'content-type': 'application/json' }) : {};
   const chamarRpc = async (nome: string, args: Row, headers: Record<string, string>): Promise<Row> => { const r = await fetch(`${url}/rest/v1/rpc/${nome}`, { method: 'POST', headers, body: JSON.stringify(args) }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`rpc ${nome}: ${mascarar(JSON.stringify(d).slice(0, 200))}`); return (d ?? {}) as Row; };
   const rpc = (nome: string, args: Row) => chamarRpc(nome, args, cab);
   const rpcServidor = (nome: string, args: Row) => chamarRpc(nome, { p_user_id: u.id, ...args }, cabServidor);
@@ -53,7 +55,7 @@ export default async (req: Request): Promise<Response> => {
   const acao = String(corpo.acao ?? '');
   const ids = ((corpo.businessIds as string[] | undefined) ?? []).filter((b) => /^[a-f0-9]{32}$/i.test(b)).map((b) => b.toLowerCase()).slice(0, 10000);
   const somenteComEmail = !!corpo.somenteComEmail;
-  const cfg = verificarConfiguracaoServidor({ acao, temChave: !!chave, temServiceRole: !!service });
+  const cfg = verificarConfiguracaoServidor({ acao, temChave: !!chave, temServiceRole: chaveServicoValida(service) });
   if (!cfg.ok) return json({ erro: cfg.erro, mensagem: cfg.mensagem }, 501); // sem fallback para anon; nada e enviado a Explorium
 
   try {
