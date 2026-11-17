@@ -164,7 +164,7 @@ export function gerarReversao(retrato, opcoes = {}) {
     sql.push(...restaurar(`table ${v.nome}`, v.acl, 'relacao', dono));
   }
   for (const x of r.relacoes) sql.push(...restaurar(`${x.tipo === 'S' ? 'sequence' : 'table'} ${x.nome}`, x.acl, 'relacao', dono));
-  for (const f of r.funcoes) sql.push(...restaurar(`function ${f.assinatura}`, f.acl, 'funcao', dono));
+  for (const f of r.funcoes) sql.push(...restaurar(`routine ${f.assinatura}`, f.acl, 'funcao', dono)); // routine: vale para função e procedure
   // privilégio padrão: os escopos que a 0077 toca (global de funções e public) e qualquer outro do retrato voltam ao retrato
   const escopos = new Map([['|f', null], ['public|r', null], ['public|S', null], ['public|f', null]]);
   for (const d of r.padrao) escopos.set(`${d.schema ?? ''}|${d.tipo}`, d);

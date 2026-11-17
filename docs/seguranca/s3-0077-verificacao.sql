@@ -68,6 +68,12 @@ itens(ordem, item, esperado, nomes) as (
     join pg_class ct on ct.oid = coalesce(ad.adrelid, co.conrelid, rw.ev_class) join pg_namespace nt on nt.oid = ct.relnamespace
     where d.refclassid = 'pg_proc'::regclass and nf.nspname in ('public', 'mart') and pf.proowner = (select oid from eu)
       and d.classid in ('pg_attrdef'::regclass, 'pg_constraint'::regclass, 'pg_rewrite'::regclass) and nt.nspname not in ('public', 'mart'))
+  union all select 22, 'gatilhos fora de public/mart que chamam função INVOKER do dono (EXECUTE do que ela chamar vem de quem grava: avaliar)', 'informativo', array(
+    select format('%s gatilho %s -> %s', c.oid::regclass, t.tgname, t.tgfoid::regprocedure) from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc pf on pf.oid = t.tgfoid join pg_namespace nf on nf.oid = pf.pronamespace
+    where not t.tgisinternal and n.nspname not in ('public', 'mart') and nf.nspname in ('public', 'mart')
+      and pf.proowner = (select oid from eu) and not pf.prosecdef order by 1)
   union all select 21, 'padrão de funções do dono que concede EXECUTE a authenticated (R10)', '0', array(select distinct
     case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end from pg_default_acl d, aclexplode(d.defaclacl) a
     where d.defaclrole = (select oid from eu) and d.defaclobjtype = 'f' and a.grantee = 'authenticated'::regrole)

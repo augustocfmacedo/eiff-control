@@ -31,10 +31,13 @@
 //          só executa para o dono e service_role; cliente e anon negados até concessão explícita; tabela/view novas sem
 //          anon; view nova sem security_invoker é apontada pela guarda G
 //   R10    SECURITY DEFINER executáveis pelo cliente = lista explícita (scripts/lib/s3Permissoes.mjs); só do servidor fechadas
-//   R9     papéis internos do Supabase: nenhuma concessão nova; Storage, PostgREST, gatilho do Auth, hook com concessão
+//   R9     papéis internos do Supabase: nenhuma concessão nova; Storage, PostgREST, gatilho SECURITY DEFINER do Auth, hook com concessão
 //          explícita e leitura por pg_read_all_data funcionam; política a papel interno ou DEFAULT fora de public/mart
 //          abortam a 0077
 //   R6     retrato em autocommit e com search_path estranho dá as mesmas assinaturas qualificadas
+//   Q      ORDEM NUMÉRICA (produção): com a 0077 na posição dela, migrations futuras criam funções já fechadas; a lista
+//          R10 vale e toda função usada por política/DEFAULT/CHECK/view tem EXECUTE de quem a avalia (pega concessão
+//          esquecida numa 0078+)
 //   K      reaplicar a 0077 não muda nada (idempotente)
 //   R3     a reversão RECUSA retrato anterior à C1, posterior à 0077, antigo, sem schema ou com concedente estranho, e a
 //          execução de uma reversão adulterada que reabriria a C1 é desfeita
@@ -54,12 +57,15 @@ import { bancoComFila } from './lib/pgliteFila.mjs';
 import { DEFINER_CLIENTE, SOMENTE_SERVIDOR } from './lib/s3Permissoes.mjs';
 
 const AQUI = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
-const RAIZ = path.join(AQUI, '..');
+const arg = (nome) => { const i = process.argv.indexOf(nome); return i > 0 ? path.resolve(process.argv[i + 1]) : null; };
+// --raiz <pasta>: outra pasta com supabase/migrations + supabase/seed.sql (teste de mutação: uma 0078 fictícia que
+// dependa do padrão antigo tem de fazer a prova Q FALHAR). C1, retrato e reversão vêm sempre deste repositório.
+const RAIZ_REPO = path.join(AQUI, '..');
+const RAIZ = arg('--raiz') ?? RAIZ_REPO;
 const NUM = '0077';
 const ARQ_0077 = fs.readdirSync(path.join(RAIZ, 'supabase', 'migrations')).find((f) => f.startsWith(`${NUM}_`));
-const arg = (nome) => { const i = process.argv.indexOf(nome); return i > 0 ? path.resolve(process.argv[i + 1]) : null; };
 const SQL_0077 = fs.readFileSync(arg('--migracao') ?? path.join(RAIZ, 'supabase', 'migrations', ARQ_0077), 'utf8');
-const SQL_C1 = fs.readFileSync(path.join(RAIZ, 'docs', 'seguranca', 's3-c1-contencao.sql'), 'utf8');
+const SQL_C1 = fs.readFileSync(path.join(RAIZ_REPO, 'docs', 'seguranca', 's3-c1-contencao.sql'), 'utf8');
 const { RETRATO_SQL, gerarReversao, VIEWS_S3 } = await import(pathToFileURL(arg('--reversao') ?? path.join(AQUI, 'lib', 's3Reversao.mjs')).href);
 const FECHADAS = ['fn_cancel_entry(uuid,text)', 'fn_close_period(uuid,character)', 'fn_reopen_period(uuid,text)'];
 // R9: papéis internos como no Supabase (atributos e participações equivalentes): o Auth grava em auth.* como
@@ -530,21 +536,9 @@ try {
     jOk, `${JSON.stringify(novaT)} · ${novaF.map((x) => `${x.f}: anon ${x.anon} auth ${x.auth} svc ${x.svc} PUBLIC ${x.publico} | chamada cliente ${x.cliente}, anon ${x.anonCh}, servidor ${x.svcCh}`).join(' · ')} · com grant explícito o cliente executa: ${comGrant.valor ?? comGrant.erro} · extensão instalada depois (pgcrypto): ${JSON.stringify(ext)} · guarda G aponta a view nova: ${guardaVe}`);
 
   // R10. lista explícita das SECURITY DEFINER executáveis pelo cliente (scripts/lib/s3Permissoes.mjs) e das só do servidor
-  const definerCli = (await q(`select p.oid::regprocedure::text f from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname in ('public','mart') and p.prosecdef and p.prorettype <> 'trigger'::regtype and has_function_privilege('authenticated', p.oid, 'EXECUTE')
-      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`)).map((r) => r.f);
-  const sobra = definerCli.filter((f) => !DEFINER_CLIENTE.includes(f));
-  const falta = DEFINER_CLIENTE.filter((f) => !definerCli.includes(f));
-  const servAberto = [];
-  for (const f of SOMENTE_SERVIDOR) {
-    const x = (await q(`select to_regprocedure($1) is not null existe, coalesce(has_function_privilege('authenticated', to_regprocedure($1), 'EXECUTE'), false) auth,
-      coalesce(has_function_privilege('anon', to_regprocedure($1), 'EXECUTE'), false) anon, coalesce(has_function_privilege('service_role', to_regprocedure($1), 'EXECUTE'), false) svc`, [f]))[0];
-    if (!x.existe || x.auth || x.anon || !x.svc) servAberto.push(`${f}: ${JSON.stringify(x)}`);
-  }
+  const r10 = await conferirR10();
   prova('R10 SECURITY DEFINER executáveis pelo cliente = lista explícita (scripts/lib/s3Permissoes.mjs); as só do servidor fechadas para authenticated e anon e abertas ao service_role',
-    sobra.length === 0 && falta.length === 0 && servAberto.length === 0,
-    [sobra.length ? `fora da lista: ${sobra.join(', ')}` : '', falta.length ? `na lista mas não executável: ${falta.join(', ')}` : '', servAberto.length ? `só servidor com problema: ${servAberto.join(' · ')}` : ''].filter(Boolean).join(' | ')
-      || `${definerCli.length} DEFINER do cliente conferidas · ${SOMENTE_SERVIDOR.length} só do servidor fechadas`);
+    r10.ok, r10.detalhe);
 
   // R9. papéis internos depois da 0077: nada concedido a eles; os fluxos reais do Supabase continuam funcionando
   await db.exec('begin;');
@@ -571,7 +565,7 @@ try {
     && r9.authGatilho === true && r9.authHook === '1' && r9.authSemGrant === 'negado' && r9.leitura === true && internoAntes.authOrg === true
     && internoAntes.leitorSemBypass === 0 && r9.leituraSemBypass === 'negado'
     && /políticas dirigidas a papéis internos/.test(errR9a ?? '') && /objetos fora de public\/mart dependem/.test(errR9b ?? '') && intactoR9;
-  prova('R9 papéis internos: nenhuma concessão nova a eles; Storage (SET ROLE authenticated), PostgREST, gatilho do Auth, hook com concessão explícita e leitura por pg_read_all_data com BYPASSRLS funcionam; o que só vinha por PUBLIC sai (supabase_auth_admin em current_org; leitor sem BYPASSRLS, que já lia 0 linhas, passa a receber negado); política dirigida a papel interno ou DEFAULT fora de public/mart abortam a 0077',
+  prova('R9 papéis internos: nenhuma concessão nova a eles; Storage (SET ROLE authenticated), PostgREST, gatilho SECURITY DEFINER em auth.users, hook com concessão explícita e leitura por pg_read_all_data com BYPASSRLS funcionam; o que só vinha por PUBLIC sai (supabase_auth_admin em current_org; leitor sem BYPASSRLS, que já lia 0 linhas, passa a receber negado); política dirigida a papel interno ou DEFAULT fora de public/mart abortam a 0077',
     r9ok, `ACL de papéis internos antes ${internoAntes.aclInternos} → depois ${r9.aclInternos} · ${JSON.stringify(r9)} · supabase_auth_admin executava current_org antes: ${internoAntes.authOrg} · leitor sem BYPASSRLS antes: ${internoAntes.leitorSemBypass} linha(s) · guarda política: ${(errR9a ?? 'APLICOU').slice(0, 70)} · guarda dependência: ${(errR9b ?? 'APLICOU').slice(0, 70)} · nada mudou nas tentativas: ${intactoR9}`);
 
   // R3. guardas da reversão: geração recusa retratos perigosos; execução recusa resultado que reabriria a C1
@@ -634,12 +628,65 @@ try {
   prova('L ordem: com a 0074 ainda pendente, C1 + 0077 e a 0074 depois chegam ao MESMO retrato da fila em ordem',
     dOrdem.length === 0, dOrdem.slice(0, 6).join(' · ') || 'retratos idênticos');
 
+  // Q. ORDEM NUMÉRICA (como em produção): a fila inteira com a 0077 na posição dela. Migrations depois da 0077 criam
+  //    funções com o padrão NOVO (fechado para o cliente). Aqui o Quality Gate pega quem esqueceu a concessão:
+  //    toda função do dono usada por política (dirigida a authenticated/PUBLIC), DEFAULT/CHECK de tabela ou view de
+  //    public/mart tem de ser executável por authenticated (e, em DEFAULT/CHECK, pelo service_role); e a lista R10 vale.
+  const dbPrincipal = db;
+  ({ db } = await bancoComFila(RAIZ));
+  const qR10 = await conferirR10();
+  const usadas = await q(`select distinct d.refobjid::regprocedure::text f, d.classid::regclass::text origem,
+      has_function_privilege('authenticated', d.refobjid, 'EXECUTE') auth, has_function_privilege('service_role', d.refobjid, 'EXECUTE') svc,
+      coalesce(pol.polname, '') pol,
+      coalesce((select bool_or(x = 0 or x = 'authenticated'::regrole) from unnest(pol.polroles) x), true) cliente
+    from pg_depend d
+    join pg_proc pf on pf.oid = d.refobjid join pg_namespace nf on nf.oid = pf.pronamespace
+    left join pg_policy pol on d.classid = 'pg_policy'::regclass and pol.oid = d.objid
+    left join pg_attrdef ad on d.classid = 'pg_attrdef'::regclass and ad.oid = d.objid
+    left join pg_constraint co on d.classid = 'pg_constraint'::regclass and co.oid = d.objid
+    left join pg_rewrite rw on d.classid = 'pg_rewrite'::regclass and rw.oid = d.objid
+    join pg_class ct on ct.oid = coalesce(pol.polrelid, ad.adrelid, co.conrelid, rw.ev_class) join pg_namespace nt on nt.oid = ct.relnamespace
+    where d.refclassid = 'pg_proc'::regclass and nf.nspname in ('public', 'mart') and pf.proowner = (select oid from pg_roles where rolname = current_user)
+      and d.classid in ('pg_policy'::regclass, 'pg_attrdef'::regclass, 'pg_constraint'::regclass, 'pg_rewrite'::regclass)
+      and nt.nspname in ('public', 'mart', 'storage')
+      and not exists (select 1 from pg_depend e where e.classid = 'pg_proc'::regclass and e.objid = pf.oid and e.deptype = 'e')`);
+  const quebradas = usadas.filter((u) => (u.origem === 'pg_policy' ? u.cliente && !u.auth : (u.origem === 'pg_rewrite' ? !u.auth : !u.auth || !u.svc)))
+    .map((u) => `${u.f} (${u.origem}${u.pol ? ' ' + u.pol : ''}): auth ${u.auth} svc ${u.svc}`);
+  await db.close(); db = dbPrincipal;
+  prova('Q ordem numérica (como em produção, migrations futuras depois da 0077): lista R10 confere e toda função usada por política, DEFAULT/CHECK ou view de public/mart é executável por quem a avalia',
+    qR10.ok && quebradas.length === 0,
+    [qR10.ok ? `R10 ok (${qR10.detalhe})` : `R10: ${qR10.detalhe}`, quebradas.length ? `funções usadas sem EXECUTE: ${quebradas.join(' · ')}` : `${usadas.length} usos de função em política/DEFAULT/CHECK/view conferidos`].join(' | '));
+
   // N. dono NÃO superusuário (como o postgres do Supabase): banco mínimo com as 25 views
   const n = await provaDonoComum();
   prova('N dono não superusuário: 0077 aplica; acesso por PUBLIC preservado; funções novas (public, mart, schema novo) só para o dono e service_role (nem authenticated, nem anon); grant a anon de OUTRO concedente aborta',
     n.ok, n.detalhe);
 } catch (e) {
   prova('EXECUCAO', false, so(e));
+}
+
+async function conferirR10() {
+  const definerCli = (await q(`select p.oid::regprocedure::text f from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public','mart') and p.prosecdef and p.prorettype <> 'trigger'::regtype and has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`)).map((r) => r.f);
+  const sobra = definerCli.filter((f) => !DEFINER_CLIENTE.includes(f));
+  const falta = DEFINER_CLIENTE.filter((f) => !definerCli.includes(f));
+  const servAberto = [];
+  for (const f of SOMENTE_SERVIDOR) {
+    const x = (await q(`select to_regprocedure($1) is not null existe, coalesce(has_function_privilege('authenticated', to_regprocedure($1), 'EXECUTE'), false) auth,
+      coalesce(has_function_privilege('anon', to_regprocedure($1), 'EXECUTE'), false) anon, coalesce(has_function_privilege('service_role', to_regprocedure($1), 'EXECUTE'), false) svc`, [f]))[0];
+    if (!x.existe || x.auth || x.anon || !x.svc) servAberto.push(`${f}: ${JSON.stringify(x)}`);
+  }
+  // SECURITY DEFINER nova que não está em nenhuma das duas listas também falha: toda DEFINER tem de ser classificada
+  const todas = (await q(`select p.oid::regprocedure::text f from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public','mart') and p.prosecdef and p.prorettype <> 'trigger'::regtype
+      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`)).map((r) => r.f);
+  const semClasse = todas.filter((f) => !DEFINER_CLIENTE.includes(f) && !SOMENTE_SERVIDOR.includes(f) && !/^f_smoke_/.test(f));
+  const ok = sobra.length === 0 && falta.length === 0 && servAberto.length === 0 && semClasse.length === 0;
+  const detalhe = [sobra.length ? `fora da lista: ${sobra.join(', ')}` : '', falta.length ? `na lista mas não executável: ${falta.join(', ')}` : '',
+    servAberto.length ? `só servidor com problema: ${servAberto.join(' · ')}` : '', semClasse.length ? `DEFINER sem classificação: ${semClasse.join(', ')}` : '']
+    .filter(Boolean).join(' | ') || `${definerCli.length} DEFINER do cliente conferidas · ${SOMENTE_SERVIDOR.length} só do servidor fechadas · toda DEFINER classificada`;
+  return { ok, detalhe };
 }
 
 async function provaDonoComum() {

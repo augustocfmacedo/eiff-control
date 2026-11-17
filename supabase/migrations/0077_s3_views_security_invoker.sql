@@ -202,10 +202,10 @@ begin
                    case r.defaclobjtype when 'r' then 'tables' when 'S' then 'sequences' when 'f' then 'functions'
                                         when 'T' then 'types' when 'n' then 'schemas' when 'L' then 'large objects' end);
   end loop;
-  -- e qualquer padrão de funções do papel, em outro schema, que conceda EXECUTE a authenticated (R10)
+  -- e qualquer padrão de funções do papel, em outro schema, que conceda EXECUTE a authenticated ou a PUBLIC (R10)
   for r in select distinct d.defaclnamespace from pg_default_acl d, aclexplode(d.defaclacl) a
-           where d.defaclrole = eu and d.defaclobjtype = 'f' and d.defaclnamespace <> 0 and a.grantee = 'authenticated'::regrole loop
-    execute format('alter default privileges for role %I in schema %I revoke execute on functions from authenticated', current_user, r.defaclnamespace::regnamespace);
+           where d.defaclrole = eu and d.defaclobjtype = 'f' and d.defaclnamespace <> 0 and a.grantee in ('authenticated'::regrole, 0) loop
+    execute format('alter default privileges for role %I in schema %I revoke execute on functions from public, authenticated', current_user, r.defaclnamespace::regnamespace);
   end loop;
 
   -- 6. pós-condição (privilégio efetivo) ---------------------------------------------------------------------------
@@ -255,10 +255,11 @@ begin
            case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end, d.defaclobjtype)), '{}') into ruins
   from pg_default_acl d, aclexplode(d.defaclacl) a
   where d.defaclrole = eu and a.grantee = anon_oid;
-  select ruins || coalesce(array_agg(format('padrão de funções %s ainda concede EXECUTE a authenticated',
-           case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end)), '{}') into ruins
+  select ruins || coalesce(array_agg(format('padrão de funções %s ainda concede EXECUTE a %s',
+           case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end,
+           case when a.grantee = 0 then 'PUBLIC' else 'authenticated' end)), '{}') into ruins
   from pg_default_acl d, aclexplode(d.defaclacl) a
-  where d.defaclrole = eu and d.defaclobjtype = 'f' and a.grantee = 'authenticated'::regrole;
+  where d.defaclrole = eu and d.defaclobjtype = 'f' and a.grantee in ('authenticated'::regrole, 0);
   if not exists (select 1 from pg_default_acl d where d.defaclrole = eu and d.defaclnamespace = 0 and d.defaclobjtype = 'f'
                  and not exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 0)
                  and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'service_role'::regrole and a.privilege_type = 'EXECUTE')) then
