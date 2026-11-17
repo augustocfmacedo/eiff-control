@@ -31,7 +31,7 @@
 import { randomBytes } from 'node:crypto';
 import { lerOculto } from './entradaOculta.mjs';
 
-const REF_AUTORIZADO = ''; // preenchido SÓ pelo commit de autorização, com o identificador exato do projeto descartável
+const REF_AUTORIZADO = 'lygduprbdmmnczkhxrcn'; // projeto s1-r3b, organização «EIFF ensaio descartavel» (qxlckipecdqlzrwkahot), conferido em 17/11/2026; voltar a '' depois da R3B
 const OPERACIONAIS = ['dduobppgomqyagjviwpx', 'htromxizctbknkwqxuvc', 'cbulkfgkqkuwcckgfwqc', 'wxtozqtxrathmftxacen'];
 const FRASE = 'ENSAIO_AUTH_DESCARTAVEL';
 const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : undefined; };

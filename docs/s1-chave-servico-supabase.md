@@ -95,7 +95,7 @@ falham ou o controle falha → NO-GO.
 **O que a R3A não homologa:** criar, atualizar, convidar e recuperar. Essas rotas têm a mesma porta de administrador que a
 R3A atravessa, mas escrevem — ficam para a R3B.
 
-### R3B — escritas do Auth em projeto DESCARTÁVEL (plano aprovado com condições em 17/11/2026; execução NÃO autorizada)
+### R3B — escritas do Auth em projeto DESCARTÁVEL (plano aprovado com condições e identificador autorizado em 17/11/2026; execução NÃO autorizada)
 
 **Estado da R3A (17/11/2026):** PASS nas seis provas obrigatórias, controles negativos com 401 — leitura do banco e do Auth
 admin homologada com a `sb_secret` `netlifyfunctions`.
@@ -141,6 +141,28 @@ palavra final: se não mostrar Free a US$ 0, ou se recusar o plano Free, **parar
 | 5 recuperar | POST `recover` (o e-mail criado) | PORTA_ACEITA_EMAIL_RECUSADO |
 | 6 limpeza | GET de conferência + DELETE de cada usuário do ensaio | CONCLUIDA |
 | 7 limpeza conferida | GET `admin/users` | CONCLUIDA, 0 usuários |
+
+**Autorização do identificador (17/11/2026).** `REF_AUTORIZADO = 'lygduprbdmmnczkhxrcn'` — projeto `s1-r3b`, us-west-2,
+criado às 16:08 UTC na organização «EIFF ensaio descartavel» (`qxlckipecdqlzrwkahot`), a única do projeto; os quatro
+operacionais seguem na organização antiga. Conferido por metadados e por consulta só de leitura (`set transaction read
+only`, contagens): 0 usuários, 0 identidades, 0 tabelas em `public`, 0 buckets, nada no Realtime, só os schemas padrão.
+Nenhuma variável do Netlify mudou depois da criação e o repositório não citava o projeto. Com a constante preenchida, o
+script recusa os quatro operacionais e qualquer outro identificador; só esse chega a pedir a chave. Isto autoriza o
+IDENTIFICADOR, não a execução: ela exige «EXECUÇÃO R3B AUTORIZADA».
+
+**Procedimento definitivo (cada passo com a Direção)**
+1. «EXECUÇÃO R3B AUTORIZADA».
+2. Augusto, no painel do projeto `s1-r3b` (conferir o nome e a organização no topo): *Settings › API Keys*, chave secreta
+   `default` → gerenciador de senhas, entrada «DESCARTÁVEL s1-r3b». Nunca a de produção.
+3. Augusto, PowerShell, na pasta do PR (`.claude\worktrees\s1-r1`), conferindo que está no commit autorizado:
+   `git log --oneline -1` e depois
+   `node scripts/s1/ensaio-auth-escrita.mjs --ref lygduprbdmmnczkhxrcn --confirmar ENSAIO_AUTH_DESCARTAVEL`;
+   colar a chave quando pedir (oculta). Cola no chat só a tabela e a linha RESULTADO.
+4. Parecer: PASS/NO-GO pela tabela. Se a etapa 7 não for CONCLUIDA, ninguém apaga nada à mão antes da decisão da Direção.
+5. Apagar a entrada «DESCARTÁVEL s1-r3b» do gerenciador (ou revogar a chave no painel do descartável).
+6. Exclusão do projeto e da organização — **autorização separada**. Antes, conferência por metadados de que o alvo é
+   exatamente `lygduprbdmmnczkhxrcn` na `qxlckipecdqlzrwkahot`; depois, de que sumiram da lista.
+7. Commit voltando `REF_AUTORIZADO` para `''`.
 
 **Etapas com a Direção**
 1. Criação manual da organização e do projeto (passo a passo no relatório), conferindo US$ 0.
