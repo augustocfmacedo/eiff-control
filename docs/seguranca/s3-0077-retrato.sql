@@ -1,12 +1,18 @@
--- Retrato de privilégios da Segurança S3 (somente leitura, só catálogo; nenhum dado de negócio).
--- Uso: ANTES de aplicar a 0077 em produção, guardar a saída (um JSON) — é dela que a reversão é gerada:
+-- Retrato de privilégios da Segurança S3, versão 2 (somente leitura, só catálogo; nenhum dado de negócio).
+-- Uso: IMEDIATAMENTE antes de aplicar a 0077 em produção, sem nenhuma migration no meio. A reversão é gerada dele e
+-- recusa retrato com mais de 24 h, anterior à C1 (views com anon/PUBLIC ou escrita de authenticated), posterior à 0077
+-- (views já com security_invoker) ou com concessão feita por outro papel:
 --   npx supabase db query --linked --project-ref dduobppgomqyagjviwpx -f docs/seguranca/s3-0077-retrato.sql -o json > retrato-antes-0077.json
 --   node scripts/s3-0077-reversao.mjs --retrato retrato-antes-0077.json > reversao-0077.sql
--- Depois de aplicar, rodar de novo e comparar (o smoke faz o mesmo em PGlite).
--- Conteúdo: views (opções e ACL), relações e funções de public/mart do papel que roda (ACL), privilégio padrão do papel.
+-- search_path = pg_catalog só nesta transação: assinaturas de função e tipos saem com o schema (não dependem do
+-- search_path de quem gera ou executa a reversão).
 set transaction read only;
+set local search_path = pg_catalog;
 with eu as (select oid, rolname from pg_roles where rolname = current_user)
 select jsonb_build_object(
+  'versao_retrato', 2,
+  'tirado_em', now(),
+  'banco', current_database(),
   'papel', (select rolname from eu),
   'versao', current_setting('server_version_num'),
   'views', (select coalesce(jsonb_agg(jsonb_build_object('nome', format('%I.%I', n.nspname, c.relname),

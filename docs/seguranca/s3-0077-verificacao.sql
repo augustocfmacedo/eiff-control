@@ -26,10 +26,17 @@ itens(ordem, item, esperado, nomes) as (
   union all select 8, 'funções do dono executáveis por anon', '0', array(select nome from fn where proowner = (select oid from eu) and has_function_privilege('anon', fn.oid, 'EXECUTE') order by 1)
   union all select 9, 'funções fechadas executáveis por authenticated', '0', array(select nome from fn where fn.oid in (to_regprocedure('public.fn_cancel_entry(uuid, text)'),
     to_regprocedure('public.fn_close_period(uuid, character)'), to_regprocedure('public.fn_reopen_period(uuid, text)')) and has_function_privilege('authenticated', fn.oid, 'EXECUTE') order by 1)
-  union all select 10, 'privilégio padrão do dono que ainda concede a anon (schema public)', '0', array(select d.defaclobjtype::text from pg_default_acl d, aclexplode(d.defaclacl) a
-    where d.defaclrole = (select oid from eu) and d.defaclnamespace = 'public'::regnamespace and a.grantee = (select oid from pg_roles where rolname = 'anon'))
-  union all select 11, 'privilégio padrão do dono que ainda dá EXECUTE a PUBLIC', '0', case when exists (select 1 from pg_default_acl d where d.defaclrole = (select oid from eu)
-    and d.defaclnamespace = 0 and d.defaclobjtype = 'f' and not exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 0)) then array[]::text[] else array['global (funções)'] end
+  union all select 10, 'privilégio padrão do dono que ainda concede a anon (qualquer schema ou global)', '0', array(select distinct
+    case when d.defaclnamespace = 0 then 'global' else d.defaclnamespace::regnamespace::text end || '/' || d.defaclobjtype::text from pg_default_acl d, aclexplode(d.defaclacl) a
+    where d.defaclrole = (select oid from eu) and a.grantee = (select oid from pg_roles where rolname = 'anon'))
+  union all select 11, 'padrão global de funções do dono: PUBLIC executa ou authenticated/service_role sem EXECUTE', '0', case when exists (select 1 from pg_default_acl d
+    where d.defaclrole = (select oid from eu) and d.defaclnamespace = 0 and d.defaclobjtype = 'f'
+      and not exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 0)
+      and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'authenticated'::regrole and a.privilege_type = 'EXECUTE')
+      and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee = 'service_role'::regrole and a.privilege_type = 'EXECUTE')) then array[]::text[] else array['global (funções)'] end
+  union all select 15, 'relações do dono com grant a PUBLIC (antes da 0077: avaliar; depois: 0)', '0', array(select distinct nome from rel join pg_class c on c.oid = rel.oid, aclexplode(c.relacl) a
+    where rel.relowner = (select oid from eu) and a.grantee = 0 order by 1)
+  union all select 16, 'informativo: service_role com USAGE no schema mart', 'informativo', case when has_schema_privilege('service_role', 'mart', 'USAGE') then array['sim'] else array[]::text[] end
   union all select 12, 'informativo: relações de OUTRO dono com privilégio de anon', 'informativo', array(select distinct nome || ' (' || pg_get_userbyid(rel.relowner) || ')' from rel, privs
     where rel.relowner <> (select oid from eu) and rel.relkind <> 'S' and has_table_privilege('anon', rel.oid, privs.p) order by 1)
   union all select 13, 'informativo: funções de OUTRO dono executáveis por anon', 'informativo', array(select nome || ' (' || pg_get_userbyid(proowner) || ')' from fn
