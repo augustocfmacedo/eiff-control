@@ -180,3 +180,49 @@ describe('guarda: nenhuma chamada nova monta à mão a chave de serviço nos doi
     expect(achados).toEqual([])
   })
 })
+
+describe('guarda: credencial real fora dos testes, do CI e do repositório', () => {
+  const raiz = path.resolve(__dirname, '../..')
+  const script = path.join(raiz, 'scripts/s1/validar-chave-secreta.mjs')
+
+  it('nenhum arquivo versionado tem chave sb_ que não seja marcada como fictícia ou de controle', () => {
+    const achados: string[] = []
+    const varrer = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        if (['node_modules', '.git', 'dist', 'dados', 'scratch', '.netlify', '.claude'].includes(e.name)) continue
+        const p = path.join(d, e.name)
+        if (e.isDirectory()) varrer(p)
+        else if (/\.(ts|mts|tsx|mjs|cjs|js|json|yml|yaml|toml|md|sql|env|txt)$/.test(e.name) || e.name.startsWith('.env')) {
+          for (const m of fs.readFileSync(p, 'utf8').matchAll(/sb_(?:secret|publishable)_[A-Za-z0-9_-]{12,}/g)) {
+            if (!/FICTICIA|CONTROLE/.test(m[0])) achados.push(`${path.relative(raiz, p)}: ${m[0].slice(0, 18)}…`)
+          }
+        }
+      }
+    }
+    varrer(raiz)
+    expect(achados).toEqual([])
+  })
+
+  it('o CI nunca roda o script da R3 nem recebe chave sb_secret', () => {
+    const dir = path.join(raiz, '.github/workflows')
+    for (const f of fs.readdirSync(dir)) {
+      const t = fs.readFileSync(path.join(dir, f), 'utf8')
+      expect(t).not.toMatch(/scripts\/s1\/|validar-chave-secreta|EIFF_SB_SECRET|sb_secret/)
+    }
+    const pkg = fs.readFileSync(path.join(raiz, 'package.json'), 'utf8')
+    expect(pkg).not.toMatch(/validar-chave-secreta|scripts\/s1\//)
+  })
+
+  it('o script da R3 só lê a chave de um terminal interativo, nunca de variável de ambiente, e só usa HEAD/GET no banco', () => {
+    const t = fs.readFileSync(script, 'utf8')
+    expect(t).not.toMatch(/process\.env/)
+    expect(t).toMatch(/process\.stdin\.isTTY/)
+    expect(t).not.toMatch(/inbox_email_delivery_transition|delivery_create|reserve_vibe|update_vibe|inbox_ingest|apply_routing/)
+    // toda chamada ao banco é HEAD ou GET (sem method POST/PATCH/DELETE em /rest/v1)
+    for (const linha of t.split('\n').filter((l) => l.includes('/rest/v1/'))) expect(linha).not.toMatch(/method: '(POST|PATCH|PUT|DELETE)'/)
+    // escrita no Auth só com e-mail inválido (sem @) ou id inexistente
+    expect(t).toMatch(/EMAIL_INVALIDO = 's1-r3-sem-arroba'/)
+    // nenhuma saída interpola a chave
+    for (const linha of t.split('\n').filter((l) => /console\.(log|error)|stdout\.write/.test(l))) expect(linha).not.toMatch(/\$\{chave|\$\{k\b|\(chave\)|, chave\)/)
+  })
+})
