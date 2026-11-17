@@ -213,16 +213,39 @@ describe('guarda: credencial real fora dos testes, do CI e do repositório', () 
     expect(pkg).not.toMatch(/validar-chave-secreta|scripts\/s1\//)
   })
 
-  it('o script da R3 só lê a chave de um terminal interativo, nunca de variável de ambiente, e só usa HEAD/GET no banco', () => {
-    const t = fs.readFileSync(script, 'utf8')
-    expect(t).not.toMatch(/process\.env/)
-    expect(t).toMatch(/process\.stdin\.isTTY/)
-    expect(t).not.toMatch(/inbox_email_delivery_transition|delivery_create|reserve_vibe|update_vibe|inbox_ingest|apply_routing/)
-    // toda chamada ao banco é HEAD ou GET (sem method POST/PATCH/DELETE em /rest/v1)
-    for (const linha of t.split('\n').filter((l) => l.includes('/rest/v1/'))) expect(linha).not.toMatch(/method: '(POST|PATCH|PUT|DELETE)'/)
-    // escrita no Auth só com e-mail inválido (sem @) ou id inexistente
-    expect(t).toMatch(/EMAIL_INVALIDO = 's1-r3-sem-arroba'/)
-    // nenhuma saída interpola a chave
-    for (const linha of t.split('\n').filter((l) => /console\.(log|error)|stdout\.write/.test(l))) expect(linha).not.toMatch(/\$\{chave|\$\{k\b|\(chave\)|, chave\)/)
+  const ler = (f: string) => fs.readFileSync(path.join(raiz, 'scripts/s1', f), 'utf8')
+  const semSaidaDaChave = (t: string) => {
+    for (const linha of t.split('\n').filter((l) => /console\.(log|error)|stdout\.write/.test(l))) expect(linha).not.toMatch(/\$\{chave|\(chave\)|, chave\)/)
+  }
+
+  it('entrada da chave: só teclado de terminal interativo, sem variável de ambiente nem argumento', () => {
+    const lib = ler('entradaOculta.mjs')
+    expect(lib).toMatch(/process\.stdin\.isTTY/)
+    expect(lib).toMatch(/setRawMode\(true\)/)
+    for (const f of ['entradaOculta.mjs', 'validar-chave-secreta.mjs', 'ensaio-auth-escrita.mjs']) expect(ler(f)).not.toMatch(/process\.env/)
+    for (const f of ['validar-chave-secreta.mjs', 'ensaio-auth-escrita.mjs']) {
+      expect(ler(f)).toMatch(/import \{ lerOculto \} from '\.\/entradaOculta\.mjs'/)
+      expect(ler(f)).not.toMatch(/argv[^\n]*(chave|secret)/i)
+      semSaidaDaChave(ler(f))
+    }
+  })
+
+  it('R3A em produção: só HEAD e GET, por uma única função de requisição', () => {
+    const t = ler('validar-chave-secreta.mjs')
+    expect(t.match(/\bfetch\(/g)).toHaveLength(1) // só dentro de ler()
+    expect(t).toMatch(/if \(metodo !== 'GET' && metodo !== 'HEAD'\) throw/)
+    expect(t).not.toMatch(/'(POST|PUT|PATCH|DELETE)'/)
+    expect(t).not.toMatch(/body:/)
+    expect(t).not.toMatch(/admin\/users',|\/invite|\/recover|delivery_transition|delivery_create|reserve_vibe|update_vibe|inbox_ingest|apply_routing/)
+  })
+
+  it('R3B (escrita no Auth) recusa produção e exige a frase de confirmação', () => {
+    const t = ler('ensaio-auth-escrita.mjs')
+    expect(t).toMatch(/PRODUCAO_REF = 'dduobppgomqyagjviwpx'/)
+    expect(t).toMatch(/includes\(PRODUCAO_REF\)\) recusar/)
+    expect(t).toMatch(/FRASE = 'ENSAIO_AUTH_DESCARTAVEL'/)
+    // as recusas vêm antes de pedir a chave e antes de qualquer requisição
+    expect(t.indexOf("recusar('esta é a URL de PRODUÇÃO")).toBeLessThan(t.indexOf('lerOculto('))
+    expect(t.indexOf('lerOculto(')).toBeLessThan(t.indexOf('await fetch('))
   })
 })
