@@ -663,3 +663,172 @@ ferramenta de captura devolveu imagens duplicadas; ali a evidência é a mediç�
 - A fila técnica, a visibilidade por atribuição e a separação Engenharia × comercial só valem no banco depois de aplicar
   S3 → comercial-acesso → pedido-projeto (§12.7). Até lá, a proteção é da tela e do repositório em memória.
 - Equipe técnica é um texto (sem cadastro de membros por equipe): «fila da equipe» hoje é a Engenharia inteira.
+
+## 14. E11.2C — Persistência das solicitações de projeto (16/11/2026)
+
+Branch local `feature/central-comercial-e11-4-persistencia-projetos`, a partir do `9689bf5` (PR #91). PRs #89, #90 e #91
+intocados. Nada aplicado em banco real; a persistência está **implementada e provada em PostgreSQL descartável** e
+**desligada** no app.
+
+### 14.1 Arquitetura
+
+```
+Tela (PedidosProjeto.tsx) ── hoje ──▶ RepositorioPedidos (síncrono, memória) ─ demonstração local
+                          └ ativação ▶ RepositorioPedidosAsync ─▶ repositorioSupabase (src/data/pedidosProjeto.supabase.ts)
+                                                                      │  só RPC (supabase-js .rpc / storage.upload)
+                                                                      ▼
+                                       PostgreSQL: pp_criar · pp_transicionar · pp_listar · pp_obter · pp_eventos
+                                                   pp_arquivos · pp_doc_preparar · pp_doc_registrar · pp_doc_remover
+                                                   (security definer: papel no perfil, fila técnica, versão, intenção,
+                                                    vínculos, histórico na MESMA transação)
+```
+
+- **O banco é a autoridade.** O adaptador não decide permissão: monta a chamada e traduz o erro. As regras saem do banco
+  como `PP:<CODIGO>: mensagem` (os códigos de `ErroPedido`), então o app mostra a mesma mensagem nos dois adaptadores.
+- **Contrato assíncrono** (`RepositorioPedidosAsync` em `pedidosRepositorio.ts`): sem o usuário nos parâmetros (a
+  identidade vem do JWT), com arquivos. O motor (`pedidoProjeto.ts`) não foi reescrito: o banco espelha
+  `REGRAS_ACAO`, `CAMPOS_TECNICOS`, a fila técnica e a idempotência, na mesma ordem de conferência.
+- **Desligado no app**: `src/data/pedidosProjeto.ts` continua devolvendo a memória no modo local e «persistência
+  pendente» no remoto; um teste garante que nenhum código do app instancia o adaptador.
+
+### 14.2 Modelo de banco (`docs/propostas/pedido-projeto.proposta.sql`)
+
+| Tabela | Conteúdo |
+|---|---|
+| `project_request` | id, código `SP-nnnn` por organização (lock consultivo), organização, empresa, oportunidade, vínculos (conversa, submissão, evidência do Lead Engine, orçamento), origem, tipo, versão por oportunidade+tipo, prioridade, responsável comercial, equipe, responsável técnico, prazos, situação, entrega, resultado, motivo, versão (concorrência), datas. Índice único parcial: uma aberta por oportunidade e tipo |
+| `project_request_field` | dado técnico atual por campo do catálogo: valor, declarado/validado, quem e quando validou, quem e quando alterou |
+| `project_request_document` | situação por tipo de documento, referência, quem atualizou, recebimento, validação |
+| `project_request_file` | cada arquivo é uma VERSÃO (tipo, versão, caminho no bucket, nome, tipo MIME, tamanho, quem enviou, quando); remoção lógica com motivo |
+| `project_request_pending` | descrição, quem pediu, quem responde (o responsável comercial), abertura, resposta, resolução, situação |
+| `project_request_event` | ação, de → para, autor, papel, instante, motivo, detalhe, **alterações** (dados e documentos antes/depois), intenção (única por organização) |
+
+Histórico preservado para os papéis da aplicação: eventos, versões de arquivo e as demais linhas não aceitam DELETE
+(gatilho), e eventos não aceitam UPDATE. Isso também barra um UPDATE ou DELETE comum feito pelo dono do banco, mas não é
+proteção absoluta: o dono e superusuários podem desligar gatilhos (§14.12). Remover um dado técnico é uma ação (`editar_dados`) registrada no histórico.
+
+### 14.3 Políticas e segurança
+
+- Leitura **direta** das tabelas: só a gestão comercial (auditoria). A Engenharia **não lê nenhuma tabela**: recebe pela
+  função a projeção técnica (`pp_json` com `tecnica`), **sem oportunidade, sem vínculos, sem nada comercial**, e só da
+  fila de triagem ou do que está atribuído a ela.
+- Escrita direta: ninguém (`insert/update/delete/truncate` revogados de `authenticated`); tudo pelas funções.
+- Demais perfis (Financeiro, Contabilidade, Compras, Gestor de obra, Auditoria, Solicitante): nada.
+- Outra organização: nada (filtro por `current_org()` em todas as leituras e escritas).
+- O papel Comercial depende da parte 1 da `comercial-acesso` (enum).
+
+### 14.4 Documentos
+
+Bucket **próprio** `projetos-tecnicos` (privado, 25 MB; PDF, imagens, ZIP, DWG/DXF), nunca o `anexos-financeiros`.
+Caminho `<organização>/<solicitação>/<uuid>.<ext>`. Três passos, como os anexos financeiros: `pp_doc_preparar` (confere
+quem pode anexar e devolve a pasta) → envio ao bucket (política de INSERT pela pasta) → `pp_doc_registrar` (confere
+caminho, objeto existente, tipo e tamanho; cria a versão seguinte; evento no histórico). Leitura do objeto só para quem vê
+a solicitação. O Comercial anexa documentos do cliente; a Engenharia, documentos técnicos (na triagem ou como
+responsável); o **entregável** é do responsável técnico. Remoção é lógica (`pp_doc_remover`: quem enviou ou a gestão,
+com motivo); o objeto e a versão ficam (retenção). Sem UPDATE/DELETE de objeto pelo app.
+
+### 14.5 Demonstração de persistência
+
+`src/data/pedidosProjeto.supabase.integracao.test.ts` roda o **adaptador real** contra o PGlite com a fila inteira
+(0001..0075) + as duas propostas, cada chamada como um usuário de verdade. A solicitação nasce de uma oportunidade
+fictícia, aparece na fila da Engenharia, é atribuída, triada, devolvida com duas pendências, complementada pelo Comercial,
+volta à triagem, é desenvolvida, entregue e encerrada com o orçamento vinculado: 12 eventos. Depois, um adaptador NOVO
+lê o mesmo estado; e o diretório de dados do banco é exportado e carregado num PGlite novo, onde a solicitação e o
+histórico continuam lá (reinicialização do adaptador e do banco).
+
+A **tela continua no modo demonstrativo** (memória): ligá-la ao banco descartável exigiria servir o PGlite ao navegador
+fora do ambiente do app. A troca da tela para o contrato assíncrono é o primeiro passo da ativação (§14.8).
+
+### 14.6 Testes
+
+| Prova | Resultado |
+|---|---|
+| Integração do adaptador (11 cenários + 8 adversariais, §14.9 + 5 de privilégios, §14.12): ciclo completo; reinicialização do adaptador e do banco; isolamento por organização e perfil (API e consulta direta, leitura e escrita); payload da Engenharia sem dado comercial; triagem compartilhada e atribuição; concorrência (dois usuários na mesma versão: um passa, o outro recebe conflito), idempotência e versões; histórico imutável; falha forçada no meio da operação desfaz tudo; vínculos por id; pendências; documentos (versões, permissões, tipo, tamanho, remoção lógica, bucket próprio) | 24/24 |
+| Mutação: a projeção devolvendo a oportunidade à Engenharia | o cenário 4 falha (pega) |
+| `scripts/pg-smoke-pedido-projeto.mjs` (pela API do banco) | 19/19 (Q, R e S vêm da revisão independente de 18/11/2026: entregável pelo caminho direto, responsável comercial desativado, pasta que não é uuid) |
+| Guarda: nenhum código do app instancia o adaptador | passa |
+
+### 14.7 Dependências
+
+- **Segurança S3** (P0) antes de tudo; a proposta não toca as views financeiras nem as funções auxiliares que a S3
+  pode mudar. Ordem: S3 → `comercial-acesso` parte 1 → parte 2 → `pedido-projeto`.
+- **Frente A**: trabalha em documentos e no fluxo do formulário; nenhum arquivo em comum com esta branch.
+- Números de migration: escolhidos só na hora de aplicar, em coordenação (hoje o repositório termina na 0075).
+
+### 14.8 Ativação e reversão (cada passo com autorização própria)
+
+1. Aplicar S3, depois as duas partes da `comercial-acesso`, depois esta proposta como migrations numeradas, cada uma
+   numa transação; conferir o schema real (só leitura) e rodar o smoke contra uma cópia.
+2. PR de código: a tela passa ao `RepositorioPedidosAsync` (a memória ganha um invólucro assíncrono para a
+   demonstração local) e o `src/data/pedidosProjeto.ts` passa a devolver `repositorioSupabase` no modo remoto, por trás
+   de um interruptor desligado por padrão.
+3. Piloto só com a Direção; depois a Engenharia; depois o papel Comercial (quando existir).
+
+Reversão: desligar o interruptor (a tela volta a «persistência pendente», sem perder nada). No banco, revogar `execute`
+das funções `pp_*` congela o módulo; as tabelas são aditivas e **não** devem ser apagadas (histórico). O bucket fica
+privado e sem políticas de escrita depois da revogação.
+
+### 14.9 Revisão de segurança das funções SQL (16/11/2026)
+
+| # | Achado | Gravidade | Correção | Prova |
+|---|---|---|---|---|
+| R1 | **`pp_json` executável por qualquer autenticado**: o padrão do Supabase concede EXECUTE em função nova a `authenticated`; a função aceita uma linha montada pelo chamador, então um engenheiro (ou qualquer perfil) leria a visão comercial de qualquer solicitação pelo id | **alta** | `revoke ... from authenticated` em `pp_json`, `pp_eu`, `pp_texto`, `pp_dados`, `pp_conferir_dados` | adversarial B; mutação (sem a revogação a chamada forjada executa) |
+| R2 | Registro de arquivo confiava no tipo e no tamanho DECLARADOS | média | `pp_doc_registrar` confere com `metadata.mimetype`/`metadata.size` do objeto | adversarial G |
+| R3 | Projeção técnica levava o id do orçamento vinculado e o motivo do encerramento comercial | média | técnica: `resultado` só com o tipo; sem `motivo` em Encerrado; eventos de encerramento sem motivo, detalhe e alterações | adversarial E |
+| R4 | Responsável comercial podia ser qualquer perfil da organização | baixa | só gestão comercial ativa | adversarial F |
+| R5 | TRUNCATE ignora gatilho de linha e a RLS não se aplica a TRUNCATE | baixa | sem privilégio TRUNCATE para anon, authenticated e service_role; gatilho de instrução como segunda barreira (não absoluta: §14.12) | adversarial D |
+| R6 | Textos livres sem limite | baixa | 2000 por dado, 1000 por motivo, 20000 por chamada | adversarial F |
+| R7 | Utilitárias com EXECUTE para anon/public | baixa | revogado | adversarial A |
+| R8 | Duas criações simultâneas com a mesma intenção: a perdedora recebia erro de índice | baixa | o adaptador refaz uma vez e recebe a original; nunca há duplicata | adversarial H |
+
+Conferido e sem achado: as 17 funções `SECURITY DEFINER` têm `search_path = public, pg_temp`; a identidade é sempre
+`auth.uid()` lida no perfil ativo (nunca um parâmetro); toda leitura e escrita filtra por `current_org()`; anon não
+executa nenhuma `pp_*`; escrita direta revogada; a mudança de solicitação, campos, documentos, pendências e evento
+acontece numa só função (uma transação; falha forçada desfaz tudo, cenário 8); a intenção é única por organização; a
+versão é conferida com a linha travada (`for update`).
+
+### 14.10 O que foi provado em PGlite × o que ainda exige o Supabase real
+
+| Provado em PGlite (fila inteira 0001..0075 + propostas) | Ainda exige Supabase real (projeto de homologação) |
+|---|---|
+| RLS e GRANTs das tabelas; funções e suas regras; isolamento por organização e perfil; projeção técnica; atomicidade; idempotência; versão; histórico imutável; políticas do Storage sobre `storage.objects`; persistência após reinício do adaptador e do banco | autenticação real (JWT do Supabase Auth, `request.jwt.claims` preenchido pelo PostgREST; no PGlite `auth.uid()` lê um parâmetro de teste) |
+| | chamadas pela API REST/RPC do PostgREST (exposição de tabelas e funções, cabeçalhos) |
+| | Storage real: upload pelo `storage-api`, `allowed_mime_types` e `file_size_limit` do bucket aplicados no envio, `metadata` preenchido pelo serviço, URL assinada |
+| | privilégios padrão do projeto real (o prelúdio do PGlite imita os do Supabase, mas o projeto pode ter ajustes) |
+| | concorrência com conexões separadas (o PGlite tem uma conexão; a corrida foi simulada no cliente) |
+| | interação com a S3 já aplicada |
+
+### 14.11 Bloqueio do adaptador em ambiente real
+
+`repositorioSupabase` não é instanciado por nenhum código do app (teste de guarda); `src/data/pedidosProjeto.ts` devolve
+a memória no modo local e «persistência pendente» no remoto; as funções `pp_*` só existem depois de aplicar a proposta.
+Ou seja: três travas independentes — código não ligado, banco sem as funções, e a ativação exige PR de código + migrations
+autorizadas.
+
+### 14.12 E11.2D — Verificação final de privilégios e TRUNCATE (16/11/2026)
+
+**EXECUTE e PUBLIC.** O PostgreSQL concede EXECUTE a PUBLIC em toda função nova, e o Supabase concede ainda a `anon` e
+`authenticated` por privilégio padrão do schema. A proposta tem 24 funções, todas listadas num de três grupos, cada um com
+`revoke all ... from public, anon, authenticated` e, quando cabe, `grant execute ... to authenticated`:
+
+| Grupo | Funções | Quem executa |
+|---|---|---|
+| Internas | `pp_json`, `pp_eu`, `pp_texto`, `pp_dados`, `pp_conferir_dados`, `pp_engenharia_role`, `pp_engenharia_ve` e os 4 gatilhos | só o dono (de dentro das funções do dono) |
+| Usadas em políticas | `pp_gestao_role`, `pp_ve_pedido`, `pp_pode_anexar`, `pp_pedido_do_caminho` | `authenticated` (devolvem só um booleano ou o id do caminho) |
+| API (RPC) | `pp_criar`, `pp_transicionar`, `pp_listar`, `pp_obter`, `pp_eventos`, `pp_arquivos`, `pp_doc_preparar`, `pp_doc_registrar`, `pp_doc_remover` | `authenticated` |
+
+Nenhuma função existente do CRM é tocada. Provas (bloco E11.2D do teste de integração): nenhuma ACL com EXECUTE para PUBLIC;
+uma assinatura por nome (sem sobrecargas); o inventário bate exatamente com os três grupos; internas negadas a `anon`,
+`authenticated` e a um papel que HERDA dos dois; políticas e API só para `authenticated` (e herdeiros), nunca `anon`; as 17
+`SECURITY DEFINER` com `search_path = public, pg_temp` e o mesmo dono das tabelas; `pp_json` chamada diretamente com uma
+linha forjada é negada como `authenticated` e como `anon`. Mutação: retirar a revogação das internas derruba 3 dessas provas.
+
+A proposta deve ser aplicada **inteira numa única transação** (BEGIN … COMMIT): criação e revogação juntas, sem janela.
+O `service_role` (chave de servidor) mantém EXECUTE nas internas pelo privilégio padrão do Supabase; ele já ignora a RLS
+por definição e não é usado pelo adaptador.
+
+**TRUNCATE.** A RLS **não** se aplica a TRUNCATE, e gatilho de linha não dispara nele. Por isso: `anon`, `authenticated` e
+`service_role` não têm o privilégio TRUNCATE nas seis tabelas (provado, inclusive por herança), e um gatilho de instrução
+recusa o TRUNCATE de quem tiver o privilégio. **Não é proteção absoluta**: o dono das tabelas e superusuários podem
+desligar gatilhos ou alterar privilégios. Papéis administrativos privilegiados exigem controles próprios: acesso restrito ao
+dono do banco, auditoria das sessões administrativas e backup (plano Pro do Supabase, pendência já registrada). Mutação:
+devolver o TRUNCATE ao `service_role` derruba a prova correspondente.

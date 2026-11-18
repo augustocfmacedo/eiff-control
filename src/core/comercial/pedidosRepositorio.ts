@@ -9,7 +9,7 @@
 //   - histórico append-only: eventos só são acrescentados.
 import type { Usuario } from '../types'
 import {
-  ErroPedido, aplicarAcao, criarPedido, pedidoVisivel, type ACOES_PEDIDO, type DadosAcao, type EntradaPedido, type EventoPedido, type FontesVinculo, type PedidoProjeto,
+  ErroPedido, aplicarAcao, criarPedido, pedidoVisivel, type ACOES_PEDIDO, type DadosAcao, type EntradaPedido, type EventoPedido, type FontesVinculo, type PedidoProjeto, type PedidoTecnico,
 } from './pedidoProjeto'
 
 export type AdaptadorPedidos = 'memoria' | 'supabase'
@@ -75,3 +75,33 @@ export function repositorioEmMemoria(opts: { agora?: () => string; novoId?: (pre
 
 /** Uma intenção nova por clique/envio (repetir o mesmo clique reaproveita a mesma). */
 export const novaIntencao = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `int-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+
+/* ------------------------------------------------------------------ contrato assíncrono (E11.2C) */
+
+/**
+ * O que um leitor recebe: a visão técnica sempre; oportunidade e vínculos só para a gestão comercial. No banco, quem
+ * decide é a função (pp_json): para a Engenharia esses campos NÃO vêm no payload.
+ */
+export type PedidoLido = PedidoTecnico & Partial<Pick<PedidoProjeto, 'oportunidadeId' | 'vinculos'>>
+export interface ArquivoPedido {
+  id: string; tipo: string; versao: number; caminho: string; nome: string; mime: string; tamanho: number
+  enviadoPor: string; enviadoEm: string; removidoEm?: string; removidoPor?: string; motivoRemocao?: string
+}
+export interface ArquivoParaEnviar { nome: string; mime: string; extensao: string; conteudo: Blob | Uint8Array; tamanho: number }
+
+/**
+ * Contrato do repositório PERSISTENTE: assíncrono e SEM o usuário nos parâmetros — a identidade vem do JWT da sessão e a
+ * autorização é do banco. O adaptador Supabase (src/data/pedidosProjeto.supabase.ts) implementa este contrato; o
+ * repositório em memória continua servindo a demonstração local até a tela migrar para ele (plano de ativação, §14).
+ */
+export interface RepositorioPedidosAsync {
+  readonly adaptador: AdaptadorPedidos
+  listar(): Promise<PedidoLido[]>
+  obter(id: string): Promise<PedidoLido | undefined>
+  eventos(id: string): Promise<EventoPedido[]>
+  criar(e: EntradaPedido, intencao: string): Promise<PedidoLido>
+  agir(id: string, acao: (typeof ACOES_PEDIDO)[number], d: DadosAcao, intencao: string): Promise<PedidoLido>
+  arquivos(id: string): Promise<ArquivoPedido[]>
+  anexar(id: string, tipo: string, arquivo: ArquivoParaEnviar, intencao: string): Promise<{ id: string; versao: number; caminho: string }>
+  removerArquivo(arquivoId: string, motivo: string, intencao: string): Promise<void>
+}
