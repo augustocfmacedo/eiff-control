@@ -16,10 +16,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   ErroDeConfiguracao, ErroDeGravacao, PRAZO_PRIMEIRA_RESPOSTA_MIN, ROTULO_LEITURA_DA_PAGINA, decidirPrazo, gravarSubmissao, linhaDeEvidencia,
-  linhaDeOrigem, prazoDoLead, resumoParaOInbox, validarFonte, type EstadoDoPrazo, type FonteLida, type PortasGravacao,
+  CAMPOS_DESCRITOS_DO_BRUTO, linhaDeOrigem, prazoDoLead, resumoParaOInbox, validarFonte, type EstadoDoPrazo, type FonteLida, type PortasGravacao,
 } from './formularioGravacao'
 import { textoDaMensagem } from '../inbox/formularioSite'
-import { pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
+import { canonicoDaSubmissao, pedidoDeIntake, type SubmissaoFormulario } from './formularioSite'
 import { planejarGravacao } from './formularioServidor'
 import { registroDeIntake, validarIntake } from './leadEngineIntake'
 import type { RegistroFonte } from './types'
@@ -348,6 +348,40 @@ describe('gravação · o que o atendente lê', () => {
     /* e cada linha é única */
     const linhas = t.split('\n').filter((l) => l.trim() !== '')
     expect(new Set(linhas).size).toBe(linhas.length)
+  })
+
+  it('«Iniciar um projeto»: o tipo de obra e a área aparecem, como a pessoa escreveu', () => {
+    const CONTATO = {
+      id: 'nf-contato', formulario: 'iniciar-projeto', recebidoEm: SUB.recebidoEm,
+      campos: {
+        nome: 'Bia Souza (FICTÍCIO)', email: 'bia@exemplo.com.br', cidade: 'Anápolis, GO',
+        tipo: 'Centro de distribuição / logística', area: 'entre 2 e 3 mil', prazo: 'operação em 6 meses',
+        mensagem: 'Terreno já comprado.',
+      },
+    }
+    const t = textoDaMensagem(resumoParaOInbox(CONTATO))
+    expect(t).toContain('Tipo de obra: Centro de distribuição / logística')
+    /* a área vai como escrita: convertê-la em número aqui seria inventar uma leitura */
+    expect(t).toContain('Área aproximada informada: entre 2 e 3 mil')
+    expect(t).toContain('Prazo informado: operação em 6 meses')
+    /* o que a pessoa escreveu continua no topo, e a origem no fim */
+    expect(t.startsWith('Terreno já comprado.')).toBe(true)
+    const linhas = t.split('\n').filter((l) => l.trim() !== '')
+    expect(new Set(linhas).size).toBe(linhas.length)
+  })
+
+  it('no simulador a área já está no resumo da página e não se repete', () => {
+    const t = textoDaMensagem(resumoParaOInbox({ ...SUB, campos: { ...SUB.campos, area: '900' } }))
+    expect(t).not.toContain('Área aproximada informada')
+    expect(t).toContain('900 m²')
+  })
+
+  it('o tipo de obra fica fora do canônico: a impressão das submissões não muda com esta exibição', () => {
+    const comTipo = { ...SUB, campos: { ...SUB.campos, tipo: 'Galpão industrial' } }
+    /* o tipo só existe no bruto (evidência); o canônico é o mesmo com ou sem ele */
+    expect(canonicoDaSubmissao(comTipo)).toEqual(canonicoDaSubmissao(SUB))
+    expect(CAMPOS_DESCRITOS_DO_BRUTO.map((d) => d.campo)).toEqual(['tipo', 'area'])
+    expect(textoDaMensagem(resumoParaOInbox(comTipo))).toContain('Tipo de obra: Galpão industrial')
   })
 
   it('submissão magra não inventa texto', () => {
