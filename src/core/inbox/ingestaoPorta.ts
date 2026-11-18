@@ -7,6 +7,7 @@
 // - `fetch` e injetado para o teste provar a chamada sem rede;
 // - o texto da mensagem vai no corpo da RPC e em lugar nenhum mais.
 import { recusaDoIngest, type PedidoIngest, type ResultadoIngest } from './ingestaoServidor';
+import { cabecalhosServico, chaveServicoValida } from '../chaveServico';
 
 export interface AmbienteIngest { SUPABASE_URL?: string; VITE_SUPABASE_URL?: string; SUPABASE_SERVICE_ROLE_KEY?: string; EIFF_INBOX_ORGANIZATION_ID?: string }
 export const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
@@ -17,6 +18,7 @@ export function configPortaIngest(env: AmbienteIngest): (ConfigPortaIngest & { c
   const chave = (env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
   const organizacaoId = (env.EIFF_INBOX_ORGANIZATION_ID ?? '').trim();
   if (!chave) return { motivo: 'sem SUPABASE_SERVICE_ROLE_KEY' };
+  if (!chaveServicoValida(chave)) return { motivo: 'SUPABASE_SERVICE_ROLE_KEY nao e chave de servico' };
   if (!organizacaoId) return { motivo: 'sem EIFF_INBOX_ORGANIZATION_ID' };
   return { url: (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? SUPABASE_URL_PADRAO).replace(/\/$/, ''), organizacaoId, chave };
 }
@@ -46,7 +48,7 @@ export function portaIngestRpc(cfg: { url: string; chave: string }, fetchFn: typ
   return async (p) => {
     const r = await fetchFn(`${cfg.url}/rest/v1/rpc/inbox_ingest`, {
       method: 'POST',
-      headers: { apikey: cfg.chave, authorization: `Bearer ${cfg.chave}`, 'content-type': 'application/json' },
+      headers: cabecalhosServico(cfg.chave, { 'content-type': 'application/json' }),
       body: JSON.stringify(argsIngest(p)),
     });
     // o erro carrega SO o status: nunca o corpo da resposta (poderia ecoar dados) nem a chave

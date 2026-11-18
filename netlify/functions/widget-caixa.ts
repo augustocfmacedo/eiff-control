@@ -6,6 +6,7 @@
 import { erroParaLog, tratarWidgetCaixa, type ValidacaoTokenWidget } from '../../src/core/widgetServidor';
 import { carregarComoServidor } from '../../src/data/supabase';
 import { clienteServidor } from '../../src/data/clienteServidor';
+import { cabecalhosServico, chaveServicoValida } from '../../src/core/chaveServico';
 
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -13,12 +14,12 @@ const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo
 export default async (req: Request): Promise<Response> => {
   const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? SUPABASE_URL_PADRAO;
   const servico = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!servico) return json({ erro: 'nao_configurado', mensagem: 'Widget ainda não configurado no servidor.' }, 501);
+  if (!servico || !chaveServicoValida(servico)) return json({ erro: 'nao_configurado', mensagem: 'Widget ainda não configurado no servidor.' }, 501);
   const r = await tratarWidgetCaixa({ metodo: req.method, autorizacao: req.headers.get('authorization'), visao: new URL(req.url).searchParams.get('visao') }, {
     async validar(token) {
       const resp = await fetch(`${url}/rest/v1/rpc/widget_token_validar`, {
         method: 'POST',
-        headers: { apikey: servico, authorization: `Bearer ${servico}`, 'content-type': 'application/json' },
+        headers: cabecalhosServico(servico, { 'content-type': 'application/json' }),
         body: JSON.stringify({ p_token: token }),
       });
       if (!resp.ok) throw new Error(`validar ${resp.status}`);

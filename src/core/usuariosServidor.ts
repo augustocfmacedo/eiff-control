@@ -5,6 +5,7 @@
 // link para a propria pessoa criar a senha (tela DefinirSenha no app). Toda mudanca grava audit_log (source 'usuarios').
 import type { Papel } from './types';
 import { PAPEIS, PAPEIS_COM_OBRAS, type UsuarioLista } from './usuarios';
+import { cabecalhosAuthAdmin, cabecalhosServico, chaveServicoValida } from './chaveServico';
 
 export { PAPEIS, PAPEIS_COM_OBRAS, type UsuarioLista };
 /** papeis que enxergam todas as obras pelo proprio papel (can_access_project) e os que precisam de escopo de empresa */
@@ -81,7 +82,9 @@ export function validarPedido(c: unknown): PedidoUsuarios | string {
 
 /** Cliente minimo do Supabase com a chave de servico (PostgREST + Auth admin). */
 function cliente(f: Fetch, amb: AmbienteUsuarios) {
-  const h = { apikey: amb.service, authorization: `Bearer ${amb.service}`, 'content-type': 'application/json' };
+  // banco: só `apikey` com a chave nova; Auth admin: `apikey` + `Authorization` idêntico (como o supabase-js). Ver chaveServico.ts
+  const h = cabecalhosServico(amb.service, { 'content-type': 'application/json' });
+  const hAuth = cabecalhosAuthAdmin(amb.service, { 'content-type': 'application/json' });
   const rest = async (caminho: string, init: RequestInit = {}) => {
     const r = await f(`${amb.url}/rest/v1/${caminho}`, { ...init, headers: { ...h, prefer: 'return=representation', ...(init.headers ?? {}) } });
     const t = await r.text();
@@ -89,7 +92,7 @@ function cliente(f: Fetch, amb: AmbienteUsuarios) {
     return (t ? JSON.parse(t) : []) as Row[];
   };
   const auth = async (caminho: string, init: RequestInit = {}) => {
-    const r = await f(`${amb.url}/auth/v1/${caminho}`, { ...init, headers: { ...h, ...(init.headers ?? {}) } });
+    const r = await f(`${amb.url}/auth/v1/${caminho}`, { ...init, headers: { ...hAuth, ...(init.headers ?? {}) } });
     const t = await r.text();
     return { ok: r.ok, status: r.status, dados: (t ? JSON.parse(t) : {}) as Row };
   };
@@ -98,6 +101,7 @@ function cliente(f: Fetch, amb: AmbienteUsuarios) {
 
 export async function tratarUsuarios(req: { token: string | null; corpo: unknown }, f: Fetch, amb: AmbienteUsuarios): Promise<Resposta> {
   if (!amb.service) return erro(501, 'nao_configurado', 'A chave SUPABASE_SERVICE_ROLE_KEY não está configurada no Netlify.');
+  if (!chaveServicoValida(amb.service)) return erro(501, 'nao_configurado', 'A chave SUPABASE_SERVICE_ROLE_KEY configurada no Netlify não é uma chave de serviço.');
   if (!req.token) return erro(401, 'nao_autenticado', 'Sessão expirada. Entre de novo.');
   // 1) quem chama: JWT valido -> perfil ativo Administrador (lido com a chave de servico, nunca do cliente)
   const u = await f(`${amb.url}/auth/v1/user`, { headers: { apikey: amb.anon, authorization: `Bearer ${req.token}` } });

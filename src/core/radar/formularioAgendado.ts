@@ -1,5 +1,5 @@
 /**
- * A RECONCILIAÇÃO AGENDADA: a rede de segurança rodando sozinha, de hora em hora.
+ * A RECONCILIAÇÃO AGENDADA: a rede de segurança rodando sozinha, a cada 10 minutos (era de hora em hora até a E10.17).
  *
  * ── POR QUE ELA EXISTE ───────────────────────────────────────────────────
  *
@@ -41,6 +41,7 @@ import { ErroDeConfiguracao, ErroDeGravacao, decidirPrazo, gravarSubmissao, praz
 import { planoDaReconciliacao, type ItemReconciliacao, type MotivoRetencao } from './formularioReconciliacao'
 import { montarPortasIntegracao, type AmbienteFormulario } from './formularioPorta'
 import { FORMULARIOS } from './formularioSite'
+import { ESPERA_RELEITURA_MS, ehConflitoNaEvidencia, verificarAposFalha } from './formularioConcorrencia'
 import { PROVIDER_FORMULARIO } from '../inbox/formularioSite'
 import type { ResultadoBorda } from './formularioServidor'
 import type { AmbienteAtivacao } from '../inbox/ativacao'
@@ -78,6 +79,8 @@ export interface DepsAgendado {
   /** Instante ISO para o registro. */
   agoraIso(): string
   log?(t: Record<string, unknown>): void
+  /** Espera (ms) antes da única releitura de um conflito «parcial». Padrão: `setTimeout`. O teste injeta. */
+  esperar?(ms: number): Promise<void>
   /** Portas já montadas (o teste injeta; a produção deixa montar pelo ambiente). */
   portas?: { portas: PortasGravacao; fonteId: string; organizacaoId: string }
 }
@@ -260,6 +263,26 @@ export async function rodadaDeReconciliacao(env: AmbienteAgendado, deps: DepsAge
       resultados[r.resultado] = (resultados[r.resultado] ?? 0) + 1
       if (entraram.includes(r.resultado)) recuperadas += 1
     } catch (e) {
+      // Conflito de unicidade na evidência: outra rodada pode ter gravado a MESMA submissão (agendador + «Run now»).
+      // O conflito só abre a verificação; o estado lido do banco decide (formularioConcorrencia.ts). Só
+      // CONCLUIDA_POR_OUTRA_RODADA deixa de ser falha; parcial, inconsistência e erro real continuam falha.
+      if (ehConflitoNaEvidencia(e)) {
+        const c = await verificarAposFalha(item, e, ligacao.portas, ligacao.cfg.fonteId, {
+          esperar: deps.esperar ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+          podeEsperar: () => deps.agora() - inicio + ESPERA_RELEITURA_MS < LIMITE_MS - RESERVA_MS,
+        })
+        if (c.desfecho === 'CONCLUIDA_POR_OUTRA_RODADA') {
+          resultados['CONCORRENTE'] = (resultados['CONCORRENTE'] ?? 0) + 1
+          deps.log?.({ evento: 'RECONCILIACAO_CONCORRENTE', desfecho: c.desfecho, releu: c.releu })
+          processadas += 1
+          continue
+        }
+        falhas += 1
+        resultados[c.desfecho] = (resultados[c.desfecho] ?? 0) + 1
+        deps.log?.({ evento: 'RECONCILIACAO_FALHA', codigo: 'FALHA_GRAVACAO', etapa: 'evidencia', desfecho: c.desfecho, motivo: c.motivo, releu: c.releu })
+        processadas += 1
+        continue
+      }
       falhas += 1
       // Sem conteúdo de lead e sem mensagem bruta: etapa da gravação e texto seguro (código, status, operação).
       const etapa = e instanceof ErroDeGravacao ? e.etapa : e instanceof ErroDeConfiguracao ? 'configuracao' : 'desconhecida'

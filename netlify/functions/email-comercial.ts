@@ -11,6 +11,7 @@
 //   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN, SUPABASE_SERVICE_ROLE_KEY.
 import { GMAIL_SEND_URL, ambienteEmail, portaGoogle, portaLivro, portaSessao, type VariaveisEmail } from '../../src/core/inbox/emailPorta';
 import { tratarEmailComercial, type DepsEmail } from '../../src/core/inbox/emailServidor';
+import { chaveServicoValida } from '../../src/core/chaveServico';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
@@ -32,7 +33,7 @@ export default async (req: Request): Promise<Response> => {
     ambiente,
     sessao: portaSessao({ url, anon }, fetch),
     // sem a chave de serviço o livro fica indisponível: o handler recusa e NADA é enviado (livro primeiro)
-    livro: chave ? portaLivro({ url, chave }, fetch) : { criar: async () => ({ ok: false, erro: 'livro_indisponivel' }), transicionar: async () => false, aceitar: async () => ({ ok: false }) },
+    livro: chaveServicoValida(chave) ? portaLivro({ url, chave }, fetch) : { criar: async () => ({ ok: false, erro: 'livro_indisponivel' }), transicionar: async () => false, aceitar: async () => ({ ok: false }) },
     // sem credencial não existe porta para o Google: qualquer chamada seria «rede», e o handler nem chega a fazê-la
     google: ambiente.credenciais
       ? portaGoogle({ clientId: (env.GOOGLE_OAUTH_CLIENT_ID ?? '').trim(), clientSecret: (env.GOOGLE_OAUTH_CLIENT_SECRET ?? '').trim(), refreshToken: (env.GOOGLE_OAUTH_REFRESH_TOKEN ?? '').trim(), modo: ambiente.modo, canario: ambiente.canario }, fetch)

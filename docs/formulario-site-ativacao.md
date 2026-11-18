@@ -179,7 +179,7 @@ motivo. A evidência é imutável e **fica** (REJECTED); não há como apagá-la
 ## 6. Reconciliação horária
 
 Executor único: a **Scheduled Function do Netlify** no eiffcontrol (`netlify/functions/formulario-reconciliar.mts`,
-`@hourly`), **desligada por padrão** — só roda com `FORMULARIO_RECONCILIACAO = ativa` **e** `EIFF_FORM_MARCO`. O workflow do
+`*/10 * * * *` desde a E10.17, antes `@hourly`; monitor e alertas em `formulario-site-go3-monitor.md`), **desligada por padrão** — só roda com `FORMULARIO_RECONCILIACAO = ativa` **e** `EIFF_FORM_MARCO`. O workflow do
 GitHub Actions que existia como reserva manual nunca esteve ligado e saiu do release.
 
 - **Ligar é publicar o CRM-2**: criar as variáveis C4 e fazer novo deploy (§3.1). Criar as variáveis sem novo

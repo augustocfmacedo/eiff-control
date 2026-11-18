@@ -8,6 +8,7 @@ import { ErroCanal, NOME_PROVIDER, avaliarEntregabilidade, avaliarJanelaLivre, c
 import { autorizarDestino, chaveIdempotencia, impressaoComando, interpretarRespostaEnvio, permitePostar, permiteReenvioAutomatico, validarCoerenciaCanal, type AutorizacaoDestino, type EstadoEntrega, type ModoEnvio, type PedidoEnvio, type ResultadoEnvio } from './canais';
 import { autenticar, type Sessao } from './comunicacaoServidor';
 import type { Canal, Contato } from './types';
+import { cabecalhosServico, chaveServicoValida } from '../chaveServico';
 
 type Row = Record<string, unknown>;
 type Resp = { status: number; corpo: Record<string, unknown> };
@@ -363,10 +364,10 @@ async function reconstruirEnvio(comunicacaoId: string, sessao: Sessao, provider:
 
 /** RPC server-only (service_role) — a unica porta de escrita no ledger de entrega. */
 async function rpcEntrega(nome: 'radar_delivery_create' | 'radar_delivery_transition', args: Record<string, unknown>, d: DepsCanal): Promise<Row | undefined> {
-  if (!d.serviceKey) return undefined;
+  if (!d.serviceKey || !chaveServicoValida(d.serviceKey)) return undefined;
   const r = await d.fetch(`${d.supabaseUrl}/rest/v1/rpc/${nome}`, {
     method: 'POST',
-    headers: { apikey: d.serviceKey, authorization: `Bearer ${d.serviceKey}`, 'content-type': 'application/json' },
+    headers: cabecalhosServico(d.serviceKey, { 'content-type': 'application/json' }),
     body: JSON.stringify(args),
   });
   if (!r.ok) return undefined;
