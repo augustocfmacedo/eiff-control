@@ -20,6 +20,8 @@ import type { AmbienteAtivacao } from '../inbox/ativacao'
 
 export interface AmbienteBorda extends AmbienteFormulario, AmbienteAtivacao {
   EIFF_FORM_SECRET?: string
+  /** Segunda vaga do segredo, para a troca coordenada (P1). Ver `autorizar`. */
+  EIFF_FORM_SECRET_B?: string
 }
 
 export interface DepsBorda {
@@ -43,12 +45,14 @@ export async function tratarPedidoFormulario(req: Request, deps: DepsBorda): Pro
   const cabecalhos: Record<string, string | undefined> = {}
   req.headers.forEach((v, k) => { cabecalhos[k.toLowerCase()] = v })
 
-  const auth = autorizar(cabecalhos, deps.env.EIFF_FORM_SECRET)
+  const auth = autorizar(cabecalhos, deps.env.EIFF_FORM_SECRET, deps.env.EIFF_FORM_SECRET_B)
   if (!auth.ok) {
     // 401 nos dois casos: quem chama não precisa saber se o segredo existe no servidor.
     log({ resultado: 'recusado', motivo: auth.motivo })
     return { status: 401, corpo: { erro: 'nao_autorizado' } }
   }
+  // Qual vaga conferiu — é por este log que a troca coordenada sabe quando a antiga pode sair.
+  log({ etapa: 'autenticado', chave: auth.chave })
 
   let bruto: unknown
   try { bruto = await req.json() } catch { return { status: 400, corpo: { erro: 'corpo_invalido' } } }

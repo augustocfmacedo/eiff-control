@@ -68,20 +68,36 @@ export interface Recusa { ok: false; motivo: MotivoRecusa; detalhe?: string }
 export const LIMITE_CAMPOS = 60
 export const LIMITE_TAMANHO_CAMPO = 5000
 
+/** Qual das duas vagas de segredo conferiu. Vai ao log; o valor, nunca. */
+export type ChaveDoSegredo = 'a' | 'b'
+
 /**
- * Autoriza. Fail-closed: sem segredo configurado no ambiente, a borda recusa
- * — nunca aceita «porque ainda não configuraram».
+ * Autoriza. Fail-closed: sem NENHUM segredo configurado no ambiente, a borda
+ * recusa — nunca aceita «porque ainda não configuraram».
+ *
+ * DUAS VAGAS, ALTERNADAS (P1). `EIFF_FORM_SECRET` (vaga a) e
+ * `EIFF_FORM_SECRET_B` (vaga b). Os segredos do Netlify não se leem de volta,
+ * então uma troca nunca copia valor de uma variável para outra: o valor novo
+ * nasce na vaga LIVRE (no CRM e no site, na mesma operação), o site passa a
+ * mandá-lo, e quando o log mostrar só a vaga nova a antiga é APAGADA. A partir
+ * daí todo deploy antigo do site — que guarda o valor da época — perde a
+ * autorização. A troca seguinte usa a outra vaga. Ninguém vê o valor.
  */
 export function autorizar(
   cabecalhos: Readonly<Record<string, string | undefined>>,
-  segredoDoAmbiente: string | undefined,
-): { ok: true } | Recusa {
-  if (segredoDoAmbiente === undefined || segredoDoAmbiente.trim() === '') {
-    return { ok: false, motivo: 'sem_segredo_configurado' }
-  }
+  segredoA: string | undefined,
+  segredoB?: string | undefined,
+): { ok: true; chave: ChaveDoSegredo } | Recusa {
+  const temA = segredoA !== undefined && segredoA.trim() !== ''
+  const temB = segredoB !== undefined && segredoB.trim() !== ''
+  if (!temA && !temB) return { ok: false, motivo: 'sem_segredo_configurado' }
   const recebido = cabecalhos[CABECALHO_SEGREDO] ?? cabecalhos[CABECALHO_SEGREDO.toUpperCase()]
-  if (!segredoConfere(recebido, segredoDoAmbiente)) return { ok: false, motivo: 'segredo_invalido' }
-  return { ok: true }
+  // As duas comparações rodam sempre, em tempo constante: o tempo de resposta não diz qual vaga conferiu.
+  const confereA = temA ? segredoConfere(recebido, segredoA) : false
+  const confereB = temB ? segredoConfere(recebido, segredoB) : false
+  if (confereA) return { ok: true, chave: 'a' }
+  if (confereB) return { ok: true, chave: 'b' }
+  return { ok: false, motivo: 'segredo_invalido' }
 }
 
 /* ---------------------------------------------------------------
