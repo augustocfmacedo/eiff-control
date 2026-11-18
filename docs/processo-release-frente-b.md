@@ -77,6 +77,11 @@ confere a classe junto com o código.
 | 7. Verificação depois da publicação, sem gravar nada: o site responde, os assets carregam e a tela mudada abre em modo leitura | agente QA | resultado |
 | 8. Reversão se o passo 7 falhar: republicar o deploy anterior e travar | agente orquestrador | ids e horário |
 
+**A classe da publicação é a do conjunto, não a do PR.** Um deploy publica tudo o que está na `main` e ainda não
+está no ar. Por isso o passo 6 confere o intervalo `deploy publicado..candidato`. Se qualquer commit desse intervalo
+for VERMELHO e não tiver a própria autorização de publicação, a publicação é VERMELHA. A proposta da Frente A
+(PR #98) chegou à mesma regra.
+
 O passo 6 nunca publica deploy de outra branch nem de um SHA diferente do mesclado. Antes de cada merge, o agente
 confere por leitura que a trava está ligada. Se estiver desligada, para e reporta (incidente de 30/09/2026).
 
@@ -91,7 +96,7 @@ do Quality Gate, o deploy publicado e o deploy anterior.
 |---|---|---|
 | D1 | Para mudança VERDE ou AMARELA que cumpre a seção 3, o registro no PR substitui a frase `MERGE AUTORIZADO` | sim / não |
 | D2 | Para mudança VERDE ou AMARELA, o agente publica o deploy construído e trava de novo (passos 6 a 8), sem `PRODUCTION AUTORIZADA` | sim / não |
-| D3 | Credencial da publicação: (a) a sessão da Netlify CLI já autenticada nesta máquina, usada só para publicar e travar deploys por id; ou (b) um token dedicado criado pelo Augusto, guardado fora do repositório | (a) / (b) |
+| D3 | Identidade dos agentes: hoje o merge (GitHub CLI) e a publicação (Netlify CLI) usam a conta pessoal do Augusto nesta máquina. Opções: (a) aceitar formalmente essa sessão para as operações VERDE e AMARELA, com o registro de cada operação no PR; ou (b) criar identidades próprias (GitHub App ou conta de serviço com acesso só a este repositório, e token do Netlify restrito ao site), criadas pelo Augusto e guardadas fora do repositório | (a) / (b) |
 | D4 | O congelamento da `main` deixa de valer para VERDE e AMARELO e continua para tudo que depende da S3 | sim / não |
 
 Sem D1 e D2, os agentes continuam preparando tudo até o passo 3 e param antes do merge.
