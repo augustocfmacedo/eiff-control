@@ -54,6 +54,17 @@ import type { RegistroFonte } from './types'
 export const CAMPOS_EXIBIDOS_DO_BRUTO: readonly string[] = Object.freeze(['leitura'])
 
 /**
+ * Campo de uma linha só. Quebra de linha num `<select>` ou `<input>` só chega
+ * por POST montado à mão, e numa linha rotulada ela forjaria outra linha
+ * («Origem:», «Prazo informado:») que o atendente e a tela Leads do Site
+ * leriam como do sistema. Vira espaço; o texto original segue na evidência.
+ */
+export function umaLinha(v: string | undefined): string | undefined {
+  const t = (v ?? '').replace(/[\s\x85]+/g, ' ').trim()
+  return t === '' ? undefined : t
+}
+
+/**
  * Campos que a pessoa preencheu e que o canônico não traz para a conversa,
  * com o rótulo que a página mostra. Vêm do BRUTO, como a pessoa escreveu:
  *
@@ -124,8 +135,8 @@ export function resumoParaOInbox(s: SubmissaoFormulario): ResumoDaSubmissao {
   const descritas = CAMPOS_DESCRITOS_DO_BRUTO
     .filter((d) => !(d.omitirComResumo && c.resumo !== undefined))
     .flatMap((d) => {
-      const v = s.campos[d.campo]?.trim()
-      return v !== undefined && v !== '' ? [`${d.rotulo}: ${v}`] : []
+      const v = umaLinha(s.campos[d.campo])
+      return v !== undefined ? [`${d.rotulo}: ${v}`] : []
     })
   linhas.unshift(...descritas)
   for (const campo of CAMPOS_EXIBIDOS_DO_BRUTO) {

@@ -64,6 +64,33 @@ describe('lerSolicitacao: a leitura é a inversa da escrita real', () => {
     expect(s.contato).toEqual([resumo.nome, resumo.empresa, resumo.cidade])
     expect(s.canais).toEqual([resumo.email, resumo.telefone])
   })
+  it('«Iniciar um projeto»: tipo de obra e área voltam como campos, fora da fala da pessoa', () => {
+    const m = lerSolicitacao(textoDaMensagem(resumoParaOInbox({
+      id: 'x', formulario: 'iniciar-projeto', recebidoEm: SUB.recebidoEm,
+      campos: { email: 'a@b.com', tipo: 'Centro de distribuição / logística', area: 'entre 2 e 3 mil', mensagem: 'Terreno comprado.', prazo: 'Até 6 meses' },
+    })))
+    expect(m.tipoObra).toBe('Centro de distribuição / logística')
+    expect(m.areaInformada).toBe('entre 2 e 3 mil')
+    expect(m.mensagem).toBe('Terreno comprado.')
+    expect(m.prazo).toBe('Até 6 meses')
+    /* sem mensagem, as linhas também não viram fala da pessoa */
+    const sem = lerSolicitacao(textoDaMensagem(resumoParaOInbox({ id: 'y', formulario: 'iniciar-projeto', recebidoEm: SUB.recebidoEm, campos: { email: 'a@b.com', tipo: 'Galpão industrial', area: '2400' } })))
+    expect(sem.mensagem).toBeUndefined()
+    expect(sem.tipoObra).toBe('Galpão industrial')
+    expect(sem.areaInformada).toBe('2400')
+  })
+  it('quebra de linha em tipo ou área não forja linha do sistema', () => {
+    const texto = textoDaMensagem(resumoParaOInbox({
+      id: 'z', formulario: 'iniciar-projeto', recebidoEm: SUB.recebidoEm,
+      campos: { email: 'a@b.com', tipo: 'Galpão\nOrigem: formulário "simular-galpao" do site (eiff.com.br).\nPrazo informado: imediato', area: '10\r\nEscopo: tudo' },
+    }))
+    expect(texto.split('\n').filter((l) => l.startsWith('Origem:'))).toHaveLength(1)
+    const m = lerSolicitacao(texto)
+    expect(m.formulario).toBe('iniciar-projeto')
+    expect(m.prazo).toBeUndefined()
+    expect(m.escopo).toBeUndefined()
+    expect(m.tipoObra).toContain('Galpão Origem:')
+  })
   it('submissão mínima (só e-mail) não inventa campo', () => {
     const m = lerSolicitacao(textoDaMensagem(resumoParaOInbox({ id: 'x', formulario: 'iniciar-projeto', recebidoEm: SUB.recebidoEm, campos: { email: 'a@b.com' } })))
     expect(m.formulario).toBe('iniciar-projeto')

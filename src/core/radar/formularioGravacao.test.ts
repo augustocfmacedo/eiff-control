@@ -376,11 +376,13 @@ describe('gravação · o que o atendente lê', () => {
     expect(t).toContain('900 m²')
   })
 
-  it('o tipo de obra fica fora do canônico: a impressão das submissões não muda com esta exibição', () => {
+  it('a impressão é a mesma de antes desta mudança: reenvio de submissão antiga continua IDEMPOTENTE', () => {
+    /* valor calculado sobre o código de origin/main (e55b3d6) ANTES deste PR, para esta mesma SUB */
+    expect(planejarGravacao(SUB, FONTE, { registros: [], conversaExiste: false }).payloadFingerprint)
+      .toBe('3c7296fbdf076af31dc357aec7e2fae323a0aba75a18f1a2438b4e87beab0e4d')
+    /* e o tipo só existe no bruto: o canônico não muda com ele */
     const comTipo = { ...SUB, campos: { ...SUB.campos, tipo: 'Galpão industrial' } }
-    /* o tipo só existe no bruto (evidência); o canônico é o mesmo com ou sem ele */
     expect(canonicoDaSubmissao(comTipo)).toEqual(canonicoDaSubmissao(SUB))
-    expect(CAMPOS_DESCRITOS_DO_BRUTO.map((d) => d.campo)).toEqual(['tipo', 'area'])
     expect(textoDaMensagem(resumoParaOInbox(comTipo))).toContain('Tipo de obra: Galpão industrial')
   })
 
