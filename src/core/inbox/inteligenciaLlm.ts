@@ -9,6 +9,7 @@
 // (resumo). Nada de raw_payload, segredo, texto integral de outras threads. A resposta nunca traz raciocinio encadeado.
 import type { IntelligenceProvider, InboxAnalysisInput, InboxAnalysisResult, SaidaInteligencia } from './fronteiras';
 import { CATALOGO_INTENCOES } from './roteador';
+import { descricaoSegura } from '../erroSeguro';
 import { PRIORIDADES, TIPOS_ENTIDADE, type Prioridade } from './tipos';
 
 export const VERSAO_PROMPT_INBOX = 'inbox-router-llm-1';
@@ -126,7 +127,7 @@ export function provedorAnthropic(cfg: ConfigInteligencia, portas: PortasAnthrop
         if ('erro' in res) return { ok: false, motivo: res.erro };
         return { ok: true, resultado: res };
       } catch (e) {
-        return { ok: false, motivo: (e as Error).name === 'AbortError' ? `ia timeout ${cfg.timeoutMs} ms` : `ia falhou: ${((e as Error).message ?? 'erro').slice(0, 120)}` };
+        return { ok: false, motivo: (e as Error).name === 'AbortError' ? `ia timeout ${cfg.timeoutMs} ms` : `ia falhou: ${descricaoSegura(e)}` };
       } finally { clearTimeout(timer); }
     },
   };

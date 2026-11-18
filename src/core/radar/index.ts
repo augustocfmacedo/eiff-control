@@ -29,3 +29,4 @@ export * from './leadEngineReview';
 export * from './donoConta';
 export * from './estagioOportunidade';
 export * from './metaComercial';
+export * from './desfechos';

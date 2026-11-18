@@ -6,10 +6,12 @@ import type { Dataset, Usuario } from './types';
 import { pode } from './permissoes';
 import { resumoWidgetCaixa, type ResumoWidgetCaixa } from './widgetCaixa';
 import { resumoWidgetPedidos, type ResumoWidgetPedidos } from './widgetPedidos';
+import { resumoWidgetPagamentos, type ResumoWidgetPagamentos } from './widgetPagamentos';
 
 export const FORMATO_TOKEN_WIDGET = /^eiffw_[0-9a-f]{64}$/;
-/** visões do widget: o caixa (padrão) e os pedidos da equipe ao Diretor Financeiro (exige também aprovar, como a Central) */
-export type VisaoWidget = 'caixa' | 'pedidos';
+/** visões do widget: o caixa (padrão), os pagamentos do dia e os pedidos da equipe ao Diretor Financeiro (exige também aprovar, como a Central) */
+export type VisaoWidget = 'caixa' | 'pedidos' | 'pagamentos';
+export const VISOES_WIDGET: readonly VisaoWidget[] = ['caixa', 'pedidos', 'pagamentos'];
 export type ErroWidget = 'visao_invalida' | 'metodo' | 'token_ausente' | 'token_invalido' | 'token_revogado' | 'token_expirado' | 'perfil_inativo' | 'sem_permissao' | 'nao_configurado' | 'indisponivel';
 export type ValidacaoTokenWidget = { ok: true; perfilId: string; tokenId: string; nome: string } | { ok: false; erro: string };
 export interface PortasWidget {
@@ -25,10 +27,10 @@ export function erroParaLog(erro: unknown): string {
   const texto = erro instanceof Error ? `${erro.name}: ${erro.message}` : String(erro);
   return texto.split('\n')[0].replace(/eiffw_[0-9a-f]+/gi, 'eiffw_***').replace(/bearer\s+\S+/gi, 'Bearer ***').slice(0, 200);
 }
-export interface RespostaWidget { status: number; corpo: ResumoWidgetCaixa | ResumoWidgetPedidos | { erro: ErroWidget; mensagem: string } }
+export interface RespostaWidget { status: number; corpo: ResumoWidgetCaixa | ResumoWidgetPedidos | ResumoWidgetPagamentos | { erro: ErroWidget; mensagem: string } }
 
 export const MENSAGENS_WIDGET: Record<ErroWidget, string> = {
-  visao_invalida: 'Visão desconhecida: use caixa ou pedidos no parâmetro do widget.',
+  visao_invalida: 'Visão desconhecida: use caixa, pagamentos ou pedidos no parâmetro do widget.',
   metodo: 'Use GET.',
   token_ausente: 'Widget sem token. Gere um em EIFF Control › Caixa › Widgets do iPad.',
   token_invalido: 'Token não reconhecido. Gere um novo em Caixa › Widgets do iPad.',
@@ -49,7 +51,7 @@ export const hojeEmSaoPaulo = (agora: Date) => new Intl.DateTimeFormat('en-CA', 
 export async function tratarWidgetCaixa(req: { metodo: string; autorizacao: string | null; visao?: string | null }, portas: PortasWidget): Promise<RespostaWidget> {
   if (req.metodo !== 'GET') return falha('metodo');
   const visao = (req.visao ?? 'caixa') || 'caixa';
-  if (visao !== 'caixa' && visao !== 'pedidos') return falha('visao_invalida');
+  if (!(VISOES_WIDGET as readonly string[]).includes(visao)) return falha('visao_invalida');
   const token = (req.autorizacao ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return falha('token_ausente');
   if (!FORMATO_TOKEN_WIDGET.test(token)) return falha('token_invalido');
@@ -69,7 +71,7 @@ export async function tratarWidgetCaixa(req: { metodo: string; autorizacao: stri
     if (visao === 'pedidos' && !pode(usuario, 'aprovar')) return falha('sem_permissao');
     const agora = portas.agora();
     const dsHoje: Dataset = { ...ds, params: { ...ds.params, dataBase: ds.params.dataBaseAutomatica === false ? ds.params.dataBase : hojeEmSaoPaulo(agora) } };
-    return { status: 200, corpo: visao === 'pedidos' ? resumoWidgetPedidos(dsHoje, agora) : resumoWidgetCaixa(dsHoje, agora) };
+    return { status: 200, corpo: visao === 'pedidos' ? resumoWidgetPedidos(dsHoje, agora) : visao === 'pagamentos' ? resumoWidgetPagamentos(dsHoje, agora) : resumoWidgetCaixa(dsHoje, agora) };
   } catch (e) {
     portas.registrar?.('resumo', e);
     return falha('indisponivel');

@@ -129,3 +129,19 @@ describe('visão pedidos (?visao=pedidos)', () => {
     expect(r.status).toBe(403);
   });
 });
+
+describe('visão pagamentos (?visao=pagamentos)', () => {
+  it('Administrador recebe os pagamentos do dia', async () => {
+    const r = await tratarWidgetCaixa({ metodo: 'GET', autorizacao: `Bearer ${TOKEN}`, visao: 'pagamentos' }, portas().p);
+    expect(r.status).toBe(200);
+    const corpo = r.corpo as { visao: string; itens: unknown[]; total: number; curva?: unknown };
+    expect(corpo.visao).toBe('pagamentos');
+    expect(Array.isArray(corpo.itens)).toBe(true);
+    expect(typeof corpo.total).toBe('number');
+    expect(corpo.curva).toBeUndefined();
+  });
+  it('quem não vê bancos não recebe os pagamentos', async () => {
+    const r = await tratarWidgetCaixa({ metodo: 'GET', autorizacao: `Bearer ${TOKEN}`, visao: 'pagamentos' }, portas({ usuario: { ...ADM, papel: 'Diretoria' } }).p);
+    expect(r.status).toBe(403);
+  });
+});

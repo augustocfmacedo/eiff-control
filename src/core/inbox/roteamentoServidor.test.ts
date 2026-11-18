@@ -90,6 +90,28 @@ describe('rotearNoServidor: determinístico sempre, IA como refino, nunca lança
     expect(r2).toMatchObject({ ok: true, aplicado: true, origem: 'DETERMINISTICO', classificado: false });
     expect(logs.some((l) => l.evento === 'inbox_inteligencia' && l.outcome === 'indisponivel')).toBe(true);
   });
+  it('falha de inteligência com segredo (motivo, message ou cause): o roteamento determinístico segue igual e nada de fora vai ao log nem à resposta', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const texto = 'A NF 320 já foi paga?';
+    const base = aplicar();
+    const semIa = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', texto), aplicar: base.fn, agora: () => AGORA });
+    const casos: [string, { codigo: 'LLM'; analisar: () => Promise<{ ok: false; motivo: string }> }, string][] = [
+      ['motivo com segredo', { codigo: 'LLM', analisar: async () => ({ ok: false, motivo: `erro do provedor: ${SEGREDO}` }) }, 'MOTIVO_NAO_CATALOGADO'],
+      ['motivo forjado com forma de sistema', { codigo: 'LLM', analisar: async () => ({ ok: false, motivo: `ia falhou: ${SEGREDO}` }) }, 'MOTIVO_NAO_CATALOGADO'],
+      ['excecao com segredo em message', { codigo: 'LLM', analisar: async () => { throw new TypeError(`Headers.append: "x-api-key ${SEGREDO}" is an invalid header value.`); } }, 'inteligência falhou: CREDENCIAL_INVALIDA'],
+      ['excecao com segredo em cause', { codigo: 'LLM', analisar: async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error(`x-api-key: ${SEGREDO}`), { code: 'ECONNRESET' }) }); } }, 'inteligência falhou: ERRO_REDE ECONNRESET'],
+      ['motivo legítimo do sistema', { codigo: 'LLM', analisar: async () => ({ ok: false, motivo: 'ia timeout 8000 ms' }) }, 'ia timeout 8000 ms'],
+    ];
+    for (const [nome, ia, esperado] of casos) {
+      const a = aplicar(); const logs: Record<string, unknown>[] = [];
+      const r = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', texto), aplicar: a.fn, inteligencia: () => ia, log: (t) => logs.push(t), agora: () => AGORA });
+      // o determinístico não muda: mesma resposta e mesmo pedido à RPC de quando não há IA nenhuma
+      expect(r, nome).toEqual(semIa);
+      expect(a.pedidos, nome).toEqual(base.pedidos);
+      expect(logs.find((l) => l.evento === 'inbox_inteligencia'), nome).toMatchObject({ outcome: 'indisponivel', motivo: esperado });
+      expect(JSON.stringify([r, logs, a.pedidos]), nome).not.toContain(SEGREDO);
+    }
+  });
   it('baixa confiança → apply false (sugestão registrada, thread fica em Não atribuídos)', async () => {
     const a = aplicar();
     const r = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', 'oi'), aplicar: a.fn });
@@ -114,7 +136,29 @@ describe('rotearNoServidor: determinístico sempre, IA como refino, nunca lança
     expect(r).toMatchObject({ ok: false, aplicado: false, motivo: 'contexto indisponível' });
     const logs: Record<string, unknown>[] = [];
     const r2 = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: async () => contextoDe(seed, 'THR-00007', 'A NF 1 foi paga?'), aplicar: async () => { throw new Error('rpc inbox_apply_routing http 500'); }, log: (t) => logs.push(t) });
-    expect(r2.ok).toBe(false); expect(r2.motivo).toMatch(/http 500/); expect(JSON.stringify(logs)).not.toContain(CHAVE);
+    // o motivo e texto seguro (src/core/erroSeguro.ts): codigo + status + operacao, nunca a mensagem bruta da excecao
+    expect(r2.ok).toBe(false); expect(r2.motivo).toBe('ERRO_HTTP 500 (rpc inbox_apply_routing)'); expect(JSON.stringify(logs)).not.toContain(CHAVE);
+  });
+  it('texto devolvido pela RPC de roteamento (erro ou motivo) nunca vai para o log nem para quem chamou: só código de catálogo', async () => {
+    const SEGREDO = 'SEGREDO_FICTICIO_123456';
+    const ctx = async () => contextoDe(seed, 'THR-00007', 'A NF 1 foi paga?');
+    const casos: [{ ok: boolean; aplicado?: boolean; erro?: string; motivo?: string }, string | undefined][] = [
+      [{ ok: false, erro: SEGREDO }, 'CODIGO_NAO_CATALOGADO'],
+      [{ ok: true, aplicado: false, motivo: SEGREDO }, 'CODIGO_NAO_CATALOGADO'],
+      [{ ok: false, erro: 'setor_invalido' }, 'setor_invalido'],
+      [{ ok: true, aplicado: false, motivo: 'override_humano' }, 'override_humano'],
+    ];
+    for (const [resposta, esperado] of casos) {
+      const logs: Record<string, unknown>[] = [];
+      const r = await rotearNoServidor('THR-00007', 'MSG-N', { contexto: ctx, aplicar: async () => resposta, log: (t) => logs.push(t) });
+      expect(r.motivo).toBe(esperado);
+      expect(JSON.stringify([r, logs])).not.toContain(SEGREDO);
+    }
+    // na fronteira HTTP: o que a RPC responde já sai saneado da porta
+    const fetchFn = (async () => new Response(JSON.stringify({ ok: false, erro: SEGREDO, motivo: SEGREDO, status: 'NOVA' }), { status: 200 })) as unknown as typeof fetch;
+    const p = await portaAplicarRoteamentoRpc({ url: 'https://x.supabase.co', chave: CHAVE, organizacaoId: 'org-1' }, fetchFn)({ threadId: 'T', routing: {}, priority: 'Normal', serviceLevel: 'B', apply: true } as unknown as PedidoAplicarRoteamento);
+    expect(p).toMatchObject({ ok: false, erro: 'CODIGO_NAO_CATALOGADO', motivo: 'CODIGO_NAO_CATALOGADO' });
+    expect(JSON.stringify(p)).not.toContain(SEGREDO);
   });
 });
 

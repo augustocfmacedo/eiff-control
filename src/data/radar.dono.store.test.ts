@@ -134,7 +134,7 @@ describe('CD-D5 · dono da conta (store)', () => {
       expect(editada.commercialOwnerId).toBe('u-eng'); // editar a conta não limpa nem revalida o dono
       const s = snapshotComercialCD(radar(), hoje(), { usuarios: usuarios() });
       expect(s.base.contasSemDono).toMatchObject({ estado: 'DISPONIVEL', valor: contasSemDonoValido(radar(), usuarios()).length });
-      expect(s.versaoRegras).toBe('CD-1.2');
+      expect(s.versaoRegras).toBe('CD-1.3'); // CD-1.3 (E4) só acrescentou o bloco metaComercial
     });
     expect(estadoDonoConta(empresa(beta), usuarios())).toBe('COM_DONO'); // reativado, volta a valer
   });

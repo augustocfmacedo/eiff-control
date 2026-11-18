@@ -65,12 +65,13 @@ describe('atribuição e status', () => {
 });
 
 describe('responder, anotar e sugestões', () => {
-  it('responder registra a mensagem de saída SEM enviar, cumpre o SLA e leva ATRIBUIDA a EM_ATENDIMENTO', async () => {
+  it('responder registra o RASCUNHO sem enviar, leva ATRIBUIDA a EM_ATENDIMENTO e NÃO cumpre o SLA', async () => {
     actions.trocarUsuario('u-fin');
+    const slaAntes = thread('THR-00001').sla?.primeiraRespostaEm;
     const m = await actions.inboxResponder('THR-00001', 'Paulo, a NF 583 está programada.');
     expect(m.entrega).toBe('registrada'); expect(m.externalMessageId).toBeUndefined(); expect(m.direcao).toBe('outbound');
     const t = thread('THR-00001');
-    expect(t.status).toBe('EM_ATENDIMENTO'); expect(t.sla?.primeiraRespostaEm).toBeTruthy();
+    expect(t.status).toBe('EM_ATENDIMENTO'); expect(t.sla?.primeiraRespostaEm).toBe(slaAntes);
     expect(inbox().eventos.some((e) => e.threadId === t.id && e.tipo === 'MESSAGE_REGISTERED' && /nada foi enviado/.test(e.detalhe))).toBe(true);
     // auditoria nunca leva o texto: so ids, contagem e entrega
     expect(JSON.stringify(audits().find((x) => x.acao === 'inbox_responder'))).not.toContain('programada');

@@ -669,3 +669,94 @@ responsável padrão) → `ATRIBUIR_SETOR`, automação APPROVAL, nível B; `inb
 FINANCEIRO, atribuição `roteamento` sem ator, eventos ROUTING_DECIDED, ROUTED e STATUS_CHANGED). Sem resposta, sem envio.
 Métricas desta ativação: 1 mensagem recebida, 1 thread, 1 decisão MEDIUM, 1 roteada automaticamente, 0 override,
 0 falhas de IA, 0 mensagens enviadas.
+
+## 17. Primeira resposta: o que cumpre o SLA (09/11/2026)
+
+**Regra.** O SLA de primeira resposta só é cumprido por contato EFETIVAMENTE realizado com o interessado
+(`src/core/inbox/primeiraResposta.ts`). Duas origens: uma pessoa declara o contato (`actions.inboxRegistrarContato`)
+ou um canal envia de fato a resposta (entrega `enviada`/`entregue`/`lida` — nenhum canal de saída está ligado
+nesta fase, mas a regra já vale). Vale igual para todos os canais e não muda a duração de nenhum SLA.
+
+**Não cumprem:** rascunho de resposta (entrega `registrada`), nota interna, assumir, alterar responsável,
+tentativa sem sucesso, resolver ou fechar sem resposta, e qualquer ação no Radar.
+
+**Antes** (defeito): `inboxResponder` chamava `aoResponder` para qualquer saída, e o rascunho — que nada envia —
+gravava `primeiraRespostaEm`. `estadoSla` ainda tratava conversa encerrada sem resposta como «cumprido».
+`aoResponder(t, em, efetiva)` passou a exigir que quem chama diga se houve contato de verdade.
+
+**O registro do contato realizado**, sem migration, com o sentido que cada coluna já tinha:
+
+| dado | onde |
+|---|---|
+| canal do contato (telefone, e-mail, WhatsApp externo, presencial) | `inbox_message.meta`: `contato` = `realizado` e `contatoMeio` |
+| responsável autenticado | `sender_kind` = `usuario`, `sender_id`, `sender_name` |
+| data e hora DECLARADAS do contato | `occurred_at` (`InboxMessage.em`) |
+| data e hora de REGISTRO | `received_at`, padrão `now()` do banco — o navegador não escolhe (`InboxMessage.registradaEm`) |
+| resumo | `body`, imutável por trigger |
+| conversa | `thread_id` |
+| primeiro contato da conversa | `inbox_thread.sla_first_response_at` |
+| rastro | evento `MESSAGE_REGISTERED` no histórico da conversa e `audit_log` (`inbox_contato_realizado`: quem, meio, declarado, registrado, se foi a primeira resposta e a situação — nunca o texto) |
+
+A mensagem é de saída, com entrega `entregue`. A tentativa sem sucesso é nota interna com `meta.contato` =
+`tentativa` e auditoria `inbox_tentativa_contato`; não toca no prazo.
+
+**Consistência.** O PRIMEIRO contato é o que vale (contatos posteriores ficam no histórico e não substituem);
+o instante usado no SLA é o declarado, nunca no futuro e nunca anterior à abertura da conversa; contato depois
+do vencimento é «respondida fora do prazo» (`estadoSla` = `atrasada`); encerrar sem resposta é «encerrada sem
+resposta» (`sem_resposta`), não atendimento; reabrir não apaga nada; repetir o mesmo registro devolve o que já
+existe. `situacaoPrimeiraResposta` dá as quatro leituras da tela.
+
+**Registros anteriores à regra.** Conversas com `primeiraRespostaEm` gravado quando o rascunho ainda cumpria o
+SLA **não são reclassificadas nem apagadas**: continuam «respondidas», e a tela acrescenta «registro anterior à
+regra de contato realizado (não verificável)» (`origemPrimeiraResposta` = `anterior_a_regra`, quando não há
+mensagem que prove contato). Em produção, em 09/11/2026, não havia nenhuma conversa nesse estado (uma única
+conversa, sem resposta).
+
+**Limites declarados.**
+- O instante do contato é DECLARADO por quem registra: dá para informar uma hora anterior à real. O registro
+  guarda ao lado a hora em que foi feito e quem fez, e a auditoria mostra a diferença — é rastreável, não impedido.
+- O catálogo de meios é conferido no core e no store; o banco não tem CHECK sobre `meta`.
+- O autor da mensagem é gravado pela aplicação, como em toda mensagem e evento do Inbox; o banco não o impõe
+  como `auth.uid()`. Endurecer os dois pontos pede migration (CHECK em `meta`, tipo de evento próprio e autor
+  imposto por trigger) e não foi feito.
+- Não há indicador agregado «respondidas no prazo» em tela; `commercialDirector` continua contando conversas com
+  primeira resposta registrada, agora sem os rascunhos novos.
+
+
+## 18. Incidente de 10/11/2026: nenhuma alteração de conversa era gravada em produção
+
+**O que aconteceu.** No ensaio de ativação do formulário do site (GO-1), registrar um rascunho na conversa do ensaio
+devolveu `atualizar inbox_thread: permission denied for table inbox_thread`. A tela mostrava o rascunho, mas ele só
+existia no navegador: no banco a conversa continuou «Atribuída», com a única mensagem recebida. O site foi devolvido ao
+deploy inerte e o GO-1 ficou interrompido.
+
+**Causa.** A 0056 revoga o UPDATE de tabela em `inbox_thread` e concede UPDATE **por coluna** (20 colunas, com a
+`routing` da 0057). O adapter mandava no UPDATE também `channel`, `provider`, `context`, `contact_id`, `opened_at` e
+`origin`, que só existem na criação. O PostgreSQL recusa o comando **inteiro** quando uma única coluna do `SET` não tem
+privilégio — antes da RLS e dos gatilhos. Como a conversa é gravada antes das mensagens e dos eventos, nada mais entrava.
+Valia para todos os canais e para todo tipo de alteração feita por pessoa (rascunho, nota, contato realizado, status,
+prioridade, encerramento). A atribuição não era afetada: passa pela RPC `inbox_assign_thread`.
+
+**Por que os testes não viram.** A suíte provava o que o adapter manda com helpers falsos; a prova de banco
+(`scripts/pg-smoke-inbox.mjs`) atualizava a conversa com SQL próprio. O comando que o app monta nunca tinha sido
+executado contra os privilégios reais — e ninguém tinha alterado uma conversa real em produção até o ensaio.
+
+**Correção (sem migration, sem mudar permissão).** `src/data/inbox.supabase.ts` declara
+`COLUNAS_MUTAVEIS_DA_CONVERSA` (as 20 concedidas) e `COLUNAS_SO_DA_CRIACAO_DA_CONVERSA` (as 6); o UPDATE de conversa
+manda só as mutáveis. O INSERT de conversa nova continua completo.
+
+**Provas.**
+- `src/data/inbox.persistencia.integracao.test.ts`: as AÇÕES do store de produção (`inboxResponder`,
+  `inboxRegistrarContato`, `inboxMudarStatus`, `inboxAnotar`, `inboxMudarPrioridade`) + o `persistirInbox` de produção
+  contra um PostgreSQL com a fila inteira de migrations, como `authenticated` com `auth.uid()`. Confere por leitura
+  posterior: rascunho grava mensagem e eventos e **não** cumpre o SLA; contato realizado cumpre com o horário
+  **declarado** (`occurred_at`) e o registro fica com o relógio do banco (`received_at`); o prazo original não é
+  recalculado; contato depois do vencimento continua «respondida fora do prazo»; o responsável não transversal grava na
+  conversa dele e não enxerga a dos outros; setor e responsável seguem fora do UPDATE direto. Guarda de contrato: a lista
+  do app é comparada com o privilégio efetivo do banco e com os `grant update (...)` das migrations, e toda coluna de
+  todo UPDATE emitido é conferida. Sem a correção, 9 dos 15 testes falham com o erro de produção.
+- `scripts/pg-smoke-inbox.mjs`, prova **Z**: 20 colunas concedidas, as 6 da criação negadas, UPDATE só com as mutáveis
+  aceito.
+
+**Regra que fica.** Privilégio por coluna no banco exige que o comando do app seja provado contra o banco, com o papel
+real. Tabela nova do Inbox com `grant update (colunas)` faz o teste de contrato falhar até o adapter ser revisto.

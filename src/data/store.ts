@@ -28,6 +28,9 @@ import type {
   Dataset,
   Demanda,
   Divida,
+  AlteracaoPedido,
+  AnexoLancamento,
+  TipoAnexo,
   Lancamento,
   Liquidacao,
   Medicao,
@@ -48,7 +51,8 @@ import type {
 import { conflitosAlocacao, equipeDoLocal, linhasPadrao } from '../core/equipe';
 import { planejarMovimentacao } from '../core/extratos';
 import { planejarResetExtrato } from '../core/resetExtrato';
-import { ORIGEM_DF, resumoParecer, type PrevisaoDF } from '../core/cfo';
+import { normalizarDadosPagamento, validarDadosPagamento } from '../core/pagamento';
+import { ORIGEM_DF, bloqueioAlteracao, fmt as moeda, resumoParecer, validarAlteracao, type PrevisaoDF } from '../core/cfo';
 import { ORIGEM_CAIXA, categoriaDoCaixa, validarLinhaCaixa, type NovaLinhaCaixa } from '../core/caixa';
 import { addDays, calcLancamento, dataBaseEfetiva, etapasExigidas, executarChecks, impactoLancamento, mapaPlano, statusModelo } from '../core/engine';
 import { etapasPadrao, inicioFimPeriodo } from '../core/obras';
@@ -60,19 +64,23 @@ import { efeitoMovimento, exigeCorrida, posicaoEstoque } from '../core/estoque';
 import { ESTADO_MAXIMO_AUTOMATICO, contextoComunicacaoDe, ehContentSpecCompleto, gerarComunicacaoSincrona, hashTextoEfetivo, montarContentSpec, validarGeracao, validarTransicaoComunicacao, type VeredictoEdicao, type Canal, type EstadoComunicacao, type ResultadoGeracao } from '../core/radar';
 import type { ComunicacaoRadar } from '../core/radar/types';
 import { MATRIZ, pode, type Acao } from '../core/permissoes';
-import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATUS, RISCOS, alvoDaDecisao, aoResponder, aplicarStatus, classificacaoAuditavel, decidirRoteamento, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, reavaliar, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type DecisaoOctopus, type EntradaRoteador, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
+import { CONFIGURACAO_PADRAO as CONFIG_INBOX_PADRAO, MODOS_AUTOMACAO, NOME_STATUS, RISCOS, alvoDaDecisao, aoResponder, NOME_MEIO, contatoDuplicado, ehRespostaEfetiva, metaDoContato, situacaoPrimeiraResposta, validarContato, type PedidoDeContato, aplicarStatus, classificacaoAuditavel, decidirRoteamento, eventoDaTransicao, inboxVazio, maiorPrioridade, nivelMaisRestritivo, podeAtribuir, podeMudarStatus, provedorCanal, provedorExecucao, reavaliar, receberMensagem, recorteDe, rotear, seedInbox, slaDe, statusAposAtribuicao, triagemHumana, validarTransicao, type Atribuicao, type ConfiguracaoInbox, type DecisaoOctopus, type EntradaRoteador, type Equipe, type Evidence, type InboxAction, type InboxDataset, type InboxJob, type InboxMessage, type InboxThread, type MembroSetor, type MensagemRecebida, type NivelAtendimento, type Prioridade, type Relogio, type Setor, type StatusThread, type ThreadEvent, type TipoAcao } from '../core/inbox';
 import { TEXTO_RECUSA_COMMIT_CM, revalidarCriacaoTarefaCadenciaCM, type CodigoRecusaCommitCM, type EdicoesHumanasCadenciaCM, type ExpectativaCriacaoCadenciaCM } from '../core/radar/commercialCadenceCommit';
 import type { CodigoPendenciaTarefaCM } from '../core/radar/commercialCadenceTask';
 import { motivosRecusaDono, recusaMotivoDono } from '../core/radar/donoConta';
 import { aplicarTransicao, camposEditaveis, motivosRecusaEdicao, motivosRecusaTransicao, type DadosTransicao } from '../core/radar/estagioOportunidade';
+import { complementoDoGanho, eventosDaTransicao, motivosRecusaComplemento } from '../core/radar/desfechos';
+import type { EventoDesfecho } from '../core/radar/metaComercial';
 import { ESTAGIOS_FECHADOS } from '../core/radar/types';
 import { lerValor, metaVigenteDoMes, motivosRecusaNovaMeta, proximaVersaoMeta, type VersaoMetaComercial } from '../core/radar/metaComercial';
 import { MENSAGEM_INTENCAO_MUDOU, TEXTO_CONFLITO_INTENCAO_CM, contextoComunicacaoCM, origemComercialDe, resolverIntencaoCM, type IntencaoComunicacaoCM } from '../core/radar/comunicacaoIntencaoCM';
 import { linhaApp as linhaAppRadar, registrarRefRadar } from './radar.supabase';
 import { CANAIS, CONFIG_SCORE_PADRAO, DIMENSOES, ESTAGIOS, ESTRATEGIAS_PADRAO, FONTES_PADRAO, PERSONAS, PESOS_DECISION_FIT_PADRAO, PROBABILIDADE_ESTAGIO, REGRAS_PADRAO, REGRAS_PERSONA_PADRAO, RESPOSTAS_PADRAO, TIPOS_ATIVIDADE, TIPOS_SINAL, adapterDe, contatoElegivel, contatoSuprimido, empresaVazia, encontrarEmpresa, enriquecerContato, estagioAtivo, ingerirRegistro, normalizarCidade, normalizarCnpj, normalizarContatosCsv, normalizarDominio, normalizarUf, personaPorDepartamentoVibe, prospectParaContato, radarVazio, registrarSinalNormalizado, statusEmailVibe, upsertContato, upsertEmpresa, type Atividade, type ProspectVibe, type Contato, type Empresa, type Estagio, type Estrategia, type Experimento, type Fonte, type Ids, type Oportunidade, type Persona, type Projeto, type RadarDataset, type RegraPersona, type RegraScore, type Supressao, type TarefaRadar, type TipoSinal, type TipoSupressao, type TipoTarefa, importarCsv, recalcularEmpresas, payloadComLeitura, type LeituraSinal, aplicarDecisao, terminalizarSuprimido, type ContextoDecisao, type MotivoRecusa, type PedidoDecisao, type ResultadoDecisao } from '../core/radar';
-import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
-import { lancamentoDoPedido } from './solicitante';
-import { apagarPendente, guardarCache, guardarPendente, lerCache, lerPendente } from './offline';
+import { comIntencao, comMetaGravada, definirMetaConfirmada, recusaDefinitivaMeta, type ResultadoMetaConfirmada, type VersaoMetaLocal } from './metaConfirmada';
+import { aoMudarSessao, carregarRemoto, definirSenhaRemota, linkDeSenha, pedirNovaSenhaRemota, precisaTrocarSenha, login as loginRemoto, logout as logoutRemoto, meusPedidosSolicitante, pedirAlteracaoRemota, cancelarAlteracaoRemota, enviarAnexoRemoto, removerAnexoRemoto, aplicarIntencaoMeta, lerMetasComerciaisDoMes, persistirRemoto, registrarPedidoSolicitante, remotoAtivo, remotoPronto, sessaoAtual } from './supabase';
+import { alteracaoDoJson, alteracoesDosPedidos, anexoDoJson, anexosDosPedidos, lancamentoDoPedido } from './solicitante';
+import { extensaoDoMime, mimeDoArquivo, podeRemoverAnexo, tiposQuePodeAnexar, validarArquivoAnexo } from '../core/anexos';
+import { apagarIntencoesMeta, apagarPendente, guardarCache, guardarIntencoesMeta, guardarPendente, lerCache, lerIntencoesMeta, lerPendente } from './offline';
 import { ehErroDeRede } from './rede';
 
 const STORAGE_KEY = 'eiff-control:dataset:v1';
@@ -202,26 +210,95 @@ function setSync(sync: SyncStatus) {
 }
 
 function sincronizar(depois: Dataset) {
-  fila = fila.then(async () => {
+  // a fila nunca fica rejeitada para sempre: qualquer falha inesperada de uma rodada vira status "erro" e a próxima roda
+  fila = fila.catch(() => undefined).then(() => rodadaDeSincronizacao(depois)).catch((e) => setSync({ status: 'erro', msg: (e as Error)?.message ?? String(e) }));
+}
+async function rodadaDeSincronizacao(depois: Dataset): Promise<void> {
+  {
     const antes = baseSincronizada ?? depois;
+    // CD-D3/E5: o que o banco já aceitou nesta rodada (metas) entra na base na hora; se algo depois falhar, a retomada
+    // e a pendência offline partem dessa base e não reenviam a meta. O resto da base fica como estava (as alterações
+    // dos outros módulos continuam pendentes e voltam a ser enviadas).
+    let base = antes;
     setSync({ status: 'enviando' });
+    // E5-REL-01: as intenções de meta desta rodada vão para o diário local ANTES do envio (se o app fechar no meio, a
+    // reabertura as reaplica pela RPC idempotente); cada uma sai do diário quando o banco a aceita
+    let emVoo: VersaoMetaLocal[];
+    try { emVoo = intencoesNovas(antes, depois); } catch (e) { setSync({ status: 'erro', msg: (e as Error).message }); return; }
+    // só envia se o IndexedDB CONFIRMOU a gravação; senão nada vai ao banco e a rodada fica recuperável ("Tentar de novo")
+    if (emVoo.length && !(await registrarIntencoes(state.usuario.id, emVoo))) {
+      setSync({ status: 'erro', msg: 'Não deu para guardar a intenção da meta neste aparelho; nada foi enviado. Tente de novo.' });
+      return;
+    }
+    const aceitas: string[] = [];
     try {
-      await persistirRemoto(antes, depois, state.usuario.id);
+      await persistirRemoto(antes, depois, state.usuario.id, { aoGravarMeta: (m) => { base = comMetaGravada(base, m); aceitas.push(m.id); } });
+      if (aceitas.length) await tirarIntencoes(aceitas);
       baseSincronizada = depois;
       await apagarPendente();
       state = { ...state, pendencias: false };
       setSync({ status: 'ok', em: new Date().toISOString() });
     } catch (e) {
+      if (aceitas.length) await tirarIntencoes(aceitas);
+      if (base !== antes) baseSincronizada = base;
       if (ehErroDeRede(e)) {
-        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu) e volta a ser enviado sozinho
-        await guardarPendente({ usuarioId: state.usuario.id, base: antes, ds: depois, em: new Date().toISOString() });
+        // sem rede: o que mudou fica guardado neste aparelho (com a base que o usuario viu, mais as metas já aceitas) e
+        // volta a ser enviado sozinho
+        await guardarPendente({ usuarioId: state.usuario.id, base, ds: depois, em: new Date().toISOString() });
         state = { ...state, pendencias: true };
         setSync({ status: 'pendente', msg: 'sem conexão: alterações guardadas neste aparelho', desde: state.sync.desde ?? new Date().toISOString() });
         agendarRetentativa();
       } else setSync({ status: 'erro', msg: (e as Error).message });
     }
-  });
+  }
 }
+/**
+ * Versões de meta que `depois` tem e `antes` não (as que esta rodada vai enviar), já com a intenção normalizada
+ * (`comIntencao`: legado ganha intenção determinística; intenção incompleta lança erro e nada é enviado).
+ */
+function intencoesNovas(antes: Dataset, depois: Dataset): VersaoMetaLocal[] {
+  const ja = new Set((antes.radar.metasComerciais ?? []).map((m) => m.id));
+  return ((depois.radar.metasComerciais ?? []) as VersaoMetaLocal[]).filter((m) => !ja.has(m.id)).map(comIntencao);
+}
+/** Grava as intenções no diário; `true` só quando o IndexedDB confirmou (exceção também vira `false`). */
+async function registrarIntencoes(usuarioId: string, novas: VersaoMetaLocal[]): Promise<boolean> {
+  try {
+    const d = await lerIntencoesMeta();
+    const atuais = (d && d.usuarioId === usuarioId ? d.intencoes : []) as VersaoMetaLocal[];
+    const vistas = new Set(atuais.map((m) => m.intencao));
+    return (await guardarIntencoesMeta({ usuarioId, intencoes: [...atuais, ...novas.filter((m) => !vistas.has(m.intencao))] })) === true;
+  } catch { return false; }
+}
+async function tirarIntencoes(ids: string[]): Promise<void> {
+  const d = await lerIntencoesMeta();
+  if (!d) return;
+  const resto = (d.intencoes as VersaoMetaLocal[]).filter((m) => !ids.includes(m.id));
+  if (resto.length) await guardarIntencoesMeta({ usuarioId: d.usuarioId, intencoes: resto }); else await apagarIntencoesMeta();
+}
+/**
+ * Reabertura: reaplica as intenções de meta que ficaram no diário (app fechado no meio do envio). A RPC da 0074 devolve o
+ * resultado original se a intenção já foi executada e aplica com a pré-condição se não foi — nunca duplica. Recusa
+ * (decisão sobre versão desatualizada, conteúdo diferente) tira a intenção do diário e vira aviso; sem rede, ela fica.
+ */
+async function recuperarIntencoes(usuarioId: string): Promise<{ aplicou: boolean; avisos: string[] }> {
+  const d = await lerIntencoesMeta();
+  if (!d || d.usuarioId !== usuarioId || !d.intencoes.length) return { aplicou: false, avisos: [] };
+  const lista = [...(d.intencoes as VersaoMetaLocal[])].sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : a.versao - b.versao));
+  const avisos: string[] = []; let aplicou = false;
+  for (const m of lista) {
+    try { await aplicarIntencaoMeta(m); aplicou = true; await tirarIntencoes([m.id]); }
+    catch (e) {
+      if (ehErroDeRede(e)) throw e;
+      if (recusaDefinitivaMeta(e)) { avisos.push(`meta de ${m.mes} não reaplicada: ${(e as Error).message}`); await tirarIntencoes([m.id]); continue; }
+      // transitório, sessão/autenticação recuperável ou indeterminado: a intenção FICA no diário (reenviar é seguro) e as
+      // seguintes esperam, para manter a ordem
+      avisos.push(`meta de ${m.mes} ainda não confirmada (fica guardada para nova tentativa): ${(e as Error).message}`);
+      break;
+    }
+  }
+  return { aplicou, avisos };
+}
+
 let retentativa: number | undefined;
 function agendarRetentativa(ms = 30_000) {
   if (retentativa !== undefined || typeof window === 'undefined') return;
@@ -233,18 +310,29 @@ if (typeof window !== 'undefined') window.addEventListener('online', () => { if 
 async function carregarComPendentes(): Promise<{ ds: Dataset; usuario: Usuario; offline: boolean; aviso?: string }> {
   try {
     let { ds: dsRemoto, usuario } = await carregarRemoto();
+    // E5-REL-01: intenções de meta do diário primeiro (idempotentes no banco); depois recarrega o que o banco tem
+    const rec = await recuperarIntencoes(usuario.id);
+    if (rec.aplicou) ({ ds: dsRemoto, usuario } = await carregarRemoto());
     const p = await lerPendente();
     if (p && p.usuarioId === usuario.id) {
-      try { await persistirRemoto(p.base, p.ds, usuario.id); await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
+      let baseP = p.base; // CD-D3/E5: metas aceitas nesta aplicação entram na base da pendência (nunca reenviadas)
+      try {
+        const emVooP = intencoesNovas(p.base, p.ds);
+        if (emVooP.length && !(await registrarIntencoes(usuario.id, emVooP))) throw new Error('Não deu para guardar a intenção da meta neste aparelho; nada foi enviado.');
+        const aceitasP: string[] = [];
+        try { await persistirRemoto(p.base, p.ds, usuario.id, { aoGravarMeta: (m) => { baseP = comMetaGravada(baseP, m); aceitasP.push(m.id); } }); }
+        finally { if (aceitasP.length) await tirarIntencoes(aceitasP); }
+        await apagarPendente(); state = { ...state, pendencias: false }; ({ ds: dsRemoto, usuario } = await carregarRemoto()); }
       catch (e) {
+        if (baseP !== p.base) await guardarPendente({ ...p, base: baseP });
         if (ehErroDeRede(e)) throw e;
         // conflito ou regra: mantem as alteracoes locais na tela e a pendencia guardada; o usuario decide entre tentar de novo e descartar
-        baseSincronizada = p.base; state = { ...state, pendencias: true };
+        baseSincronizada = baseP; state = { ...state, pendencias: true };
         return { ds: p.ds, usuario, offline: false, aviso: `alterações feitas offline não foram aplicadas: ${(e as Error).message}` };
       }
     }
     await guardarCache({ ds: dsRemoto, usuario });
-    return { ds: dsRemoto, usuario, offline: false };
+    return { ds: dsRemoto, usuario, offline: false, ...(rec.avisos.length ? { aviso: rec.avisos.join(' · ') } : {}) };
   } catch (e) {
     if (!ehErroDeRede(e)) throw e;
     const c = await lerCache(); if (!c) throw e;
@@ -328,6 +416,31 @@ export const getState = () => state;
 // Utilidades
 // ---------------------------------------------------------------------------
 const agora = () => new Date().toISOString();
+/**
+ * Alteracao de valor que veio da porta do banco (df_pedir_alteracao / df_cancelar_alteracao): entra no estado E na base ja
+ * sincronizada (o banco ja tem a linha; o diff nao deve tentar grava-la de novo, e a decisao seguinte precisa achar a PENDENTE).
+ */
+function incorporarAlteracao(a: AlteracaoPedido) {
+  const trocar = (ds: Dataset): Dataset => ({ ...ds, alteracoesPedido: [...(ds.alteracoesPedido ?? []).filter((x) => x.id !== a.id), a] });
+  if (baseSincronizada) baseSincronizada = trocar(baseSincronizada);
+  state = { ...state, ds: trocar(state.ds) };
+  persistir();
+  emit();
+}
+
+/** Documento que veio da porta do banco: entra no estado e na base sincronizada (o banco ja tem a linha; nao e gravado pelo diff). */
+function incorporarAnexo(a: AnexoLancamento) {
+  const trocar = (ds: Dataset): Dataset => ({ ...ds, anexosLancamento: [...(ds.anexosLancamento ?? []).filter((x) => x.id !== a.id), a] });
+  if (baseSincronizada) baseSincronizada = trocar(baseSincronizada);
+  state = { ...state, ds: trocar(state.ds) };
+  persistir();
+  emit();
+}
+/** Arquivo como data URL (modo local/demo). */
+function lerComoDataUrl(b: Blob): Promise<string> {
+  return new Promise((ok, erro) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => erro(new RegraDeNegocioError('Não foi possível ler o arquivo.')); r.readAsDataURL(b); });
+}
+
 const seq = (prefix: string, ids: string[]): string => {
   let n = ids.length + 1;
   let id = `${prefix}-${String(n).padStart(4, '0')}`;
@@ -342,7 +455,7 @@ const seq = (prefix: string, ids: string[]): string => {
 const REMETENTE_CIDADE_PADRAO = 'Goiânia';
 
 function idsRadar(r: RadarDataset): Ids {
-  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte, ...(r.metasComerciais ?? [])].map((x) => x.id));
+  const usados = new Set<string>([...r.fontes, ...r.empresas, ...r.contatos, ...r.projetos, ...r.sinais, ...r.oportunidades, ...r.historicoEstagios, ...r.atividades, ...r.tarefas, ...r.estrategias, ...r.experimentos, ...r.regrasScore, ...r.snapshotsScore, ...r.importacoes, ...r.importacaoLinhas, ...r.importacaoErros, ...r.duplicatas, ...r.supressoes, ...r.registrosFonte, ...(r.metasComerciais ?? []), ...(r.desfechos ?? [])].map((x) => x.id));
   const contagem: Record<string, number> = {};
   return {
     novo: (p) => { let k = (contagem[p] ?? usados.size) + 1; let id = `${p}-${String(k).padStart(5, '0')}`; while (usados.has(id)) id = `${p}-${String(++k).padStart(5, '0')}`; contagem[p] = k; usados.add(id); return id; },
@@ -391,7 +504,29 @@ function exigirProximaAcao(o: Oportunidade, tarefas: TarefaRadar[]) {
  * No modo remoto a lista vem do banco; ausente lá significa "tabela indisponível" (banco sem a 0068), e a ação recusa.
  */
 function comMetasLocais(ds: Dataset): Dataset {
-  return ds.radar && !ds.radar.metasComerciais ? { ...ds, radar: { ...ds.radar, metasComerciais: [] } } : ds;
+  if (!ds.radar) return ds;
+  // CD-D3/E2 e E3: no modo local metas e livro de desfechos existem (vazios); no remoto vêm do banco ou ficam indisponíveis
+  return !ds.radar.metasComerciais || !ds.radar.desfechos ? { ...ds, radar: { ...ds.radar, metasComerciais: ds.radar.metasComerciais ?? [], desfechos: ds.radar.desfechos ?? [] } } : ds;
+}
+
+/**
+ * CD-D3/E3 — eventos de desfecho da transição. Modo REMOTO: nenhum (o gatilho da 0070 grava GANHO/ESTORNO na mesma
+ * transação do UPDATE, e a carga traz o livro). Modo LOCAL: o espelho do gatilho (`eventosDaTransicao`). Livro
+ * indisponível (código publicado, banco ainda sem a 0070): criar ganha, marcar como ganha e reabrir uma ganha ficam
+ * BLOQUEADOS — o ganho ou o estorno se perderiam. Transições sem WON seguem normalmente.
+ */
+export const MENSAGEM_LIVRO_INDISPONIVEL = 'Marcar como ganha ou reabrir uma oportunidade ganha está bloqueado: o banco ainda não tem o livro de desfechos, e o ganho ou o estorno não seriam registrados. Nada foi alterado.';
+function desfechosDaTransicao(r: RadarDataset, antes: Oportunidade | undefined, depois: Oportunidade, ids: Ids): EventoDesfecho[] | undefined {
+  if (!r.desfechos) {
+    // código publicado antes da 0070: ganho ou estorno não teriam onde ficar registrados — bloqueia, nada muda
+    if (antes?.estagio === 'WON' || depois.estagio === 'WON') throw new RegraDeNegocioError(MENSAGEM_LIVRO_INDISPONIVEL);
+    return undefined;
+  }
+  if (state.modo === 'remoto') return r.desfechos;
+  const dono = r.empresas.find((e) => e.id === depois.empresaId)?.commercialOwnerId;
+  try {
+    return [...r.desfechos, ...eventosDaTransicao(antes, depois, r.desfechos, { agora: ids.agora, atorId: state.usuario.id, donoContaId: dono, novoId: () => ids.novo('DSF') })];
+  } catch (e) { throw new RegraDeNegocioError((e as Error).message); }
 }
 
 export function garantirInbox(ds: Dataset, modo: 'local' | 'remoto'): Dataset {
@@ -579,6 +714,8 @@ export function validarLancamento(ds: Dataset, l: Lancamento): string[] {
   if (!(l.valorBruto > 0)) erros.push('Valor bruto deve ser positivo.');
   if (l.retencoes < 0 || l.desconto < 0 || l.multaJuros < 0) erros.push('Retenções, descontos e juros devem ser positivos.');
   if (l.probabilidade < 0 || l.probabilidade > 1) erros.push('Probabilidade deve estar entre 0% e 100%.');
+  // forma e dados de pagamento (0072): opcionais, mas quando informados tem de estar completos e validos; so para saidas
+  if (l.formaPagamento) { if (plano?.tipo === 'Entrada') erros.push('Forma de pagamento é só para saídas.'); else erros.push(...validarDadosPagamento(l.formaPagamento, l.dadosPagamento)); }
   if (l.status === 'Realizado' && (!l.realizacao || !(l.valorRealizado ?? 0))) erros.push('Realizado exige data e valor realizados (use Liquidar).');
   if (plano && (plano.grupoFluxo === 'Custos Diretos de Obras' || plano.grupoDre === 'Receita Operacional') && !l.codigoObra)
     erros.push('Custos diretos e receitas de obra exigem Código Obra.');
@@ -782,6 +919,7 @@ export const actions = {
     const l = this.novoLancamento({
       categoria: p.categoria, codigoObra: p.codigoObra ?? '', contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), competencia: p.vencimento, vencimento: p.vencimento,
       status: 'Rascunho', confiabilidade: 'Estimado', probabilidade: 1, valorBruto: Math.round(p.valor * 100) / 100, origem: ORIGEM_DF,
+      ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: normalizarDadosPagamento(p.formaPagamento, p.dadosPagamento) } : {}),
       // quem nao ve caixa nao tem o caixa completo no aparelho: o resumo do parecer sairia com numeros errados (a Diretoria ve o
       // parecer completo na Caixa/Central, calculado na hora)
       observacoes: state.usuario.papel === 'Solicitante' || !pode(state.usuario, 'ver_bancos')
@@ -806,7 +944,9 @@ export const actions = {
     if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return this.registrarPrevisaoDF(p);
     if (!(p.valor > 0)) throw new RegraDeNegocioError('Valor do pedido deve ser positivo.');
     if (!p.vencimento) throw new RegraDeNegocioError('Data do pedido é obrigatória.');
-    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120) });
+    const erros = validarDadosPagamento(p.formaPagamento, p.dadosPagamento);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    const r = await registrarPedidoSolicitante({ valor: Math.round(p.valor * 100) / 100, vencimento: p.vencimento, categoria: p.categoria, codigoObra: p.codigoObra, contraparte: p.contraparte || 'A definir', descricao: p.descricao.slice(0, 120), ...(p.formaPagamento ? { formaPagamento: p.formaPagamento, dadosPagamento: normalizarDadosPagamento(p.formaPagamento, p.dadosPagamento) } : {}) });
     await this.atualizarPedidosSolicitante();
     return state.ds.lancamentos.find((x) => x.id === r.codigo) ?? lancamentoDoPedido(r, state.usuario.nome);
   },
@@ -815,11 +955,130 @@ export const actions = {
   async atualizarPedidosSolicitante() {
     if (state.usuario.papel !== 'Solicitante' || state.modo !== 'remoto') return;
     const pedidos = await meusPedidosSolicitante();
-    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)) };
+    const ds = { ...state.ds, lancamentos: pedidos.map((x) => lancamentoDoPedido(x, state.usuario.nome)), alteracoesPedido: alteracoesDosPedidos(pedidos, state.usuario.nome), anexosLancamento: anexosDosPedidos(pedidos) };
     baseSincronizada = ds;
     state = { ...state, ds };
     emit();
   },
+  /**
+   * Equipe: pede a alteracao de VALOR de um pedido proprio ao Diretor Financeiro (0071). O titulo NAO muda aqui: a alteracao
+   * fica PENDENTE ate a Diretoria aceitar (decidirAlteracaoValorDF). No modo remoto nasce pela porta df_pedir_alteracao, para
+   * todos os papeis (o Solicitante nao grava tabela nenhuma; os demais nao tem politica de INSERT nesta tabela).
+   */
+  async pedirAlteracaoValorDF(id: string, valor: number, motivo: string): Promise<AlteracaoPedido> {
+    exigir('pedir_pagamento');
+    const l = state.ds.lancamentos.find((x) => x.id === id);
+    if (!l || l.origem !== ORIGEM_DF || l.criadoPor !== state.usuario.nome) throw new RegraDeNegocioError('Pedido não encontrado entre os seus pedidos.');
+    const bloqueio = bloqueioAlteracao(state.ds, l);
+    if (bloqueio) throw new RegraDeNegocioError(bloqueio);
+    const v = Math.round(valor * 100) / 100;
+    const erros = validarAlteracao(l, v, motivo);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    if (state.modo === 'remoto') {
+      const r = await pedirAlteracaoRemota(id, v, motivo.trim());
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return alteracaoDoJson(r, state.usuario.nome); }
+      const a = alteracaoDoJson(r, state.usuario.nome);
+      incorporarAlteracao(a);
+      return a;
+    }
+    const a: AlteracaoPedido = { id: seq('ALT', (state.ds.alteracoesPedido ?? []).map((x) => x.id)), lancamentoId: id, solicitadoPor: state.usuario.nome, solicitadoEm: agora(), valorAnterior: l.valorBruto, valorNovo: v, motivo: motivo.trim(), status: 'PENDENTE' };
+    commit(registrar({ ...state.ds, alteracoesPedido: [...(state.ds.alteracoesPedido ?? []), a] }, 'pedir_alteracao_valor', 'lancamento', id, { valor: l.valorBruto }, { valor: v }, a.motivo));
+    return a;
+  },
+
+  /**
+   * Anexa um documento ao lancamento (0073): nota fiscal e boleto por quem pediu ou pelo Financeiro; comprovante por quem paga.
+   * No modo remoto o arquivo vai ao bucket privado pelas portas anexo_preparar/anexo_registrar (o Solicitante inclusive); no
+   * modo local fica como data URL na memoria. `dados` e o arquivo (Blob) ou, nos testes e no modo local, uma data URL.
+   */
+  async anexarDocumento(lancamentoId: string, tipo: TipoAnexo, arquivo: { nome: string; mime: string; tamanho: number; dados: Blob | string }): Promise<AnexoLancamento> {
+    const l = state.ds.lancamentos.find((x) => x.id === lancamentoId);
+    if (!l) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    if (!tiposQuePodeAnexar(state.usuario, l).includes(tipo)) throw new RegraDeNegocioError(tipo === 'COMPROVANTE' ? 'O comprovante é anexado por quem paga (Financeiro ou Diretoria).' : 'Você não pode anexar documentos a este lançamento.');
+    const erro = validarArquivoAnexo({ name: arquivo.nome, type: arquivo.mime, size: arquivo.tamanho });
+    if (erro) throw new RegraDeNegocioError(erro);
+    const mime = mimeDoArquivo({ name: arquivo.nome, type: arquivo.mime })!;
+    const nome = arquivo.nome.trim().slice(0, 200) || `documento.${extensaoDoMime(mime)}`;
+    if (state.modo === 'remoto') {
+      if (typeof arquivo.dados === 'string') throw new RegraDeNegocioError('Envie o arquivo.');
+      const r = await enviarAnexoRemoto(lancamentoId, tipo, arquivo.dados, nome, mime, extensaoDoMime(mime));
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return anexoDoJson(r); }
+      const a = anexoDoJson(r);
+      incorporarAnexo(a);
+      return a;
+    }
+    const dataUrl = typeof arquivo.dados === 'string' ? arquivo.dados : await lerComoDataUrl(arquivo.dados);
+    const a: AnexoLancamento = { id: seq('ANX', (state.ds.anexosLancamento ?? []).map((x) => x.id)), lancamentoId, tipo, nome, dataUrl, mime, tamanho: arquivo.tamanho, enviadoPor: state.usuario.nome, enviadoPorId: state.usuario.id, enviadoEm: agora() };
+    commit(registrar({ ...state.ds, anexosLancamento: [...(state.ds.anexosLancamento ?? []), a] }, 'anexar_documento', 'lancamento', lancamentoId, undefined, { tipo, nome, tamanho: a.tamanho }));
+    return a;
+  },
+
+  /** Remocao logica de um documento, com motivo: quem enviou (antes do pagamento) ou o Financeiro/Diretoria. O arquivo fica. */
+  async removerDocumento(anexoId: string, motivo: string): Promise<void> {
+    const a = (state.ds.anexosLancamento ?? []).find((x) => x.id === anexoId);
+    const l = a && state.ds.lancamentos.find((x) => x.id === a.lancamentoId);
+    if (!a || !l) throw new RegraDeNegocioError('Documento não encontrado.');
+    if (!podeRemoverAnexo(state.usuario, a, l)) throw new RegraDeNegocioError('Só quem enviou (antes do pagamento) ou o Financeiro remove este documento.');
+    if (motivo.trim().length < 3) throw new RegraDeNegocioError('Informe o motivo da remoção.');
+    if (state.modo === 'remoto') {
+      const r = await removerAnexoRemoto(anexoId, motivo.trim());
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return; }
+      incorporarAnexo(anexoDoJson(r));
+      return;
+    }
+    const rem: AnexoLancamento = { ...a, removidoEm: agora(), removidoPor: state.usuario.nome, motivoRemocao: motivo.trim() };
+    commit(registrar({ ...state.ds, anexosLancamento: (state.ds.anexosLancamento ?? []).map((x) => (x.id === a.id ? rem : x)) }, 'remover_documento', 'lancamento', a.lancamentoId, { nome: a.nome }, { nome: a.nome, removido: true }, rem.motivoRemocao));
+  },
+
+  /** Quem pediu desiste da alteracao ainda pendente. */
+  async cancelarAlteracaoValorDF(alteracaoId: string): Promise<void> {
+    const a = (state.ds.alteracoesPedido ?? []).find((x) => x.id === alteracaoId);
+    if (!a || a.solicitadoPor !== state.usuario.nome) throw new RegraDeNegocioError('Alteração não encontrada entre as suas.');
+    if (a.status !== 'PENDENTE') throw new RegraDeNegocioError('Alteração já decidida.');
+    if (state.modo === 'remoto') {
+      const r = await cancelarAlteracaoRemota(alteracaoId);
+      if (state.usuario.papel === 'Solicitante') { await this.atualizarPedidosSolicitante(); return; }
+      incorporarAlteracao(alteracaoDoJson(r, state.usuario.nome));
+      return;
+    }
+    const c: AlteracaoPedido = { ...a, status: 'CANCELADA', decididoPor: state.usuario.nome, decididoEm: agora() };
+    commit(registrar({ ...state.ds, alteracoesPedido: (state.ds.alteracoesPedido ?? []).map((x) => (x.id === a.id ? c : x)) }, 'cancelar_alteracao_valor', 'lancamento', a.lancamentoId, a, c));
+  },
+
+  /**
+   * Diretoria decide a alteracao de valor. Aceitar grava o novo valor no titulo pelas regras normais (salvarLancamento: pedido
+   * ja programado volta a passar pelas alcadas com o novo valor; aprovacao pendente do valor antigo e devolvida) e marca ACEITA;
+   * recusar exige motivo, que o solicitante ve. O banco confere a decisao (gatilho da 0071).
+   */
+  decidirAlteracaoValorDF(alteracaoId: string, decisao: 'aceitar' | 'recusar', motivo = '') {
+    exigir('aprovar');
+    if (!PAPEIS_DECISAO_DF.includes(state.usuario.papel)) throw new RegraDeNegocioError(`Decisão de alteração de valor é da Diretoria: o perfil ${state.usuario.papel} não decide.`);
+    const a = (state.ds.alteracoesPedido ?? []).find((x) => x.id === alteracaoId);
+    if (!a) throw new RegraDeNegocioError('Alteração não encontrada.');
+    if (a.status !== 'PENDENTE') throw new RegraDeNegocioError('Alteração já decidida.');
+    if (a.solicitadoPor === state.usuario.nome && state.usuario.papel !== 'Administrador') throw new RegraDeNegocioError('Segregação de funções: quem pediu não decide a própria alteração.');
+    const l = state.ds.lancamentos.find((x) => x.id === a.lancamentoId);
+    if (!l) throw new RegraDeNegocioError('Pedido não encontrado.');
+    const decidida = (status: 'ACEITA' | 'RECUSADA', motivoDecisao?: string): AlteracaoPedido => ({ ...a, status, decididoPor: state.usuario.nome, decididoEm: agora(), motivoDecisao });
+    if (decisao === 'recusar') {
+      if (motivo.trim().length < 3) throw new RegraDeNegocioError('Informe o motivo da recusa (o solicitante vê).');
+      const r = decidida('RECUSADA', motivo.trim());
+      commit(registrar({ ...state.ds, alteracoesPedido: (state.ds.alteracoesPedido ?? []).map((x) => (x.id === a.id ? r : x)) }, 'recusar_alteracao_valor', 'lancamento', l.id, a, r, r.motivoDecisao));
+      return;
+    }
+    if (l.status === 'Realizado' || l.status === 'Cancelado' || l.excluidoEm || state.ds.liquidacoes.some((q) => q.lancamentoId === l.id)) {
+      throw new RegraDeNegocioError('O pedido mudou desde a alteração (pago, cancelado ou com pagamento registrado): recuse a alteração.');
+    }
+    const nota = `Valor alterado de ${moeda(a.valorAnterior)} para ${moeda(a.valorNovo)} a pedido de ${a.solicitadoPor} (${a.motivo}); aceito por ${state.usuario.nome} em ${agora().slice(0, 10).split('-').reverse().join('/')}.`;
+    if (l.status === 'Pendente') {
+      // a aprovacao em curso era do valor antigo: devolve, e salvarLancamento reabre a alcada com o novo valor
+      state = { ...state, ds: { ...state.ds, aprovacoes: state.ds.aprovacoes.map((x) => (x.entidadeId === l.id && x.status === 'Pendente' ? { ...x, status: 'Devolvido' as const } : x)) } };
+    }
+    this.salvarLancamento({ ...l, status: l.status === 'Pendente' ? 'Programado' : l.status, valorBruto: a.valorNovo, observacoes: `${l.observacoes}\n${nota}`.trim() });
+    const ac = decidida('ACEITA');
+    commit(registrar({ ...state.ds, alteracoesPedido: (state.ds.alteracoesPedido ?? []).map((x) => (x.id === a.id ? ac : x)) }, 'aceitar_alteracao_valor', 'lancamento', l.id, a, ac));
+  },
+
   /** Alinhamento diario (Diretoria/Financeiro): programar (vira lancamento oficial, alcadas normais), reagendar (segue rascunho) ou recusar (cancela com motivo). */
   decidirPrevisaoDF(id: string, decisao: 'programar' | 'reagendar' | 'recusar', dados: { vencimento?: string; motivo?: string } = {}) {
     exigir('aprovar');
@@ -1070,6 +1329,67 @@ export const actions = {
     ds = { ...ds, aprovacoes: ds.aprovacoes.map((a) => (a.id === id ? novo : a)), lancamentos };
     ds = registrar(ds, `aprovacao_${decisao.toLowerCase()}`, 'aprovacao', id, ap, novo, autoAprovacao ? `[auto-aprovação pelo solicitante como Administrador] ${justificativa}`.trim() : justificativa);
     commit(ds);
+  },
+
+  /**
+   * Ajusta o valor PAGO/RECEBIDO de um titulo ja liquidado (Realizado) ao valor real, sem estornar e relancar (pedido do
+   * Augusto em 19/10/2026). A diferenca entre o pago real e o liquido previsto vira, a escolha de quem ajusta:
+   *   'valor'    — o proprio titulo passa a valer o pago (valor bruto corrigido);
+   *   'juros'    — multa/juros (so quando o pago e MAIOR que o previsto);
+   *   'desconto' — desconto (so quando o pago e MENOR que o previsto).
+   * A ultima liquidacao absorve a diferenca do total liquidado (data opcional); o titulo continua Realizado. No banco, o
+   * titulo e gravado antes da liquidacao (persistirRemoto), entao o gatilho apply_settlement recalcula com o liquido novo.
+   * Bloqueado quando conciliado com o extrato (o banco e o fato: desfaca a conciliacao) e em periodo fechado.
+   */
+  ajustarValorPago(id: string, dados: { valorPago: number; tratamento: 'valor' | 'juros' | 'desconto'; motivo: string; data?: string }) {
+    const atual = state.ds.lancamentos.find((l) => l.id === id);
+    if (!atual) throw new RegraDeNegocioError('Lançamento não encontrado.');
+    exigir('liquidar', atual.codigoObra || undefined);
+    if (atual.status !== 'Realizado' || atual.excluidoEm) throw new RegraDeNegocioError('Só dá para ajustar o valor pago de um lançamento já pago/recebido.');
+    if (state.ds.transacoes.some((t) => t.lancamentoIds.includes(id))) throw new RegraDeNegocioError('Pagamento conciliado com o extrato: o valor do banco é o real. Desfaça a conciliação antes de ajustar.');
+    if (periodoFechado(state.ds, atual.competencia)) throw new RegraDeNegocioError('Período fechado.');
+    if (dados.motivo.trim().length < 3) throw new RegraDeNegocioError('Informe o motivo do ajuste.');
+    const pago = Math.round(dados.valorPago * 100) / 100;
+    if (!(pago > 0)) throw new RegraDeNegocioError('O valor pago deve ser positivo.');
+    if (dados.data && dados.data > state.ds.params.dataBase) throw new RegraDeNegocioError('A data do pagamento não pode ser futura.');
+    const liquido = Math.round((atual.valorBruto - atual.retencoes - atual.desconto + atual.multaJuros) * 100) / 100;
+    const liqs = state.ds.liquidacoes.filter((q) => q.lancamentoId === id).sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.id.localeCompare(b.id)));
+    const ultima = liqs[liqs.length - 1];
+    if (!ultima) throw new RegraDeNegocioError('Lançamento sem pagamento registrado.');
+    const totalLiq = Math.round(liqs.reduce((a, q) => a + q.valor, 0) * 100) / 100;
+    const difLiquido = Math.round((pago - liquido) * 100) / 100;
+    const difPago = Math.round((pago - totalLiq) * 100) / 100;
+    const data = dados.data || ultima.data;
+    if (!difLiquido && !difPago && data === ultima.data) throw new RegraDeNegocioError('O valor e a data já são esses.');
+    const novaUltima = Math.round((ultima.valor + difPago) * 100) / 100;
+    if (!(novaUltima > 0)) throw new RegraDeNegocioError('Este título tem pagamentos parciais e o ajuste zeraria o último: estorne o pagamento e registre de novo.');
+    let campos: Partial<Lancamento> = {};
+    if (difLiquido) {
+      if (dados.tratamento === 'juros') {
+        if (difLiquido < 0) throw new RegraDeNegocioError('Juros/multa só quando o valor pago é maior que o previsto. Use desconto ou corrija o valor.');
+        campos = { multaJuros: Math.round((atual.multaJuros + difLiquido) * 100) / 100 };
+      } else if (dados.tratamento === 'desconto') {
+        if (difLiquido > 0) throw new RegraDeNegocioError('Desconto só quando o valor pago é menor que o previsto. Use juros ou corrija o valor.');
+        campos = { desconto: Math.round((atual.desconto - difLiquido) * 100) / 100 };
+      } else {
+        const bruto = Math.round((atual.valorBruto + difLiquido) * 100) / 100;
+        if (!(bruto > 0)) throw new RegraDeNegocioError('O valor do título ficaria zerado: confira o valor pago.');
+        campos = { valorBruto: bruto };
+      }
+    }
+    const rotulo = { valor: 'valor do título corrigido', juros: 'diferença como multa/juros', desconto: 'diferença como desconto' }[dados.tratamento];
+    const nota = `Valor pago ajustado de ${moeda(totalLiq)} para ${moeda(pago)}${data !== ultima.data ? ` (data ${data.split('-').reverse().join('/')})` : ''} por ${state.usuario.nome}: ${dados.motivo.trim()}${difLiquido ? ` (${rotulo})` : ''}.`;
+    const l: Lancamento = { ...atual, ...campos, valorRealizado: pago, realizacao: data, observacoes: `${atual.observacoes}\n${nota}`.trim(), atualizadoEm: agora(), atualizadoPor: state.usuario.nome, versao: atual.versao + 1 };
+    const erros = validarLancamento(state.ds, l);
+    if (erros.length) throw new RegraDeNegocioError(erros.join(' '), erros);
+    let ds: Dataset = {
+      ...state.ds,
+      lancamentos: state.ds.lancamentos.map((x) => (x.id === id ? l : x)),
+      liquidacoes: state.ds.liquidacoes.map((q) => (q.id === ultima.id ? { ...q, valor: novaUltima, data } : q)),
+    };
+    ds = registrar(ds, 'ajustar_valor_pago', 'lancamento', id, { valorPago: totalLiq, valorBruto: atual.valorBruto, desconto: atual.desconto, multaJuros: atual.multaJuros, realizacao: atual.realizacao }, { valorPago: pago, valorBruto: l.valorBruto, desconto: l.desconto, multaJuros: l.multaJuros, realizacao: data }, dados.motivo.trim());
+    commit(ds);
+    return l;
   },
 
   /**
@@ -2125,15 +2445,65 @@ export const actions = {
     }
     const anteriores = metas.filter((m) => m.mes === mes);
     const ultima = anteriores.reduce<VersaoMetaComercial | undefined>((u, m) => (!u || m.versao > u.versao ? m : u), undefined);
-    const nova: VersaoMetaComercial = {
-      id: idsRadar(r).novo('META'), mes, metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor, versao: proximaVersaoMeta(metas, mes),
+    // E5-REL-01: a intenção ganha um identificador ESTÁVEL antes do primeiro envio e leva a versão vigente em que a
+    // decisão se baseou; o banco (0074) devolve o resultado original no reenvio e recusa decisão sobre versão velha
+    const versaoBase = proximaVersaoMeta(metas, mes) - 1;
+    const nova: VersaoMetaLocal = {
+      id: idsRadar(r).novo('META'), mes, metrica: 'RECEITA_GANHA', moeda: 'BRL', escopo: 'ORGANIZACAO', valor, versao: versaoBase + 1,
       ...(ultima ? { substituiId: ultima.id } : {}), motivo: motivo.trim(), definidaPor: state.usuario.id, definidaEm: t,
+      intencao: globalThis.crypto.randomUUID(), versaoBase,
     };
     const radar: RadarDataset = { ...r, metasComerciais: [...metas, nova] };
     ds = registrar({ ...ds, radar }, valor === null ? 'radar_retirar_meta_comercial' : 'radar_definir_meta_comercial', 'radar_meta_comercial', nova.id,
       ultima ? { versao: ultima.versao, valor: ultima.valor ?? null } : undefined, { mes, versao: nova.versao, valor: nova.valor ?? null }, nova.motivo);
     commit(ds);
     return nova;
+  },
+
+  /**
+   * CD-D3/E5 — a MESMA ação canônica (`definirMetaComercialRadar`), mas só devolve sucesso depois que o banco confirma:
+   * no remoto espera a sincronização (RPC radar_definir_meta_comercial) e CONFERE nas versões persistidas do mês (leitura
+   * direta, nunca o status global da fila) se a versão pedida foi gravada: confirmada, não gravada, desatualizada (outra
+   * sessão), pendente (sem rede) ou indeterminada (sem leitura). Ver src/data/metaConfirmada.ts.
+   */
+  definirMetaComercialConfirmada(mes: string, valor: number | null, motivo: string): Promise<ResultadoMetaConfirmada> {
+    return definirMetaConfirmada({
+      remoto: state.modo === 'remoto',
+      syncAtual: () => state.sync,
+      definir: () => actions.definirMetaComercialRadar(mes, valor, motivo),
+      aguardarSincronizacao: () => actions.aguardarSincronizacao(),
+      recarregar: () => actions.recarregar(),
+      versoesDoMes: () => (state.ds.radar.metasComerciais ?? []).filter((m) => m.mes === mes),
+      lerPersistidas: () => lerMetasComerciaisDoMes(mes),
+    });
+  },
+
+  /** Espera a fila de sincronização com o banco esvaziar (inclusive o que entrar enquanto espera) e devolve o status final. */
+  async aguardarSincronizacao(): Promise<SyncStatus> {
+    let atual: Promise<void>;
+    do { atual = fila; await atual; } while (atual !== fila);
+    return state.sync;
+  },
+
+  /**
+   * CD-D3/E3 — completa o valor de um ganho registrado SEM valor (D3-B: corrige o mês do ganho; nada é apagado). Mesmas
+   * regras da RPC radar_complementar_valor_ganho (Administrador e Diretoria = radar_config; um complemento por ganho;
+   * valor positivo com até 2 casas; motivo). No remoto a RPC é a autoridade e a recarga traz o evento do banco.
+   */
+  complementarValorGanhoRadar(ganhoId: string, valor: number, motivo: string): EventoDesfecho {
+    let ds = state.ds;
+    exigir('radar_config');
+    const r = ds.radar;
+    const livro = r.desfechos;
+    if (!livro) throw new RegraDeNegocioError('O livro de desfechos ainda não está disponível neste banco.');
+    const recusa = motivosRecusaComplemento(livro, ganhoId, valor, motivo);
+    if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
+    const ids = idsRadar(r);
+    const ev = complementoDoGanho(livro, ganhoId, valor, motivo, { agora: ids.agora, atorId: state.usuario.id, novoId: () => ids.novo('DSF') });
+    const radar: RadarDataset = { ...r, desfechos: [...livro, ev] };
+    ds = registrar({ ...ds, radar }, 'radar_complementar_valor_ganho', 'radar_desfecho', ev.id, { ganho: ganhoId, valor: null }, { ganho: ganhoId, valor }, ev.motivo);
+    commit(ds);
+    return ev;
   },
 
   inativarEmpresaRadar(id: string, motivo: string) {
@@ -2332,9 +2702,9 @@ export const actions = {
     const t = agora();
     let novo: Oportunidade;
     if (!atual) {
-      const recusa = motivosRecusaTransicao(undefined, o.estagio, { motivo: o.motivoFechamento });
+      const recusa = motivosRecusaTransicao(undefined, o.estagio, { motivo: o.motivoFechamento, valorFechado: o.valorFechado });
       if (recusa.length) throw new RegraDeNegocioError(recusa.join(' '));
-      novo = aplicarTransicao({ ...o, titulo: o.titulo.trim(), fechadoEm: undefined }, o.estagio, { motivo: o.motivoFechamento }, t);
+      novo = aplicarTransicao({ ...o, titulo: o.titulo.trim(), fechadoEm: undefined }, o.estagio, { motivo: o.motivoFechamento, valorFechado: o.valorFechado }, t);
       if (!ESTAGIOS_FECHADOS.includes(o.estagio)) novo = { ...novo, probabilidade: o.probabilidade || PROBABILIDADE_ESTAGIO[o.estagio] };
     } else {
       if (o.estagio !== atual.estagio) throw new RegraDeNegocioError('Para mudar o estágio, use a mudança de estágio (com motivo quando exigido).');
@@ -2345,7 +2715,7 @@ export const actions = {
     exigirProximaAcao(novo, r.tarefas);
     const ids = idsRadar(r);
     let radar: RadarDataset = { ...r, oportunidades: atual ? r.oportunidades.map((x) => (x.id === o.id ? novo : x)) : [...r.oportunidades, novo] };
-    if (!atual) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: undefined, para: novo.estagio, usuarioId: state.usuario.id, motivo: novo.motivoFechamento, em: t }] };
+    if (!atual) radar = { ...radar, historicoEstagios: [...radar.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: novo.id, de: undefined, para: novo.estagio, usuarioId: state.usuario.id, motivo: novo.motivoFechamento, em: t }], desfechos: desfechosDaTransicao(radar, undefined, novo, ids) };
     radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
     ds = registrar({ ...ds, radar }, atual ? 'radar_alterar_oportunidade' : 'radar_criar_oportunidade', 'radar_oportunidade', o.id, atual, novo);
     commit(ds);
@@ -2381,12 +2751,12 @@ export const actions = {
     const novo = aplicarTransicao(base, para, dados, t);
     exigirProximaAcao(novo, r.tarefas);
     const ids = idsRadar(r);
-    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo?.trim(), em: t }] };
+    let radar: RadarDataset = { ...r, oportunidades: r.oportunidades.map((x) => (x.id === id ? novo : x)), historicoEstagios: [...r.historicoEstagios, { id: ids.novo('HST'), oportunidadeId: id, de: o.estagio, para, usuarioId: state.usuario.id, motivo: dados.motivo?.trim(), em: t }], desfechos: desfechosDaTransicao(r, o, novo, ids) };
     if (fecha) radar = { ...radar, tarefas: radar.tarefas.map((x) => (x.oportunidadeId === id && x.status === 'Aberta' ? { ...x, status: 'Cancelada' as const } : x)) };
     radar = recalcularEmpresasRadar(radar, [o.empresaId], ids);
     ds = registrar({ ...ds, radar }, 'radar_mudar_estagio', 'radar_oportunidade', id,
-      { estagio: o.estagio, fechadoEm: o.fechadoEm ?? null, valorEstimado: o.valorEstimado ?? null },
-      { estagio: para, fechadoEm: novo.fechadoEm ?? null, valorEstimado: novo.valorEstimado ?? null }, dados.motivo?.trim());
+      { estagio: o.estagio, fechadoEm: o.fechadoEm ?? null, valorEstimado: o.valorEstimado ?? null, valorFechado: o.valorFechado ?? null },
+      { estagio: para, fechadoEm: novo.fechadoEm ?? null, valorEstimado: novo.valorEstimado ?? null, valorFechado: novo.valorFechado ?? null }, dados.motivo?.trim());
     commit(ds);
     return novo;
   },
@@ -3412,15 +3782,59 @@ export const actions = {
     const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
     const proposta = opcoes.propostaId ? i.acoes.find((a) => a.id === opcoes.propostaId && a.threadId === t.id) : undefined;
     const m: InboxMessage = { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'outbound', tipo: 'texto', autor: atorAtual(), texto: texto.trim(), anexos: [], em: ids.agora, entrega: envio.entrega, externalMessageId: envio.externalMessageId, propostaId: proposta?.id };
-    const novo = aoResponder(entrar(t, state.usuario.id), ids.agora);
-    const eventos = [eventoInbox(ids, t.id, 'MESSAGE_REGISTERED', `rascunho de resposta ${envio.entrega}: ${envio.motivo}`, undefined, undefined, m.id)];
+    // Rascunho (entrega `registrada`) NAO cumpre o SLA: nada saiu e ninguem foi atendido. So conta resposta que um
+    // canal efetivamente enviou — e o contato declarado por pessoa, que tem acao propria (inboxRegistrarContato).
+    const efetiva = ehRespostaEfetiva(m);
+    const novo = aoResponder(entrar(t, state.usuario.id), ids.agora, efetiva);
+    const eventos = [eventoInbox(ids, t.id, 'MESSAGE_REGISTERED', `${efetiva ? 'resposta' : 'rascunho de resposta'} ${envio.entrega}: ${envio.motivo}`, undefined, undefined, m.id)];
     if (novo.status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'primeira ação da EIFF na conversa', t.status, novo.status));
     let acoes = i.acoes;
     if (proposta && (proposta.estado === 'proposta' || proposta.estado === 'aprovada')) {
       acoes = trocar(i.acoes, { ...proposta, estado: 'executada', executadaEm: ids.agora, referencia: m.id, aprovacao: { ...proposta.aprovacao, decisao: 'aprovada', decididaPor: state.usuario.id, decididaEm: ids.agora } });
       eventos.push(eventoInbox(ids, t.id, 'ACTION_EXECUTED', `sugestão ${proposta.id} usada na resposta`));
     }
-    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos], acoes }), 'inbox_responder', 'inbox_thread', t.id, undefined, { mensagemId: m.id, entrega: envio.entrega, chars: m.texto.length, propostaId: proposta?.id }));
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos], acoes }), 'inbox_responder', 'inbox_thread', t.id, undefined, { mensagemId: m.id, entrega: envio.entrega, chars: m.texto.length, propostaId: proposta?.id, cumpreSla: efetiva }));
+    return m;
+  },
+
+  /**
+   * CONTATO DECLARADO: uma pessoa registra que FALOU com o interessado fora de um canal ligado (telefone, e-mail,
+   * WhatsApp externo, presencial) — ou que tentou e nao conseguiu.
+   *
+   * So o resultado `realizado` cumpre o SLA de primeira resposta, e so o PRIMEIRO: contatos posteriores ficam no
+   * historico e nao mexem em `primeiraRespostaEm`. `tentativa` vira nota interna marcada, sem efeito no prazo.
+   * O instante do SLA e o DECLARADO do contato (nunca no futuro, nunca antes da abertura); o instante do registro
+   * fica ao lado (`registradaEm`, relogio do banco depois de sincronizar). Quem declarou e o usuario autenticado.
+   * Repetir o mesmo registro (duplo clique, fila offline) devolve o que ja existe. Nada e enviado a ninguem.
+   */
+  inboxRegistrarContato(threadId: string, pedido: PedidoDeContato): InboxMessage {
+    exigir('inbox');
+    const ds = state.ds; const i = inboxDe(ds); const t = threadDoInbox(i, threadId); const ids = idsInbox(i);
+    const p: PedidoDeContato = { ...pedido, resumo: pedido.resumo.trim(), em: Number.isNaN(Date.parse(pedido.em)) ? pedido.em : new Date(pedido.em).toISOString() };
+    const erros = validarContato(p, t, ids.agora);
+    if (erros.length) throw new RegraDeNegocioError(erros[0]);
+    const repetido = contatoDuplicado(i.mensagens, t.id, state.usuario.id, p);
+    if (repetido) return repetido;
+    const realizado = p.resultado === 'realizado';
+    const m: InboxMessage = realizado
+      ? { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'outbound', tipo: 'texto', autor: atorAtual(), texto: p.resumo, anexos: [], em: p.em, registradaEm: ids.agora, entrega: 'entregue', meta: metaDoContato(p) }
+      : { id: ids.novoId('MSG'), threadId: t.id, provider: t.provider, direcao: 'interna', tipo: 'nota', autor: atorAtual(), texto: p.resumo, anexos: [], em: p.em, registradaEm: ids.agora, meta: metaDoContato(p) };
+    const antes = t.sla?.primeiraRespostaEm;
+    const base = entrar(t, state.usuario.id);
+    const novo = realizado ? aoResponder(base, p.em, true) : { ...base, ultimaMensagemEm: !base.ultimaMensagemEm || ids.agora > base.ultimaMensagemEm ? ids.agora : base.ultimaMensagemEm };
+    const primeiro = realizado && !antes && !!novo.sla?.primeiraRespostaEm;
+    const situacao = situacaoPrimeiraResposta(novo);
+    const quando = `${p.em.slice(8, 10)}/${p.em.slice(5, 7)} ${p.em.slice(11, 16)} UTC`;
+    const eventos = [eventoInbox(ids, t.id, realizado ? 'MESSAGE_REGISTERED' : 'NOTE_ADDED',
+      realizado
+        ? `contato realizado por ${NOME_MEIO[p.meio]}, declarado para ${quando}${primeiro ? ` — primeira resposta ${situacao === 'respondida_no_prazo' ? 'dentro do prazo' : 'FORA do prazo'}` : ' (a primeira resposta já estava registrada)'}`
+        : `tentativa de contato por ${NOME_MEIO[p.meio]} sem sucesso, declarada para ${quando} — não cumpre o SLA`,
+      undefined, undefined, m.id)];
+    if (novo.status !== t.status) eventos.push(eventoInbox(ids, t.id, 'STATUS_CHANGED', 'primeira ação da EIFF na conversa', t.status, novo.status));
+    commit(registrar(comInbox(ds, { ...i, threads: trocar(i.threads, novo), mensagens: [...i.mensagens, m], eventos: [...i.eventos, ...eventos] }),
+      realizado ? 'inbox_contato_realizado' : 'inbox_tentativa_contato', 'inbox_thread', t.id,
+      { primeiraRespostaEm: antes ?? null },
+      { mensagemId: m.id, meio: p.meio, declaradoEm: p.em, registradoEm: ids.agora, declaradoPor: state.usuario.id, primeiraResposta: primeiro, primeiraRespostaEm: novo.sla?.primeiraRespostaEm ?? null, situacao, chars: m.texto.length }));
     return m;
   },
 

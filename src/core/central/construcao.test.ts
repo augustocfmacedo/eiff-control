@@ -451,8 +451,10 @@ describe('14 · EIFF Inbox observado pela Central', () => {
   it('o Inbox está no catálogo, no domínio da Central, cobrindo /atendimento', () => {
     expect(inbox).toBeDefined();
     expect(inbox.dominio).toBe('CENTRAL');
-    expect(inbox.rotas).toEqual(['/atendimento']);
+    // /atendimento/leads (Leads do site) é uma visão das MESMAS conversas do Inbox: mesmo módulo, sem cadastro próprio
+    expect(inbox.rotas).toEqual(['/atendimento', '/atendimento/leads']);
     expect(classificarSuperficie('/atendimento')).toEqual({ tipo: 'MODULO', moduloId: 'INBOX' });
+    expect(classificarSuperficie('/atendimento/leads')).toEqual({ tipo: 'MODULO', moduloId: 'INBOX' });
   });
 
   it('o estado do Inbox é derivado: componentes com evidência concluídos, pendências declaradas como plano, módulo em construção', () => {

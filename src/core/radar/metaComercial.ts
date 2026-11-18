@@ -95,8 +95,21 @@ function deslocamentoMinutos(ms: number): number {
 /** Instante ISO com fuso explícito → milissegundos; outro formato → `undefined` (nunca o fuso da máquina). */
 export function instanteEmMs(valor: string | undefined): number | undefined {
   if (!valor || !INSTANTE.test(valor)) return undefined;
-  const ms = Date.parse(valor);
+  // fração além do milissegundo é truncada explicitamente (nunca arredondada pelo motor de datas)
+  const ms = Date.parse(valor.replace(/(\.\d{3})\d+/, '$1'));
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
+ * CD-D3/E3: instante em MICROSSEGUNDOS, só para ORDENAR e comparar eventos do livro. O banco grava o desfecho com
+ * clock_timestamp() (microssegundos) e GANHO → ESTORNO → novo GANHO podem cair no mesmo milissegundo; com ms eles
+ * empatavam e o desempate por tipo/id perdia a ordem real. O mês comercial continua vindo de `instanteEmMs`.
+ */
+export function instanteEmMicros(valor: string | undefined): number | undefined {
+  const ms = instanteEmMs(valor);
+  if (ms === undefined) return undefined;
+  const fracao = /:\d{2}\.(\d+)/.exec(valor!)?.[1] ?? '';
+  return ms * 1000 + Number((fracao + '000000').slice(3, 6));
 }
 
 export const mesValido = (mes: string): boolean => MES.test(mes);
@@ -298,16 +311,16 @@ const canonico = (e: EventoDesfecho) => JSON.stringify(Object.keys(e).sort().map
  */
 export function lerLivroDesfechos(eventos: readonly EventoDesfecho[], ate?: string): LivroDesfechos {
   const inconsistencias: InconsistenciaEvento[] = [];
-  const ateMs = ate === undefined ? undefined : instanteEmMs(ate);
+  const ateMs = ate === undefined ? undefined : instanteEmMicros(ate);
   if (ate !== undefined && ateMs === undefined) throw new Error('instante de referência inválido');
 
   // 1. validação e ordem determinística (instante, tipo, id, conteúdo)
   const validos: (EventoDesfecho & { ms: number })[] = [];
   for (const e of eventos) {
     if (!TIPOS_EVENTO_DESFECHO.includes(e.tipo)) { inconsistencias.push({ codigo: 'TIPO_INVALIDO', eventoId: e.id, detalhe: `tipo ${String(e.tipo)}` }); continue; }
-    const ms = instanteEmMs(e.ocorridoEm);
+    const ms = instanteEmMicros(e.ocorridoEm);
     if (ms === undefined) { inconsistencias.push({ codigo: 'INSTANTE_INVALIDO', eventoId: e.id, detalhe: `ocorridoEm ${e.ocorridoEm} sem fuso explícito ou inválido` }); continue; }
-    if (ateMs !== undefined && ms > ateMs) continue;
+    if (ateMs !== undefined && ms > ateMs) continue; // ambos em microssegundos
     validos.push({ ...e, ms });
   }
   validos.sort((a, b) => a.ms - b.ms || ORDEM_TIPO[a.tipo] - ORDEM_TIPO[b.tipo] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) || (canonico(a) < canonico(b) ? -1 : 1));
@@ -341,7 +354,7 @@ export function lerLivroDesfechos(eventos: readonly EventoDesfecho[], ate?: stri
     if (e.tipo === 'ESTORNO_GANHO') {
       if (!g || g.oportunidadeId !== e.oportunidadeId) { inconsistencias.push({ codigo: 'ESTORNO_SEM_GANHO', eventoId: e.id, detalhe: `ganho ${e.ganhoId ?? '(não informado)'} não encontrado nesta oportunidade` }); continue; }
       if (g.estornadoPor) { inconsistencias.push({ codigo: 'ESTORNO_REPETIDO', eventoId: e.id, detalhe: `o ganho ${g.id} já foi estornado por ${g.estornadoPor}` }); continue; }
-      if (e.ms < instanteEmMs(g.ocorridoEm)!) { inconsistencias.push({ codigo: 'ESTORNO_ANTERIOR_AO_GANHO', eventoId: e.id, detalhe: `estorno antes do ganho ${g.id}` }); continue; }
+      if (e.ms < instanteEmMicros(g.ocorridoEm)!) { inconsistencias.push({ codigo: 'ESTORNO_ANTERIOR_AO_GANHO', eventoId: e.id, detalhe: `estorno antes do ganho ${g.id}` }); continue; }
       g.estornadoPor = e.id;
       if (ativoPorOportunidade.get(e.oportunidadeId) === g.id) ativoPorOportunidade.delete(e.oportunidadeId);
       estornos.push({ id: e.id, ganhoId: g.id, oportunidadeId: e.oportunidadeId, ocorridoEm: e.ocorridoEm, mes });
@@ -351,7 +364,7 @@ export function lerLivroDesfechos(eventos: readonly EventoDesfecho[], ate?: stri
     if (!g || g.oportunidadeId !== e.oportunidadeId) { inconsistencias.push({ codigo: 'COMPLEMENTO_SEM_GANHO', eventoId: e.id, detalhe: `ganho ${e.ganhoId ?? '(não informado)'} não encontrado nesta oportunidade` }); continue; }
     if (g.centavosNoGanho !== undefined) { inconsistencias.push({ codigo: 'COMPLEMENTO_EM_GANHO_COM_VALOR', eventoId: e.id, detalhe: `o ganho ${g.id} já tem valor confirmado` }); continue; }
     if (g.complemento) { inconsistencias.push({ codigo: 'COMPLEMENTO_REPETIDO', eventoId: e.id, detalhe: `o ganho ${g.id} já foi complementado por ${g.complemento.id}` }); continue; }
-    if (e.ms < instanteEmMs(g.ocorridoEm)!) { inconsistencias.push({ codigo: 'COMPLEMENTO_ANTERIOR_AO_GANHO', eventoId: e.id, detalhe: `complemento antes do ganho ${g.id}` }); continue; }
+    if (e.ms < instanteEmMicros(g.ocorridoEm)!) { inconsistencias.push({ codigo: 'COMPLEMENTO_ANTERIOR_AO_GANHO', eventoId: e.id, detalhe: `complemento antes do ganho ${g.id}` }); continue; }
     const l = lerValor(e.valor);
     if (l.estado !== 'VALIDO') { inconsistencias.push({ codigo: l.estado === 'AUSENTE' ? 'COMPLEMENTO_SEM_VALOR' : 'VALOR_INVALIDO', eventoId: e.id, detalhe: `valor ${String(e.valor)}` }); continue; }
     g.complemento = { id: e.id, ocorridoEm: e.ocorridoEm, mes, centavos: l.centavos };

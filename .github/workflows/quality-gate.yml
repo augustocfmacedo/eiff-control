@@ -130,6 +130,21 @@ jobs:
       - name: PostgreSQL Smoke (EIFF Inbox)
         run: node scripts/pg-smoke-inbox.mjs
 
+      # scripts/pg-smoke-formulario.mts prova a entrada do formulário do site num PGlite descartável, com o CÓDIGO de
+      # produção (gravarSubmissao, a montagem da RPC, a leitura da interface e o Octopus Router): evidência + conversa,
+      # os cenários de recuperação, a fonte canônica verificada antes de escrever, o prazo de 30 minutos úteis sem
+      # falso sucesso e os demais canais com o SLA intacto. Submissões fictícias, ROLLBACK ao final, nenhuma rede.
+      # Sai com código 1 se qualquer prova falhar. Não toca em banco externo, não usa segredo.
+      - name: PostgreSQL Smoke (formulário do site)
+        run: npm run smoke:formulario
+
+      # scripts/pg-smoke-email.mjs aplica a 0075 (livro de entregas do e-mail comercial) num PGlite descartável e prova
+      # idempotência por intenção, entrega pendente, tetos diários, máquina de estados, comando imutável, histórico
+      # append-only, o vínculo com o SLA (só o aceite preenche a primeira resposta), a permissão conferida no banco e que
+      # o navegador só lê — 15 provas A–O, ROLLBACK ao final. Nenhuma rede, nenhum e-mail, nenhum segredo.
+      - name: PostgreSQL Smoke (e-mail comercial)
+        run: npm run smoke:email
+
       # scripts/pg-smoke-fin-reset.mjs aplica a fila INTEIRA de migrations num PGlite descartável e prova o FIN-RESET-01
       # (0061/0062): reset do extrato com lista fechada, reimportação do mesmo OFX sem FITID ativo duplicado, relançamento
       # sem colidir, desfazer e autoridade (só o dono do banco executa). Sai com código 1 se qualquer prova falhar.
@@ -148,6 +163,20 @@ jobs:
       # rollback exato versionado. Sai com código 1 se qualquer prova falhar.
       - name: PostgreSQL Smoke (CD-D3 metas comerciais)
         run: node scripts/pg-smoke-meta-comercial.mjs
+
+      # scripts/pg-smoke-desfechos.mjs aplica a FILA INTEIRA (0001..0070) num PGlite descartável e prova o livro imutável de
+      # desfechos (CD-D3/E3): GANHO ao entrar em WON com tudo congelado, WON → WON sem duplicar, ganha travada, ESTORNO ao
+      # reabrir/perder, novo ganho, complemento governado, atomicidade, livro imutável, escrita direta negada, isolamento por
+      # organização, search_path seguro e o rollback exato. Sai com código 1 se qualquer prova falhar.
+      - name: PostgreSQL Smoke (CD-D3 livro de desfechos)
+        run: node scripts/pg-smoke-desfechos.mjs
+
+      # scripts/pg-smoke-meta-intencao.mjs aplica a FILA INTEIRA (até a 0074) num PGlite descartável e prova a idempotência
+      # por intenção da meta comercial (E5-REL-01): reenvio devolve o resultado original sem versão nova (mesmo depois de
+      # outra sessão mudar a meta), mesmo id com conteúdo diferente recusado, pré-condição de versão vigente, nova decisão
+      # legítima, governança, isolamento, registro imutável e rollback exato. Concorrência real: gate em PostgreSQL 17.6.
+      - name: PostgreSQL Smoke (CD-D3 meta por intenção)
+        run: node scripts/pg-smoke-meta-intencao.mjs
 
       # scripts/pg-smoke-widget-token.mjs aplica a 0069 (widgets do iPad) num PGlite descartável e prova o token por aparelho:
       # só Administrador ativo cria, o segredo nunca fica em claro (só SHA-256), validação só para service_role com cada recusa

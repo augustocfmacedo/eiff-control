@@ -1,0 +1,1405 @@
+{
+ "versaoRegras": "CD-1.2",
+ "hoje": "2026-10-14",
+ "geradoDe": {
+  "versaoFila": "CM1-A.1"
+ },
+ "commercialQueue": {
+  "versaoRegras": "CM1-A.1",
+  "total": {
+   "id": "fila.total",
+   "descricao": "contas na Commercial Queue",
+   "unidade": "CONTAS",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 4
+  },
+  "porCategoria": {
+   "AGIR_AGORA": {
+    "id": "fila.categoria.AGIR_AGORA",
+    "descricao": "contas da fila na categoria AGIR_AGORA",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 2,
+    "base": 4
+   },
+   "AVANCAR_OPORTUNIDADE": {
+    "id": "fila.categoria.AVANCAR_OPORTUNIDADE",
+    "descricao": "contas da fila na categoria AVANCAR_OPORTUNIDADE",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "FOLLOW_UP": {
+    "id": "fila.categoria.FOLLOW_UP",
+    "descricao": "contas da fila na categoria FOLLOW_UP",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "REVISAR": {
+    "id": "fila.categoria.REVISAR",
+    "descricao": "contas da fila na categoria REVISAR",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "PROSPECTAR": {
+    "id": "fila.categoria.PROSPECTAR",
+    "descricao": "contas da fila na categoria PROSPECTAR",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "ENRIQUECER": {
+    "id": "fila.categoria.ENRIQUECER",
+    "descricao": "contas da fila na categoria ENRIQUECER",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "NURTURE": {
+    "id": "fila.categoria.NURTURE",
+    "descricao": "contas da fila na categoria NURTURE",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "AGENDADO": {
+    "id": "fila.categoria.AGENDADO",
+    "descricao": "contas da fila na categoria AGENDADO",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   }
+  },
+  "foraDaFila": {
+   "EMPRESA_MESCLADA": {
+    "id": "fila.fora.EMPRESA_MESCLADA",
+    "descricao": "contas fora da fila pelo motivo EMPRESA_MESCLADA",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 6
+   },
+   "EMPRESA_INATIVA": {
+    "id": "fila.fora.EMPRESA_INATIVA",
+    "descricao": "contas fora da fila pelo motivo EMPRESA_INATIVA",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 6
+   },
+   "EMPRESA_SUPRIMIDA": {
+    "id": "fila.fora.EMPRESA_SUPRIMIDA",
+    "descricao": "contas fora da fila pelo motivo EMPRESA_SUPRIMIDA",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "SEM_RELEVANCIA_ATUAL": {
+    "id": "fila.fora.SEM_RELEVANCIA_ATUAL",
+    "descricao": "contas fora da fila pelo motivo SEM_RELEVANCIA_ATUAL",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   }
+  },
+  "referencias": [
+   {
+    "posicao": 1,
+    "empresaId": "E1",
+    "categoria": "AGIR_AGORA",
+    "porQueAgora": "RESPOSTA_NAO_TRATADA",
+    "referencia": {
+     "tipo": "atividade",
+     "id": "A1"
+    }
+   },
+   {
+    "posicao": 2,
+    "empresaId": "E6",
+    "categoria": "AGIR_AGORA",
+    "porQueAgora": "OPORTUNIDADE_PARADA_CRITICA",
+    "referencia": {
+     "tipo": "oportunidade",
+     "id": "O1"
+    }
+   },
+   {
+    "posicao": 3,
+    "empresaId": "E2",
+    "categoria": "FOLLOW_UP",
+    "porQueAgora": "FOLLOW_UP_SEM_RESPOSTA",
+    "referencia": {
+     "tipo": "atividade",
+     "id": "A2"
+    }
+   },
+   {
+    "posicao": 4,
+    "empresaId": "E5",
+    "categoria": "NURTURE",
+    "porQueAgora": "CLIENTE_GANHO",
+    "referencia": {
+     "tipo": "oportunidade",
+     "id": "O9"
+    }
+   }
+  ]
+ },
+ "base": {
+  "empresasRadar": {
+   "id": "base.empresasRadar",
+   "descricao": "empresas no Radar (todas)",
+   "unidade": "CONTAS",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 6
+  },
+  "empresasAtivas": {
+   "id": "base.empresasAtivas",
+   "descricao": "empresas ativas e não mescladas",
+   "unidade": "CONTAS",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 4,
+   "base": 6
+  },
+  "naFila": {
+   "id": "base.naFila",
+   "descricao": "empresas com entrada na Commercial Queue",
+   "unidade": "CONTAS",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 4,
+   "base": 6
+  },
+  "foraDaFila": {
+   "id": "base.foraDaFila",
+   "descricao": "empresas fora da Commercial Queue (qualquer motivo)",
+   "unidade": "CONTAS",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 2,
+   "base": 6
+  },
+  "porClasseRadar": {
+   "A+": {
+    "id": "base.classe.A+",
+    "descricao": "empresas ativas com classe A+ no Radar",
+    "unidade": "CONTAS",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "A": {
+    "id": "base.classe.A",
+    "descricao": "empresas ativas com classe A no Radar",
+    "unidade": "CONTAS",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "B": {
+    "id": "base.classe.B",
+    "descricao": "empresas ativas com classe B no Radar",
+    "unidade": "CONTAS",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "C": {
+    "id": "base.classe.C",
+    "descricao": "empresas ativas com classe C no Radar",
+    "unidade": "CONTAS",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "D": {
+    "id": "base.classe.D",
+    "descricao": "empresas ativas com classe D no Radar",
+    "unidade": "CONTAS",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   }
+  },
+  "contasSemDono": {
+   "id": "base.contasSemDono",
+   "descricao": "contas ativas e não mescladas sem dono comercial válido (SEM_DONO ou DONO_INATIVO)",
+   "unidade": "CONTAS",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 3,
+   "base": 4
+  }
+ },
+ "decisores": {
+  "comAlgumContatoAtivo": {
+   "id": "decisores.comAlgumContatoAtivo",
+   "descricao": "empresas ativas com ao menos um contato ativo (qualquer cargo)",
+   "unidade": "CONTAS",
+   "autoridade": "CONTATOS",
+   "estado": "DISPONIVEL",
+   "valor": 3,
+   "base": 4
+  },
+  "comDecisorMarcado": {
+   "id": "decisores.comDecisorMarcado",
+   "descricao": "empresas ativas com ao menos um contato ativo marcado como decisor",
+   "unidade": "CONTAS",
+   "autoridade": "CONTATOS",
+   "estado": "DISPONIVEL",
+   "valor": 2,
+   "base": 4
+  },
+  "comContatoElegivel": {
+   "id": "decisores.comContatoElegivel",
+   "descricao": "empresas ativas com ao menos um contato elegível (contatoElegivel: ativo, situação ATIVO, sem não-contatar/opt-out)",
+   "unidade": "CONTAS",
+   "autoridade": "CONTATOS",
+   "estado": "DISPONIVEL",
+   "valor": 3,
+   "base": 4
+  },
+  "comContatoRecomendado": {
+   "id": "decisores.comContatoRecomendado",
+   "descricao": "empresas ativas com contato recomendado (coberturaEmpresa ≠ NO_CONTACT)",
+   "unidade": "CONTAS",
+   "autoridade": "COBERTURA",
+   "estado": "DISPONIVEL",
+   "valor": 3,
+   "base": 4
+  },
+  "porNivelCobertura": {
+   "IDEAL_DECISION_MAKER": {
+    "id": "decisores.cobertura.IDEAL_DECISION_MAKER",
+    "descricao": "empresas ativas no nível de cobertura IDEAL_DECISION_MAKER",
+    "unidade": "CONTAS",
+    "autoridade": "COBERTURA",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "USABLE_CONTACT": {
+    "id": "decisores.cobertura.USABLE_CONTACT",
+    "descricao": "empresas ativas no nível de cobertura USABLE_CONTACT",
+    "unidade": "CONTAS",
+    "autoridade": "COBERTURA",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "NEEDS_BETTER_DECISION_MAKER": {
+    "id": "decisores.cobertura.NEEDS_BETTER_DECISION_MAKER",
+    "descricao": "empresas ativas no nível de cobertura NEEDS_BETTER_DECISION_MAKER",
+    "unidade": "CONTAS",
+    "autoridade": "COBERTURA",
+    "estado": "DISPONIVEL",
+    "valor": 3,
+    "base": 4
+   },
+   "NO_CONTACT": {
+    "id": "decisores.cobertura.NO_CONTACT",
+    "descricao": "empresas ativas no nível de cobertura NO_CONTACT",
+    "unidade": "CONTAS",
+    "autoridade": "COBERTURA",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   }
+  },
+  "filaComCanalAcionavel": {
+   "id": "decisores.filaComCanalAcionavel",
+   "descricao": "contas da fila cujo contato da fila tem ao menos um canal acionável",
+   "unidade": "CONTAS",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 3,
+   "base": 4
+  },
+  "prontasParaContato": {
+   "id": "decisores.prontasParaContato",
+   "descricao": "contas da fila cujo Action Plan está em modo CONTATO",
+   "unidade": "CONTAS",
+   "autoridade": "ACTION_PLAN",
+   "estado": "DISPONIVEL",
+   "valor": 2,
+   "base": 4
+  }
+ },
+ "atividade": {
+  "atividadesRegistradas": {
+   "id": "atividade.registradas",
+   "descricao": "atividades registradas em empresas ativas (inclui notas)",
+   "unidade": "ATIVIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 3
+  },
+  "notas": {
+   "id": "atividade.notas",
+   "descricao": "notas (NOTE): registro administrativo, não é toque comercial",
+   "unidade": "ATIVIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 3
+  },
+  "toquesComerciais": {
+   "id": "atividade.toques",
+   "descricao": "toques comerciais: atividades diferentes de NOTE (mesma regra de historicoDe)",
+   "unidade": "ATIVIDADES",
+   "autoridade": "HISTORICO_CONTATO",
+   "estado": "DISPONIVEL",
+   "valor": 2,
+   "base": 3
+  },
+  "toquesPorTipo": {
+   "CALL": {
+    "id": "atividade.tipo.CALL",
+    "descricao": "toques do tipo CALL",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 2
+   },
+   "MESSAGE": {
+    "id": "atividade.tipo.MESSAGE",
+    "descricao": "toques do tipo MESSAGE",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 2
+   },
+   "EMAIL": {
+    "id": "atividade.tipo.EMAIL",
+    "descricao": "toques do tipo EMAIL",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 2
+   },
+   "MEETING": {
+    "id": "atividade.tipo.MEETING",
+    "descricao": "toques do tipo MEETING",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 2
+   },
+   "VISIT": {
+    "id": "atividade.tipo.VISIT",
+    "descricao": "toques do tipo VISIT",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 2
+   },
+   "PRESENTATION": {
+    "id": "atividade.tipo.PRESENTATION",
+    "descricao": "toques do tipo PRESENTATION",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 2
+   },
+   "PROPOSAL": {
+    "id": "atividade.tipo.PROPOSAL",
+    "descricao": "toques do tipo PROPOSAL",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 2
+   },
+   "NOTE": {
+    "id": "atividade.tipo.NOTE",
+    "descricao": "NOTE não é toque comercial",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "NOTE é registro administrativo; não entra na contagem de toques"
+   },
+   "OTHER": {
+    "id": "atividade.tipo.OTHER",
+    "descricao": "toques do tipo OTHER",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 2
+   }
+  },
+  "toquesRecentes": {
+   "7d": {
+    "id": "atividade.toques7d",
+    "descricao": "toques comerciais ocorridos nos últimos 7 dias (até hoje, inclusive)",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 2
+   },
+   "30d": {
+    "id": "atividade.toques30d",
+    "descricao": "toques comerciais ocorridos nos últimos 30 dias (até hoje, inclusive)",
+    "unidade": "ATIVIDADES",
+    "autoridade": "HISTORICO_CONTATO",
+    "estado": "DISPONIVEL",
+    "valor": 2,
+    "base": 2
+   }
+  },
+  "reunioes": {
+   "id": "atividade.reunioes",
+   "descricao": "reuniões realizadas (atividade MEETING)",
+   "unidade": "ATIVIDADES",
+   "autoridade": "HISTORICO_CONTATO",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 2
+  },
+  "toquesComResultado": {
+   "id": "atividade.toquesComResultado",
+   "descricao": "toques com resultado registrado",
+   "unidade": "ATIVIDADES",
+   "autoridade": "HISTORICO_CONTATO",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 2
+  },
+  "respostasPositivas": {
+   "id": "atividade.respostasPositivas",
+   "descricao": "toques com resultado de sentimento positivo (catálogo radar_response_type)",
+   "unidade": "ATIVIDADES",
+   "autoridade": "HISTORICO_CONTATO",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 1
+  },
+  "contasTocadas": {
+   "id": "atividade.contasTocadas",
+   "descricao": "empresas ativas com ao menos um toque comercial (historicoDe.tentativas > 0)",
+   "unidade": "CONTAS",
+   "autoridade": "HISTORICO_CONTATO",
+   "estado": "DISPONIVEL",
+   "valor": 2,
+   "base": 4
+  },
+  "contasNuncaTocadas": {
+   "id": "atividade.contasNuncaTocadas",
+   "descricao": "empresas ativas sem nenhum toque comercial",
+   "unidade": "CONTAS",
+   "autoridade": "HISTORICO_CONTATO",
+   "estado": "DISPONIVEL",
+   "valor": 2,
+   "base": 4
+  },
+  "tarefasAbertas": {
+   "id": "atividade.tarefasAbertas",
+   "descricao": "tarefas abertas em empresas ativas",
+   "unidade": "TAREFAS",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "tarefasVencidasNaFila": {
+   "id": "atividade.tarefasVencidasNaFila",
+   "descricao": "tarefas com razão TAREFA_VENCIDA na Commercial Queue",
+   "unidade": "TAREFAS",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "comunicacoesPorEstado": {
+   "DRAFT": {
+    "id": "atividade.comunicacao.DRAFT",
+    "descricao": "comunicações no estado DRAFT",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "READY_FOR_REVIEW": {
+    "id": "atividade.comunicacao.READY_FOR_REVIEW",
+    "descricao": "comunicações no estado READY_FOR_REVIEW",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "APPROVED": {
+    "id": "atividade.comunicacao.APPROVED",
+    "descricao": "comunicações no estado APPROVED",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "REJECTED": {
+    "id": "atividade.comunicacao.REJECTED",
+    "descricao": "comunicações no estado REJECTED",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "SENT": {
+    "id": "atividade.comunicacao.SENT",
+    "descricao": "comunicações no estado SENT",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "REPLIED": {
+    "id": "atividade.comunicacao.REPLIED",
+    "descricao": "comunicações no estado REPLIED",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "CANCELLED": {
+    "id": "atividade.comunicacao.CANCELLED",
+    "descricao": "comunicações no estado CANCELLED",
+    "unidade": "COMUNICACOES",
+    "autoridade": "COMUNICACAO",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   }
+  },
+  "planosPorModo": {
+   "CONTATO": {
+    "id": "atividade.plano.CONTATO",
+    "descricao": "contas da fila com Action Plan no modo CONTATO",
+    "unidade": "CONTAS",
+    "autoridade": "ACTION_PLAN",
+    "estado": "DISPONIVEL",
+    "valor": 2,
+    "base": 4
+   },
+   "ACAO_INTERNA": {
+    "id": "atividade.plano.ACAO_INTERNA",
+    "descricao": "contas da fila com Action Plan no modo ACAO_INTERNA",
+    "unidade": "CONTAS",
+    "autoridade": "ACTION_PLAN",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "REVISAR": {
+    "id": "atividade.plano.REVISAR",
+    "descricao": "contas da fila com Action Plan no modo REVISAR",
+    "unidade": "CONTAS",
+    "autoridade": "ACTION_PLAN",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "ENRIQUECER": {
+    "id": "atividade.plano.ENRIQUECER",
+    "descricao": "contas da fila com Action Plan no modo ENRIQUECER",
+    "unidade": "CONTAS",
+    "autoridade": "ACTION_PLAN",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "AGUARDAR": {
+    "id": "atividade.plano.AGUARDAR",
+    "descricao": "contas da fila com Action Plan no modo AGUARDAR",
+    "unidade": "CONTAS",
+    "autoridade": "ACTION_PLAN",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   }
+  },
+  "cadenciasPorEstado": {
+   "DEVIDA": {
+    "id": "atividade.cadencia.DEVIDA",
+    "descricao": "contas da fila com cadência no estado DEVIDA",
+    "unidade": "CONTAS",
+    "autoridade": "CADENCIA",
+    "estado": "DISPONIVEL",
+    "valor": 3,
+    "base": 4
+   },
+   "AGUARDANDO": {
+    "id": "atividade.cadencia.AGUARDANDO",
+    "descricao": "contas da fila com cadência no estado AGUARDANDO",
+    "unidade": "CONTAS",
+    "autoridade": "CADENCIA",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "SUGERIR_PROXIMO_PASSO": {
+    "id": "atividade.cadencia.SUGERIR_PROXIMO_PASSO",
+    "descricao": "contas da fila com cadência no estado SUGERIR_PROXIMO_PASSO",
+    "unidade": "CONTAS",
+    "autoridade": "CADENCIA",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "PAUSADA": {
+    "id": "atividade.cadencia.PAUSADA",
+    "descricao": "contas da fila com cadência no estado PAUSADA",
+    "unidade": "CONTAS",
+    "autoridade": "CADENCIA",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "ENCERRADA": {
+    "id": "atividade.cadencia.ENCERRADA",
+    "descricao": "contas da fila com cadência no estado ENCERRADA",
+    "unidade": "CONTAS",
+    "autoridade": "CADENCIA",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 4
+   },
+   "NAO_APLICAVEL": {
+    "id": "atividade.cadencia.NAO_APLICAVEL",
+    "descricao": "contas da fila com cadência no estado NAO_APLICAVEL",
+    "unidade": "CONTAS",
+    "autoridade": "CADENCIA",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   }
+  }
+ },
+ "funil": {
+  "oportunidades": {
+   "id": "funil.oportunidades",
+   "descricao": "oportunidades de empresas ativas (todas as fases)",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 6
+  },
+  "ativas": {
+   "id": "funil.ativas",
+   "descricao": "oportunidades em estágio ativo (nem WON, nem LOST, nem NURTURE)",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 6
+  },
+  "porEstagio": {
+   "DETECTED": {
+    "id": "funil.estagio.DETECTED",
+    "descricao": "oportunidades no estágio DETECTED",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "RESEARCHING": {
+    "id": "funil.estagio.RESEARCHING",
+    "descricao": "oportunidades no estágio RESEARCHING",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "QUALIFIED": {
+    "id": "funil.estagio.QUALIFIED",
+    "descricao": "oportunidades no estágio QUALIFIED",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "DECISION_MAKER_FOUND": {
+    "id": "funil.estagio.DECISION_MAKER_FOUND",
+    "descricao": "oportunidades no estágio DECISION_MAKER_FOUND",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "CONTACT_STARTED": {
+    "id": "funil.estagio.CONTACT_STARTED",
+    "descricao": "oportunidades no estágio CONTACT_STARTED",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "ENGAGED": {
+    "id": "funil.estagio.ENGAGED",
+    "descricao": "oportunidades no estágio ENGAGED",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 6
+   },
+   "NEED_CONFIRMED": {
+    "id": "funil.estagio.NEED_CONFIRMED",
+    "descricao": "oportunidades no estágio NEED_CONFIRMED",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "PROJECT_RECEIVED": {
+    "id": "funil.estagio.PROJECT_RECEIVED",
+    "descricao": "oportunidades no estágio PROJECT_RECEIVED",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "ENGINEERING": {
+    "id": "funil.estagio.ENGINEERING",
+    "descricao": "oportunidades no estágio ENGINEERING",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "PRICING": {
+    "id": "funil.estagio.PRICING",
+    "descricao": "oportunidades no estágio PRICING",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "PROPOSAL_SENT": {
+    "id": "funil.estagio.PROPOSAL_SENT",
+    "descricao": "oportunidades no estágio PROPOSAL_SENT",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "NEGOTIATION": {
+    "id": "funil.estagio.NEGOTIATION",
+    "descricao": "oportunidades no estágio NEGOTIATION",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   },
+   "WON": {
+    "id": "funil.estagio.WON",
+    "descricao": "oportunidades no estágio WON",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 4,
+    "base": 6
+   },
+   "LOST": {
+    "id": "funil.estagio.LOST",
+    "descricao": "oportunidades no estágio LOST",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 1,
+    "base": 6
+   },
+   "NURTURE": {
+    "id": "funil.estagio.NURTURE",
+    "descricao": "oportunidades no estágio NURTURE",
+    "unidade": "OPORTUNIDADES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 6
+   }
+  },
+  "valorEstimadoAtivas": {
+   "id": "funil.valorEstimadoAtivas",
+   "descricao": "soma do valor estimado das oportunidades ativas que têm valor",
+   "unidade": "BRL",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 900000,
+   "base": 1
+  },
+  "ativasSemValor": {
+   "id": "funil.ativasSemValor",
+   "descricao": "oportunidades ativas sem valor estimado",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 1
+  },
+  "semProximaAcao": {
+   "id": "funil.semProximaAcao",
+   "descricao": "oportunidades ativas sem próxima ação nem tarefa aberta (semProximaAcao, a mesma primitiva da fila)",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 1
+  },
+  "paradasNaFila": {
+   "id": "funil.paradasNaFila",
+   "descricao": "oportunidades com razão OPORTUNIDADE_PARADA na fila (SLA da hipótese CM)",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 1
+  },
+  "paradasCriticasNaFila": {
+   "id": "funil.paradasCriticasNaFila",
+   "descricao": "oportunidades com razão OPORTUNIDADE_PARADA_CRITICA na fila",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "COMMERCIAL_QUEUE",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 1
+  },
+  "registrosDeEstagio": {
+   "id": "funil.registrosDeEstagio",
+   "descricao": "registros de mudança de estágio das oportunidades de empresas ativas",
+   "unidade": "REGISTROS_ESTAGIO",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "ganhas": {
+   "id": "funil.ganhas",
+   "descricao": "oportunidades em WON",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 4,
+   "base": 6
+  },
+  "perdidas": {
+   "id": "funil.perdidas",
+   "descricao": "oportunidades em LOST",
+   "unidade": "OPORTUNIDADES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 1,
+   "base": 6
+  },
+  "taxaGanhoSobreFechadas": {
+   "id": "funil.taxaGanhoSobreFechadas",
+   "descricao": "WON ÷ (WON + LOST)",
+   "autoridade": "RADAR",
+   "unidade": "RAZAO",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "amostra abaixo da mínima (5 < 30)",
+   "base": 5
+  },
+  "taxaContaTocadaParaOportunidade": {
+   "id": "funil.taxaContaTocadaParaOportunidade",
+   "descricao": "empresas tocadas com oportunidade ÷ empresas tocadas",
+   "autoridade": "RADAR",
+   "unidade": "RAZAO",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "amostra abaixo da mínima (2 < 30)",
+   "base": 2
+  }
+ },
+ "prospeccao": {
+  "fontesCnoAtivas": {
+   "id": "prospeccao.fontesCnoAtivas",
+   "descricao": "fontes CNO ativas",
+   "unidade": "FONTES",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "descobertos": {
+   "id": "prospeccao.descobertos",
+   "descricao": "candidatos CNO gerenciados pelo Lead Engine (metricasPiloto)",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "pendentes": {
+   "id": "prospeccao.pendentes",
+   "descricao": "candidatos PENDING",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 0
+  },
+  "emRevisao": {
+   "id": "prospeccao.emRevisao",
+   "descricao": "candidatos REVIEW",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 0
+  },
+  "rejeitados": {
+   "id": "prospeccao.rejeitados",
+   "descricao": "candidatos REJECTED",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 0
+  },
+  "promovidos": {
+   "id": "prospeccao.promovidos",
+   "descricao": "candidatos RESOLVED (promovidos por decisão humana)",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 0
+  },
+  "promovidosAssociados": {
+   "id": "prospeccao.promovidosAssociados",
+   "descricao": "promovidos por associação a empresa existente",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "a decisão associar × criar não é gravada no registro; a separação seria inferência",
+   "base": 0
+  },
+  "promovidosComEmpresaCriada": {
+   "id": "prospeccao.promovidosComEmpresaCriada",
+   "descricao": "promovidos que criaram empresa nova",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "a decisão associar × criar não é gravada no registro; a separação seria inferência",
+   "base": 0
+  },
+  "filaDeRevisao": {
+   "id": "prospeccao.filaDeRevisao",
+   "descricao": "candidatos acionáveis na fila de revisão (PENDING + REVIEW, sem suprimidos)",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "filaPorSinal": {
+   "CNO_NEW": {
+    "id": "prospeccao.sinal.CNO_NEW",
+    "descricao": "candidatos da fila de revisão com sinal CNO_NEW",
+    "unidade": "CANDIDATOS",
+    "autoridade": "LEAD_ENGINE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "CNO_EXPANSION": {
+    "id": "prospeccao.sinal.CNO_EXPANSION",
+    "descricao": "candidatos da fila de revisão com sinal CNO_EXPANSION",
+    "unidade": "CANDIDATOS",
+    "autoridade": "LEAD_ENGINE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   }
+  },
+  "filaPorDescoberta": {
+   "hoje": {
+    "id": "prospeccao.descobertos.hoje",
+    "descricao": "candidatos da fila descobertos pelo EIFF hoje (data local)",
+    "unidade": "CANDIDATOS",
+    "autoridade": "LEAD_ENGINE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "7d": {
+    "id": "prospeccao.descobertos.7d",
+    "descricao": "candidatos da fila descobertos nos últimos 7 dias",
+    "unidade": "CANDIDATOS",
+    "autoridade": "LEAD_ENGINE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "30d": {
+    "id": "prospeccao.descobertos.30d",
+    "descricao": "candidatos da fila descobertos nos últimos 30 dias",
+    "unidade": "CANDIDATOS",
+    "autoridade": "LEAD_ENGINE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "90d": {
+    "id": "prospeccao.descobertos.90d",
+    "descricao": "candidatos da fila descobertos nos últimos 90 dias",
+    "unidade": "CANDIDATOS",
+    "autoridade": "LEAD_ENGINE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   }
+  },
+  "suprimidos": {
+   "id": "prospeccao.suprimidos",
+   "descricao": "redescobertas de contas suprimidas (fora da fila acionável)",
+   "unidade": "CANDIDATOS",
+   "autoridade": "LEAD_ENGINE",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  }
+ },
+ "qualidade": {
+  "duplicatasPendentes": {
+   "id": "qualidade.duplicatasPendentes",
+   "descricao": "possíveis duplicatas pendentes de revisão",
+   "unidade": "DUPLICATAS",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0
+  },
+  "supressoesPorTipo": {
+   "do_not_contact": {
+    "id": "qualidade.supressao.do_not_contact",
+    "descricao": "supressões do tipo do_not_contact",
+    "unidade": "SUPRESSOES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "email_bounced": {
+    "id": "qualidade.supressao.email_bounced",
+    "descricao": "supressões do tipo email_bounced",
+    "unidade": "SUPRESSOES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "invalid_phone": {
+    "id": "qualidade.supressao.invalid_phone",
+    "descricao": "supressões do tipo invalid_phone",
+    "unidade": "SUPRESSOES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   },
+   "opt_out": {
+    "id": "qualidade.supressao.opt_out",
+    "descricao": "supressões do tipo opt_out",
+    "unidade": "SUPRESSOES",
+    "autoridade": "RADAR",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 0
+   }
+  },
+  "contatosInelegiveis": {
+   "id": "qualidade.contatosInelegiveis",
+   "descricao": "contatos de empresas ativas que não são elegíveis (contatoElegivel)",
+   "unidade": "CONTATOS",
+   "autoridade": "CONTATOS",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 3
+  },
+  "sinaisNaoVerificados": {
+   "id": "qualidade.sinaisNaoVerificados",
+   "descricao": "sinais de empresas ativas ainda não verificados",
+   "unidade": "SINAIS",
+   "autoridade": "RADAR",
+   "estado": "DISPONIVEL",
+   "valor": 0,
+   "base": 0
+  },
+  "travasNaFila": {
+   "DUPLICATA_PENDENTE": {
+    "id": "qualidade.trava.DUPLICATA_PENDENTE",
+    "descricao": "contas da fila com a trava DUPLICATA_PENDENTE",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "CONTATO_INELEGIVEL": {
+    "id": "qualidade.trava.CONTATO_INELEGIVEL",
+    "descricao": "contas da fila com a trava CONTATO_INELEGIVEL",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "CONFLITO_TAREFA_COMUNICACAO": {
+    "id": "qualidade.trava.CONFLITO_TAREFA_COMUNICACAO",
+    "descricao": "contas da fila com a trava CONFLITO_TAREFA_COMUNICACAO",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "OPORTUNIDADE_SEM_RESPONSAVEL": {
+    "id": "qualidade.trava.OPORTUNIDADE_SEM_RESPONSAVEL",
+    "descricao": "contas da fila com a trava OPORTUNIDADE_SEM_RESPONSAVEL",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   }
+  },
+  "dadoFaltanteNaFila": {
+   "SEM_DECISOR": {
+    "id": "qualidade.razao.SEM_DECISOR",
+    "descricao": "contas da fila com a razão SEM_DECISOR (principal ou secundária)",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "SEM_DECISOR_IDEAL_PARA_SINAL": {
+    "id": "qualidade.razao.SEM_DECISOR_IDEAL_PARA_SINAL",
+    "descricao": "contas da fila com a razão SEM_DECISOR_IDEAL_PARA_SINAL (principal ou secundária)",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "SEM_CANAL_VALIDO": {
+    "id": "qualidade.razao.SEM_CANAL_VALIDO",
+    "descricao": "contas da fila com a razão SEM_CANAL_VALIDO (principal ou secundária)",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "SINAL_NAO_VERIFICADO": {
+    "id": "qualidade.razao.SINAL_NAO_VERIFICADO",
+    "descricao": "contas da fila com a razão SINAL_NAO_VERIFICADO (principal ou secundária)",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   },
+   "INCONSISTENCIA_PARA_REVISAR": {
+    "id": "qualidade.razao.INCONSISTENCIA_PARA_REVISAR",
+    "descricao": "contas da fila com a razão INCONSISTENCIA_PARA_REVISAR (principal ou secundária)",
+    "unidade": "CONTAS",
+    "autoridade": "COMMERCIAL_QUEUE",
+    "estado": "DISPONIVEL",
+    "valor": 0,
+    "base": 4
+   }
+  }
+ },
+ "inbox": {
+  "disponivel": false,
+  "origem": "AUSENTE",
+  "threadsVisiveis": {
+   "id": "inbox.threadsVisiveis",
+   "descricao": "threads visíveis no recorte do usuário",
+   "unidade": "THREADS",
+   "autoridade": "INBOX",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "Inbox não carregado neste contexto"
+  },
+  "porContexto": {
+   "INTERNAL": {
+    "id": "inbox.contexto.INTERNAL",
+    "descricao": "threads no contexto INTERNAL",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "EXTERNAL": {
+    "id": "inbox.contexto.EXTERNAL",
+    "descricao": "threads no contexto EXTERNAL",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   }
+  },
+  "porStatus": {
+   "NOVA": {
+    "id": "inbox.status.NOVA",
+    "descricao": "threads no status NOVA",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "TRIADA": {
+    "id": "inbox.status.TRIADA",
+    "descricao": "threads no status TRIADA",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "ATRIBUIDA": {
+    "id": "inbox.status.ATRIBUIDA",
+    "descricao": "threads no status ATRIBUIDA",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "EM_ATENDIMENTO": {
+    "id": "inbox.status.EM_ATENDIMENTO",
+    "descricao": "threads no status EM_ATENDIMENTO",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "AGUARDANDO_CONTATO": {
+    "id": "inbox.status.AGUARDANDO_CONTATO",
+    "descricao": "threads no status AGUARDANDO_CONTATO",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "AGUARDANDO_INTERNO": {
+    "id": "inbox.status.AGUARDANDO_INTERNO",
+    "descricao": "threads no status AGUARDANDO_INTERNO",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "AGUARDANDO_APROVACAO": {
+    "id": "inbox.status.AGUARDANDO_APROVACAO",
+    "descricao": "threads no status AGUARDANDO_APROVACAO",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "RESOLVIDA": {
+    "id": "inbox.status.RESOLVIDA",
+    "descricao": "threads no status RESOLVIDA",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   },
+   "FECHADA": {
+    "id": "inbox.status.FECHADA",
+    "descricao": "threads no status FECHADA",
+    "unidade": "THREADS",
+    "autoridade": "INBOX",
+    "estado": "DADO_INSUFICIENTE",
+    "motivoInsuficiencia": "Inbox não carregado neste contexto"
+   }
+  },
+  "externasPorIntencao": {},
+  "externasSemClassificacao": {
+   "id": "inbox.externasSemClassificacao",
+   "descricao": "threads EXTERNAL sem classificação",
+   "unidade": "THREADS",
+   "autoridade": "INBOX",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "Inbox não carregado neste contexto"
+  },
+  "comPrimeiraResposta": {
+   "id": "inbox.comPrimeiraResposta",
+   "descricao": "threads com primeira resposta registrada",
+   "unidade": "THREADS",
+   "autoridade": "INBOX",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "Inbox não carregado neste contexto"
+  },
+  "slaVencido": {
+   "id": "inbox.slaVencido",
+   "descricao": "threads abertas com SLA de primeira resposta vencido",
+   "unidade": "THREADS",
+   "autoridade": "INBOX",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "Inbox não carregado neste contexto"
+  },
+  "contatosVinculadosAoRadar": {
+   "id": "inbox.contatosVinculadosAoRadar",
+   "descricao": "contatos do Inbox com vínculo explícito a empresa do Radar",
+   "unidade": "CONTATOS",
+   "autoridade": "INBOX",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "Inbox não carregado neste contexto"
+  },
+  "threadsPorContaRadar": {
+   "id": "inbox.threadsPorContaRadar",
+   "descricao": "threads cujo contato tem vínculo explícito com empresa do Radar",
+   "unidade": "THREADS",
+   "autoridade": "INBOX",
+   "estado": "DADO_INSUFICIENTE",
+   "motivoInsuficiencia": "Inbox não carregado neste contexto"
+  }
+ }
+}

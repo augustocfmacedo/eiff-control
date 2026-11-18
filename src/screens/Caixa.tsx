@@ -3,6 +3,7 @@
 // toda gravacao passa pelas acoes do store (lancarCaixa, pagarCaixa, estornarLiquidacoes, editarLinhaCaixa, excluirLancamento).
 import { useMemo, useState } from 'react';
 import { addDays, calcLancamentos } from '../core/engine';
+import { AjustePago } from '../ui/AjustePago';
 import { DEPARTAMENTOS, livroCaixa, type LinhaCaixa } from '../core/caixa';
 import { centralDF } from '../core/cfo';
 import { saudeCaixa, type Sinal } from '../core/saudeCaixa';
@@ -34,6 +35,7 @@ export default function Caixa() {
   const [erros, setErros] = useState<string[]>([]);
   const [edicao, setEdicao] = useState<Edicao | null>(null);
   const [estorno, setEstorno] = useState<{ id: string; motivo: string } | null>(null);
+  const [ajustePago, setAjustePago] = useState<string | null>(null);
   const [exclusao, setExclusao] = useState<{ id: string; motivo: string } | null>(null);
   const [widgets, setWidgets] = useState(false);
   const { toast, el } = useToast();
@@ -244,14 +246,16 @@ export default function Caixa() {
       )}
       {estorno && (
         <Modal title={`Desfazer pagamento de ${estorno.id}`} onClose={() => setEstorno(null)}>
-          <p>O pagamento é estornado (fica registrado na auditoria) e a linha volta a <b>previsto</b>.</p>
+          <p>O pagamento é estornado (fica registrado na auditoria) e a linha volta a <b>previsto</b>. Se o pagamento aconteceu, mas com outro valor ou outra data, use <b>Ajustar valor pago</b>.</p>
           <Field label="Motivo" req full><input autoFocus value={estorno.motivo} onChange={(e) => setEstorno({ ...estorno, motivo: e.target.value })} placeholder="ex.: marquei pago por engano" /></Field>
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
             <button className="btn" onClick={() => setEstorno(null)}>Cancelar</button>
+            <button className="btn" onClick={() => { setAjustePago(estorno.id); setEstorno(null); }}>Ajustar valor pago</button>
             <button className="btn primary" onClick={() => tentar(() => actions.estornarLiquidacoes(estorno.id, estorno.motivo), toast, () => { toast(`${estorno.id} voltou a previsto.`); setEstorno(null); })}>Desfazer pagamento</button>
           </div>
         </Modal>
       )}
+      {ajustePago && (() => { const lc = lancs.find((x) => x.id === ajustePago); const lb = ds.lancamentos.find((x) => x.id === ajustePago); return lc && lb ? <AjustePago lancamento={lb} tipo={lc.tipo} valorPagoAtual={lc.valorRealizadoTotal} dataAtual={lc.realizacao} onClose={() => setAjustePago(null)} aviso={toast} /> : null; })()}
       {exclusao && (
         <Modal title={`Excluir ${exclusao.id}`} onClose={() => setExclusao(null)}>
           <p>A linha sai do caixa, do fluxo e da DRE. Nada é apagado: o lançamento fica no filtro "Excluídos" e na auditoria.</p>

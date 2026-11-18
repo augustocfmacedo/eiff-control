@@ -17,9 +17,10 @@ import type {
 } from '../core/types';
 import { mapaPlano } from '../core/engine';
 import { radarVazio } from '../core/radar/types';
-import { carregarRadar, persistirRadar } from './radar.supabase';
+import { carregarRadar, chamadaDaMeta, metaDoBanco, persistirRadar } from './radar.supabase';
+import type { VersaoMetaComercial } from '../core/radar/metaComercial';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
-import { datasetSolicitante, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
+import { datasetSolicitante, type AlteracaoJson, type AnexoJson, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
 import { hojeLocal } from '../core/engine';
 
 // URL e chave publica vem de src/data/ambiente.ts (importado so pelo main.tsx): este modulo nao le import.meta.env, para o
@@ -233,6 +234,42 @@ export async function carregarComoServidor(c: SupabaseClient, userId: string): P
 export const contextoSolicitante = () => porta<ContextoSolicitante>('df_contexto');
 export const meusPedidosSolicitante = () => porta<PedidoSolicitante[]>('df_meus_pedidos');
 export const registrarPedidoSolicitante = (p: NovoPedidoSolicitante) => porta<PedidoSolicitante>('df_registrar_pedido', { p });
+/** Alteracao de valor de um pedido proprio (0071), para qualquer papel que pede pagamento. */
+export const pedirAlteracaoRemota = (codigo: string, valor: number, motivo: string) => porta<AlteracaoJson>('df_pedir_alteracao', { p_codigo: codigo, p_valor: valor, p_motivo: motivo });
+export const cancelarAlteracaoRemota = (id: string) => porta<AlteracaoJson>('df_cancelar_alteracao', { p_id: id });
+
+export const BUCKET_ANEXOS = 'anexos-financeiros';
+/**
+ * Documento de um lancamento (0073), para qualquer papel com permissao (inclusive o Solicitante): anexo_preparar confere a
+ * permissao e devolve a pasta <org>/<lancamento>; o arquivo sobe ao bucket privado; anexo_registrar grava a linha.
+ */
+export async function enviarAnexoRemoto(codigo: string, tipo: string, arquivo: Blob, nome: string, mime: string, extensao: string): Promise<AnexoJson> {
+  if (!supabase) throw new RemotoError('Supabase não configurado.');
+  const { pasta } = await porta<{ pasta: string }>('anexo_preparar', { p_codigo: codigo, p_tipo: tipo });
+  const caminho = `${pasta}/${crypto.randomUUID()}.${extensao}`;
+  const { error } = await cliente()!.storage.from(BUCKET_ANEXOS).upload(caminho, arquivo, { contentType: mime, upsert: false });
+  falha('enviar documento', error);
+  return porta<AnexoJson>('anexo_registrar', { p_codigo: codigo, p_tipo: tipo, p_caminho: caminho, p_nome: nome, p_mime: mime, p_tamanho: arquivo.size });
+}
+export const removerAnexoRemoto = (id: string, motivo: string) => porta<AnexoJson>('anexo_remover', { p_id: id, p_motivo: motivo });
+/** Link temporario (10 min) para abrir/baixar o documento; null quando nao ha armazenamento remoto. */
+export async function urlAnexo(caminho: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.storage.from(BUCKET_ANEXOS).createSignedUrl(caminho, 600);
+  if (error) throw new RemotoError(`Não foi possível abrir o documento: ${error.message}`);
+  return data?.signedUrl ?? null;
+}
+
+/**
+ * CD-D3/E5 — leitura direta (somente leitura, RLS do usuário) das versões PERSISTIDAS da meta comercial de um mês. É a
+ * prova usada por `definirMetaConfirmada` para afirmar "gravada" ou "não gravada" (o status da fila é global e não prova).
+ */
+export async function lerMetasComerciaisDoMes(mes: string): Promise<VersaoMetaComercial[]> {
+  if (!supabase) throw new Error('banco não configurado');
+  const { data, error } = await supabase.from('radar_commercial_goal').select('*').eq('period_month', `${mes}-01`);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((x) => metaDoBanco(x as Row));
+}
 
 export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario }> {
   if (!cliente()) throw new RemotoError('Supabase não configurado.');
@@ -289,7 +326,11 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
   const [estacaoRows, romaneioRows, stockItems, stockMovs] = await Promise.all([selTodos('station_log', 'log_date'), selTodos('shipment', 'number'), selTodos('stock_item', 'code'), selTodos('stock_movement', 'moved_on')]);
   const trainingRows = await selTodos('training_progress', 'completed_at');
   const fotoRows = await selTodos('field_photo', 'taken_at');
-  const [funcRows, alocRows, rateioRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on'), selTodos('entry_service_split', 'created_at')]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
+  const [funcRows, alocRows, rateioRows] = await Promise.all([selTodos('job_function', 'name'), selTodos('worker_allocation', 'starts_on'), selTodos('entry_service_split', 'created_at')]);
+  // alteracoes de valor dos pedidos ao Diretor Financeiro (0071): enquanto a migration nao estiver no banco, lista vazia
+  const alteracaoRows = await selTodos('payment_change_request', 'requested_at').catch(() => [] as Row[]);
+  // documentos dos lancamentos (0073): enquanto a migration nao estiver no banco, lista vazia
+  const anexoRows = await selTodos('entry_attachment', 'uploaded_at').catch(() => [] as Row[]); // fotos de campo (imagem na linha; ver CLAUDE.md sobre volume)
   const pedItensPor = new Map<string, Row[]>();
   for (const i of pedidosItens) pedItensPor.set(i.order_id, [...(pedItensPor.get(i.order_id) ?? []), i]);
   const [insumosRows, compRows, compItens, estRows, estItens] = await Promise.all([
@@ -410,7 +451,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
       competencia: l.competence_date, vencimento: l.due_date ?? '', realizacao: l.settlement_date ?? undefined, status: l.status, confiabilidade: l.confidence, probabilidade: Number(l.probability),
       contaFinanceira: l.bank_account_id ? r.contasInv.get(l.bank_account_id) ?? '' : '', valorBruto: Number(l.gross_amount), retencoes: Number(l.tax_amount), desconto: Number(l.discount_amount), multaJuros: Number(l.interest_amount),
       valorRealizado: Number(l.settled_amount) > 0 ? Number(l.settled_amount) : undefined, conciliado: l.reconciled, observacoes: l.notes ?? '', anexos: [], origem: l.source_system, idExterno: l.external_id ?? undefined,
-      criadoEm: l.created_at, criadoPor: nome(l.created_by), atualizadoEm: l.updated_at, atualizadoPor: nome(l.updated_by), versao: l.version, motivoCancelamento: l.cancellation_reason ?? undefined, faturamentoDireto: !!l.direct_billing, enviadoClienteEm: l.client_forwarded_on ?? undefined,
+      criadoEm: l.created_at, criadoPor: nome(l.created_by), atualizadoEm: l.updated_at, atualizadoPor: nome(l.updated_by), versao: l.version, motivoCancelamento: l.cancellation_reason ?? undefined, faturamentoDireto: !!l.direct_billing, enviadoClienteEm: l.client_forwarded_on ?? undefined, formaPagamento: l.payment_method ?? undefined, dadosPagamento: l.payment_details ?? undefined,
       excluidoEm: l.deleted_at ?? undefined, excluidoPor: l.deleted_by ? nome(l.deleted_by) : undefined, motivoExclusao: l.deletion_reason ?? undefined,
     })),
     liquidacoes: liqs.map((q) => ({ id: q.id, lancamentoId: r.lancsInv.get(q.entry_id) ?? '', data: q.settled_on, valor: Number(q.amount), conta: r.contasInv.get(q.bank_account_id) ?? '', documento: q.document_number ?? undefined, criadoPor: nome(q.created_by), criadoEm: q.created_at })),
@@ -484,6 +525,8 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     revisao: x.revision ?? undefined, liberadoEm: x.released_on ?? undefined, fabricadoQtd: Number(x.fabricated_qty ?? 0), expedidoQtd: Number(x.shipped_qty ?? 0), montadoQtd: Number(x.erected_qty ?? 0), observacoes: x.notes ?? '', atualizadoEm: x.updated_at,
   }));
   ds.avancos = avancosRows.map((x) => ({ id: x.id, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, data: x.measured_on, quantidade: Number(x.quantity), pct: x.pct === null || x.pct === undefined ? undefined : Number(x.pct), descricao: x.description ?? '', evidencia: x.evidence ?? undefined, responsavel: x.created_by ?? '', criadoEm: x.created_at }));
+  ds.anexosLancamento = anexoRows.map((x) => ({ id: x.id, lancamentoId: r.lancsInv.get(x.entry_id) ?? '', tipo: x.kind, nome: x.file_name, caminho: x.storage_path, mime: x.mime_type, tamanho: Number(x.size_bytes), enviadoPor: nome(x.uploaded_by), enviadoPorId: x.uploaded_by, enviadoEm: x.uploaded_at, removidoEm: x.removed_at ?? undefined, removidoPor: x.removed_by ? nome(x.removed_by) : undefined, motivoRemocao: x.removal_reason ?? undefined })).filter((a) => a.lancamentoId);
+  ds.alteracoesPedido = alteracaoRows.map((x) => ({ id: x.id, lancamentoId: r.lancsInv.get(x.entry_id) ?? '', solicitadoPor: nome(x.requested_by), solicitadoEm: x.requested_at, valorAnterior: Number(x.previous_amount), valorNovo: Number(x.new_amount), motivo: x.reason, status: x.status, decididoPor: x.decided_by ? nome(x.decided_by) : undefined, decididoEm: x.decided_at ?? undefined, motivoDecisao: x.decision_reason ?? undefined })).filter((a) => a.lancamentoId);
   ds.rateios = rateioRows.map((x) => ({ id: x.id, lancamentoId: r.lancsInv.get(x.entry_id) ?? '', codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id, medicaoId: x.measurement_id ?? undefined, descricao: x.description ?? '', valor: Number(x.amount), criadoEm: x.created_at, criadoPor: x.created_by ?? '' }));
   ds.apontamentosEstacao = estacaoRows.map((x) => ({ id: x.id, data: x.log_date, codigoObra: r.obrasInv.get(x.project_id) ?? '', servicoId: x.service_id ?? undefined, ordemId: x.order_id ?? undefined, linha: x.line, estacao: x.station, conjuntos: (x.assemblies ?? []) as { conjuntoId: string; quantidade: number }[], pecas: Number(x.pieces ?? 0), pesoKg: Number(x.weight_kg ?? 0), colaboradores: (x.workers ?? []) as { colaboradorId: string; horas: number }[], observacao: x.notes ?? '', responsavel: x.created_by ?? '', criadoEm: x.created_at }));
   ds.itensEstoque = stockItems.map((x) => ({ id: x.id, codigo: x.code, descricao: x.description, familia: x.family, insumoId: x.catalog_input_id ?? undefined, pesoUnitario: x.unit_weight != null ? Number(x.unit_weight) : undefined, estoqueMinimo: Number(x.min_stock ?? 0), ativo: !!x.active, observacoes: x.notes ?? '' }));
@@ -513,7 +556,9 @@ export const ACOES_DONO_RPC: ReadonlySet<string> = new Set(['radar_definir_dono_
 /** CD-D3/E2: ações de meta comercial que a RPC radar_definir_meta_comercial já audita no banco. */
 export const ACOES_META_RPC: ReadonlySet<string> = new Set(['radar_definir_meta_comercial', 'radar_retirar_meta_comercial']);
 /** Ações cuja auditoria o banco grava na mesma transação da mudança (o app não reenvia). */
-export const ACOES_AUDITADAS_PELA_RPC: ReadonlySet<string> = new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC]);
+/** CD-D3/E3: o complemento de valor de um ganho já é auditado pela RPC radar_complementar_valor_ganho. */
+export const ACOES_DESFECHO_RPC: ReadonlySet<string> = new Set(['radar_complementar_valor_ganho']);
+export const ACOES_AUDITADAS_PELA_RPC: ReadonlySet<string> = new Set([...ACOES_DONO_RPC, ...ACOES_META_RPC, ...ACOES_DESFECHO_RPC]);
 
 /** Motivo da mudanca de dono mais recente da empresa (id do app) entre as entradas de auditoria desta sincronizacao. */
 export function motivoDonoDaAuditoria(entradas: readonly Auditoria[], empresaId: string): string | undefined {
@@ -556,7 +601,22 @@ export async function urlFoto(f: { dataUrl?: string; caminho?: string }): Promis
 /** O provedor remoto ja carregou (refs prontas) e pode gravar. */
 export const remotoPronto = () => !!supabase && !!refs;
 
-export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: string): Promise<void> {
+/**
+ * CD-D3/E5 — reaplica UMA intenção de meta guardada no diário local (app fechado no meio do envio). A RPC da 0074 é
+ * idempotente: se a intenção já foi executada devolve o resultado original; se não, aplica com a pré-condição.
+ */
+export async function aplicarIntencaoMeta(m: VersaoMetaComercial & { intencao?: string; versaoBase?: number }): Promise<unknown> {
+  if (!supabase) throw new Error('banco não configurado');
+  const [rpc, args] = chamadaDaMeta(m);
+  const { data, error } = await supabase.rpc(rpc, args);
+  if (error) throw Object.assign(new Error(`rpc ${rpc}: ${error.message}`), { code: error.code });
+  return data;
+}
+
+/** Avisos de progresso da sincronização (CD-D3/E5: metas aceitas pelo banco, para a retomada não reenviar). */
+export interface OpcoesPersistir { aoGravarMeta?: (m: VersaoMetaComercial) => void }
+
+export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: string, opcoes: OpcoesPersistir = {}): Promise<void> {
   if (!supabase || !refs) throw new RemotoError('Provider remoto não inicializado.');
   const r = refs;
   const sb = supabase;
@@ -930,6 +990,17 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     r.conjuntos.delete(c.id);
   }
 
+  // alteracoes de valor dos pedidos (0071): o app so grava a DECISAO (nascem pela porta df_pedir_alteracao); o titulo ja foi
+  // gravado acima, e o gatilho confere que a aceita bate com o valor do titulo. RLS que filtra em silencio vira erro.
+  const altAntes = new Map((antes.alteracoesPedido ?? []).map((a) => [a.id, a]));
+  for (const a of depois.alteracoesPedido ?? []) {
+    const ant = altAntes.get(a.id);
+    if (!ant || ant.status !== 'PENDENTE' || a.status === 'PENDENTE' || a.status === 'CANCELADA') continue;
+    const { data, error } = await sb.from('payment_change_request').update({ status: a.status, decision_reason: a.motivoDecisao ?? null }).eq('id', a.id).eq('status', 'PENDENTE').select('id');
+    falha('decidir alteração de valor', error);
+    if (!data?.length) falha('decidir alteração de valor', { message: 'alteração não encontrada ou já decidida por outra pessoa' });
+  }
+
   // rateio de faturamento por servico (leitura por etapa do mesmo titulo; insere novos, remove os que sairam)
   for (const t of mudou(antes.rateios ?? [], depois.rateios ?? [], 'id').filter((x) => !r.rateios.get(x.id))) {
     const entryId = r.lancs.get(t.lancamentoId);
@@ -1052,6 +1123,7 @@ export async function persistirRemoto(antes: Dataset, depois: Dataset, atorId: s
     // CD-D5.2: operacao governada radar_definir_dono_conta, com o JWT do usuario (autoridade conferida no banco)
     rpc: async (nome, args) => { const { data, error } = await sb.rpc(nome, args); falha(`rpc ${nome}`, error); return data; },
     motivoDono: (empresaId) => motivoDonoDaAuditoria(novas, empresaId),
+    aoGravarMeta: opcoes.aoGravarMeta,
     inserir: async (tabela, rows) => { const { data, error } = await sb.from(tabela).insert(rows).select('id'); falha(`inserir ${tabela}`, error); return data ?? []; },
     gravarComposta: async (tabela, chave, row) => {
       let q = sb.from(tabela).update(row);
@@ -1111,7 +1183,7 @@ function lancRow(l: Lancamento, r: Refs, tipoDe: ReturnType<typeof mapaPlano>, a
     competence_date: l.competencia, due_date: l.vencimento || null, settlement_date: realizado ? l.realizacao ?? l.vencimento : null, status: l.status, confidence: l.confiabilidade, probability: l.probabilidade,
     bank_account_id: r.contas.get(l.contaFinanceira) ?? null, gross_amount: l.valorBruto, tax_amount: l.retencoes, discount_amount: l.desconto, interest_amount: l.multaJuros,
     settled_amount: l.status === 'Cancelado' ? 0 : l.valorRealizado ?? 0, reconciled: l.conciliado, notes: l.observacoes || null, source_system: l.origem || 'eiff-control', external_id: l.idExterno ?? l.id,
-    direct_billing: !!l.faturamentoDireto, client_forwarded_on: l.enviadoClienteEm ?? null, cancellation_reason: l.motivoCancelamento ?? null, cancelled_at: l.status === 'Cancelado' ? new Date().toISOString() : null, cancelled_by: l.status === 'Cancelado' ? atorId : null, updated_by: atorId,
+    direct_billing: !!l.faturamentoDireto, client_forwarded_on: l.enviadoClienteEm ?? null, payment_method: l.formaPagamento ?? null, payment_details: l.formaPagamento && l.dadosPagamento ? l.dadosPagamento : null, cancellation_reason: l.motivoCancelamento ?? null, cancelled_at: l.status === 'Cancelado' ? new Date().toISOString() : null, cancelled_by: l.status === 'Cancelado' ? atorId : null, updated_by: atorId,
     deleted_at: l.excluidoEm ?? null, deleted_by: l.excluidoEm ? atorId : null, deletion_reason: l.excluidoEm ? l.motivoExclusao ?? null : null,
   };
 }

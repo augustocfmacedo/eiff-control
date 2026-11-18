@@ -97,12 +97,17 @@ export function rotear(entrada: { thread: Pick<InboxThread, 'contexto' | 'assunt
 export const slaDe = (config: ConfiguracaoInbox, prioridade: Prioridade, abertaEm: string): string =>
   new Date(new Date(abertaEm).getTime() + config.slaHorasPorPrioridade[prioridade] * 3_600_000).toISOString();
 
-export type EstadoSla = 'sem_sla' | 'no_prazo' | 'vencendo' | 'vencido' | 'cumprido';
-/** Estado do SLA de primeira resposta agora. `vencendo` = menos de 25% do prazo restante. */
+export type EstadoSla = 'sem_sla' | 'no_prazo' | 'vencendo' | 'vencido' | 'cumprido' | 'atrasada' | 'sem_resposta';
+/**
+ * Estado do SLA de primeira resposta agora. `vencendo` = menos de 25% do prazo restante.
+ *
+ * `cumprido` é SÓ resposta dentro do prazo. Resposta registrada depois do vencimento é `atrasada`, e conversa
+ * resolvida ou fechada sem resposta é `sem_resposta` — antes as duas eram contadas como cumprimento.
+ */
 export function estadoSla(t: InboxThread, agoraIso: string): EstadoSla {
   if (!t.sla) return 'sem_sla';
-  if (t.sla.primeiraRespostaEm) return 'cumprido';
-  if (!ehAberta(t.status)) return 'cumprido';
+  if (t.sla.primeiraRespostaEm) return new Date(t.sla.primeiraRespostaEm).getTime() <= new Date(t.sla.primeiraRespostaAte).getTime() ? 'cumprido' : 'atrasada';
+  if (!ehAberta(t.status)) return 'sem_resposta';
   const ate = new Date(t.sla.primeiraRespostaAte).getTime();
   const agora = new Date(agoraIso).getTime();
   if (agora > ate) return 'vencido';

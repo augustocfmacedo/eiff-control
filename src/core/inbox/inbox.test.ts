@@ -9,7 +9,7 @@ import {
   CONFIGURACAO_PADRAO, EXECUCAO_FACTORY_RESERVADA, EXECUCAO_MANUAL, FACTORY_INDISPONIVEL, PROVEDOR_MANUAL, SEM_INTELIGENCIA, SETORES_PADRAO, STATUS_THREAD, TRANSICOES_THREAD,
   aoReceberMensagem, aoResponder, aplicarStatus, caixasVirtuais, classificacaoAuditavel, deEventoCentral, escalacoesPendentes, estadoSla, identificadorMascarado, inboxVazio,
   nivelMaisRestritivo, nivelPara, ordenarParaTrabalho, provedorExecucao, receberMensagem, resumoExecutivo, rotear, seedInbox, statusAposAtribuicao, threadVisivel,
-  threadsDaCaixa, triagemHumana, validarTransicao, visibilidadeDe, classificarSeguro, eventoDaTransicao, normalizarIdentificador, podeAtribuir, podeMudarStatus, recorteDe, threadDoContato,
+  threadsDaCaixa, triagemHumana, validarTransicao, visibilidadeDe, classificarSeguro, contatoDaMensagem, eventoDaTransicao, normalizarIdentificador, podeAtribuir, podeMudarStatus, recorteDe, threadDoContato,
   type Classificacao, type InboxJob, type InboxThread, type IntelligenceProvider, type MensagemRecebida, type Relogio,
 } from './index';
 
@@ -58,12 +58,18 @@ describe('máquina de estados da thread', () => {
     expect(statusAposAtribuicao(thread({ status: 'ATRIBUIDA', responsavelId: 'u1' }), 'FINANCEIRO', undefined)).toBe('TRIADA');
     expect(statusAposAtribuicao(thread({ status: 'EM_ATENDIMENTO', responsavelId: 'u1' }), 'OBRAS', 'u2')).toBe('EM_ATENDIMENTO');
   });
-  it('mensagem do contato reabre o que esperava por ele; resposta da EIFF cumpre o SLA', () => {
+  it('mensagem do contato reabre o que esperava por ele; só resposta EFETIVA da EIFF cumpre o SLA', () => {
     expect(aoReceberMensagem(thread({ status: 'AGUARDANDO_CONTATO', responsavelId: 'u1' }), AGORA).status).toBe('EM_ATENDIMENTO');
     expect(aoReceberMensagem(thread({ status: 'FECHADA' }), AGORA).status).toBe('EM_ATENDIMENTO');
     expect(aoReceberMensagem(thread({ status: 'EM_ATENDIMENTO' }), AGORA).status).toBe('EM_ATENDIMENTO');
-    const r = aoResponder(thread({ status: 'ATRIBUIDA', responsavelId: 'u1', sla: { primeiraRespostaAte: '2026-09-24T10:00:00.000Z' } }), AGORA);
+    const base = thread({ status: 'ATRIBUIDA', responsavelId: 'u1', sla: { primeiraRespostaAte: '2026-09-24T10:00:00.000Z' } });
+    const r = aoResponder(base, AGORA, true);
     expect(r.status).toBe('EM_ATENDIMENTO'); expect(r.sla?.primeiraRespostaEm).toBe(AGORA);
+    // rascunho (não efetivo): a conversa entra em atendimento, mas o relógio da primeira resposta NÃO para
+    const rascunho = aoResponder(base, AGORA, false);
+    expect(rascunho.status).toBe('EM_ATENDIMENTO'); expect(rascunho.sla?.primeiraRespostaEm).toBeUndefined();
+    // o primeiro registro é o que vale: um contato posterior não o substitui
+    expect(aoResponder(r, '2026-09-25T10:00:00.000Z', true).sla?.primeiraRespostaEm).toBe(AGORA);
   });
 });
 
@@ -103,11 +109,16 @@ describe('roteamento e política IA + humano', () => {
 
 describe('SLA, escalação e ordem de trabalho', () => {
   const sla = (ate: string, em?: string) => ({ primeiraRespostaAte: ate, primeiraRespostaEm: em });
-  it('estado do SLA: no prazo, vencendo (<25% restante), vencido, cumprido', () => {
+  it('estado do SLA: no prazo, vencendo (<25% restante), vencido, cumprido, atrasada e sem resposta', () => {
     expect(estadoSla(thread({ sla: sla('2026-09-24T10:00:00.000Z') }), AGORA)).toBe('no_prazo');
     expect(estadoSla(thread({ sla: sla('2026-09-23T12:30:00.000Z') }), AGORA)).toBe('vencendo');
     expect(estadoSla(thread({ sla: sla('2026-09-23T11:00:00.000Z') }), AGORA)).toBe('vencido');
     expect(estadoSla(thread({ sla: sla('2026-09-23T11:00:00.000Z', '2026-09-23T10:30:00.000Z') }), AGORA)).toBe('cumprido');
+    // respondida DEPOIS do vencimento não é cumprimento
+    expect(estadoSla(thread({ sla: sla('2026-09-23T11:00:00.000Z', '2026-09-23T11:00:01.000Z') }), AGORA)).toBe('atrasada');
+    // resolvida ou fechada sem resposta não é atendimento realizado
+    expect(estadoSla(thread({ status: 'RESOLVIDA', sla: sla('2026-09-24T10:00:00.000Z') }), AGORA)).toBe('sem_resposta');
+    expect(estadoSla(thread({ status: 'FECHADA', sla: sla('2026-09-23T11:00:00.000Z') }), AGORA)).toBe('sem_resposta');
     expect(estadoSla(thread(), AGORA)).toBe('sem_sla');
   });
   it('vencido sem resposta escala para o setor de escalação, exceto se já está nele', () => {
@@ -163,8 +174,10 @@ describe('visibilidade e caixas virtuais', () => {
   });
   it('resumo executivo bate com as caixas', () => {
     const r = resumoExecutivo(ds, usuario('u-augusto', 'Diretoria'), AGORA);
-    expect(r.urgente).toBe(1); expect(r.iaResolveu).toBe(1); expect(r.aguardandoContato).toBe(1); expect(r.slaVencido).toBe(1); // THR-00010: Alta, 4 h, aberta ha 6 h
-    expect(r.precisaDeMim).toBe(2);
+    // O seed ganhou 4 leads do site (THR-00011..14, Comercial, responsavel u-augusto): THR-00013 aguarda o contato,
+    // THR-00012 esta com o prazo de 30 min uteis vencido, e THR-00011/12/14 sao dele e estao vivas (2 + 3 = 5).
+    expect(r.urgente).toBe(1); expect(r.iaResolveu).toBe(1); expect(r.aguardandoContato).toBe(2); expect(r.slaVencido).toBe(2); // THR-00010: Alta, 4 h, aberta ha 6 h
+    expect(r.precisaDeMim).toBe(5);
   });
 });
 
@@ -260,7 +273,8 @@ describe('resolução de thread e fallback sem IA', () => {
     expect((await classificarSeguro(undefined, entrada, AGORA)).ok).toBe(false);
     expect((await classificarSeguro(SEM_INTELIGENCIA, entrada, AGORA)).ok).toBe(false);
     const quebrada: IntelligenceProvider = { codigo: 'LLM', async analisar() { throw new Error('timeout'); } };
-    const q = await classificarSeguro(quebrada, entrada, AGORA); expect(q.ok).toBe(false); expect(!q.ok && q.motivo).toMatch(/timeout/);
+    // a mensagem da excecao nao e reproduzida: sai o diagnostico seguro (src/core/erroSeguro.ts)
+    const q = await classificarSeguro(quebrada, entrada, AGORA); expect(q.ok).toBe(false); expect(!q.ok && q.motivo).toBe('inteligência falhou: SEM_CODIGO');
     const tagarela: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'x', assunto: 'y', entidades: [], prioridade: 'Normal', confianca: 0.9, sinais: ['z'.repeat(500)], provedor: 'LLM', versao: 'v' } }; } };
     const tg = await classificarSeguro(tagarela, entrada, AGORA); expect(tg.ok).toBe(false); expect(!tg.ok && tg.motivo).toMatch(/raciocínio/);
     const boa: IntelligenceProvider = { codigo: 'LLM', async analisar() { return { ok: true, resultado: { intencao: 'solicitar_orcamento', assunto: 'Mezanino', entidades: [], resumo: 'pede mezanino', prioridade: 'Normal', nivel: 'B', setorRecomendado: 'COMERCIAL', confianca: 0.8, sinais: ['pede prazo'], motivoOperacional: 'pedido comercial', provedor: 'LLM', versao: 'v1', modelo: 'm' } }; } };
@@ -282,7 +296,8 @@ describe('seed e higiene', () => {
     expect(ds.origem).toBe('seed');
   });
   it('o seed não afirma envio: toda saída está apenas registrada e nenhum job foi à Factory', () => {
-    for (const m of ds.mensagens.filter((m) => m.direcao === 'outbound')) expect(m.entrega).toBe('registrada');
+    // contato DECLARADO por pessoa (telefone, e-mail externo) não é envio do sistema: fica fora desta checagem
+    for (const m of ds.mensagens.filter((m) => m.direcao === 'outbound' && !contatoDaMensagem(m))) expect(m.entrega).toBe('registrada');
     // evento nunca carrega corpo de mensagem nem telefone inteiro (regra espelhada no CHECK da 0056)
     for (const e of ds.eventos) { expect(e.detalhe.length).toBeLessThanOrEqual(500); expect(e.detalhe).not.toMatch(/[0-9]{9,}/); }
     for (const j of ds.jobs) { expect(j.provider).toBe('MANUAL'); expect(j.referenciaExterna).toBeUndefined(); }

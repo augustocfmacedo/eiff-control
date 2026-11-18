@@ -47,10 +47,12 @@ describe('E2 · escrita só pela RPC', () => {
     const antes = com([versao('g1', '2026-10', 1, '100000.00')]);
     const depois = com([...antes.metasComerciais!, versao('L3', '2026-11', 1, 90000, ' plano '), versao('L2', '2026-10', 3, null, 'suspensa'), versao('L1', '2026-10', 2, 120000.5, 'revisão')]);
     await persistirRadar(h, antes, depois);
+    // E5-REL-01: sempre a RPC por intenção; versão legada (sem intenção) ganha intenção determinística e base = versão − 1
+    const uuid = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(h.chamadas).toEqual([
-      { op: 'rpc', tabela: 'radar_definir_meta_comercial', row: { p_mes: '2026-10-01', p_valor: 120000.5, p_motivo: 'revisão' } },
-      { op: 'rpc', tabela: 'radar_definir_meta_comercial', row: { p_mes: '2026-10-01', p_valor: null, p_motivo: 'suspensa' } },
-      { op: 'rpc', tabela: 'radar_definir_meta_comercial', row: { p_mes: '2026-11-01', p_valor: 90000, p_motivo: 'plano' } },
+      { op: 'rpc', tabela: 'radar_definir_meta_comercial_intencao', row: { p_intencao: uuid, p_mes: '2026-10-01', p_valor: 120000.5, p_motivo: 'revisão', p_versao_base: 1 } },
+      { op: 'rpc', tabela: 'radar_definir_meta_comercial_intencao', row: { p_intencao: uuid, p_mes: '2026-10-01', p_valor: null, p_motivo: 'suspensa', p_versao_base: 2 } },
+      { op: 'rpc', tabela: 'radar_definir_meta_comercial_intencao', row: { p_intencao: uuid, p_mes: '2026-11-01', p_valor: 90000, p_motivo: 'plano', p_versao_base: 0 } },
     ]);
   });
 
@@ -77,7 +79,9 @@ describe('E2 · escrita só pela RPC', () => {
     const fonte = readFileSync('src/data/radar.supabase.ts', 'utf8');
     expect(fonte).not.toMatch(/tabela: 'radar_commercial_goal'/);
     expect(fonte.match(/'radar_commercial_goal'/g)).toHaveLength(1); // só a leitura em carregarRadar
-    expect(fonte).toContain("h.rpc('radar_definir_meta_comercial'");
+    expect(fonte).toContain("'radar_definir_meta_comercial_intencao'"); // E5-REL-01: com intenção, a RPC idempotente da 0074
+    expect(fonte).not.toMatch(/'radar_definir_meta_comercial'[,]]/); // E5-REL-01: o app nunca chama a RPC antiga da 0068
+    expect(fonte).toContain('await h.rpc(rpc, args);');
     const migration = readFileSync('supabase/migrations/0068_radar_commercial_goal.sql', 'utf8');
     expect(migration).toMatch(/grant select on radar_commercial_goal to authenticated;/);
     expect(migration).not.toMatch(/grant (insert|update|delete|all)[^;]*on radar_commercial_goal/i);

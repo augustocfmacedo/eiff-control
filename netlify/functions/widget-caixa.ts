@@ -1,5 +1,5 @@
 // Widgets do iPad (Scriptable): GET /api/widget-caixa com o token do aparelho devolve o resumo do caixa (ou, com
-// ?visao=pedidos, os pedidos da equipe ao Diretor Financeiro). Toda a regra está
+// ?visao=pedidos, os pedidos da equipe ao Diretor Financeiro; com ?visao=pagamentos, os pagamentos do dia). Toda a regra está
 // em src/core/widgetServidor.ts (handler puro, testado); aqui só o ambiente: SUPABASE_SERVICE_ROLE_KEY (só no painel do
 // Netlify, nunca VITE_, nunca no navegador ou em log) valida o token pela RPC server-only widget_token_validar (0069) e
 // carrega o dataset como o Diretor Financeiro já faz (carregarComoServidor). O token nunca é registrado em log.

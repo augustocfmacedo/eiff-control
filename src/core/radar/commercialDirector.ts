@@ -12,15 +12,19 @@
 // - Sem score, sem peso, sem ranking do Diretor. Contas só aparecem por referência à Commercial Queue, na ordem dela.
 // - `hoje` é explícito; o instante do Inbox (SLA) também. Nenhuma leitura de relógio, rede ou persistência.
 // - Texto livre (notas, payload bruto, corpo de mensagem, motivos) não participa de nenhuma regra.
+// - CD-1.3 (CD-D3/E4): o resultado comercial do mês vem SÓ do motor E1 (apurarMetaComercial) sobre as metas versionadas
+//   (E2) e o livro imutável de desfechos (E3). O Diretor não soma valor nenhum, não lê oportunidade nem faturamento
+//   financeiro para isso: compõe a apuração e diz quando ela não existe (metas ou livro indisponíveis, sem instante).
 import { MODOS_PLANO_CM, planosDaFilaCM, resumoPorModoCM } from './commercialActionPlan';
 import { ESTADOS_CADENCIA_CM, cadenciasDaFilaCM } from './commercialCadence';
 import { CATEGORIAS_COMMERCIAL_QUEUE, CODIGOS_TRAVA_CM, MOTIVOS_FORA_DA_FILA, construirCommercialQueue, normalizarHojeCM, type CategoriaCommercialQueue, type CodigoRazaoCM, type CommercialQueue, type CommercialQueueItem, type OpcoesCommercialQueue, type ReferenciaCM } from './commercialMachine';
-import { disponivel, insuficiente, taxa, type MedidaComercial } from './commercialMetrics';
+import { disponivel, insuficiente, naoAplicavel, taxa, type MedidaComercial } from './commercialMetrics';
 import { NIVEIS_COBERTURA, coberturaEmpresa } from './cobertura';
 import { ESTADOS_COMUNICACAO, historicoDe } from './comunicacao';
 import { contatoElegivel } from './contatos';
 import { CONTEXTOS_COMUNICACAO } from './canais';
 import { contasSemDonoValido, type UsuarioDono } from './donoConta';
+import { apurarMetaComercial, mesComercialDe, mesValido, type AlertaMeta, type ApuracaoMetaComercial, type MesComercial, type MetaVigente, type SituacaoMes } from './metaComercial';
 import { descobertasSuprimidas, filaDeRevisao } from './leadEngineReview';
 import { contadoresRevisao, metricasPiloto } from './leadEngineRevisao';
 import { semProximaAcao } from './pipeline';
@@ -31,7 +35,8 @@ import { estadoSla } from '../inbox/roteamento';
 
 /** Versão das definições do snapshot. Mudar uma definição ou um recorte sobe a versão. */
 // CD-1.1: amostra mínima das taxas = 30 (decisão CD-D4). CD-1.2: medida base.contasSemDono (decisão CD-D5).
-export const VERSAO_REGRAS_CD = 'CD-1.2';
+// CD-1.3: bloco metaComercial — resultado comercial do mês pelo motor E1 (CD-D3/E4). As medidas do CD-1.2 não mudam.
+export const VERSAO_REGRAS_CD = 'CD-1.3';
 
 const CLASSES_RADAR = ['A+', 'A', 'B', 'C', 'D'] as const satisfies readonly ClassePrioridade[];
 const TIPOS_SUPRESSAO = ['do_not_contact', 'email_bounced', 'invalid_phone', 'opt_out'] as const satisfies readonly TipoSupressao[];
@@ -59,6 +64,11 @@ export interface OpcoesSnapshotCD {
    * Commercial Queue. Ausente com alguma conta já com dono gravado → `base.contasSemDono` sai DADO_INSUFICIENTE.
    */
   usuarios?: readonly UsuarioDono[];
+  /**
+   * CD-1.3: mês comercial (AAAA-MM, America/Sao_Paulo) do bloco metaComercial. Padrão: o mês de `agoraIso`. O instante
+   * de referência é sempre `agoraIso` (explícito e reproduzível): sem ele o bloco inteiro sai DADO_INSUFICIENTE.
+   */
+  mesComercial?: MesComercial;
 }
 
 /** Uma conta citada pelo Diretor: sempre a referência da Commercial Queue, na posição original. */
@@ -177,6 +187,31 @@ export interface BlocoInboxCD {
   threadsPorContaRadar: MedidaComercial;
 }
 
+/** CD-1.3 — resultado comercial do mês: a apuração do motor E1, composta e nunca recalculada. */
+export interface BlocoMetaComercialCD {
+  /** versão das regras do motor E1 (meta comercial) */
+  versaoRegras: string;
+  /** mês comercial apurado e instante de referência; ausentes quando não há instante explícito */
+  mes?: MesComercial;
+  situacao?: SituacaoMes;
+  vistoEm?: string;
+  /** o que estava disponível: instante explícito, metas carregadas (E2) e livro de desfechos carregado (E3) */
+  disponibilidade: { instante: boolean; metas: boolean; livro: boolean };
+  /** a versão de meta que vale no mês, só como referência (o valor está em medidas.meta) */
+  metaVigente?: { estado: MetaVigente['estado']; id?: string; versao?: number };
+  /**
+   * As medidas do motor E1, com os mesmos ids e definições (meta.*): meta, ganhos, ganhosSemValor, valorGanhos (receita
+   * ganha confirmada), estornos, estornosSemValor, valorEstornos, realizadoConfirmado, realizado (líquido exato),
+   * atingimento, faltaParaMeta, excedente — mais duas contagens do que o motor já devolve: retificacoes e
+   * eventosInconsistentes.
+   */
+  medidas: ApuracaoMetaComercial['medidas'] & { retificacoes: MedidaComercial; eventosInconsistentes: MedidaComercial };
+  /** complementos (D3-B) que retificaram o mês, como o motor devolve */
+  retificacoes: ApuracaoMetaComercial['retificacoes'];
+  alertas: AlertaMeta[];
+  inconsistencias: ApuracaoMetaComercial['inconsistencias'];
+}
+
 export interface CommercialDirectorSnapshot {
   versaoRegras: string;
   hoje: string;
@@ -189,6 +224,7 @@ export interface CommercialDirectorSnapshot {
   prospeccao: BlocoProspeccaoCD;
   qualidade: BlocoQualidadeCD;
   inbox: BlocoInboxCD;
+  metaComercial: BlocoMetaComercialCD;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -226,6 +262,7 @@ export function snapshotComercialCD(radar: RadarDataset, hoje: string, opcoes: O
     prospeccao: blocoProspeccao(),
     qualidade: blocoQualidade(),
     inbox: blocoInbox(opcoes),
+    metaComercial: blocoMetaComercial(radar, opcoes),
   };
 
   function blocoFila(): BlocoCommercialQueueCD {
@@ -426,6 +463,72 @@ function blocoInbox(opcoes: OpcoesSnapshotCD): BlocoInboxCD {
     threadsPorContaRadar: vinculados.size
       ? disponivel({ id: 'inbox.threadsPorContaRadar', descricao: 'threads cujo contato tem vínculo explícito com empresa do Radar', ...T }, comConta, threads.length)
       : insuficiente({ id: 'inbox.threadsPorContaRadar', descricao: 'threads cujo contato tem vínculo explícito com empresa do Radar', ...T }, 'nenhum contato do Inbox tem vínculo com empresa do Radar; não se infere por telefone, nome ou texto', threads.length),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Meta comercial (CD-1.3) — composição do motor E1; nenhuma soma, nenhum valor estimado, nenhum faturamento
+// ---------------------------------------------------------------------------------------------------------------------
+type ChaveMedidaMeta = keyof BlocoMetaComercialCD['medidas'];
+/** As medidas que dependem da META (as demais dependem só do livro de desfechos). */
+const MEDIDAS_DA_META: readonly ChaveMedidaMeta[] = ['meta', 'atingimento', 'faltaParaMeta', 'excedente'];
+const MOTIVO_SEM_INSTANTE = 'instante de referência (agoraIso) não informado: o mês comercial e o que já aconteceu dependem dele';
+const MOTIVO_SEM_METAS = 'metas comerciais não carregadas neste contexto: meta indisponível não é meta zero';
+const MOTIVO_SEM_LIVRO = 'livro de desfechos não carregado neste contexto: livro indisponível não é ausência de vendas';
+/** Códigos de alerta do motor que falam da meta (somem quando as metas não foram carregadas). */
+const ALERTAS_DA_META: readonly AlertaMeta['codigo'][] = ['META_AUSENTE', 'META_RETIRADA', 'META_INCONSISTENTE', 'META_ATINGIDA', 'META_NAO_ATINGIDA'];
+/** Os únicos alertas que só dependem da DEFINIÇÃO da meta; todos os outros dependem do livro (somem sem livro carregado:
+ * sem livro não há "meta atingida/não atingida", nem ganho, estorno ou complemento a apontar). */
+const ALERTAS_SO_DA_DEFINICAO: readonly AlertaMeta['codigo'][] = ['META_AUSENTE', 'META_RETIRADA', 'META_INCONSISTENTE'];
+/** Só para obter as DEFINIÇÕES das medidas do motor quando não há instante (nenhum número sai daqui). */
+const MES_SO_DEFINICOES = '2000-01';
+const AGORA_SO_DEFINICOES = '2000-01-15T12:00:00Z';
+const definicoesDoMotor = () => apurarMetaComercial({ metas: [], eventos: [], mes: MES_SO_DEFINICOES, agora: AGORA_SO_DEFINICOES });
+
+function blocoMetaComercial(radar: RadarDataset, opcoes: OpcoesSnapshotCD): BlocoMetaComercialCD {
+  const agora = opcoes.agoraIso;
+  const mesDoInstante = mesComercialDe(agora);
+  // só instante ISO com fuso conta como referência; data civil sozinha não é instante
+  const instante = !!agora && agora.includes('T') && mesDoInstante !== undefined;
+  const temMetas = Array.isArray(radar.metasComerciais);
+  const temLivro = Array.isArray(radar.desfechos);
+  const disponibilidade = { instante, metas: temMetas, livro: temLivro };
+  const defDe = (m: MedidaComercial) => ({ id: m.id, descricao: m.descricao, unidade: m.unidade, autoridade: m.autoridade });
+  const EV = { unidade: 'EVENTOS', autoridade: 'META_COMERCIAL' } as const;
+  const defRetificacoes = { id: 'meta.retificacoes', descricao: 'ganhos do mês com valor complementado depois (D3-B: o complemento corrige o mês do ganho)', ...EV };
+  const defInconsistentes = { id: 'meta.eventosInconsistentes', descricao: 'eventos do livro, até o instante de referência, desconsiderados pelo motor por inconsistência', ...EV };
+
+  if (!instante) {
+    const d = definicoesDoMotor();
+    const medidasSemInstante = Object.fromEntries(Object.entries(d.medidas).map(([k, m]) => [k, insuficiente(defDe(m), MOTIVO_SEM_INSTANTE)])) as ApuracaoMetaComercial['medidas'];
+    return {
+      versaoRegras: d.versaoRegras, disponibilidade, alertas: [], retificacoes: [], inconsistencias: { metas: [], eventos: [] },
+      medidas: { ...medidasSemInstante, retificacoes: insuficiente(defRetificacoes, MOTIVO_SEM_INSTANTE), eventosInconsistentes: insuficiente(defInconsistentes, MOTIVO_SEM_INSTANTE) },
+    };
+  }
+  const mes = opcoes.mesComercial ?? mesDoInstante!;
+  if (!mesValido(mes)) throw new Error(`mês comercial inválido: ${mes}`);
+  const a = apurarMetaComercial({ metas: radar.metasComerciais ?? [], eventos: radar.desfechos ?? [], mes, agora: agora! });
+  const futuro = a.situacao === 'FUTURO';
+  const medidas: BlocoMetaComercialCD['medidas'] = {
+    ...a.medidas,
+    retificacoes: futuro ? naoAplicavel(defRetificacoes, 'o mês ainda não começou') : disponivel(defRetificacoes, a.retificacoes.length, a.ganhos.length),
+    // sem base: o motor não devolve quantos eventos considerou até o instante, e recontar seria recriar a leitura dele
+    eventosInconsistentes: disponivel(defInconsistentes, a.inconsistencias.eventos.length),
+  };
+  // indisponível não vira zero: a medida que depende do que não foi carregado sai DADO_INSUFICIENTE (o NAO_APLICAVEL
+  // de mês futuro continua valendo)
+  for (const k of Object.keys(medidas) as ChaveMedidaMeta[]) {
+    const motivos = [...(!temLivro && k !== 'meta' ? [MOTIVO_SEM_LIVRO] : []), ...(!temMetas && MEDIDAS_DA_META.includes(k) ? [MOTIVO_SEM_METAS] : [])];
+    if (motivos.length && medidas[k].estado !== 'NAO_APLICAVEL') medidas[k] = insuficiente(defDe(medidas[k]), motivos.join('; '), medidas[k].base);
+  }
+  return {
+    versaoRegras: a.versaoRegras, mes: a.mes, situacao: a.situacao, vistoEm: a.vistoEm, disponibilidade,
+    ...(temMetas ? { metaVigente: { estado: a.meta.estado, ...(a.meta.versao ? { id: a.meta.versao.id, versao: a.meta.versao.versao } : {}) } } : {}),
+    medidas,
+    retificacoes: a.retificacoes,
+    alertas: a.alertas.filter((x) => (temMetas || !ALERTAS_DA_META.includes(x.codigo)) && (temLivro || ALERTAS_SO_DA_DEFINICAO.includes(x.codigo))),
+    inconsistencias: { metas: temMetas ? a.inconsistencias.metas : [], eventos: a.inconsistencias.eventos },
   };
 }
 

@@ -344,6 +344,22 @@ async function main() {
     ok('Y', y1.length === 2 && y1.every((r) => r.n === 12) && y2 === 2 && nomeFinAntes === nomeFinDepois && y3 === 24,
       `setores por organização: ${y1.map((r) => r.n).join('/')} · configs ${y2} · FINANCEIRO existente preservado: ${nomeFinAntes === nomeFinDepois} · reaplicação: ${y3} setores (sem duplicar)`);
 
+    // Z) privilegio de COLUNA em inbox_thread (incidente do GO-1, 10/11/2026): o app so pode mandar no UPDATE as 20 colunas
+    //    mutaveis; uma unica coluna da criacao no SET derruba o comando inteiro. A lista abaixo e a mesma de
+    //    COLUNAS_MUTAVEIS_DA_CONVERSA / COLUNAS_SO_DA_CRIACAO_DA_CONVERSA (src/data/inbox.supabase.ts); o caminho real do
+    //    app (acoes do store + persistirInbox) e provado em src/data/inbox.persistencia.integracao.test.ts.
+    const MUTAVEIS = ['subject', 'status', 'priority', 'service_level', 'participant_ids', 'project_id', 'labels', 'classification', 'summary', 'routing',
+      'sla_first_response_due', 'sla_first_response_at', 'sla_resolution_due', 'last_message_at', 'last_inbound_at', 'resolved_at', 'closed_at', 'resolved_by',
+      'central_conversation_id', 'external_conversation_id'];
+    const SO_CRIACAO = ['channel', 'provider', 'context', 'contact_id', 'opened_at', 'origin'];
+    const concedidas = (await db.query(`select column_name from information_schema.column_privileges where table_name = 'inbox_thread' and grantee = 'authenticated' and privilege_type = 'UPDATE' order by 1`)).rows.map((r) => r.column_name);
+    const z1 = JSON.stringify(concedidas) === JSON.stringify([...MUTAVEIS].sort());
+    const negadas = [];
+    for (const c of SO_CRIACAO) { const e = await comoUsuarioFalha(DIR_A, `update inbox_thread set status = status, ${c} = ${c} where id = $1`, [s2.thread_id]); if (/permission denied for table inbox_thread/.test(e ?? '')) negadas.push(c); }
+    const z3 = await comoUsuarioFalha(DIR_A, `update inbox_thread set ${MUTAVEIS.map((c) => `${c} = ${c}`).join(', ')} where id = $1`, [s2.thread_id]);
+    ok('Z', z1 && negadas.length === SO_CRIACAO.length && !z3,
+      `UPDATE concedido em ${concedidas.length} colunas (as mutáveis: ${z1}) · colunas da criação negadas: ${negadas.length}/${SO_CRIACAO.length} · UPDATE só com as mutáveis: ${z3 ? 'NEGADO ' + String(z3).split('\n')[0] : 'ok'}`);
+
     await db.exec('rollback');
     const sobrou = (await db.query('select count(*)::int n from inbox_thread')).rows[0].n;
     res.rollback = sobrou === 0 ? 'ROLLBACK ok — nada persistiu' : `ATENCAO: ${sobrou} threads sobraram`;

@@ -1,7 +1,7 @@
 // EIFF Radar: dominio de inteligencia comercial (empresas, contatos, projetos, sinais, oportunidades, atividades,
 // tarefas, respostas, estrategias, experimentos, score, fontes). Nomes em portugues no app; snake_case ingles no banco
 // (ver migration 0031 e src/data/radar.supabase.ts). Nada aqui depende de React ou de rede.
-import type { VersaoMetaComercial } from './metaComercial';
+import type { EventoDesfecho, VersaoMetaComercial } from './metaComercial';
 
 export type TipoFonte = 'VIBE' | 'CNO' | 'PNCP' | 'CNPJ_RFB' | 'NEWS' | 'LINKEDIN' | 'PARTNER' | 'MANUAL' | 'WEBSITE' | 'CSV';
 
@@ -170,6 +170,8 @@ export interface Oportunidade {
   titulo: string;
   estagio: Estagio;
   valorEstimado?: number;
+  /** CD-D3/E3: valor fechado CONFIRMADO ao marcar WON (vazio = ganho sem valor, sinalizado); só existe em oportunidade ganha. Nunca copiado do estimado. */
+  valorFechado?: number;
   probabilidade: number; // 0-1 (padrao pelo estagio)
   previsaoFechamento?: string;
   responsavelId: string;
@@ -177,6 +179,8 @@ export interface Oportunidade {
   proximaAcao?: string;
   proximaAcaoEm?: string;
   motivoFechamento?: string;
+  /** CD-D3/E3: motivo da ÚLTIMA mudança de estágio (stage_reason). Entrar ou sair de WON exige um motivo novo; vai para o livro de desfechos. */
+  motivoEstagio?: string;
   observacoes: string;
   criadoEm: string;
   atualizadoEm: string;
@@ -440,8 +444,10 @@ export interface RadarDataset {
   comunicacoes: ComunicacaoRadar[]; // rascunhos gerados para revisao humana (sem persistencia nesta fase)
   /** CD-D3/E2: versões de meta comercial (só inclusão, pela RPC radar_definir_meta_comercial); ausente = tabela indisponível no banco */
   metasComerciais?: VersaoMetaComercial[];
+  /** CD-D3/E3: livro imutável de desfechos (GANHO, ESTORNO_GANHO, COMPLEMENTO_VALOR), produzido pelo banco (gatilho + RPC); ausente = tabela indisponível */
+  desfechos?: EventoDesfecho[];
 }
 /** Comunicacao gerada (estrutura completa em comunicacaoGeracao.ts; aqui so o contrato do dataset). */
 export interface ComunicacaoRadar { id: string; empresaId: string; contatoId: string; canal: Canal; objetivo: string; playbook: string; estado: 'DRAFT' | 'READY_FOR_REVIEW' | 'APPROVED' | 'REJECTED' | 'SENT' | 'REPLIED' | 'CANCELLED'; spec: unknown; resultado: { versaoPrincipal: string; versoesAlternativas: string[]; assunto?: string; roteiroLigacao?: string; objecoes: { gatilho: string; resposta: string }[]; claimsUsados: string[]; metadados: Record<string, unknown> }; textoEditado?: string; assuntoEditado?: string; editadoPor?: string; editadoEm?: string; sinalId?: string; estrategiaId?: string; aprovadoPor?: string; aprovadoEm?: string; rejeitadoPor?: string; rejeitadoEm?: string; motivoRejeicao?: string; enviadaEm?: string; atividadeEnvioId?: string; respondidaEm?: string; atividadeRespostaId?: string; ultimoMotivo?: string; contextHash: string; versoes: { playbook: string; contentSpec: string; prompt: string; provedor: string; modelo?: string }; validacao: { ok: boolean; problemas: string[] }; criadoEm: string; atualizadoEm: string; criadoPor: string; historico: { de: string; para: string; em: string; por: string; motivo?: string }[] }
 
-export const radarVazio = (): RadarDataset => ({ operacoesVibe: [], metasComerciais: [], fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [], comunicacoes: [] });
+export const radarVazio = (): RadarDataset => ({ operacoesVibe: [], metasComerciais: [], desfechos: [], fontes: [], empresas: [], contatos: [], projetos: [], sinais: [], oportunidades: [], historicoEstagios: [], atividades: [], tarefas: [], tiposResposta: [], estrategias: [], experimentos: [], regrasScore: [], configScore: [], regrasPersona: [], pesosDecisionFit: [], snapshotsScore: [], importacoes: [], importacaoLinhas: [], importacaoErros: [], duplicatas: [], supressoes: [], registrosFonte: [], comunicacoes: [] });

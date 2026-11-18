@@ -19,6 +19,37 @@ Os mesmos números da tela **Caixa** e do Diretor Financeiro — nada é recalcu
 "Semana" é o que **ainda** entra e sai (os pagos de hoje já estão no caixa de hoje). Recebimento vencido aparece marcado,
 fora do saldo, como na Caixa. Rascunho e em aprovação não aparecem. Tocar no widget abre `#/caixa`.
 
+## Widget dos pagamentos do dia (script próprio EIFF Pagamentos)
+
+Pedido do Augusto em 14/10/2026: uma lista bonita, na tela de início do iPad, com os pagamentos do dia, a situação de cada
+um e o somatório, atualizando de 15 em 15 minutos. Script próprio (`scriptWidgetPagamentos` em
+`src/core/widgetScriptablePagamentos.ts`, botão "Copiar script dos pagamentos"), mesma porta e mesmo token
+(`GET /api/widget-caixa?visao=pagamentos`, exige ver o caixa), sem migration. `resumoWidgetPagamentos`
+(`src/core/widgetPagamentos.ts`) é leitura do `livroCaixa`, a mesma lista da tela Caixa, só as saídas:
+
+| Situação | O que entra |
+|---|---|
+| Atrasado | pagamento vencido e não pago (conta no caixa de hoje), com os dias de atraso |
+| A pagar | previsto com vencimento hoje |
+| Aprovação | aguardando alçada com vencimento até hoje — fica fora do total, como fica fora do saldo |
+| Pago | pago hoje (inclusive parcial) |
+
+Rascunho (pedido ao Diretor ainda não decidido), faturamento direto ao cliente e entradas não aparecem. Total = pago + a
+pagar + atrasado; "falta pagar" = a pagar + atrasado; "caixa depois de pagar" = caixa de hoje − o que falta, com o aviso
+quando fica abaixo do caixa mínimo. A lista põe o que exige ação primeiro (atrasado, a pagar, aprovação, pagos), o maior
+valor antes em cada grupo.
+
+| Formato | Conteúdo |
+|---|---|
+| Pequeno | quanto falta pagar hoje, barra pago/a pagar/atrasado, "x de y pagos" e atrasados |
+| Médio | total, falta pagar, barra, legenda e os 2 primeiros |
+| Grande / extra grande | o médio + até 7/8 linhas com etiqueta de situação, para quem e departamento, e o caixa depois de pagar |
+| Tela de bloqueio | "Pagar hoje R$ 6.500 · pago R$ 12 mil", o anel da fração paga ou o retangular com o que falta |
+
+**Atualização**: o script pede ao iOS uma nova execução a cada 15 minutos (`refreshAfterDate`, constante
+`MINUTOS_ATUALIZACAO_WIDGET`). O iOS pode atrasar (economia de bateria, orçamento de atualizações), nunca adiantar. Tocar
+abre `#/caixa`.
+
 ## Widget de pedidos da equipe (script próprio EIFF Pedidos)
 
 A pedido do Augusto (14/10/2026) o widget de pedidos ganhou **script próprio**, sem nada do caixa
