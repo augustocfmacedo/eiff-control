@@ -21,6 +21,7 @@
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
     "smoke:formulario": "vite-node scripts/pg-smoke-formulario.mts",
     "smoke:email": "node scripts/pg-smoke-email.mjs",
+    "smoke:email-chave": "node scripts/pg-smoke-email-chave.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
     "lint": "eslint src"

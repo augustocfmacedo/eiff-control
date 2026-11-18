@@ -9,6 +9,7 @@ export const ler = (f) => fs.readFileSync(new URL(f, RAIZ), 'utf8');
 export const SQL_0056 = ler('0056_inbox.sql');
 export const SQL_0057 = ler('0057_inbox_octopus_router.sql');
 export const SQL_0075 = ler('0075_inbox_email_delivery.sql');
+export const SQL_0076 = ler('0076_inbox_email_switch.sql');
 
 export const ORG_A = '11111111-1111-1111-1111-111111111111';
 export const ORG_B = '22222222-2222-2222-2222-222222222222';
@@ -68,12 +69,14 @@ insert into inbox_config (organization_id) values ('${ORG_A}');
 
 
 /** PGlite novo com as migrations aplicadas (a 0075 duas vezes: prova de idempotencia). Sem semente. */
-export async function bancoDoEmail() {
+/** `com0076`: aplica tambem a chave central (duas vezes). Sem semente: nenhuma organizacao tem linha da chave. */
+export async function bancoDoEmail(opcoes = {}) {
   const db = new PGlite();
   await db.exec(PRELUDIO);
   await db.exec(SQL_0056);
   await db.exec(SQL_0057);
   await db.exec(SQL_0075);
   await db.exec(SQL_0075);
+  if (opcoes.com0076) { await db.exec(SQL_0076); await db.exec(SQL_0076); }
   return db;
 }
