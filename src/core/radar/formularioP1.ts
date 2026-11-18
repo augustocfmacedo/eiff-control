@@ -128,8 +128,10 @@ export function falhaSemSegredo(fase: string, metodo: string, e: unknown): strin
   return `falha em ${fase}: ${metodo}${status === null ? '' : ` (código ${status})`} — detalhe omitido de propósito (pode conter o valor)`
 }
 
-/** Campos de `build_settings` que um PATCH parcial não pode mudar sem querer. */
-export const CAMPOS_BUILD_PRESERVADOS = ['allowed_branches', 'stop_builds', 'repo_url', 'repo_branch', 'cmd', 'dir', 'provider'] as const
+/** Campos de `build_settings` que um PATCH só de `skip_prs` pode mudar: só ele. */
+export const CAMPOS_BUILD_ALTERAVEIS = ['skip_prs'] as const
+/** Todo campo de `build_settings`, além de `skip_prs`, que mudou entre antes e depois. */
 export function mudancasInesperadas(antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
-  return CAMPOS_BUILD_PRESERVADOS.filter((k) => JSON.stringify(antes[k] ?? null) !== JSON.stringify(depois[k] ?? null))
+  const chaves = [...new Set([...Object.keys(antes), ...Object.keys(depois)])].sort()
+  return chaves.filter((k) => !(CAMPOS_BUILD_ALTERAVEIS as readonly string[]).includes(k) && JSON.stringify(antes[k] ?? null) !== JSON.stringify(depois[k] ?? null))
 }

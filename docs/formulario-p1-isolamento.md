@@ -59,7 +59,7 @@ continuaria gerando previews com formulário).
 | 4 | Mesclar e publicar o site P1 (L1 + L2, build novo lê o valor novo) | smoke: `form-name` no ar nas duas páginas; formulários registrados; função presente | site manda b; CRM aceita |
 | 5 | Esperar o **primeiro lead real** depois do passo 4 aparecer no Inbox e ler no log da borda do CRM (painel do Netlify) a linha `"etapa":"autenticado","chave":"b"` desse lead; conferir também que não há `"outcome":"bloqueado"` no log da função do site | lead no Inbox + `chave` da vaga nova | — |
 | 6 | `limpar-previews` + `desligar-previews` | inventário: 0 não produtivos; `skip_prs=true` | sem efeito em produção |
-| 7 | `troca-concluir --chave-observada b` (as vagas antiga e nova são derivadas do estado, nunca de parâmetro) e publicar o CRM | inventário: só b; deploys antigos passam a 401 | site atual (b) segue entrando |
+| 7 | `troca-concluir --chave-observada b --recuperacao-ativa conferencia-c|agendada` (as vagas antiga e nova são derivadas do estado). **Só com a conferência C ou a reconciliação agendada ligada em produção**: depois deste passo o reconciliador manual não autentica mais. Publicar o CRM | inventário: só b; deploys antigos passam a 401 | site atual (b) segue entrando |
 
 Se o passo 5 demorar, nada se perde: até o passo 7 o CRM aceita as duas vagas.
 
@@ -67,7 +67,7 @@ Se o passo 5 demorar, nada se perde: até o passo 7 o CRM aceita as duas vagas.
 
 | Falha | Ação |
 | --- | --- |
-| passo 2 falhou depois de criar a vaga b | `troca-desfazer` (apaga a b; site intocado) |
+| passo 2 falhou depois de criar a vaga b | `troca-desfazer --site-sem-valor-novo-publicado --vaga b` (apaga a b só se ela for a nova derivada E tiver valor só em production; site intocado) |
 | passo 4: formulário some em produção | restaurar o deploy anterior do site (ainda tem valor antigo, aceito até o passo 7) |
 | passo 4: L2 bloqueia tudo (`contexto_ausente` no log) | restaurar o deploy anterior; o lead fica no painel de formulários e entra pela conferência C. É exatamente o que H-0 previne |
 | depois do passo 7 | **restaurar deploy antigo do site deixa de funcionar** (valor antigo recusado). Retorno passa a ser **novo build** do commit anterior (lê o valor atual). Os pontos de retorno anotados hoje (`6af758cc`, `6af3b1ba`, `6af32e64`) ficam inertes para o CRM |

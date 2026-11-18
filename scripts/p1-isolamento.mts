@@ -126,6 +126,15 @@ function trocaDesfazer(): void {
     console.error('BLOQUEADO: confirme com --site-sem-valor-novo-publicado que nenhum deploy do site com o valor novo foi publicado (senão desfazer recusa todo lead)')
     process.exit(1)
   }
+  // A data da última gravação pode enganar (alguém mexeu na vaga antiga depois): exige também a letra da vaga
+  // a apagar, e ela tem de ser a única que só tem valor de production (a nova nasce assim).
+  const informada = args[args.indexOf('--vaga') + 1]
+  const crm = variaveis(SITE_CRM)
+  const soProducao = (k: string) => { const m = crm.find((x) => x.key === k); return m !== undefined && m.valores.length === 1 && m.valores[0]!.context === 'production' }
+  if (!args.includes('--vaga') || informada !== LETRA_DA_VAGA[v.valor.nova] || !soProducao(v.valor.nova)) {
+    console.error(`BLOQUEADO: a vaga nova derivada é ${v.valor.nova} (${LETRA_DA_VAGA[v.valor.nova]}); confirme com --vaga ${LETRA_DA_VAGA[v.valor.nova]} — e ela precisa ter valor só em production`)
+    process.exit(1)
+  }
   console.log(`${modo}: apagar ${v.valor.nova} (a vaga nova) do CRM; fica só ${v.valor.antiga}`)
   if (executar) { api('deleteEnvVar', { account_id: CONTA, site_id: SITE_CRM, key: v.valor.nova }); console.log(`ok: ${v.valor.nova} apagado`) }
 }
@@ -142,6 +151,13 @@ function trocaConcluir(): void {
   const esperada = LETRA_DA_VAGA[v.valor.nova]
   const d = podeConcluir(crm, v.valor.antiga, args.includes('--chave-observada') && observada === esperada)
   if (!d.ok) { console.error(`BLOQUEADO: ${d.motivo} — informe --chave-observada ${esperada} (a vaga nova), lida no log de um lead real`); process.exit(1) }
+  // Depois deste passo o reconciliador manual (que usa o segredo local) não autentica mais: só conclui com outro
+  // caminho de recuperação LIGADO — a conferência C ou a reconciliação agendada (que grava sem o segredo).
+  const recuperacao = args[args.indexOf('--recuperacao-ativa') + 1]
+  if (!args.includes('--recuperacao-ativa') || !['conferencia-c', 'agendada'].includes(recuperacao ?? '')) {
+    console.error('BLOQUEADO: informe --recuperacao-ativa conferencia-c|agendada (o caminho de recuperação que está ligado em produção); sem ele, um lead que falhar no evento não tem mais como entrar')
+    process.exit(1)
+  }
   console.log(`${modo}: apagar ${v.valor.antiga} (antiga) do CRM; fica ${v.valor.nova}. Depois publicar o CRM: todo deploy antigo do site passa a 401.`)
   if (executar) { api('deleteEnvVar', { account_id: CONTA, site_id: SITE_CRM, key: v.valor.antiga }); console.log(`ok: ${v.valor.antiga} apagado`) }
 }

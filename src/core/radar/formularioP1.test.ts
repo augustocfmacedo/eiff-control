@@ -104,6 +104,8 @@ describe('P1 · desligar previews não pode mexer no resto do build', () => {
     const antes = { allowed_branches: ['main'], stop_builds: false, repo_url: 'r', skip_prs: null }
     expect(mudancasInesperadas(antes, { ...antes, skip_prs: true })).toEqual([])
     expect(mudancasInesperadas(antes, { skip_prs: true, repo_url: 'r', stop_builds: false })).toEqual(['allowed_branches'])
+    /* qualquer campo, não só uma lista fixa */
+    expect(mudancasInesperadas({ ...antes, functions_dir: 'f' }, { ...antes, skip_prs: true })).toEqual(['functions_dir'])
   })
 })
 
