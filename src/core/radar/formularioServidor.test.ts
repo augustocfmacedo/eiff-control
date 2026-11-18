@@ -58,6 +58,37 @@ describe('borda · autenticação fail-closed', () => {
     expect(autorizar({ [CABECALHO_SEGREDO]: SEGREDO.slice(0, -1) }, SEGREDO).ok).toBe(false)
   })
 
+  describe('troca coordenada do segredo em duas vagas (P1)', () => {
+    const ANTIGO = 'segredo-antigo-ficticio-0001'
+    const NOVO = 'segredo-novo-ficticio-0002'
+    const com = (v: string) => ({ [CABECALHO_SEGREDO]: v })
+
+    it('antes da troca: só a vaga a, como sempre', () => {
+      expect(autorizar(com(ANTIGO), ANTIGO)).toEqual({ ok: true, chave: 'a' })
+      expect(autorizar(com(NOVO), ANTIGO).ok).toBe(false)
+    })
+    it('durante a troca: as duas vagas passam, e o log sabe qual', () => {
+      expect(autorizar(com(ANTIGO), ANTIGO, NOVO)).toEqual({ ok: true, chave: 'a' })
+      expect(autorizar(com(NOVO), ANTIGO, NOVO)).toEqual({ ok: true, chave: 'b' })
+      expect(autorizar(com('outro'), ANTIGO, NOVO).ok).toBe(false)
+    })
+    it('depois da troca: a vaga antiga foi apagada e o segredo antigo — o que os deploys antigos guardam — é recusado', () => {
+      expect(autorizar(com(NOVO), undefined, NOVO)).toEqual({ ok: true, chave: 'b' })
+      expect(autorizar(com(ANTIGO), undefined, NOVO).ok).toBe(false)
+      expect(autorizar(com(ANTIGO), '  ', NOVO).ok).toBe(false)
+    })
+    it('a troca seguinte volta para a vaga a', () => {
+      const TERCEIRO = 'segredo-terceiro-ficticio-0003'
+      expect(autorizar(com(TERCEIRO), TERCEIRO, NOVO)).toEqual({ ok: true, chave: 'a' })
+      expect(autorizar(com(NOVO), TERCEIRO, undefined).ok).toBe(false)
+    })
+    it('nenhuma vaga configurada: fail-closed', () => {
+      const r = autorizar(com(''), undefined, '   ')
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.motivo).toBe('sem_segredo_configurado')
+    })
+  })
+
   it('o certo passa, inclusive com o cabeçalho em maiúsculas', () => {
     expect(autorizar({ [CABECALHO_SEGREDO]: SEGREDO }, SEGREDO).ok).toBe(true)
     expect(autorizar({ [CABECALHO_SEGREDO.toUpperCase()]: SEGREDO }, SEGREDO).ok).toBe(true)

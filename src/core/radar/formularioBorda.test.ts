@@ -121,6 +121,25 @@ describe('borda · autenticação', () => {
     expect(pedidos.length).toBe(0);
   });
 
+  it('troca coordenada: durante, a vaga b entra e o log diz qual — nunca o valor', async () => {
+    const PROXIMO = 'segredo-proximo-ficticio-borda';
+    env['EIFF_FORM_SECRET_B'] = PROXIMO;
+    const r = await pedir(CORPO, { 'x-eiff-form-secret': PROXIMO });
+    expect(r.status).toBe(200);
+    expect(logs.some((l) => l.includes('"chave":"b"'))).toBe(true);
+    expect(logs.join('\n')).not.toContain(PROXIMO);
+    expect(logs.join('\n')).not.toContain(SEGREDO);
+  });
+
+  it('troca coordenada: depois, com a vaga antiga apagada, o segredo antigo (o que os deploys antigos guardam) é 401 e nada toca o banco', async () => {
+    const NOVO = 'segredo-novo-ficticio-borda';
+    delete env['EIFF_FORM_SECRET'];
+    env['EIFF_FORM_SECRET_B'] = NOVO;
+    const r = await pedir(CORPO, { 'x-eiff-form-secret': SEGREDO });
+    expect(r.status).toBe(401);
+    expect(pedidos.length).toBe(0);
+  });
+
   it('GET não é caminho de entrada', async () => {
     const r = await pedir(undefined, {}, 'GET');
     expect(r.status).toBe(405);
