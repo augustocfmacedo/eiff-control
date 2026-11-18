@@ -496,3 +496,170 @@ antes); Contabilidade e Auditoria perdem as telas do Radar que abriam por URL. �
 - Para a **E11.2**: aplicar a `pedido-projeto` (depois da `comercial-acesso`) e autorizar a implementação de tela e store.
 - Para criar o **papel Comercial**: a parte 1 da `comercial-acesso` e o pacote do app (§8.6).
 - Para **D2**: a E11.2 em uso e a decisão da Direção (§11.4).
+
+## 12. E11.2A — Gestão de Solicitações de Projeto (primeira versão funcional, local, 16/11/2026)
+
+Branch local `feature/central-comercial-e11-3-pedidos-projeto`, a partir do `4aec194` (PR #90). PRs #89 e #90 intocados.
+Sem persistência homologada: **demonstração local, em memória** (recarregar apaga), com faixa explícita; no modo remoto a
+tela não grava nada e mostra o motivo.
+
+### 12.1 O que foi construído
+
+| Peça | Arquivo | Papel |
+|---|---|---|
+| Motor de estados e validações | `src/core/comercial/pedidoProjeto.ts` | catálogos, `REGRAS_ACAO`, `criarPedido`, `aplicarAcao`, `motivoBloqueio`, `errosDeVinculo`, prazos, resumo, `visaoTecnica` |
+| Repositório | `src/core/comercial/pedidosRepositorio.ts` | contrato único para os dois adaptadores; em memória: idempotência por intenção, isolamento por organização, histórico append-only |
+| Exemplo fictício | `src/core/comercial/pedidosExemplo.ts` | três solicitações (Solicitado, Dados pendentes, Em desenvolvimento atrasada) pelo mesmo motor |
+| Adaptador do app | `src/data/pedidosProjeto.ts` | memória só fora do modo remoto; no remoto lê vazio e recusa escrever (`PERSISTENCIA_PENDENTE`) |
+| Telas | `src/screens/comercial/PedidosProjeto.tsx` | lista com indicadores e filtros, formulário em grupos, detalhe, histórico, ações em janelas |
+| Integração | `CentralGestao.tsx`, `App.tsx`, `Paleta.tsx`, `construcao.ts` | rota `#/comercial/projetos[/novo|/:id]`; Central: área Projetos com «Abrir solicitação» por oportunidade, dossiê com «abrir solicitação técnica», visão técnica da Engenharia apontando para as solicitações; menu e paleta (`comercial_projetos`); rota classificada no Mission Control |
+
+### 12.2 Estados e ações
+
+| Situação | Com quem | Ações possíveis (lado) |
+|---|---|---|
+| Solicitado | Engenharia | iniciar triagem (E), atribuir (E), cancelar (C; E só recusa), atualizar documento, editar dados (C) |
+| Triagem técnica | Engenharia | registrar triagem — valida dados (E, responsável), devolver por dados pendentes (E, motivo), assumir desenvolvimento (E, prazo), atribuir, cancelar, documento |
+| Dados pendentes | Comercial | responder pendências (C, resposta), editar dados (C), atribuir, cancelar (C), documento |
+| Em desenvolvimento | Engenharia | registrar andamento (E), devolver por dados pendentes (E, motivo), entregar (E: resumo, resultados, documentos resolvidos), atribuir, cancelar (C) |
+| Entregue | Comercial | encerrar (C: segue para orçamento / orçamento vinculado / não seguiu com motivo), reabrir (C, motivo), documento |
+| Encerrado, Cancelado | — | **nenhuma** (estado final) |
+
+Não há rascunho: pela jornada definida pela Direção, a solicitação nasce encaminhada (Solicitado). O RASCUNHO do §11
+saiu do motor e da proposta SQL. Regras transversais: depois da triagem, só o responsável técnico age pela Engenharia (a Direção age pelos dois lados);
+motivo obrigatório em devolução, reabertura, cancelamento e «não seguiu»; versão (concorrência otimista); cada ação gera
+um evento com de → para, autor, papel, instante, motivo, detalhe e intenção. O estágio da oportunidade no Radar **nunca**
+muda: a tela só sugere avançar quando a oportunidade está atrás da situação da solicitação (nunca sugere voltar).
+
+### 12.3 Campos
+
+- **Identificação**: empresa e oportunidade (Radar, só ativas), origem do lead, tipo (Estudo preliminar, Anteprojeto
+  estrutural, Projeto executivo, Análise técnica, Apoio ao orçamento técnico), responsável comercial, prioridade, prazo
+  solicitado; vínculos oficiais opcionais por id (conversa do Inbox cujo contato aponta para a empresa, submissão do
+  simulador nessas conversas, evidência do Lead Engine promovida para a empresa) e orçamento técnico só no encerramento.
+- **Dados técnicos** (catálogo `CAMPOS_TECNICOS`): cidade, UF, endereço, uso, área, comprimento, largura, altura,
+  tipologia, cobertura, fechamentos, projeto arquitetônico, fundação e terreno, observações. Cada dado é **declarado**
+  (pelo cliente) ou **validado** (pela Engenharia, com autor e data); alterar um dado validado o devolve a declarado.
+- **Documentos**: arquitetura, implantação, topografia, sondagem, memorial, complementares — não necessário, pendente,
+  recebido (o Comercial marca) ou validado (a Engenharia). Os arquivos ainda não são armazenados (vêm com a persistência).
+- **Responsabilidade**: equipe técnica, responsável técnico, prazo de entrega, situação, pendências, histórico.
+
+### 12.4 Integridade, duplicidade e idempotência
+
+- Vínculos só por id e conferidos contra a autoridade: oportunidade inexistente, de outra empresa ou fechada é recusada;
+  conversa, submissão e evidência inexistentes também; submissão de ensaio nunca vira solicitação; evidência só se
+  promovida (RESOLVED) para a mesma empresa. Nada é associado por nome.
+- Uma oportunidade pode ter várias solicitações, mas **uma aberta por tipo**; a seguinte do mesmo tipo, depois de encerrada
+  ou cancelada, é a **versão 2, 3…** (`versaoTipo`).
+- **Intenção**: o formulário gera uma intenção ao abrir e cada janela de ação gera a sua; repetir o clique devolve o
+  resultado original, sem segunda solicitação nem segundo evento. No banco, índice único `(organization_id, intent)` nos
+  eventos e índice único parcial «uma aberta por oportunidade e tipo».
+
+### 12.5 Matriz de acesso
+
+| Perfil | Lista e detalhe | Abre | Age |
+|---|---|---|---|
+| Administrador, Diretoria (e Comercial, quando existir) | tudo, com oportunidade e vínculos | sim | os dois lados |
+| Engenharia | **visão técnica**: sem oportunidade, sem vínculos, sem valores, contatos ou negociação | não | lado da Engenharia (responsável técnico depois da triagem); recusa só na triagem |
+| Financeiro, Contabilidade, Compras, Gestor de obra, Auditoria, Solicitante | nada (rota e menu bloqueados) | não | não |
+
+Conferido na tela: a página da Engenharia não contém o título nem o valor da oportunidade, o estágio, o dossiê nem os
+vínculos; a Contabilidade recebe «Acesso restrito» nas três rotas, por URL.
+
+### 12.6 Testes e homologação
+
+- `pedidoProjeto.test.ts` (22): ciclo completo com devolução, reabertura, cancelamento e estado final; tabela de ações;
+  prazo/pendência/documentos; versão; autorização por perfil; documentos por lado; vínculos por id; submissão real e de
+  ensaio; idempotência; duplicidade e versões; isolamento entre organizações; visão técnica sem chave comercial;
+  Radar e orçamentos intactos; sugestão de estágio só para a frente; prazos e indicadores.
+- `src/data/pedidosProjeto.test.ts` (3): remoto não grava nem finge gravar; local usa a demonstração marcada; menu.
+- `scripts/pg-smoke-pedido-projeto.mjs` (14 provas, PostgreSQL descartável): só a gestão abre; mesma intenção devolve a
+  mesma solicitação; uma aberta por oportunidade e tipo; ninguém escreve direto; a Engenharia não lê a tabela, só a
+  visão técnica, sem oportunidade, vínculos ou coluna comercial; lados, responsável, versão e motivo; idempotência na
+  ação; ciclo completo com devolução; estado final; histórico; estágio do Radar intacto; vínculos por id e chave fora do
+  catálogo descartada; outra organização não vê nem altera.
+- Prévia local percorrida pela tela (Comercial ↔ Engenharia), do formulário ao encerramento com orçamento vinculado: 11
+  eventos. A 375 px, lista, formulário, detalhe, janela de ação e a área da Central sem estouro horizontal (medido no
+  DOM). Dois defeitos achados e corrigidos na homologação: a sugestão de estágio mandava voltar uma oportunidade já em
+  «Proposta enviada»; e a janela de documento da Engenharia começava numa situação que ela não podia escolher.
+
+### 12.7 Plano de persistência e migration
+
+1. Segurança S3 (P0) aplicada.
+2. `comercial-acesso.proposta.sql` parte 1 (enum Comercial) e parte 2 (acesso).
+3. `pedido-projeto.proposta.sql` (este contrato no banco: `project_request`, `project_request_event`, RPCs `pp_criar`,
+   `pp_transicionar`, visão `pp_visao_tecnica`), número escolhido na hora, coordenado com as outras frentes.
+4. Adaptador `supabase` do `RepositorioPedidos` (RPCs com o JWT do usuário; a Engenharia lê pela visão técnica), sem
+   passar pelo diff genérico do Dataset.
+5. Armazenamento dos arquivos de projeto (bucket privado no padrão da 0073) e a coluna de vínculo orçamento → solicitação.
+
+### 12.8 Dependências e limites
+
+- **PR #89 e PR #90**: esta branch está empilhada sobre o #90 (que está sobre o #89); integra depois deles.
+- **S3**: continua aberta; nada aqui a corrige. A garantia no banco depende da ordem do §12.7.
+- **D2**: a Engenharia ainda tem `radar` e lê o Radar pelas outras telas; as solicitações não dependem disso.
+- O orçamento técnico vinculado no encerramento é escolhido pelo id na lista de orçamentos, porque ainda não existe
+  vínculo oficial orçamento → empresa/oportunidade.
+
+## 13. E11.2B — Homologação funcional das solicitações de projeto (16/11/2026)
+
+Trabalho local sobre o PR #91 (`8741005`), sem commit. PRs #89 e #90 intocados.
+
+### 13.1 P0 — Relógio operacional separado da data-base financeira
+
+Defeito: a tela de solicitações usava `ds.params.dataBase` (data-base FINANCEIRA, parada em 01/09/2026 no seed) como
+«hoje», enquanto as solicitações eram criadas com o relógio real (novembro): prazos de setembro apareciam «No prazo».
+
+Correção (`src/core/comercial/relogio.ts`): relógio injetável (`Relogio`, `relogioDoSistema`, `relogioFixo`); «hoje» é
+a data CIVIL de America/Sao_Paulo derivada do instante (`dataOperacional`, `hojeOperacional`); prazos são datas sem
+horário comparadas como datas civis (`diasEntre`): vencem no próprio dia e atrasam no seguinte. A tela usa
+`useHojeOperacional()` (revisto a cada minuto, vira o dia sozinho) e diz «Hoje dd/mm/aaaa (data de operação, não a
+data-base financeira)». A data-base financeira continua só no topo e nos cálculos financeiros, intocados. O exemplo nasce
+com prazos relativos ao dia de operação; a única solicitação atrasada é a de propósito (prazo de ontem).
+
+Prova (`pedidoProjeto.filas.test.ts`): virada às 03:00Z (23:59 × 00:00 em São Paulo); réveillon; datas civis e meses;
+«vence logo» no próprio dia e «atrasado» no seguinte pela virada de São Paulo; o caso que motivou a correção (prazo
+10/09: «no prazo» com a data-base de 01/09, «atrasado» em 16/11); datas do exemplo coerentes.
+
+### 13.2 P1 — Fila técnica da Engenharia (decisão)
+
+| Fila | O que entra | Quem da Engenharia vê | Quem age |
+|---|---|---|---|
+| Aguardando triagem | Solicitado | toda a equipe técnica | qualquer engenheiro se não houver responsável; se pré-atribuída, só o responsável |
+| Atribuídas a mim | Triagem técnica e Em desenvolvimento com o engenheiro como responsável | só o responsável | o responsável |
+| Devolvidas ao Comercial | Dados pendentes e Entregue do engenheiro | só o responsável (acompanha) | o Comercial |
+| Encerradas | Encerrado e Cancelado do engenheiro | só o responsável | ninguém |
+
+Uma solicitação atribuída a outro engenheiro sai da vista (lista, detalhe e histórico). A Direção vê tudo, age pelos dois
+lados e reatribui. Um engenheiro pode atribuir a si uma solicitação sem responsável. Regras em `pedidoVisivel`,
+`filaTecnica` e `motivoBloqueio`; espelhadas na proposta SQL (`pp_engenharia_ve`, `pp_engenharia_ve_pedido`, visão
+técnica, política de eventos e `pp_transicionar`). **É regra local: não substitui RLS** até a migration ser aplicada.
+
+Prova: testes por perfil, atribuição e organização (`pedidoProjeto.filas.test.ts`) e a prova O do smoke em PostgreSQL
+descartável (pré-atribuída a ENG2: ENG vê e não age; depois da triagem só ENG2 vê, inclusive o histórico).
+
+### 13.3 P2 — Homologação da interface
+
+| Item | 1440 px | 800 px | 375 px |
+|---|---|---|---|
+| Lista e filtros | tabela; prazos coerentes | cartões (a tabela precisava de rolagem lateral: 897 px de conteúdo em 724 px) | cartões |
+| Formulário | ok | ok; erro orientador | sem estouro |
+| Detalhe, triagem, devolução, documentos, entrega, histórico | ok | ok | sem estouro; entrega feita na tela |
+| Teclado | setas e Enter na tabela; Enter abre a ação; foco preso na janela; Esc devolve o foco | — | — |
+
+Corrigido na homologação: tabela substituída por cartões até 1000 px; rótulos curtos nos indicadores da Engenharia
+(«Devolvidas ao Comercial» encostava no vizinho a 800 px); filtro vindo da URL não era aplicado com a lista já aberta
+(a rota agora remonta quando a consulta muda); mensagem do formulário vazio («Vínculo inválido…» virou «Escolha a
+empresa e a oportunidade…», com os dois campos marcados); texto da faixa da Engenharia atualizado para a fila técnica.
+
+Limite das capturas: o painel do navegador estava oculto, o que congela as animações (comportamento do navegador). As
+capturas finais foram feitas com movimento reduzido simulado na página (`matchMedia`), que é o caminho que o app usa para
+pular as animações e mostrar o estado final; a captura com as animações concluídas exige o painel visível. A 375 px a
+ferramenta de captura devolveu imagens duplicadas; ali a evidência é a medição no DOM (largura do documento = 375 px).
+
+### 13.4 Pendências de persistência e RLS
+
+- Adaptador `supabase` do repositório (RPCs) e armazenamento dos arquivos: não feitos (fora do escopo).
+- A fila técnica, a visibilidade por atribuição e a separação Engenharia × comercial só valem no banco depois de aplicar
+  S3 → comercial-acesso → pedido-projeto (§12.7). Até lá, a proteção é da tela e do repositório em memória.
+- Equipe técnica é um texto (sem cadastro de membros por equipe): «fila da equipe» hoje é a Engenharia inteira.

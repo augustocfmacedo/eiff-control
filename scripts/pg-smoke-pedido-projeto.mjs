@@ -48,6 +48,7 @@ grant select, insert, update, delete on storage.objects to authenticated;
 create or replace function storage.foldername(name text) returns text[] language sql immutable as $fn$ select string_to_array(name, '/') $fn$;
 `;
 
+
 const res = { migrations: {}, provas: {}, diagnostico: {} };
 let falhas = 0;
 const prova = (k, ok, detalhe = '') => { res.provas[k] = `${ok ? 'PASS' : 'FALHOU'}${detalhe ? ' — ' + detalhe : ''}`; if (!ok) falhas++; };
@@ -56,7 +57,7 @@ const so = (e) => String(e?.message ?? e).split('\n')[0];
 const db = new PGlite({ extensions: { pgcrypto } });
 const q = async (sql, p = []) => (await db.query(sql, p)).rows;
 const um = async (sql, p = []) => { const r = await q(sql, p); return r[0] ? r[0][Object.keys(r[0])[0]] : undefined; };
-/** roda `fn` como `uid` (papel authenticated) numa transação própria; `manter` confirma (efeito persiste), senão desfaz */
+/** roda `fn` como `uid` (papel authenticated) numa transação própria; `manter` confirma, senão desfaz */
 async function como(uid, fn, { manter = false } = {}) {
   await db.exec('begin;');
   try {
@@ -77,7 +78,10 @@ const P = {
   Auditoria: 'dddddddd-0000-4000-8000-00000000000a', Solicitante: 'dddddddd-0000-4000-8000-00000000000b',
 };
 const papelDe = (k) => (k === 'Engenharia2' ? 'Engenharia' : k);
-const transicionar = (uid, id, acao, dados, versao) => como(uid, async () => (await q(`select * from pp_transicionar($1, $2, $3::jsonb, $4)`, [id, acao, JSON.stringify(dados ?? {}), versao]))[0], { manter: true });
+let intencoes = 0;
+const int = () => `int-${++intencoes}`;
+const criar = (uid, p, intencao = int()) => como(uid, async () => (await q(`select * from pp_criar($1::jsonb, $2)`, [JSON.stringify(p), intencao]))[0], { manter: true });
+const agir = (uid, id, acao, dados, versao, intencao = int()) => como(uid, async () => (await q(`select * from pp_transicionar($1, $2, $3::jsonb, $4, $5)`, [id, acao, JSON.stringify(dados ?? {}), versao, intencao]))[0], { manter: true });
 const versao = (id) => um(`select version from project_request where id = $1`, [id]);
 
 try {
@@ -95,7 +99,6 @@ try {
     if (!feitas.has(arq)) await aplicar(arq);
     if (n === SEMENTE) { await db.exec('begin;'); await db.exec(fs.readFileSync(path.join(RAIZ, '..', 'seed.sql'), 'utf8')); await db.exec('commit;'); }
   }
-  // ordem: comercial-acesso parte 1 → parte 2 → pedido-projeto (a proposta do pedido usa o papel Comercial)
   const [ca1, ca2] = fs.readFileSync(ACESSO, 'utf8').split('-- @@PARTE2@@');
   await db.exec('begin;'); await db.exec(ca1); await db.exec('commit;'); res.migrations.comercial_acesso_1 = 'APLICADA';
   await db.exec('begin;'); await db.exec(ca2); await db.exec('commit;'); res.migrations.comercial_acesso_2 = 'APLICADA';
@@ -112,100 +115,128 @@ try {
   const op = await um(`insert into radar_opportunity (organization_id, company_id, title, stage, estimated_value, probability, owner_id, next_action_at, notes) values ($1, $2, 'Galpão 25 × 80', 'NEED_CONFIRMED', 1400000, 0.3, $3, now() + interval '3 days', 'cliente pediu desconto de 5%') returning id`, [org, emp, P.Comercial]);
   const emp2 = await um(`insert into radar_company (organization_id, legal_name, active) values ($1, 'Outra empresa (fictícia)', true) returning id`, [org]);
   const op2 = await um(`insert into radar_opportunity (organization_id, company_id, title, stage, probability, owner_id, next_action_at) values ($1, $2, 'Outra', 'QUALIFIED', 0.1, $3, now() + interval '3 days') returning id`, [org, emp2, P.Comercial]);
+  const opGanha = await um(`insert into radar_opportunity (organization_id, company_id, title, stage, probability, owner_id) values ($1, $2, 'Já ganha', 'NURTURE', 0, $3) returning id`, [org, emp, P.Comercial]);
+  const orc = await um(`insert into estimate (organization_id, code, title) values ($1, 'ORC-T1', 'Orçamento técnico fictício') returning id`, [org]);
   await db.exec('commit;');
+  const estagioAntes = await um(`select stage from radar_opportunity where id = $1`, [op]);
 
-  const pedido = { empresaId: emp, oportunidadeId: op, origem: 'SIMULADOR', origemRef: { tipo: 'submissao', id: 'sub-ficticia-1' }, tipoProjeto: 'Galpão',
-    terreno: { cidade: 'Rio Verde', uf: 'GO' }, dadosDeclarados: [{ rotulo: 'Medidas', texto: 'vão 25 m × 80 m', fonte: 'SIMULADOR', registradoEm: '2026-11-16T10:00:00Z' }] };
+  const pedido = { empresaId: emp, oportunidadeId: op, origemLead: 'SIMULADOR', tipo: 'Estudo preliminar', prioridade: 'Alta', prazoSolicitado: '2026-11-30', responsavelComercialId: P.Comercial,
+    dados: { cidade: 'Rio Verde', uf: 'GO', comprimentoM: 80, larguraM: 25, alturaM: 10 }, documentos: { arquitetura: 'pendente' } };
 
-  // A. quem cria
+  // A. quem abre
   const criadores = {};
-  for (const k of Object.keys(P)) {
-    const r = await como(P[k], async () => (await q(`select * from pp_criar($1::jsonb)`, [JSON.stringify(pedido)]))[0]);
-    criadores[k] = r.erro ? 'negado' : 'cria';
-  }
-  const podeCriar = Object.entries(criadores).filter(([, v]) => v === 'cria').map(([k]) => k).sort();
-  prova('A só a gestão comercial cria (Administrador, Diretoria, Comercial)', JSON.stringify(podeCriar) === JSON.stringify(['Administrador', 'Comercial', 'Diretoria']), JSON.stringify(criadores));
+  for (const k of Object.keys(P)) { const r = await como(P[k], async () => (await q(`select * from pp_criar($1::jsonb, $2)`, [JSON.stringify(pedido), int()]))[0]); criadores[k] = r.erro ? 'negado' : 'abre'; }
+  const abrem = Object.entries(criadores).filter(([, v]) => v === 'abre').map(([k]) => k).sort();
+  prova('A só a gestão comercial abre (Administrador, Diretoria, Comercial)', JSON.stringify(abrem) === JSON.stringify(['Administrador', 'Comercial', 'Diretoria']), JSON.stringify(criadores));
 
-  const criado = await como(P.Comercial, async () => (await q(`select * from pp_criar($1::jsonb)`, [JSON.stringify(pedido)]))[0], { manter: true });
-  const id = criado.valor.id;
-  prova('B nasce RASCUNHO com código PP-0001 e evento de criação', criado.valor.status === 'RASCUNHO' && criado.valor.code === 'PP-0001' && (await um(`select count(*)::int from project_request_event where request_id = $1`, [id])) === 1, `${criado.valor.code} ${criado.valor.status}`);
+  // B. idempotência na criação
+  const c1 = await criar(P.Comercial, pedido, 'abrir-1');
+  const c2 = await criar(P.Comercial, pedido, 'abrir-1');
+  const id = c1.valor.id;
+  prova('B nasce SOLICITADO (SP-0001, versão 1); a mesma intenção devolve a mesma solicitação', c1.valor.status === 'SOLICITADO' && c1.valor.code === 'SP-0001' && c2.valor?.id === id && (await um(`select count(*)::int from project_request`)) === 1, `${c1.valor.code} ${c1.valor.status} · repetida=${c2.valor?.id === id}`);
 
-  const conta = async (k) => (await como(P[k], async () => um(`select count(*)::int from project_request`))).valor;
-  const contaTec = async (k) => { const r = await como(P[k], async () => um(`select count(*)::int from pp_visao_tecnica()`)); return r.erro ? 'negado' : r.valor; };
-  prova('C rascunho: a Engenharia não vê (tabela e visão técnica)', (await conta('Engenharia')) === 0 && (await contaTec('Engenharia')) === 0, `tabela=${await conta('Engenharia')} visão=${await contaTec('Engenharia')}`);
+  // C. duplicidade e versão
+  const dup = await criar(P.Comercial, pedido);
+  const outroTipo = await criar(P.Comercial, { ...pedido, tipo: 'Análise técnica' });
+  prova('C uma aberta por oportunidade e tipo; outro tipo convive', !!dup.erro && !outroTipo.erro, `${dup.erro} | outro tipo: ${outroTipo.valor?.code}`);
 
-  // D. escrita direta recusada para todos
+  // D. escrita direta recusada
   const diretas = [];
   for (const k of Object.keys(P)) {
-    for (const [nome, sql] of [['insert', `insert into project_request (organization_id, code, company_id, opportunity_id, origin, project_type, commercial_owner_id, created_by) values ('${org}', 'PP-9999', '${emp}', '${op}', 'OUTRO', 'Galpão', '${P[k]}', '${P[k]}')`], ['update', `update project_request set status = 'ENTREGUE' where id = '${id}'`], ['delete', `delete from project_request where id = '${id}'`], ['evento', `update project_request_event set reason = 'x' where request_id = '${id}'`]]) {
+    for (const [nome, sql] of [['insert', `insert into project_request (organization_id, code, company_id, opportunity_id, lead_origin, request_type, priority, commercial_owner_id, created_by) values ('${org}', 'SP-9999', '${emp}', '${op2}', 'OUTRO', 'Estudo preliminar', 'Normal', '${P[k]}', '${P[k]}')`], ['update', `update project_request set status = 'ENTREGUE' where id = '${id}'`], ['delete', `delete from project_request where id = '${id}'`], ['evento', `update project_request_event set reason = 'x' where request_id = '${id}'`]]) {
       const r = await como(P[k], async () => q(sql));
-      if (!r.erro) diretas.push(`${k}:${nome}`);
+      if (!r.erro && (nome !== 'update' || (await um(`select status from project_request where id = $1`, [id])) === 'ENTREGUE')) diretas.push(`${k}:${nome}`);
     }
   }
   prova('D nenhum perfil escreve direto (insert, update, delete, histórico)', diretas.length === 0, diretas.join(', ') || `${Object.keys(P).length} perfis × 4 = negado`);
 
-  // E. envio e visibilidade
+  // E. visibilidade: tabela só para a gestão; Engenharia pela visão técnica; demais nada
+  const vis = {};
+  for (const k of Object.keys(P)) {
+    const t = await como(P[k], async () => um(`select count(*)::int from project_request`));
+    const v = await como(P[k], async () => um(`select count(*)::int from pp_visao_tecnica()`));
+    vis[k] = `${t.erro ? 'x' : t.valor}/${v.erro ? 'x' : v.valor}`;
+  }
+  const esp = { Administrador: '2/2', Diretoria: '2/2', Comercial: '2/2', Engenharia: '0/2', Engenharia2: '0/2', Financeiro: '0/0', Contabilidade: '0/0', Compras: '0/0', 'Gestor de obra': '0/0', Auditoria: '0/0', Solicitante: '0/0' };
+  prova('E tabela só para a gestão; Engenharia só pela visão técnica; demais nada (tabela/visão)', JSON.stringify(vis) === JSON.stringify(esp), JSON.stringify(vis));
+
+  // F. visão técnica sem oportunidade, vínculos ou colunas comerciais
+  const linha = (await como(P.Engenharia, async () => (await q(`select * from pp_visao_tecnica() where id = $1`, [id]))[0])).valor;
+  const proibidas = Object.keys(linha).filter((c) => /opportunity|thread|submission|source_record|estimate|value|valor|probab|stage|notes|contact|phone|email/i.test(c));
+  prova('F visão técnica: sem oportunidade, sem vínculos, sem coluna comercial; empresa pelo nome', proibidas.length === 0 && linha.company_name === 'Grãos do Vale', `colunas: ${Object.keys(linha).join(', ')}`);
+
+  // G. lados, responsável técnico, versão, motivo
   let v = await versao(id);
-  const env = await transicionar(P.Comercial, id, 'enviar', {}, v);
-  prova('E Comercial envia', !env.erro && env.valor.status === 'SOLICITADO', env.erro ?? env.valor.status);
-  const visiveis = {};
-  for (const k of Object.keys(P)) visiveis[k] = `${await conta(k)}/${await contaTec(k)}`;
-  const esperados = { Administrador: '1/1', Diretoria: '1/1', Comercial: '1/1', Engenharia: '1/1', Engenharia2: '1/1', Financeiro: '0/0', Contabilidade: '0/0', Compras: '0/0', 'Gestor de obra': '0/0', Auditoria: '0/0', Solicitante: '0/0' };
-  prova('F encaminhado: Direção, Comercial e Engenharia veem; os demais não (tabela/visão)', JSON.stringify(visiveis) === JSON.stringify(esperados), JSON.stringify(visiveis));
-
-  // G. a visão técnica não tem coluna comercial e traz o nome da empresa
-  const colunas = Object.keys((await como(P.Engenharia, async () => (await q(`select * from pp_visao_tecnica()`))[0])).valor ?? {});
-  const proibidas = colunas.filter((c) => /value|valor|probab|stage|notes|contact|phone|email|opportunity/i.test(c));
-  const linha = (await como(P.Engenharia, async () => (await q(`select * from pp_visao_tecnica()`))[0])).valor;
-  prova('G visão técnica: sem coluna comercial; empresa pelo nome', proibidas.length === 0 && linha.company_name === 'Grãos do Vale', `colunas: ${colunas.join(', ')}`);
-
-  // H. lados e responsável técnico
+  const engEdita = await agir(P.Engenharia, id, 'editar_dados', { dados: { cidade: 'X', uf: 'GO', larguraM: 30 } }, v);
+  const finTriagem = await agir(P.Financeiro, id, 'iniciar_triagem', {}, v);
+  const tri = await agir(P.Engenharia, id, 'iniciar_triagem', { equipeTecnica: 'Engenharia estrutural' }, v);
   v = await versao(id);
-  const engEnvia = await transicionar(P.Engenharia, id, 'encerrar', { resultado: { tipo: 'NAO_SEGUIU' }, motivo: 'tentativa indevida' }, v);
-  const finTriagem = await transicionar(P.Financeiro, id, 'iniciar_triagem', {}, v);
-  const triagem = await transicionar(P.Engenharia, id, 'iniciar_triagem', {}, v);
-  v = await versao(id);
-  const outroAceita = await transicionar(P.Engenharia2, id, 'aceitar', { prazo: '2026-11-30' }, v);
-  const versaoVelha = await transicionar(P.Engenharia, id, 'aceitar', { prazo: '2026-11-30' }, v - 1);
-  const semMotivo = await transicionar(P.Engenharia, id, 'pedir_dados', { pendencias: ['sondagem'] }, v);
-  prova('H Engenharia não faz ação do Comercial; Financeiro não age; só o responsável técnico; versão e motivo conferidos',
-    !!engEnvia.erro && !!finTriagem.erro && !triagem.erro && triagem.valor.technical_owner_id === P.Engenharia && !!outroAceita.erro && !!versaoVelha.erro && !!semMotivo.erro,
-    [engEnvia.erro, finTriagem.erro, outroAceita.erro, versaoVelha.erro, semMotivo.erro].join(' | '));
+  const outro = await agir(P.Engenharia2, id, 'assumir_desenvolvimento', { prazoEntrega: '2026-11-30' }, v);
+  const velha = await agir(P.Engenharia, id, 'assumir_desenvolvimento', { prazoEntrega: '2026-11-30' }, v - 1);
+  const semMotivo = await agir(P.Engenharia, id, 'pedir_dados', { pendencias: ['sondagem'] }, v);
+  prova('G Engenharia não faz ação do Comercial; Financeiro não age; só o responsável técnico; versão e motivo',
+    !!engEdita.erro && !!finTriagem.erro && !tri.erro && tri.valor.technical_owner_id === P.Engenharia && !!outro.erro && !!velha.erro && !!semMotivo.erro,
+    [engEdita.erro, finTriagem.erro, outro.erro, velha.erro, semMotivo.erro].join(' | '));
 
-  // I. jornada até o fim
+  // H. idempotência na ação
+  v = await versao(id);
+  const t1 = await agir(P.Engenharia, id, 'registrar_triagem', { validar: ['cidade', 'larguraM'], nota: 'conferido' }, v, 'triagem-1');
+  const t2 = await agir(P.Engenharia, id, 'registrar_triagem', { validar: ['cidade', 'larguraM'], nota: 'conferido' }, v, 'triagem-1');
+  const nEv = await um(`select count(*)::int from project_request_event where request_id = $1 and intent = 'triagem-1'`, [id]);
+  prova('H a mesma intenção não aplica a ação duas vezes; dado validado com autor', !t1.erro && !t2.erro && t2.valor.version === t1.valor.version && nEv === 1 && t1.valor.technical_data.larguraM.situacao === 'validado' && t1.valor.technical_data.alturaM.situacao === 'declarado', `versão ${t1.valor?.version}/${t2.valor?.version}, eventos ${nEv}`);
+
+  // I. ciclo completo
   const passos = [
-    [P.Engenharia, 'pedir_dados', { motivo: 'Falta a sondagem', pendencias: ['sondagem'] }],
-    [P.Engenharia, 'aceitar', { prazo: '2026-11-30' }], // recusa: status DADOS_PENDENTES
-    [P.Comercial, 'responder_pendencias', {}],
-    [P.Engenharia, 'aceitar', { prazo: '2026-11-30' }],
-    [P.Engenharia, 'entregar', { entrega: { resumo: 'Estudo preliminar entregue', anexoIds: [] } }],
-    [P.Comercial, 'encerrar', { resultado: { tipo: 'ORCAMENTO_GERADO', orcamentoId: 'ORC-9' } }],
+    [P.Engenharia, 'pedir_dados', { motivo: 'Falta a arquitetura', pendencias: ['Planta de arquitetura'] }],
+    [P.Engenharia, 'assumir_desenvolvimento', { prazoEntrega: '2026-11-30' }], // recusado: DADOS_PENDENTES
+    [P.Comercial, 'atualizar_documento', { documento: { tipo: 'arquitetura', situacao: 'recebido', referencia: 'arq-r01.pdf' } }],
+    [P.Comercial, 'responder_pendencias', { resposta: 'Arquitetura recebida' }],
+    [P.Engenharia, 'atualizar_documento', { documento: { tipo: 'arquitetura', situacao: 'validado' } }],
+    [P.Engenharia, 'assumir_desenvolvimento', { prazoEntrega: '2026-11-30' }],
+    [P.Engenharia, 'registrar_andamento', { nota: 'Pórticos pré-dimensionados' }],
+    [P.Engenharia, 'entregar', { entrega: { resumo: 'Estudo preliminar entregue', resultados: 'Pórticos a cada 6 m', referencias: ['estudo.pdf'] } }],
+    [P.Comercial, 'encerrar', orc ? { resultado: { tipo: 'ORCAMENTO_VINCULADO', orcamentoId: orc } } : { resultado: { tipo: 'SEGUE_PARA_ORCAMENTO' } }],
   ];
   const trilha = [];
-  for (const [uid, acao, dados] of passos) {
-    const r = await transicionar(uid, id, acao, dados, await versao(id));
-    trilha.push(`${acao}:${r.erro ? 'recusado' : r.valor.status}`);
-  }
-  const eventos = await q(`select action, from_status, to_status, reason from project_request_event where request_id = $1 order by occurred_at, id`, [id]);
-  prova('I jornada completa até ENCERRADO, com a recusa no meio', trilha.join(' ') === 'pedir_dados:DADOS_PENDENTES aceitar:recusado responder_pendencias:TRIAGEM_TECNICA aceitar:EM_DESENVOLVIMENTO entregar:ENTREGUE encerrar:ENCERRADO', trilha.join(' '));
-  prova('J histórico: um evento por ação aceita, de → para, motivo da devolução', eventos.length === 8 && eventos.some((e) => e.action === 'pedir_dados' && e.reason === 'Falta a sondagem' && e.from_status === 'TRIAGEM_TECNICA'), `${eventos.length} eventos`);
-  const engEventos = (await como(P.Engenharia, async () => um(`select count(*)::int from project_request_event where request_id = $1`, [id]))).valor;
-  const finEventos = (await como(P.Financeiro, async () => um(`select count(*)::int from project_request_event where request_id = $1`, [id]))).valor;
-  prova('K histórico visível a quem vê o pedido e a mais ninguém', engEventos === 8 && finEventos === 0, `Engenharia=${engEventos} Financeiro=${finEventos}`);
+  for (const [uid, acao, dados] of passos) { const r = await agir(uid, id, acao, dados, await versao(id)); trilha.push(`${acao}:${r.erro ? 'recusado' : r.valor.status}`); }
+  prova('I ciclo completo até ENCERRADO, com devolução e a recusa no meio', trilha.join(' ') === 'pedir_dados:DADOS_PENDENTES assumir_desenvolvimento:recusado atualizar_documento:DADOS_PENDENTES responder_pendencias:TRIAGEM_TECNICA atualizar_documento:TRIAGEM_TECNICA assumir_desenvolvimento:EM_DESENVOLVIMENTO registrar_andamento:EM_DESENVOLVIMENTO entregar:ENTREGUE encerrar:ENCERRADO', trilha.join(' '));
+  const final = await agir(P.Administrador, id, 'cancelar', { motivo: 'tentativa depois de encerrada' }, await versao(id));
+  prova('J estado final não admite alteração', !!final.erro, final.erro ?? 'alterou');
+  const eventos = await q(`select action, from_status, to_status, reason, intent from project_request_event where request_id = $1 order by occurred_at, id`, [id]);
+  prova('K histórico: um evento por ação aceita, com de → para, motivo e intenção', eventos.length === 11 && eventos.every((e) => e.intent) && eventos.some((e) => e.action === 'pedir_dados' && e.reason === 'Falta a arquitetura' && e.from_status === 'TRIAGEM_TECNICA'), `${eventos.length} eventos`);
+  const estagioDepois = await um(`select stage from radar_opportunity where id = $1`, [op]);
+  prova('L o estágio da oportunidade no Radar não mudou', estagioDepois === estagioAntes, `${estagioAntes} → ${estagioDepois}`);
 
-  // L. técnico por construção e coerência
-  const comTelefone = await como(P.Comercial, async () => q(`select * from pp_criar($1::jsonb)`, [JSON.stringify({ ...pedido, dadosDeclarados: [{ rotulo: 'x', telefone: '62 99999-0000' }] })]));
-  const oportunidadeAlheia = await como(P.Comercial, async () => q(`select * from pp_criar($1::jsonb)`, [JSON.stringify({ ...pedido, oportunidadeId: op2 })]));
-  prova('L chave de contato recusada pelo banco; oportunidade de outra empresa recusada', !!comTelefone.erro && !!oportunidadeAlheia.erro, `${comTelefone.erro} | ${oportunidadeAlheia.erro}`);
+  // M. vínculos por id, técnico por construção
+  const alheia = await criar(P.Comercial, { ...pedido, oportunidadeId: op2 });
+  const inativa = await criar(P.Comercial, { ...pedido, oportunidadeId: opGanha, tipo: 'Projeto executivo' });
+  const threadFalsa = await criar(P.Comercial, { ...pedido, tipo: 'Projeto executivo', vinculos: { inboxThreadId: '00000000-0000-4000-8000-000000000000' } });
+  const subFalsa = await criar(P.Comercial, { ...pedido, tipo: 'Projeto executivo', vinculos: { submissaoId: 'sub-inexistente' } });
+  const telefone = await criar(P.Comercial, { ...pedido, tipo: 'Projeto executivo', documentos: { arquitetura: 'pendente' }, dados: { ...pedido.dados }, extra: 1 });
+  const naoCatalogo = (await como(P.Comercial, async () => (await q(`select technical_data from pp_criar($1::jsonb, $2)`, [JSON.stringify({ ...pedido, tipo: 'Apoio ao orçamento técnico', dados: { ...pedido.dados, telefone: '62 99999-0000' } }), int()]))[0])).valor;
+  prova('M vínculos conferidos por id (outra empresa, oportunidade inativa, conversa e submissão inexistentes recusadas); chave fora do catálogo descartada',
+    !!alheia.erro && !!inativa.erro && !!threadFalsa.erro && !!subFalsa.erro && !telefone.erro && naoCatalogo && !('telefone' in naoCatalogo),
+    [alheia.erro, inativa.erro, threadFalsa.erro, subFalsa.erro].join(' | '));
 
-  // M. outra organização nunca vê
+  // N. outra organização
   const ADM2 = 'dddddddd-0000-4000-8000-0000000000b1';
   await q(`insert into profile (id, organization_id, name, email, role) values ($1, $2, 'Admin da outra', 'b1@exemplo', 'Administrador')`, [ADM2, org2]);
-  const outra = (await como(ADM2, async () => `${await um(`select count(*)::int from project_request`)}/${await um(`select count(*)::int from pp_visao_tecnica()`)}`)).valor;
-  prova('M outra organização não vê nada', outra === '0/0', outra);
+  const outra = (await como(ADM2, async () => `${await um(`select count(*)::int from project_request`)}/${await um(`select count(*)::int from pp_visao_tecnica()`)}/${await um(`select count(*)::int from project_request_event`)}`)).valor;
+  const outraAge = await agir(ADM2, outroTipo.valor.id, 'cancelar', { motivo: 'tentativa de outra organização' }, 1);
+  prova('N outra organização não vê nem altera nada', outra === '0/0/0' && !!outraAge.erro, `${outra} · ${outraAge.erro}`);
 
-  // diagnóstico (D2): a Engenharia ainda lê o Radar enquanto tiver `radar`
-  res.diagnostico.engenhariaLeRadar_D2 = { oportunidades: (await como(P.Engenharia, async () => um(`select count(*)::int from radar_opportunity`))).valor, contatos: (await como(P.Engenharia, async () => um(`select count(*)::int from radar_contact`))).valor };
+  // O. fila técnica (E11.2B): pré-atribuída a ENG2 na triagem — os dois veem, só ENG2 age; depois da triagem, só ENG2 vê
+  const fila = (await criar(P.Comercial, { ...pedido, tipo: 'Anteprojeto estrutural' })).valor;
+  const atr = await agir(P.Diretoria, fila.id, 'atribuir', { responsavelTecnicoId: P.Engenharia2 }, fila.version);
+  const veEng = (await como(P.Engenharia, async () => um(`select count(*)::int from pp_visao_tecnica() where id = $1`, [fila.id]))).valor;
+  const engTenta = await agir(P.Engenharia, fila.id, 'iniciar_triagem', {}, await versao(fila.id));
+  const eng2Tri = await agir(P.Engenharia2, fila.id, 'iniciar_triagem', {}, await versao(fila.id));
+  const veEngDepois = (await como(P.Engenharia, async () => `${await um(`select count(*)::int from pp_visao_tecnica() where id = $1`, [fila.id])}/${await um(`select count(*)::int from project_request_event where request_id = $1`, [fila.id])}`)).valor;
+  const veEng2 = (await como(P.Engenharia2, async () => `${await um(`select count(*)::int from pp_visao_tecnica() where id = $1`, [fila.id])}/${await um(`select count(*)::int from project_request_event where request_id = $1`, [fila.id])}`)).valor;
+  prova('O fila técnica: na triagem a equipe vê e só o responsável age; depois, só o responsável vê (visão e histórico)',
+    !atr.erro && veEng === 1 && !!engTenta.erro && !eng2Tri.erro && veEngDepois === '0/0' && veEng2 === '1/3', `ENG triagem=${veEng} tenta=${engTenta.erro} · depois ENG=${veEngDepois} ENG2=${veEng2}`);
+
+  res.diagnostico.engenhariaLeRadar_D2 = { oportunidades: (await como(P.Engenharia, async () => um(`select count(*)::int from radar_opportunity`))).valor };
 } catch (e) {
   prova('execução', false, so(e));
 }
