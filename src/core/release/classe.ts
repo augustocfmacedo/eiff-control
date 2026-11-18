@@ -85,6 +85,27 @@ export interface ContextoConjunto {
   docsCitados?: string[]
   /** Para cada teste alterado, os módulos locais que ele importa: o teste vale a maior classe entre eles. */
   importsDosTestes?: Record<string, string[]>
+  /** Testes cuja versão da base OU do candidato usa forma de import que foge da análise: VERMELHOS. */
+  testesSuspeitos?: string[]
+}
+
+/**
+ * Forma de import que a análise estática não segue: `vi.importActual/importMock/mock/doMock`, `import()` não literal,
+ * `require(`, especificador absoluto (`/src/...`) ou de alias (`@/`, `~/`, `src/`). Teste assim vale VERMELHO.
+ */
+export function testeComImportOpaco(texto: string): boolean {
+  if (/\bvi\s*\.\s*(importActual|importMock|mock|doMock)\s*\(/.test(texto)) return true
+  if (/\bimport\s*\(\s*[^'"\s)]/.test(texto) || /\brequire\s*\(/.test(texto)) return true
+  for (const m of texto.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+    const e = m[1]
+    if (e.startsWith('/') || e.startsWith('@/') || e.startsWith('~/') || e.startsWith('src/')) return true
+  }
+  return false
+}
+
+/** Especificadores relativos (`./`, `../`) de um texto de teste. */
+export function importsRelativos(texto: string): string[] {
+  return [...texto.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)].map((m) => m[1])
 }
 
 /** Caminhos `docs/....md` citados num texto de instruções. */
@@ -102,6 +123,7 @@ export function classeDoConjunto(mudancas: Array<{ arquivo: string; status?: Sta
   const lidos = mudancas.map((m) => {
     const c = classeDoArquivo(m.arquivo, m.status ?? 'M')
     if (c.classe !== 'VERMELHO' && citados.has(m.arquivo.toLowerCase())) return { ...c, classe: 'VERMELHO' as Classe, motivo: 'documento citado pelas instruções dos agentes' }
+    if (c.classe !== 'VERMELHO' && ctx.testesSuspeitos?.includes(m.arquivo)) return { ...c, classe: 'VERMELHO' as Classe, motivo: 'teste com import que a análise não segue (mock, dinâmico, absoluto ou alias)' }
     const imp = ctx.importsDosTestes?.[m.arquivo]
     if (c.classe !== 'VERMELHO' && imp) {
       const pior = imp.map((i) => classeDoArquivo(i, 'M')).find((x) => x.classe === 'VERMELHO')

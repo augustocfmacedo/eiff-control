@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { caminhoCanonico, classeDoArquivo, classeDoConjunto, docsCitadosEm, lerRawZ } from './classe'
+import { caminhoCanonico, classeDoArquivo, classeDoConjunto, docsCitadosEm, importsRelativos, lerRawZ, testeComImportOpaco } from './classe'
 
 const RAIZ = path.resolve(__dirname, '../../..')
 const vermelho = (p: string, s?: 'A' | 'M' | 'D' | 'T') => expect(classeDoArquivo(p, s).classe, p).toBe('VERMELHO')
@@ -99,4 +99,18 @@ describe('fecho de importação das funções Netlify', () => {
     })
     expect(suspeitos, 'require, createRequire ou import() não literal no código do servidor').toEqual([])
   }, 60_000)
+})
+
+describe('testes com import opaco e união base + candidato', () => {
+  it('mock, import dinâmico não literal, require e especificador absoluto ou de alias tornam o teste VERMELHO', () => {
+    for (const t of ["await vi.importActual('../core/permissoes')", "vi.mock('../x')", 'await import(`../core/${n}`)', "const x = require('../y')",
+      "import { MATRIZ } from '/src/core/permissoes'", "import a from '@/core/x'"])
+      expect(testeComImportOpaco(t), t).toBe(true)
+    expect(testeComImportOpaco("import { describe } from 'vitest'\nimport { a } from './a'\nimport fs from 'node:fs'")).toBe(false)
+    const c = classeDoConjunto([{ arquivo: 'src/screens/x.test.ts' }], { testesSuspeitos: ['src/screens/x.test.ts'] })
+    expect(c.classe).toBe('VERMELHO')
+  })
+  it('importsRelativos lê os especificadores relativos', () => {
+    expect(importsRelativos("import { a } from './a'\nimport '../b.js'\nconst c = await import('../../c')\nimport d from 'vitest'")).toEqual(['./a', '../b.js', '../../c'])
+  })
 })

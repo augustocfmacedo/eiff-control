@@ -16,7 +16,9 @@
 //
 // Saída: 0 = VERDE ou AMARELO; 2 = VERMELHO OU QUALQUER ERRO. Só a saída 0 libera.
 import { execFileSync } from 'node:child_process'
-import { classeDoConjunto, docsCitadosEm, lerRawZ } from '../src/core/release/classe'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import { classeDoConjunto, docsCitadosEm, importsRelativos, lerRawZ, testeComImportOpaco } from '../src/core/release/classe'
 
 const BLOQUEIA = 2
 const SHA = /^[0-9a-f]{40}$/
@@ -35,7 +37,17 @@ const bloquear = (o: Record<string, unknown>) => { console.log(JSON.stringify({ 
 try {
   const raiz = git0(['rev-parse', '--show-toplevel']).trim()
   const git = (args: string[]) => git0(args, raiz)
-  const resolver = (ref: string) => git(['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]).trim()
+  // ref nomeada só pela forma EXATA (show-ref --verify não cai em tags de nome parecido); SHA confirmado como commit
+  const resolver = (ref: string) => {
+    const sha = SHA.test(ref) ? ref : git(['show-ref', '--verify', '--hash', ref]).trim()
+    return git(['rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`]).trim()
+  }
+  // o script que roda tem de ser o deste repositório, não uma cópia em outro caminho
+  const proprio = path.resolve(fileURLToPath(import.meta.url)).toLowerCase()
+  if (proprio !== path.resolve(raiz, 'scripts', 'release-classe.mts').toLowerCase()) {
+    console.error('release-classe: o script em execução não é o scripts/release-classe.mts deste repositório')
+    process.exit(BLOQUEIA)
+  }
   const args = process.argv.slice(2).filter((a) => a !== '--')
   const [modo, a1, a2] = args
   let base: string; let cand: string
@@ -65,21 +77,25 @@ try {
   const arvore = git(['ls-tree', '-r', '-z', '--name-only', shaCand]).split('\0').filter((x) => x !== '')
   // documentos citados pelas instruções da BASE (não as do candidato, que o PR poderia apagar)
   const instrucoes = ['CLAUDE.md', 'AGENTS.md'].map((f) => { try { return git(['show', `${shaBase}:${f}`]) } catch { return '' } }).join('\n')
-  // imports locais de cada teste alterado, lidos do candidato
-  const arvoreSet = new Set(arvore)
+  // imports de cada teste alterado: UNIÃO da versão da base com a do candidato (esvaziar o teste não apaga a ligação
+  // com o que ele guardava); forma de import opaca em qualquer das duas versões torna o teste VERMELHO
+  const arvoreSet = new Set([...arvore, ...git(['ls-tree', '-r', '-z', '--name-only', shaBase]).split('\0').filter((x) => x !== '')])
   const importsDosTestes: Record<string, string[]> = {}
+  const testesSuspeitos: string[] = []
+  const ler = (sha: string, f: string) => { try { return git(['show', `${sha}:${f}`]) } catch { return '' } }
   for (const m of mudancas) {
-    if (m.status === 'D' || !/\.test\.tsx?$/i.test(m.arquivo)) continue
-    const texto = git(['show', `${shaCand}:${m.arquivo}`])
+    if (!/\.test\.tsx?$/i.test(m.arquivo)) continue
+    const versoes = [ler(shaBase, m.arquivo), m.status === 'D' ? '' : ler(shaCand, m.arquivo)]
+    if (versoes.some(testeComImportOpaco)) testesSuspeitos.push(m.arquivo)
     const dir = m.arquivo.split('/').slice(0, -1)
-    importsDosTestes[m.arquivo] = [...texto.matchAll(/(?:from|import)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)].flatMap((x) => {
+    importsDosTestes[m.arquivo] = versoes.flatMap(importsRelativos).flatMap((spec) => {
       const partes = [...dir]
-      for (const seg of x[1].split('/')) { if (seg === '..') partes.pop(); else if (seg !== '.') partes.push(seg) }
+      for (const seg of spec.split('/')) { if (seg === '..') partes.pop(); else if (seg !== '.') partes.push(seg) }
       const alvo = partes.join('/').replace(/\.js$/, '')
       return ['', '.ts', '.tsx', '/index.ts'].map((e) => alvo + e).filter((c) => arvoreSet.has(c)).slice(0, 1)
     })
   }
-  const r = classeDoConjunto(mudancas, { arvore, docsCitados: docsCitadosEm(instrucoes), importsDosTestes })
+  const r = classeDoConjunto(mudancas, { arvore, docsCitados: docsCitadosEm(instrucoes), importsDosTestes, testesSuspeitos })
   console.log(JSON.stringify({ ...contexto, classe: r.classe, colisoes: r.colisoes, arquivos: r.arquivos }, null, 2))
   process.exit(r.classe === 'VERMELHO' ? BLOQUEIA : 0)
 } catch (e) {
