@@ -43,9 +43,9 @@ const SEMENTE = '0013';
 
 /**
  * Cria o PGlite (com `parsers` opcionais por OID de tipo) e aplica a fila de `raiz/supabase/migrations` (cada migration numa transação). `antesDe(numero)` roda
- * antes de cada migration (ex.: tirar um retrato do schema antes da 0070). Devolve { db, aplicadas }.
+ * antes de cada migration (ex.: tirar um retrato do schema antes da 0070); `excluir` pula números da fila. Devolve { db, aplicadas }.
  */
-export async function bancoComFila(raiz, { antesDe, parsers } = {}) {
+export async function bancoComFila(raiz, { antesDe, parsers, excluir = [] } = {}) {
   const pastaMigrations = path.join(raiz, 'supabase', 'migrations');
   // parsers: ex. devolver timestamptz como texto ISO com microssegundos, como o PostgREST
   const db = new PGlite({ extensions: { pgcrypto }, ...(parsers ? { parsers } : {}) });
@@ -59,6 +59,7 @@ export async function bancoComFila(raiz, { antesDe, parsers } = {}) {
   };
   for (const arq of arquivos) {
     const n = arq.slice(0, 4);
+    if (excluir.includes(n)) continue; // `excluir`: números deixados de fora (ex.: medir antes de aplicar a 0077)
     if (antesDe) await antesDe(n, db);
     for (const a of ORDEM_CORRIGIDA[n] ?? []) if (!feitas.has(a)) await aplicar(a);
     if (!feitas.has(arq)) await aplicar(arq);

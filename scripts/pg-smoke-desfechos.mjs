@@ -57,7 +57,8 @@ const schemaOportunidade = async () => ({
   colunas: (await q(`select column_name, data_type from information_schema.columns where table_schema = 'public' and table_name = 'radar_opportunity' order by ordinal_position`)).map((r) => `${r.column_name}:${r.data_type}`),
   restricoes: (await q(`select conname from pg_constraint where conrelid = 'public.radar_opportunity'::regclass order by 1`)).map((r) => r.conname),
   gatilhos: (await q(`select tgname from pg_trigger where tgrelid = 'public.radar_opportunity'::regclass and not tgisinternal order by 1`)).map((r) => r.tgname),
-  acl: await um(`select coalesce(relacl::text, '') from pg_class where oid = 'public.radar_opportunity'::regclass`),
+  // sem os itens de anon: a 0077 (Segurança S3) tira anon de toda tabela DEPOIS da 0070; a reversão provada aqui é a da 0070
+  acl: await um(`select coalesce(array_to_string(array(select x from unnest(relacl::text[]) x where x !~ '^anon='), ','), '') from pg_class where oid = 'public.radar_opportunity'::regclass`),
 });
 
 try {

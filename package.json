@@ -19,6 +19,7 @@
     "smoke:meta-intencao": "node scripts/pg-smoke-meta-intencao.mjs",
     "smoke:widget-token": "node scripts/pg-smoke-widget-token.mjs",
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
+    "smoke:views": "node scripts/pg-smoke-views.mjs",
     "smoke:formulario": "vite-node scripts/pg-smoke-formulario.mts",
     "smoke:email": "node scripts/pg-smoke-email.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",

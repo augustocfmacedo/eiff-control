@@ -8,7 +8,7 @@
 // O schema é a FILA INTEIRA de migrations (0001..última) mais a carga inicial, com o mesmo prelúdio do pg-smoke-fin-reset
 // (imita a plataforma Supabase). NADA TOCA PRODUÇÃO: banco em memória, sem rede, sem segredo.
 //
-// Como rodar:  node scripts/pg-smoke-solicitante.mjs   (imprime JSON; sai com 1 se qualquer prova falhar)
+// Como rodar:  node scripts/pg-smoke-solicitante.mjs [--proposta <arquivo.sql> ...]   (imprime JSON; sai com 1 se qualquer prova falhar)
 import fs from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
@@ -18,6 +18,9 @@ const AQUI = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-
 const RAIZ = path.join(AQUI, '..', 'supabase', 'migrations');
 const ORDEM_CORRIGIDA = { '0014': ['0015_version_cols.sql'] }; // mesma correção histórica do preflight
 const SEMENTE = '0013';
+// --proposta <arquivo.sql> (repetível): aplica SQL ainda fora da fila depois das migrations, para provar uma correção
+// proposta (ex.: uma migration ainda fora da fila) antes de ela virar migration numerada.
+const PROPOSTAS = process.argv.flatMap((x, i, todos) => (x === '--proposta' && todos[i + 1] ? [path.resolve(todos[i + 1])] : []));
 
 const PRELUDIO = `
 do $prel$ begin
@@ -102,6 +105,7 @@ try {
   // a 0073 redefine df_pedido_json (com os anexos): reaplicada por último, idempotente. Ordem 0067 → 0071 → 0072 → 0073.
   await db.exec(fs.readFileSync(path.join(RAIZ, arquivos.find((f) => f.startsWith('0073_'))), 'utf8'));
   res.migrations.reaplicacao_0073 = 'ok';
+  for (const arq of PROPOSTAS) { await db.exec(fs.readFileSync(arq, 'utf8')); res.migrations[`proposta ${path.basename(arq)}`] = 'APLICADA'; }
 
   await db.exec('begin;');
   const org = await um(`select id from organization where code = 'EIFF'`);
@@ -133,6 +137,19 @@ try {
   const vazamentoReal = vazou.filter((v) => !v.startsWith('storage.buckets'));
   prova('A Solicitante não lê nenhuma tabela (public + storage)', vazamentoReal.length === 0,
     vazamentoReal.length ? vazamentoReal.join(' · ') : `${tabelas.length} tabelas public: ${vazias} vazias, ${negadas} negadas`);
+
+  // A2. leitura: CADA view (public e mart). View sem security_invoker roda com os direitos do dono e ignora a RLS das
+  // tabelas — foi assim que o Solicitante lia lançamentos pela v_financial_entry_calc com a prova A verde (achado S3).
+  const views = (await q(`select schemaname || '.' || viewname v from pg_views where schemaname in ('public', 'mart') order by 1`)).map((r) => r.v);
+  const vazouView = []; let vViews = 0;
+  for (const v of views) {
+    const r = await como(SOL, async () => um(`select count(*)::int from ${v.split('.').map((x) => `"${x}"`).join('.')}`));
+    if (r.erro) { if (!/permission denied/.test(r.erro)) vazouView.push(`${v}: erro inesperado ${r.erro}`); else vViews++; }
+    else if (r.valor > 0) vazouView.push(`${v}: ${r.valor} linha(s)`);
+    else vViews++;
+  }
+  prova('A2 Solicitante não lê nenhuma view (public + mart)', vazouView.length === 0,
+    vazouView.length ? vazouView.join(' · ') : `${views.length} views: 0 linhas ou negadas`);
 
   // B. escrita direta recusada: lancamento, auditoria e promocao do proprio perfil
   // valores literais (sem SELECT em tabela que o Solicitante nao le, senao seria um insert de zero linhas e nao provaria nada)
