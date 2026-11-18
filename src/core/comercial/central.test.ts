@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { seedInbox } from '../inbox/seed'
 import { radarVazio } from '../radar/types'
 import {
-  CICLOS_DE_VIDA, CONVERSAS_DE_ENSAIO, FASE_DO_ESTAGIO, FASES_JORNADA, OPERACOES_CENTRAL, faseDoDossie, chaveContato, chaveEmpresa, contarAtendimentos, dossie, ETIQUETA_ENSAIO, filtrarAtendimentos, indiceDossies, lerChaveDossie, pipeline, retratoCentral,
+  CICLOS_DE_VIDA, CONVERSAS_DE_ENSAIO, podeAbrirCentral, FASE_DO_ESTAGIO, FASES_JORNADA, OPERACOES_CENTRAL, faseDoDossie, chaveContato, chaveEmpresa, contarAtendimentos, dossie, ETIQUETA_ENSAIO, filtrarAtendimentos, indiceDossies, lerChaveDossie, pipeline, retratoCentral,
   situacaoDoPrazo, type ContextoCentral, type FontesCentral,
 } from './central'
 import { demonstracaoCentral } from './demonstracao'
@@ -309,5 +309,14 @@ describe('Ciclos de vida e operações', () => {
   })
   it('toda operação que já opera aponta a tela da autoridade', () => {
     expect(OPERACOES_CENTRAL.filter((o) => o.situacao === 'opera').every((o) => o.rota)).toBe(true)
+  })
+})
+
+describe('quem abre a Central nesta etapa', () => {
+  it('só a Direção com radar; Financeiro, Compras, Gestor de obra e Engenharia não abrem, mesmo tendo radar', () => {
+    expect(podeAbrirCentral({ papel: 'Administrador' }, true)).toBe(true)
+    expect(podeAbrirCentral({ papel: 'Diretoria' }, true)).toBe(true)
+    for (const papel of ['Financeiro', 'Compras', 'Gestor de obra', 'Engenharia', 'Contabilidade', 'Auditoria', 'Solicitante']) expect(podeAbrirCentral({ papel }, true), papel).toBe(false)
+    expect(podeAbrirCentral({ papel: 'Diretoria' }, false)).toBe(false)
   })
 })

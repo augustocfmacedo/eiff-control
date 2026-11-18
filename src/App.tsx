@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { CenaEstrutura, IndicadorNav, MicroInteracoes, Revelar } from './ui/motion';
 import { dashboard } from './core/engine';
 import { actions, inicializar, obrasVisiveis, pode, useStore } from './data/store';
+import { NAV_CENTRAL, podeAbrirCentral } from './core/comercial/central';
 import { Badge, EstadoErro, SkeletonTela, StatusBadge, dataHora } from './ui/components';
 import { href, useRota } from './ui/router';
 import Login from './screens/Login';
@@ -143,7 +144,8 @@ export default function App() {
     '/equipe': ds.tarefas.filter((t) => t.status !== 'Concluída' && t.prazo < ds.params.dataBase).length, '/radar': radarAlertas, '/radar/hoje': radarHoje,
     '/compras': ds.pedidos.filter((p) => p.status === 'Emitido' || p.status === 'Recebido parcial').length, '/aprovacoes': ds.aprovacoes.filter((a) => a.status === 'Pendente').length,
   };
-  const rotasVisiveis = ROTAS_NAV.filter((r) => !r.permissao || pode(usuario, r.permissao as never));
+  const permiteNav = (p: string) => (p === NAV_CENTRAL ? podeAbrirCentral(usuario, pode(usuario, 'radar')) : pode(usuario, p as never));
+  const rotasVisiveis = ROTAS_NAV.filter((r) => !r.permissao || permiteNav(r.permissao));
   // uma rota filha que tambem esta no menu (ex.: /atendimento/leads) nao acende a mae
   const ativa = (to: string) => rota.path === to || (to !== '/' && to !== '/radar' && rota.path.startsWith(to) && !ROTAS_NAV.some((r) => r.to.length > to.length && r.to.startsWith(to) && rota.path.startsWith(r.to)));
   const alternarFavorito = (to: string) => setFavoritos((f) => { const v = f.includes(to) ? f.filter((x) => x !== to) : [...f, to]; try { localStorage.setItem('eiff-control:favoritos', JSON.stringify(v)); } catch { /* ignore */ } return v; });
@@ -176,9 +178,9 @@ export default function App() {
       ? (p1 === 'configuracao' ? <InboxConfig /> : p1 === 'leads' ? <LeadsSite query={rota.query} /> : <Inbox threadId={rota.query.get('t') ?? p1} query={rota.query} />)
       : <EstadoErro titulo="Acesso restrito" causa={<>O EIFF Inbox é visível para quem tem a permissão <code>inbox</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar atender conversas.</EstadoErro>;
       break;
-    // Central de Gestao Comercial: autorizacao real da rota (permissao `radar`, que esta contida em `inbox`)
+    // Central de Gestao Comercial: autorizacao real da rota (`radar` + Direcao, ver podeAbrirCentral)
     case 'comercial': tela = p1 === 'gestao'
-      ? (pode(usuario, 'radar') ? <CentralGestao query={rota.query} /> : <EstadoErro titulo="Acesso restrito" causa={<>A Central de Gestão Comercial é visível para quem tem a permissão <code>radar</code>. Seu perfil (<b>{usuario.papel}</b>) não a tem.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
+      ? (podeAbrirCentral(usuario, pode(usuario, 'radar')) ? <CentralGestao query={rota.query} /> : <EstadoErro titulo="Acesso restrito" causa={<>Nesta etapa a Central de Gestão Comercial é só da Direção (Administrador e Diretoria). Seu perfil (<b>{usuario.papel}</b>) não a abre.</>}>Peça ao Administrador se precisar acompanhar o comercial.</EstadoErro>)
       : <div className="empty">Página não encontrada.</div>;
       break;
     case 'radar': tela = p1 === 'hoje' ? <RadarHoje /> : p1 === 'empresas' ? (p2 ? <RadarEmpresa id={p2} key={p2} query={rota.query} /> : <RadarEmpresas query={rota.query} key={rota.query.toString()} />) : <RadarCommandCenter aba0={rota.query.get('aba') ?? undefined} />; break;
@@ -311,7 +313,7 @@ export default function App() {
         </header>
         <main className="content" id="conteudo" tabIndex={-1}><Suspense fallback={<SkeletonTela />}><Revelar chave={chaveTela}><Sugestoes rota={rota.path} />{tela}</Revelar></Suspense></main>
       </div>
-      <Paleta aberta={paleta} onFechar={() => setPaleta(false)} acoes={acoesPaleta} permite={(p) => pode(usuario, p as never)} />
+      <Paleta aberta={paleta} onFechar={() => setPaleta(false)} acoes={acoesPaleta} permite={permiteNav} />
       <Tour rota={rota.path} aberto={tour} onFechar={() => setTour(false)} />
       <MicroInteracoes />
       <Assistente tela={rota.path} />

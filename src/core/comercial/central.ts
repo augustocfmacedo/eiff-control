@@ -626,6 +626,19 @@ export interface RetratoCentral {
   jornada: ResumoJornada
 }
 
+/**
+ * Quem abre a Central nesta etapa: a permissão `radar` E a Direção (Administrador, Diretoria).
+ * A Central reúne valores do pipeline, negociação e dossiês de todos os clientes num só lugar; `radar` sozinha
+ * incluiria Financeiro, Compras, Gestor de obra e Engenharia. Até a segregação própria da Central (PR #90,
+ * permissão `comercial_gestao`), a rota fica restrita à Direção. Nada muda no que cada papel já vê no Radar.
+ */
+export const PAPEIS_CENTRAL = ['Administrador', 'Diretoria'] as const
+export function podeAbrirCentral(usuario: { papel: string }, temRadar: boolean): boolean {
+  return temRadar && (PAPEIS_CENTRAL as readonly string[]).includes(usuario.papel)
+}
+/** Chave de navegação (menu e paleta) resolvida por `podeAbrirCentral`, não pela MATRIZ. */
+export const NAV_CENTRAL = 'central_gestao'
+
 const MOTIVO_SEM_INBOX = 'EIFF Inbox não carregado ou sem a permissão inbox'
 
 /** Monta o retrato inteiro de uma vez (uma chamada por tela). */
