@@ -29,7 +29,7 @@ import { contatoDaMensagem, ehRespostaEfetiva, situacaoPrimeiraResposta, type Me
 import { estadoSla, ordenarParaTrabalho, threadVisivel, visibilidadeDe, type EstadoSla } from './roteamento'
 import type { ContatoInbox, InboxDataset, InboxMessage, InboxThread, ThreadEvent, TipoEventoThread } from './tipos'
 import { normalizarTelefone } from '../radar/canais'
-import { PRAZO_PRIMEIRA_RESPOSTA_MIN, ROTULO_LEITURA_DA_PAGINA } from '../radar/formularioGravacao'
+import { CAMPOS_DESCRITOS_DO_BRUTO, PRAZO_PRIMEIRA_RESPOSTA_MIN, ROTULO_LEITURA_DA_PAGINA } from '../radar/formularioGravacao'
 import type { Usuario } from '../types'
 
 /** O prazo de primeira resposta do lead do site, em minutos ÚTEIS (fonte: a gravação da submissão). */
@@ -51,6 +51,10 @@ export interface SolicitacaoDoSite {
   prazo?: string
   escopo?: string
   campanha?: string
+  /** «Tipo de obra» do formulário «Iniciar um projeto». */
+  tipoObra?: string
+  /** «Área aproximada» como a pessoa escreveu (texto livre, não convertido). */
+  areaInformada?: string
   /** Texto automático que a página mostrou ao visitante. NÃO é orientação de engenharia. */
   leituraDaPagina: string[]
   /** Nome do formulário, lido da linha de origem. */
@@ -61,9 +65,13 @@ export interface SolicitacaoDoSite {
   canais: string[]
 }
 
-const ROTULOS: readonly [keyof Pick<SolicitacaoDoSite, 'configuracao' | 'especificacao' | 'medidas' | 'prazo' | 'escopo' | 'campanha'>, string][] = [
+type CampoRotulado = keyof Pick<SolicitacaoDoSite, 'configuracao' | 'especificacao' | 'medidas' | 'prazo' | 'escopo' | 'campanha' | 'tipoObra' | 'areaInformada'>
+/** Os rótulos das linhas que vêm do bruto são os da gravação: uma fonte só. */
+const rotuloDoBruto = (campo: string): string => `${CAMPOS_DESCRITOS_DO_BRUTO.find((d) => d.campo === campo)!.rotulo}:`
+const ROTULOS: readonly [CampoRotulado, string][] = [
   ['configuracao', 'Configuração:'], ['especificacao', 'Especificação:'], ['medidas', 'Medidas:'],
   ['prazo', 'Prazo informado:'], ['escopo', 'Escopo:'], ['campanha', 'Campanha:'],
+  ['tipoObra', rotuloDoBruto('tipo')], ['areaInformada', rotuloDoBruto('area')],
 ]
 const ORIGEM = /^Origem: formulário "?([^"\s]+)"? do site/
 const partes = (s: string) => s.split(' · ').map((x) => x.trim()).filter((x) => x !== '')
