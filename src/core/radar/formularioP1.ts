@@ -128,8 +128,8 @@ export function falhaSemSegredo(fase: string, metodo: string, e: unknown): strin
   return `falha em ${fase}: ${metodo}${status === null ? '' : ` (código ${status})`} — detalhe omitido de propósito (pode conter o valor)`
 }
 
-/** Campos de `build_settings` que um PATCH só de `skip_prs` pode mudar: só ele. */
-export const CAMPOS_BUILD_ALTERAVEIS = ['skip_prs'] as const
+/** Campos de `build_settings` que um PATCH só de `skip_prs` pode mudar: ele e o carimbo da própria mudança. */
+export const CAMPOS_BUILD_ALTERAVEIS = ['skip_prs', 'updated_at'] as const
 /** Todo campo de `build_settings`, além de `skip_prs`, que mudou entre antes e depois. */
 export function mudancasInesperadas(antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
   const chaves = [...new Set([...Object.keys(antes), ...Object.keys(depois)])].sort()

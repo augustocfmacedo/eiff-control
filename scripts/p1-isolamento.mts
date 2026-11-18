@@ -15,14 +15,17 @@
  * stderr; `api()` os descarta e mostra só fase, método e código de saída (`falhaSemSegredo`).
  *
  * Segredo: o valor novo nasce aqui (32 bytes aleatórios), vai para as duas variáveis numa mesma execução e
- * nunca é impresso, gravado em arquivo nem devolvido. Limite conhecido: ele passa como argumento ao processo
- * da CLI do Netlify (visível na lista de processos desta máquina enquanto a chamada dura, segundos); a
- * alternativa seria ler o token da CLI, que é proibido. Ninguém precisa conhecer o valor: o Netlify não o
- * devolve, e a troca seguinte gera outro.
+ * nunca é impresso, gravado em arquivo nem devolvido. As duas chamadas que levam o valor (`apiComSegredo`)
+ * rodam a CLI do Netlify DENTRO deste processo: o valor nunca vira argumento de processo do sistema (antes ia
+ * para o argv de um processo filho, visível na lista de processos). O token continua sendo lido só pela CLI.
+ * Com `CI=true` a CLI não envia relatório de erro (o relatório sobe a mensagem do erro num processo filho) nem
+ * abre perguntas. A saída da CLI nessas chamadas é capturada e descartada; só sai «ok» ou «falha».
+ * Ninguém precisa conhecer o valor: o Netlify não o devolve, e a troca seguinte gera outro.
  */
 import { randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   CHAVE_SITE, LETRA_DA_VAGA, SITE_CRM, SITE_EIFF, deploysNaoProdutivos, falhaSemSegredo, metaDaApi, mudancasInesperadas,
   podeConcluir, siteApto, vagaLivre, vagasDaTroca, valoresNaoProdutivos, type MetaDeploy, type MetaVaga,
@@ -40,7 +43,7 @@ const args = process.argv.slice(2).filter((a) => a !== '--')
 const fase = args[0] ?? 'inventario'
 const executar = args.includes('--executar')
 const confirmacao = args[args.indexOf('--confirmar') + 1]
-if (fase !== 'inventario' && !(fase in FRASES)) { console.error(`fase desconhecida: ${fase}`); process.exit(2) }
+if (fase !== 'inventario' && fase !== 'autoteste-em-processo' && !(fase in FRASES)) { console.error(`fase desconhecida: ${fase}`); process.exit(2) }
 if (executar && confirmacao !== FRASES[fase]) { console.error(`BLOQUEADO: --executar exige --confirmar ${FRASES[fase] ?? '(fase só de leitura)'}`); process.exit(2) }
 const modo = executar ? 'EXECUÇÃO' : 'SIMULAÇÃO'
 
@@ -61,6 +64,37 @@ function api(metodo: string, dados: Record<string, unknown>): unknown {
     process.exit(1)
   }
 }
+/**
+ * Chamada que LEVA o segredo: a CLI roda neste processo, com a saída capturada e descartada.
+ * Devolve só se deu certo. Nada da chamada (dados, resposta, erro) é impresso.
+ */
+async function apiComSegredo(metodo: string, dados: Record<string, unknown>): Promise<boolean> {
+  process.env['CI'] = 'true' // sem relatório de erro da CLI e sem perguntas interativas
+  const base = pathToFileURL(resolve(import.meta.dirname ?? '.', '..', 'node_modules', 'netlify-cli', 'dist')).href
+  const { createMainCommand } = await import(`${base}/commands/main.js`) as { createMainCommand: () => unknown }
+  const { runProgram } = await import(`${base}/utils/run-program.js`) as { runProgram: (p: unknown, argv: string[]) => Promise<void> }
+  const escreverOut = process.stdout.write.bind(process.stdout)
+  const escreverErr = process.stderr.write.bind(process.stderr)
+  const sair = process.exit.bind(process)
+  let saiuCom: number | undefined
+  process.stdout.write = (() => true) as typeof process.stdout.write
+  process.stderr.write = (() => true) as typeof process.stderr.write
+  process.exit = ((c?: number) => { saiuCom = c ?? 0; throw new Error('saida-da-cli') }) as typeof process.exit
+  let ok = false
+  try {
+    await runProgram(createMainCommand(), ['node', 'netlify', 'api', metodo, '--data', JSON.stringify(dados)])
+    ok = saiuCom === undefined || saiuCom === 0
+  } catch {
+    ok = false
+  } finally {
+    process.stdout.write = escreverOut
+    process.stderr.write = escreverErr
+    process.exit = sair
+  }
+  if (!ok) console.error(`falha em ${fase}: ${metodo} — detalhe omitido de propósito (pode conter o valor)`)
+  return ok
+}
+
 const variaveis = (site: string): MetaVaga[] => {
   const r = api('getEnvVars', { account_id: CONTA, site_id: site })
   return (Array.isArray(r) ? r : []).map(metaDaApi).filter((x): x is MetaVaga => x !== undefined)
@@ -94,7 +128,7 @@ function inventario(): void {
   console.log(`site previews: skip_prs=${JSON.stringify(s.build_settings?.skip_prs ?? null)} allowed_branches=${JSON.stringify(s.build_settings?.allowed_branches ?? null)}`)
 }
 
-function trocaPreparar(): void {
+async function trocaPreparar(): Promise<void> {
   const crm = variaveis(SITE_CRM), site = variaveis(SITE_EIFF)
   const vaga = vagaLivre(crm)
   if (!vaga.ok) { console.error(`BLOQUEADO: ${vaga.motivo}`); process.exit(1) }
@@ -107,10 +141,21 @@ function trocaPreparar(): void {
   console.log(`${modo}: 3) site apaga ${sair.length} valor(es) fora de production`)
   console.log(`${modo}: depois: publicar o CRM (aceita as duas vagas) e SÓ ENTÃO o site (passa a mandar a nova)`)
   if (!executar) return
-  const novo = randomBytes(32).toString('base64url')
-  api('createEnvVars', { account_id: CONTA, site_id: SITE_CRM, body: [{ key: vaga.valor.livre, is_secret: true, scopes: ['functions'], values: [{ context: 'production', value: novo }] }] })
+  let novo: string | undefined = randomBytes(32).toString('base64url')
+  if (!await apiComSegredo('createEnvVars', { account_id: CONTA, site_id: SITE_CRM, body: [{ key: vaga.valor.livre, is_secret: true, scopes: ['functions'], values: [{ context: 'production', value: novo }] }] })) {
+    novo = undefined
+    console.error('PARADO no passo 1: nada mudou no site. Conferir com inventario se a vaga nova foi criada mesmo assim (resposta perdida); se foi, troca-desfazer.')
+    process.exit(1)
+  }
   console.log(`ok 1: ${vaga.valor.livre} criado no CRM`)
-  api('setEnvVarValue', { account_id: CONTA, site_id: SITE_EIFF, key: CHAVE_SITE, body: { context: 'production', value: novo } })
+  const ok2 = await apiComSegredo('setEnvVarValue', { account_id: CONTA, site_id: SITE_EIFF, key: CHAVE_SITE, body: { context: 'production', value: novo } })
+  novo = undefined
+  if (!ok2) {
+    // NÃO desfazer sozinho: o site pode ter recebido o valor (resposta perdida). Com as duas vagas no CRM, qualquer
+    // dos dois valores que o próximo build do site levar é aceito — o caminho de entrega fica preservado.
+    console.error('PARADO no passo 2: CRM já tem a vaga nova; o site pode ou não ter o valor novo. NÃO desfazer: as duas vagas valem. Conferir com inventario (updated_at do segredo do site) antes de qualquer compensação.')
+    process.exit(1)
+  }
   console.log(`ok 2: ${CHAVE_SITE} de production trocado no site`)
   for (const id of sair) api('deleteEnvVarValue', { account_id: CONTA, site_id: SITE_EIFF, key: CHAVE_SITE, id })
   console.log(`ok 3: ${sair.length} valor(es) não produtivos apagados no site`)
@@ -184,8 +229,20 @@ function desligarPreviews(): void {
 }
 
 console.log(`P1 · ${fase} · ${modo}`)
-const fases: Record<string, () => void> = {
+/**
+ * Só leitura: prova o caminho em processo com um MARCADOR (não um segredo). Uma leitura que dá certo (getSite) e uma
+ * que falha de propósito (variável inexistente cujo nome é o marcador). O marcador não pode aparecer na saída.
+ */
+async function autotesteEmProcesso(): Promise<void> {
+  const marcador = process.env['P1_MARCADOR'] ?? 'MARCADOR'
+  const leitura = await apiComSegredo('getSite', { site_id: SITE_EIFF })
+  const falha = await apiComSegredo('getEnvVar', { account_id: CONTA, site_id: SITE_EIFF, key: `P1_AUTOTESTE_${marcador}` })
+  console.log(`autoteste: leitura=${leitura ? 'ok' : 'falhou'} chamada-que-deve-falhar=${falha ? 'NAO FALHOU' : 'falhou como esperado'}`)
+}
+
+const fases: Record<string, () => void | Promise<void>> = {
+  'autoteste-em-processo': autotesteEmProcesso,
   inventario, 'troca-preparar': trocaPreparar, 'troca-desfazer': trocaDesfazer, 'troca-concluir': trocaConcluir,
   'limpar-previews': limparPreviews, 'desligar-previews': desligarPreviews,
 }
-fases[fase]!()
+await fases[fase]!()
