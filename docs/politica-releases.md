@@ -1,8 +1,13 @@
 # Política de releases do `eiff-control` (CRM)
 
 **Situação: APROVADA PELA DIREÇÃO EM 18/11/2026, AINDA NÃO EM OPERAÇÃO.** A Direção aprovou D1, D2 e D4 para
-mudanças VERDES e AMARELAS e escolheu a opção B em D3 (seção 5). A política só entra em operação quando a seção 6
-estiver toda cumprida e registrada. Até lá continuam valendo `MERGE AUTORIZADO` e `PRODUCTION AUTORIZADA`.
+mudanças VERDES e AMARELAS e escolheu a opção B em D3 (seção 5). A política só entra em operação quando as duas
+condições abaixo valerem:
+- os controles da seção 6 estão cumpridos;
+- **a Direção registrou por escrito a frase `POLÍTICA DE RELEASES EM OPERAÇÃO`**, citando o commit deste documento.
+
+O estado da tabela da seção 6 **não basta**: este documento é VERMELHO justamente para não poder ser afrouxado pelo
+próprio rito. Até lá continuam valendo `MERGE AUTORIZADO` e `PRODUCTION AUTORIZADA`.
 
 **Uma política para o repositório inteiro.** Todo merge na `main` do `eiff-control` vai para o mesmo deploy do
 `eiffcontrol.com.br`, seja a mudança da Frente A ou da Frente B. Por isso a classe de risco e o rito daqui valem para
@@ -44,8 +49,11 @@ Uma mudança é VERDE quando **todos** os itens abaixo valem, conferidos no diff
 6. não toca registro em produção (só código que roda quando alguém usa a tela);
 7. tem recuperação de um passo: republicar o deploy anterior.
 
-Exemplos: documentação, telas de leitura sob uma permissão já existente, correção de interface, teste novo, regra pura
-em `src/core` sem efeito em dados.
+Na prática só a documentação é VERDE. O piso automático (`src/core/release/classe.ts`) nega por padrão:
+- é AMARELO só o que está numa lista explícita: telas, componentes, regra pura em `src/core`, testes e propostas SQL;
+- é VERMELHO todo o resto (banco, `src/data`, funções, scripts, build, configuração);
+- são VERMELHOS também, pelo nome, os arquivos que decidem autorização, segredo, envio externo, dinheiro ou a própria
+  política, como `CLAUDE.md`, este documento e o classificador.
 
 ### AMARELO: rotina com o efeito declarado
 
@@ -75,7 +83,7 @@ confere a classe junto com o código.
 
 | Passo | Quem | Evidência registrada no PR |
 |---|---|---|
-| 1. Classe declarada com a lista da seção 2 conferida item a item, e o piso calculado por `npx vite-node scripts/release-classe.mts -- origin/main <branch>` (sai com 2 se VERMELHO). O piso nunca é rebaixado | agente orquestrador | comentário «Classe: VERDE/AMARELO» com os 7 itens e a saída do script |
+| 1. Classe declarada com a lista da seção 2 conferida item a item, e o piso calculado por `npx vite-node scripts/release-classe.mts -- pr origin/main <branch>` depois de `git fetch`. O piso nunca é rebaixado. **Só a saída 0 libera**: a saída 2 vale para VERMELHO e também para qualquer erro. A revisão confere ainda: dependência de coluna, RPC ou tabela que não existe em produção (caso da 0070), guarda de teste enfraquecida e efeito financeiro | agente orquestrador | comentário «Classe: VERDE/AMARELO» com os 7 itens e a saída do script, com os SHAs resolvidos |
 | 2. Revisão independente: outro agente recebe o código, não a conclusão | agente revisor | veredito APTO e achados resolvidos |
 | 3. Quality Gate verde **no SHA final** e branch atualizada com `main` | CI | link do run e SHA |
 | 4. Merge pelo GitHub (`gh pr merge --merge`), sem bypass do ruleset | agente orquestrador | commit de merge |
@@ -85,8 +93,10 @@ confere a classe junto com o código.
 | 8. Reversão se o passo 7 falhar: republicar o deploy anterior e travar | agente orquestrador | ids e horário |
 
 **A classe da publicação é a do conjunto, não a do PR.** Um deploy publica tudo o que está na `main` e ainda não
-está no ar. Por isso o passo 6 confere o intervalo `deploy publicado..candidato` com o mesmo script
-(`release-classe.mts -- <commit publicado> <candidato>`). Se qualquer commit desse intervalo
+está no ar. Por isso o passo 6 confere o intervalo com o mesmo script, no modo de publicação:
+`release-classe.mts -- publicacao <commit publicado> <candidato>`.
+- Esse modo compara as **árvores** (dois pontos), não o merge-base.
+- Ele **recusa** quando o publicado não é ancestral do candidato, porque publicar desfaria o que só existe no ar. Se qualquer commit desse intervalo
 for VERMELHO e não tiver a própria autorização de publicação, a publicação é VERMELHA. A proposta da Frente A
 (PR #98) chegou à mesma regra.
 
@@ -110,8 +120,13 @@ do Quality Gate, o deploy publicado e o deploy anterior.
 ## 5a. Identidade própria dos agentes (opção B)
 
 **GitHub: GitHub App privada, registrada na conta do dono e instalada só no `eiff-control`.**
-- Permissões: Contents leitura e escrita (exigida pelo merge), Pull requests leitura, Checks leitura, Commit statuses
-  leitura e Metadata leitura.
+- Permissões:
+  - Contents leitura e escrita (exigida pelo merge);
+  - Pull requests leitura e escrita, para a App registrar no PR a classe, o parecer e a evidência;
+  - Checks, Commit statuses e Metadata, só leitura.
+
+  Declarado: com Contents escrita, a App também cria e apaga branches e tags que não sejam a `main`. A `main` continua
+  protegida pelo ruleset.
 - Sem Workflows, Administration, Secrets nem Actions. Consequência: mudança em `.github/` (já VERMELHA) continua sendo
   merge humano.
 - Fora da lista de bypass do ruleset: a App obedece a PR obrigatório, ao Quality Gate e à branch atualizada, como
@@ -127,9 +142,14 @@ do Quality Gate, o deploy publicado e o deploy anterior.
 - Os papéis abaixo de Developer não publicam em produção.
 - Risco residual declarado: o token desse usuário também pode alterar variáveis e configuração **deste** site.
   Mitigações:
-  - os agentes só chamam `getSite`, `listSiteDeploys`, `restoreSiteDeploy`, `lockDeploy` e `unlockDeploy` (lista
-    fechada no script de publicação);
-  - o log de auditoria do time é revisado a cada publicação.
+  - os agentes só chamam `getSite`, `listSiteDeploys`, `restoreSiteDeploy`, `lockDeploy` e `unlockDeploy`, numa lista
+    fechada do script de publicação, que **ainda não existe** e é parte do C6;
+  - antes e depois de cada publicação o agente confere, por leitura, a trava, a publicação automática parada e os
+    **nomes** das variáveis do site (nunca os valores). Qualquer diferença não explicada é incidente;
+  - o log de auditoria do time, se o plano tiver, é revisado pelo orquestrador a cada publicação e pela Direção uma
+    vez por mês;
+  - falta confirmar que o plano atual permite limitar o Developer a um único projeto. Se não permitir, o token alcança
+    também o `eiff-site`, onde o encaminhador de leads está ativo, e a opção B não fecha sem trocar de plano.
 
 **Guarda dos segredos:** Windows Credential Manager (ou arquivo DPAPI do usuário Windows), lidos no momento do uso.
 Nunca no repositório, em `.env`, em log ou em mensagem.
@@ -151,12 +171,12 @@ Cada item tem evidência registrada neste documento. Até o último, a política
 | # | Controle | Prova | Estado |
 |---|---|---|---|
 | C1 | Proteção da branch | ruleset ativo, sem bypass, exige PR, Quality Gate e branch atualizada (`gh api .../rules/branches/main`) | conferido em 18/11 pela conta da Direção; repetir com a App |
-| C2 | A App não fura a proteção | com a App: push direto na `main` recusado, e merge de PR sem Quality Gate verde recusado (PR de teste só com documentação) | aguarda a App |
+| C2 | A App não fura a proteção | com a App, cinco recusas: push direto na `main`; merge de PR sem Quality Gate verde; merge com a branch desatualizada; alteração do ruleset; gravação em `.github/`. Testes com PR só de documentação | aguarda a App |
 | C3 | Autenticação | o merge de rotina aparece no histórico como `<app>[bot]`, e nenhuma operação de rotina usa a conta pessoal | aguarda a App |
-| C4 | Classe mínima automática | `src/core/release/classe.ts` + teste; sobre os PRs abertos: #89 AMARELO, #59 VERDE, #92 VERMELHO (saída 2) | **feito** em 18/11 |
-| C5 | Revisão independente registrada | parecer de outro agente no PR, sem achado aberto | rito em uso desde 18/11 |
-| C6 | Publicação travada | com o usuário Netlify dedicado: publicar um deploy só de documentação, conferir `locked: true` e o id publicado | aguarda o usuário Netlify |
-| C7 | Recuperação | com o mesmo usuário: restaurar o ponto de retorno anotado, conferir id e trava, e restaurar de novo o candidato | aguarda o usuário Netlify |
+| C4 | Classe mínima automática | `src/core/release/classe.ts` com **negação por padrão** e teste. O script falha fechado e compara as árvores na publicação. Revisão independente de 18/11: rename, acento no caminho, três pontos na publicação, autoproteção e lacunas da lista, todos corrigidos e cobertos por teste. Sobre os PRs abertos: #89 VERMELHO (rota e menu com permissão), #59 VERDE (depois de tirar a linha do `CLAUDE.md`), #92 VERMELHO | **feito**; nova revisão independente pendente |
+| C5 | Revisão independente registrada | parecer de outro agente no PR, sem achado aberto. **Controle procedimental**: o ruleset não exige aprovação, e nada técnico impede um merge sem revisão. A garantia vem do rito e da auditoria posterior (relatório) | rito em uso desde 18/11 |
+| C6 | Publicação travada | com o usuário Netlify dedicado e o script de lista fechada: publicar um deploy só de documentação; conferir antes e depois a trava (`locked: true`), a publicação automática parada, o id publicado e os nomes das variáveis; confirmar que o Developer está limitado a um único projeto | aguarda o usuário Netlify e o script |
+| C7 | Recuperação | com o mesmo usuário: restaurar o ponto de retorno anotado, conferir o id e a trava, e restaurar de novo o candidato | aguarda o usuário Netlify |
 
 ## 7. Classificação dos PRs abertos (18/11/2026)
 
@@ -164,8 +184,8 @@ Feita sobre o código, depois da revisão independente de cada PR.
 
 | PR | Conteúdo | Classe | Por quê | Revisão independente |
 |---|---|---|---|---|
-| #89 | Central de Gestão Comercial, só leitura, restrita à Direção (`radar` + Administrador/Diretoria) | **AMARELO** (piso do script) | tela nova de leitura: muda o menu e a paleta da Direção. Não depende da S3, porque não lê views. Na reavaliação de 18/11 a rota foi fechada à Direção (`eca79dd`): com `radar` sozinha, Financeiro, Compras, Gestor de obra e Engenharia veriam valores e dossiês consolidados | APTO COM RESSALVAS; o achado médio (KPI contava duas vezes o lead vencido) foi corrigido em `08a18f2` |
-| #59 | documentação da 0068 já aplicada | **VERDE** | só documentação | APTO COM RESSALVAS; a ressalva (texto desatualizado sobre a E3/E5) foi corrigida em `817c1d4` |
+| #89 | Central de Gestão Comercial, só leitura, restrita à Direção (`radar` + Administrador/Diretoria) | **VERMELHO** (piso do script) | cria rota e item de menu com regra de permissão (`App.tsx`, `Paleta.tsx`). Não depende da S3, porque não lê views. Na reavaliação de 18/11 a rota foi fechada à Direção (`eca79dd`): com `radar` sozinha, Financeiro, Compras, Gestor de obra e Engenharia veriam valores e dossiês consolidados | APTO COM RESSALVAS; o achado médio (KPI contava duas vezes o lead vencido) foi corrigido em `08a18f2` |
+| #59 | documentação da 0068 já aplicada | **VERDE** | só `docs/commercial-director-1.0.md`; a linha do `CLAUDE.md` saiu do PR (`0269645`), porque o `CLAUDE.md` é VERMELHO | APTO COM RESSALVAS; a ressalva (texto desatualizado sobre a E3/E5) foi corrigida em `817c1d4` |
 | #90 | permissões `comercial_gestao`/`comercial_projetos` e guardas do Radar | VERMELHO | muda a matriz de permissões | APTO COM RESSALVAS; a Engenharia continua lendo o Radar inteiro pelo app e pelo banco (D2 do documento da Central) |
 | #91 | solicitações de projeto em memória | VERMELHO | depende do #90 | APTO COM RESSALVAS; as divergências da SQL já estão resolvidas na versão do #93 |
 | #93 | persistência das solicitações (proposta SQL, adaptador desligado) | VERMELHO | depende do #90 e das migrations 0078–0080, depois da S3 | APTO COM RESSALVAS; os dois achados médios foram corrigidos em `ff7b50a` (smoke 19/19) |
