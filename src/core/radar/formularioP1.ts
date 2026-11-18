@@ -47,6 +47,8 @@ export function siteApto(v: MetaVariavel | undefined): Decisao<true> {
   if (v === undefined) return { ok: false, motivo: `${CHAVE_SITE} não existe no site` }
   if (!v.isSecret) return { ok: false, motivo: `${CHAVE_SITE} do site não está marcado como segredo` }
   if (v.scopes.length !== 1 || v.scopes[0] !== 'functions') return { ok: false, motivo: `${CHAVE_SITE} do site deveria ter só o escopo functions` }
+  if (v.valores.some((x) => x.context === 'all')) return { ok: false, motivo: `${CHAVE_SITE} do site tem valor no contexto all: o passo 3 o apagaria; separar por contexto antes` }
+  if (!v.valores.some((x) => x.context === 'production')) return { ok: false, motivo: `${CHAVE_SITE} do site sem valor de production` }
   return { ok: true, valor: true }
 }
 

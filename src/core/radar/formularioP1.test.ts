@@ -126,3 +126,10 @@ describe('P1 · o carimbo da mudança não é mudança inesperada (achado da J1)
     expect(mudancasInesperadas(antes, { ...antes, skip_prs: true, updated_at: '2026-11-18T17:20:00Z' })).toEqual([])
   })
 })
+
+describe('P1 · segredo do site com valor em all (revisão do #105)', () => {
+  it('recusa: o passo 3 apagaria o valor all', () => {
+    expect(siteApto(v('EIFF_FORM_SECRET', ['all'])).ok).toBe(false)
+    expect(siteApto(v('EIFF_FORM_SECRET', ['deploy-preview'])).ok).toBe(false)
+  })
+})

@@ -22,6 +22,9 @@
  * abre perguntas. A saída da CLI nessas chamadas é capturada e descartada; só sai «ok» ou «falha».
  * Ninguém precisa conhecer o valor: o Netlify não o devolve, e a troca seguinte gera outro.
  */
+// CI=true antes de a CLI ser carregada (ela só entra por import dinâmico em apiComSegredo; os imports estáticos
+// abaixo não carregam o ci-info): sem relatório de erro e sem perguntas, sem depender de quem chama.
+process.env['CI'] = 'true'
 import { randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
