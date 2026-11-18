@@ -11,13 +11,14 @@ import { codigoDeCatalogo, descricaoSegura } from '../erroSeguro';
 import { classificarSeguro, type IntelligenceProvider } from './fronteiras';
 import { alvoDaDecisao, decidirRoteamento, reavaliar, type EntradaRoteador } from './roteador';
 import { CONFIGURACAO_PADRAO, inboxVazio, type Classificacao, type ConfiguracaoInbox, type ContatoInbox, type DecisaoOctopus, type Equipe, type InboxDataset, type InboxMessage, type InboxThread, type MembroSetor, type Setor } from './tipos';
+import { cabecalhosServico } from '../chaveServico';
 
 export interface ConfigPortaRoteamento { url: string; chave: string; organizacaoId: string }
 type Row = Record<string, any>; // linhas cruas do PostgREST
 
 /** GET PostgREST com a chave de servico. O erro carrega so o status. */
 async function ler(cfg: ConfigPortaRoteamento, fetchFn: typeof fetch, tabela: string, query: string): Promise<Row[]> {
-  const r = await fetchFn(`${cfg.url}/rest/v1/${tabela}?${query}`, { headers: { apikey: cfg.chave, authorization: `Bearer ${cfg.chave}`, accept: 'application/json' } });
+  const r = await fetchFn(`${cfg.url}/rest/v1/${tabela}?${query}`, { headers: cabecalhosServico(cfg.chave, { accept: 'application/json' }) });
   if (!r.ok) throw new Error(`rest ${tabela} http ${r.status}`);
   return (await r.json()) as Row[];
 }
@@ -97,7 +98,7 @@ export interface ResultadoAplicarRoteamento { ok: boolean; aplicado?: boolean; m
 export function portaAplicarRoteamentoRpc(cfg: ConfigPortaRoteamento, fetchFn: typeof fetch): (p: PedidoAplicarRoteamento) => Promise<ResultadoAplicarRoteamento> {
   return async (p) => {
     const r = await fetchFn(`${cfg.url}/rest/v1/rpc/inbox_apply_routing`, {
-      method: 'POST', headers: { apikey: cfg.chave, authorization: `Bearer ${cfg.chave}`, 'content-type': 'application/json' },
+      method: 'POST', headers: cabecalhosServico(cfg.chave, { 'content-type': 'application/json' }),
       body: JSON.stringify({
         p_organization_id: cfg.organizacaoId, p_thread_id: p.threadId, p_message_id: p.messageId ?? null, p_routing: p.routing, p_classification: p.classification ?? null, p_summary: p.summary ?? null,
         p_sector_code: p.sectorCode ?? null, p_team_id: p.teamId ?? null, p_assignee_id: p.assigneeId ?? null, p_priority: p.priority, p_service_level: p.serviceLevel, p_apply: p.apply,

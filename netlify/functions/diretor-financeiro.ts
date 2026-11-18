@@ -4,6 +4,7 @@
 import { ESQUEMA_INTERPRETACAO, PROMPT_DF_V1, analisarPagamento, promptInterpretacao, validarPedidoVeredicto, veredictoDe, type CatalogoDF } from '../../src/core/cfo';
 import { carregarComoServidor } from '../../src/data/supabase';
 import { clienteServidor } from '../../src/data/clienteServidor';
+import { chaveServicoValida } from '../../src/core/chaveServico';
 
 const json = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const SUPABASE_URL_PADRAO = 'https://dduobppgomqyagjviwpx.supabase.co';
@@ -33,7 +34,7 @@ export default async (req: Request): Promise<Response> => {
   // parecer do motor (analisarPagamento) e devolve so decisao e datas. Nenhum saldo, reserva ou valor sai daqui.
   if (corpo.acao === 'veredicto') {
     const servico = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!servico) return json({ erro: 'nao_configurado' }, 501);
+    if (!servico || !chaveServicoValida(servico)) return json({ erro: 'nao_configurado' }, 501);
     const pedido = validarPedidoVeredicto(corpo.pedido);
     if (typeof pedido === 'string') return json({ erro: 'pedido_invalido', mensagem: pedido }, 400);
     const quem = (await user.json()) as { id?: string };
