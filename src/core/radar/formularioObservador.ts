@@ -22,6 +22,7 @@ import {
 } from './formularioMonitor'
 import { menorId, portaMonitorRest, type PortaMonitor } from './formularioMonitorPorta'
 import { SUPABASE_URL_PADRAO } from './formularioPorta'
+import { chaveServicoValida } from '../chaveServico'
 
 export { canalSomenteRegistro }
 export type { CanalDeAlerta }
@@ -56,6 +57,8 @@ export function portaDoAmbiente(env: AmbienteMonitor, fetchFn: typeof fetch): Po
   const chave = (env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
   const organizacaoId = (env.EIFF_INBOX_ORGANIZATION_ID ?? '').trim()
   if (chave === '') return { motivo: 'sem SUPABASE_SERVICE_ROLE_KEY' }
+  // mesma regra das outras portas privilegiadas: chave publicável ou desconhecida falha fechada, sem requisição
+  if (!chaveServicoValida(chave)) return { motivo: 'credencial_invalida: SUPABASE_SERVICE_ROLE_KEY' }
   if (organizacaoId === '') return { motivo: 'sem EIFF_INBOX_ORGANIZATION_ID' }
   const url = (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? SUPABASE_URL_PADRAO).replace(/\/$/, '')
   return portaMonitorRest({ url, chave, organizacaoId }, fetchFn)

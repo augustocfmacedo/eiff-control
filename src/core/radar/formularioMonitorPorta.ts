@@ -18,6 +18,7 @@
  * `formularioPorta.ts`. Escrita só por INSERT: nada é alterado nem apagado.
  */
 import { DESFECHOS_VALIDOS, type Alerta, type AlertaEmitido, type RodadaRegistrada } from './formularioMonitor'
+import { cabecalhosServico } from '../chaveServico'
 
 export const ENTIDADE = 'formulario_reconciliacao'
 export const ORIGEM = 'formulario-monitor'
@@ -74,7 +75,7 @@ export const menorId = (rs: readonly Reivindicacao[]): string | undefined =>
   [...rs].sort((a, b) => Number(a.id) - Number(b.id))[0]?.id
 
 export function portaMonitorRest(cfg: ConfigPortaMonitor, fetchFn: typeof fetch): PortaMonitor {
-  const base = { apikey: cfg.chave, authorization: `Bearer ${cfg.chave}`, 'content-type': 'application/json' }
+  const base = cabecalhosServico(cfg.chave, { 'content-type': 'application/json' })
   const org = `organization_id=eq.${encodeURIComponent(cfg.organizacaoId)}`
   const filtro = `${org}&entity_type=eq.${ENTIDADE}`
   const q = encodeURIComponent

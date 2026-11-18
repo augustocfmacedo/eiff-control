@@ -23,7 +23,7 @@ import {
   orcamentoDaFrequencia, problemasDeDadoPessoal, registroDaRodada, type Alerta, type RodadaRegistrada,
 } from './formularioMonitor'
 import { menorId, portaMonitorMemoria, portaMonitorRest, rodadaDaLinha } from './formularioMonitorPorta'
-import { JANELA_REIVINDICACAO_MIN, canalSomenteRegistro, intervaloDe, observar, registrarRodada } from './formularioObservador'
+import { JANELA_REIVINDICACAO_MIN, canalSomenteRegistro, intervaloDe, observar, portaDoAmbiente, registrarRodada } from './formularioObservador'
 import { canalComRegistro, canalComposto, canalDoAmbiente, canalSimulado, canalWebhook, mensagemDoAlerta } from './formularioAlertaCanais'
 import { VERSAO_CONTRATO, estadoOperacional, estadoOperacionalDasLinhas, saudeExibivel } from './formularioMonitorCentral'
 import type { RegistroFonte } from './types'
@@ -657,5 +657,15 @@ describe('contrato da Central: leitura das linhas da auditoria e saúde exibíve
     const tons = (['sem_registro', 'desligada', 'ok', 'com_falha', 'ausente'] as const).map((situacao) => saudeExibivel({ ...estadoOperacional([], [], iso(T0)), situacao }))
     expect(new Set(tons.map((t) => t.rotulo)).size).toBe(5)
     expect(tons.find((t) => t.situacao === 'ausente')!.tom).toBe('critico')
+  })
+})
+
+describe('porta do monitor: chave de serviço pela regra central (S1/R1)', () => {
+  it('chave publicável ou desconhecida falha fechada, sem montar a porta', () => {
+    const semRede = (() => { throw new Error('não pode chamar a rede') }) as unknown as typeof fetch
+    for (const chave of ['sb_publishable_x', 'sb_temp_x', 'sb_outra_x']) {
+      const p = portaDoAmbiente({ SUPABASE_SERVICE_ROLE_KEY: chave, EIFF_INBOX_ORGANIZATION_ID: 'org' }, semRede)
+      expect('motivo' in p && p.motivo).toBe('credencial_invalida: SUPABASE_SERVICE_ROLE_KEY')
+    }
   })
 })
