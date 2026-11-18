@@ -1,35 +1,58 @@
-// Classe mínima de release (docs/politica-releases.md). Somente leitura do git local; não faz fetch (rode
-// `git fetch origin` antes). Roda sempre a partir da raiz do repositório e imprime os SHAs resolvidos.
+// Classe mínima de release (docs/politica-releases.md). Somente leitura do git; não faz fetch.
 //
-//   npx vite-node scripts/release-classe.mts -- pr <branch>
-//       PR: o que a branch acrescenta desde o ponto em que saiu de origin/main (três pontos). A base é sempre
-//       origin/main; o merge depois tem de usar `gh pr merge --match-head-commit <shaCand>` com o SHA impresso aqui.
-//   npx vite-node scripts/release-classe.mts -- publicacao <commit_ref do deploy publicado> <candidato>
-//       Publicação: diferença de ÁRVORE entre o que está no ar e o candidato. O commit publicado tem de ser o
-//       `commit_ref` lido do Netlify (getSite). Recusa se o publicado não for ancestral do candidato.
+// ONDE VALE: a classificação que libera o rito autônomo é a do check "EIFF Release Class" na CI
+// (.github/workflows/release-classe.yml, `pull_request_target`): ali o código do classificador vem da BASE e o
+// PR não consegue reescrevê-lo. Rodado na máquina do agente é só uma prévia, e o script recusa rodar se o próprio
+// código (ou o que o carrega) diferir de refs/remotes/origin/main.
 //
-// Saída: 0 = VERDE ou AMARELO; 2 = VERMELHO OU QUALQUER ERRO (ref inválida, diff vazio, histórico divergente,
-// caminho colidindo em maiúsculas, saída do git inesperada). Só a saída 0 libera o rito autônomo.
+//   pr <candidato>                      base = refs/remotes/origin/main
+//   pr <sha-base> <sha-candidato>       (CI) dois SHAs de 40 hex
+//   publicacao <sha-publicado> <sha-candidato>
+//       sha-publicado = commit_ref do deploy no ar, lido do Netlify; sha-candidato = commit_ref do deploy a publicar.
+//       Compara árvores; recusa se o publicado não for ancestral do candidato.
+//
+// <candidato> aceita só SHA de 40 hex ou refs/remotes/origin/<branch>: nome curto é recusado (uma tag chamada
+// `origin/main` venceria a branch remota na resolução do git).
+//
+// Saída: 0 = VERDE ou AMARELO; 2 = VERMELHO OU QUALQUER ERRO. Só a saída 0 libera.
 import { execFileSync } from 'node:child_process'
-import { classeDoConjunto, lerRawZ } from '../src/core/release/classe'
+import { classeDoConjunto, docsCitadosEm, lerRawZ } from '../src/core/release/classe'
 
 const BLOQUEIA = 2
-const raiz = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
-const git = (args: string[]) => execFileSync('git', ['-c', 'core.quotepath=off', '-c', 'diff.relative=false', ...args], { cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+const SHA = /^[0-9a-f]{40}$/
+const REMOTA = /^refs\/remotes\/origin\/[A-Za-z0-9][\w./-]*$/
+const PROPRIO = ['src/core/release', 'scripts/release-classe.mts', 'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig.json']
+
+// ambiente do git limpo: nenhuma GIT_* herdada e sem replace. A configuração global continua (no Windows ela guarda o
+// safe.directory dos worktrees); as opções que mudariam a leitura do diff são fixadas por -c. Na CI, a verificação
+// que vale, a configuração é a do runner, limpa.
+const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('GIT_')))
+Object.assign(env, { GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' })
+const FIXAS = ['core.quotepath=off', 'diff.relative=false', 'diff.external=', 'diff.noprefix=false', 'core.fsmonitor=false', 'grep.patternType=basic']
+const git0 = (args: string[], cwd?: string) => execFileSync('git', [...FIXAS.flatMap((c) => ['-c', c]), ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 const bloquear = (o: Record<string, unknown>) => { console.log(JSON.stringify({ ...o, classe: 'VERMELHO' }, null, 2)); process.exit(BLOQUEIA) }
 
 try {
+  const raiz = git0(['rev-parse', '--show-toplevel']).trim()
+  const git = (args: string[]) => git0(args, raiz)
+  const resolver = (ref: string) => git(['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]).trim()
   const args = process.argv.slice(2).filter((a) => a !== '--')
-  const modo = args[0]
-  const ref = /^[A-Za-z0-9][\w./-]*$/
-  const [base, cand] = modo === 'pr' ? ['origin/main', args[1]] : [args[1], args[2]]
-  if ((modo !== 'pr' && modo !== 'publicacao') || !base || !cand || ![base, cand].every((r) => ref.test(r)) || args.length !== (modo === 'pr' ? 2 : 3)) {
-    console.error('uso: release-classe.mts -- pr <branch> | publicacao <publicado> <candidato>')
+  const [modo, a1, a2] = args
+  let base: string; let cand: string
+  if (modo === 'pr' && args.length === 2 && (SHA.test(a1) || REMOTA.test(a1))) { base = 'refs/remotes/origin/main'; cand = a1 }
+  else if ((modo === 'pr' || modo === 'publicacao') && args.length === 3 && SHA.test(a1) && SHA.test(a2)) { base = a1; cand = a2 }
+  else {
+    console.error('uso: release-classe.mts -- pr <sha|refs/remotes/origin/branch> | pr <sha-base> <sha-cand> | publicacao <sha-publicado> <sha-cand>')
     process.exit(BLOQUEIA)
   }
-  const shaBase = git(['rev-parse', '--verify', `${base}^{commit}`]).trim()
-  const shaCand = git(['rev-parse', '--verify', `${cand}^{commit}`]).trim()
+  const shaBase = resolver(base)
+  const shaCand = resolver(cand)
   const contexto = { modo, base, shaBase, candidato: cand, shaCand }
+  // o classificador que roda tem de ser o da main (na CI o checkout já é a base; na máquina do agente, confere)
+  const shaMain = resolver('refs/remotes/origin/main')
+  try { git(['diff', '--quiet', shaMain, '--', ...PROPRIO]) } catch {
+    bloquear({ ...contexto, motivo: 'o classificador local difere de refs/remotes/origin/main: rode a partir da main (ou confie só no check da CI)' })
+  }
   if (shaBase === shaCand) bloquear({ ...contexto, motivo: 'base e candidato são o mesmo commit: nada a classificar' })
   if (modo === 'publicacao') {
     try { git(['merge-base', '--is-ancestor', shaBase, shaCand]) } catch {
@@ -40,7 +63,23 @@ try {
   const mudancas = lerRawZ(git(['diff', '--raw', '-z', '--no-renames', '--no-relative', '--ignore-submodules=none', '--abbrev=40', ...intervalo]))
   if (mudancas.length === 0) bloquear({ ...contexto, motivo: 'diff vazio' })
   const arvore = git(['ls-tree', '-r', '-z', '--name-only', shaCand]).split('\0').filter((x) => x !== '')
-  const r = classeDoConjunto(mudancas, arvore)
+  // documentos citados pelas instruções da BASE (não as do candidato, que o PR poderia apagar)
+  const instrucoes = ['CLAUDE.md', 'AGENTS.md'].map((f) => { try { return git(['show', `${shaBase}:${f}`]) } catch { return '' } }).join('\n')
+  // imports locais de cada teste alterado, lidos do candidato
+  const arvoreSet = new Set(arvore)
+  const importsDosTestes: Record<string, string[]> = {}
+  for (const m of mudancas) {
+    if (m.status === 'D' || !/\.test\.tsx?$/i.test(m.arquivo)) continue
+    const texto = git(['show', `${shaCand}:${m.arquivo}`])
+    const dir = m.arquivo.split('/').slice(0, -1)
+    importsDosTestes[m.arquivo] = [...texto.matchAll(/(?:from|import)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)].flatMap((x) => {
+      const partes = [...dir]
+      for (const seg of x[1].split('/')) { if (seg === '..') partes.pop(); else if (seg !== '.') partes.push(seg) }
+      const alvo = partes.join('/').replace(/\.js$/, '')
+      return ['', '.ts', '.tsx', '/index.ts'].map((e) => alvo + e).filter((c) => arvoreSet.has(c)).slice(0, 1)
+    })
+  }
+  const r = classeDoConjunto(mudancas, { arvore, docsCitados: docsCitadosEm(instrucoes), importsDosTestes })
   console.log(JSON.stringify({ ...contexto, classe: r.classe, colisoes: r.colisoes, arquivos: r.arquivos }, null, 2))
   process.exit(r.classe === 'VERMELHO' ? BLOQUEIA : 0)
 } catch (e) {

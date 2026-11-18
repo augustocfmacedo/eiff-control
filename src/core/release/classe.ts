@@ -25,8 +25,8 @@ export const VERMELHOS_NOMINAIS: ReadonlyArray<{ padrao: RegExp; motivo: string 
   { padrao: /(^|\/)(claude|agents|gemini)(\.local)?\.md$/, motivo: 'instruções dos agentes' },
   { padrao: /^docs\/politica-releases\.md$/, motivo: 'a própria política de releases' },
   { padrao: /^docs\/(formulario-site-(go2-go3|ativacao|checkpoint)|publicacao-automatica|implantacao-supabase|fin-reset[^/]*|ci-release-gate|central-db-release|eiff-inbox|widgets-ipad|email-comercial[^/]*)\.md$/, motivo: 'documento operacional (estado ligado/desligado ou runbook)' },
-  { padrao: /^src\/ui\/paleta\.tsx$/, motivo: 'rotas do menu com a permissão de cada uma' },
-  { padrao: /^src\/screens\/(usuarios|widgetsipad)\.tsx$/, motivo: 'tela que mostra senha inicial ou token' },
+  { padrao: /^src\/ui\/paleta(\.test)?\.tsx?$/, motivo: 'rotas do menu com a permissão de cada uma' },
+  { padrao: /^src\/screens\/(usuarios|widgetsipad)[^/]*\.tsx?$/, motivo: 'tela que mostra senha inicial ou token (e seus testes)' },
 ]
 
 const VERDES: RegExp[] = [/^docs\/[^/]+\.md$/, /^docs\/propostas\/[^/]+\.md$/, /^[^/]+\.md$/]
@@ -36,7 +36,7 @@ const AMARELOS: RegExp[] = [
   /^src\/screens\/(.+\/)?[^/]+\.(tsx|ts|css)$/,
   /^src\/ui\/(.+\/)?[^/]+\.(tsx|ts|css)$/,
   /^src\/styles\.css$/,
-  /^src\/core\/comercial\/[^/]+\.ts$/,
+  /^src\/core\/comercial\/[^/]+\.tsx?$/,
   /^docs\/propostas\/[^/]+\.sql$/,
 ]
 
@@ -62,8 +62,9 @@ export function classeDoArquivo(arquivo: string, status: StatusGit = 'M'): Class
   const teste = p.match(/^(.*)\.test\.tsx?$/)
   if (teste) {
     if (status === 'D') return resultado(arquivo, status, 'VERMELHO', 'teste apagado (pode ser uma guarda)')
-    const alvo = classeDoArquivo(`${arquivo.slice(0, teste[1].length)}.ts`, 'M')
-    return alvo.classe === 'VERMELHO'
+    const tronco = arquivo.slice(0, teste[1].length)
+    const alvos = [classeDoArquivo(`${tronco}.ts`, 'M'), classeDoArquivo(`${tronco}.tsx`, 'M')]
+    return alvos.some((a) => a.classe === 'VERMELHO')
       ? resultado(arquivo, status, 'VERMELHO', 'teste de arquivo VERMELHO (guarda)')
       : resultado(arquivo, status, 'AMARELO', 'teste de arquivo AMARELO')
   }
@@ -77,12 +78,37 @@ export function classeDoArquivo(arquivo: string, status: StatusGit = 'M'): Class
 
 export interface ClasseDoConjunto { classe: Classe; arquivos: ClasseArquivo[]; colisoes: string[] }
 
+export interface ContextoConjunto {
+  /** Todos os caminhos da árvore candidata (para colisão de caixa). */
+  arvore?: string[]
+  /** Documentos citados pelas instruções dos agentes (CLAUDE.md da BASE): seguem-se como regra, então são VERMELHOS. */
+  docsCitados?: string[]
+  /** Para cada teste alterado, os módulos locais que ele importa: o teste vale a maior classe entre eles. */
+  importsDosTestes?: Record<string, string[]>
+}
+
+/** Caminhos `docs/....md` citados num texto de instruções. */
+export function docsCitadosEm(texto: string): string[] {
+  return [...new Set([...texto.matchAll(/docs\/[\w./-]+\.md/g)].map((m) => m[0].toLowerCase()))]
+}
+
 /**
  * Classe de um diff inteiro: a maior entre os arquivos. `arvore` (todos os caminhos do candidato) permite recusar
  * colisão de maiúsculas/minúsculas: no Windows dois caminhos que só diferem na caixa viram o mesmo arquivo.
  */
-export function classeDoConjunto(mudancas: Array<{ arquivo: string; status?: StatusGit }>, arvore: string[] = []): ClasseDoConjunto {
-  const lidos = mudancas.map((m) => classeDoArquivo(m.arquivo, m.status ?? 'M'))
+export function classeDoConjunto(mudancas: Array<{ arquivo: string; status?: StatusGit }>, ctx: ContextoConjunto = {}): ClasseDoConjunto {
+  const arvore = ctx.arvore ?? []
+  const citados = new Set((ctx.docsCitados ?? []).map((d) => d.toLowerCase()))
+  const lidos = mudancas.map((m) => {
+    const c = classeDoArquivo(m.arquivo, m.status ?? 'M')
+    if (c.classe !== 'VERMELHO' && citados.has(m.arquivo.toLowerCase())) return { ...c, classe: 'VERMELHO' as Classe, motivo: 'documento citado pelas instruções dos agentes' }
+    const imp = ctx.importsDosTestes?.[m.arquivo]
+    if (c.classe !== 'VERMELHO' && imp) {
+      const pior = imp.map((i) => classeDoArquivo(i, 'M')).find((x) => x.classe === 'VERMELHO')
+      if (pior) return { ...c, classe: 'VERMELHO' as Classe, motivo: `teste que importa arquivo VERMELHO (${pior.arquivo})` }
+    }
+    return c
+  })
   const porChave = new Map<string, Set<string>>()
   for (const c of arvore) { const k = c.toLowerCase().normalize('NFC'); porChave.set(k, (porChave.get(k) ?? new Set()).add(c)) }
   const colisoes = lidos.filter((a) => (porChave.get(a.arquivo.toLowerCase().normalize('NFC'))?.size ?? 0) > 1).map((a) => a.arquivo)
