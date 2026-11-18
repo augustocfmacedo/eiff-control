@@ -375,7 +375,7 @@ export async function inicializar(): Promise<void> {
     emit();
     try {
       const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
-      const ds = usuario.papel === 'Solicitante' ? dsRemoto : garantirInbox(garantirPadroesRadar(dsRemoto), 'remoto');
+      const ds = prepararDatasetRemoto(dsRemoto, usuario, true);
       if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
       const trocarSenha = state.definirSenha || await precisaTrocarSenha();
       state = { ...state, ds, usuario, carregando: false, sessao: true, definirSenha: trocarSenha, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };
@@ -464,6 +464,17 @@ function idsRadar(r: RadarDataset): Ids {
 }
 
 /** Preenche fontes, estrategias, tipos de resposta, regras e parametros de score quando vazios (primeira carga). */
+/**
+ * Dataset vindo do banco → estado da tela. O Solicitante fica como veio. Quem nao tem a permissao `radar` NAO recebe os
+ * padroes do Radar (E11.1E): o slice chega vazio de proposito (src/data/supabase.ts) e preenche-lo com fontes/estrategias
+ * padrao faria a sincronizacao tentar grava-las com um perfil que o banco recusa.
+ */
+export function prepararDatasetRemoto(dsRemoto: Dataset, usuario: Usuario, comInbox: boolean): Dataset {
+  if (usuario.papel === 'Solicitante') return dsRemoto;
+  const ds = pode(usuario, 'radar') ? garantirPadroesRadar(dsRemoto) : dsRemoto;
+  return comInbox ? garantirInbox(ds, 'remoto') : ds;
+}
+
 export function garantirPadroesRadar(ds: Dataset): Dataset {
   const r = ds.radar ?? radarVazio();
   const radar: RadarDataset = {
@@ -818,7 +829,7 @@ export const actions = {
     emit();
     try {
       const { ds: dsRemoto, usuario, offline, aviso } = await carregarComPendentes();
-      const ds = usuario.papel === 'Solicitante' ? dsRemoto : garantirPadroesRadar(dsRemoto);
+      const ds = prepararDatasetRemoto(dsRemoto, usuario, false);
       if (!offline && !aviso) { baseSincronizada = dsRemoto; if (JSON.stringify(ds.radar) !== JSON.stringify(dsRemoto.radar)) sincronizar(ds); }
       const trocarSenha = state.definirSenha || await precisaTrocarSenha();
       state = { ...state, ds, usuario, carregando: false, sessao: true, definirSenha: trocarSenha, sync: offline ? { status: 'pendente', msg: 'sem conexão: usando os dados guardados neste aparelho', desde: new Date().toISOString() } : aviso ? { status: 'erro', msg: aviso } : { status: 'ok', em: new Date().toISOString() } };

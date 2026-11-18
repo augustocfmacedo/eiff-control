@@ -9,6 +9,7 @@ import {
   contarAtendimentos, dossie as montarDossie, ehArea, filtrarAtendimentos, indiceDossies, retratoCentral,
   type AreaCentral, type Dossie, type FaseJornada, type SituacaoImplementacao, type FiltroAtendimento, type FontesCentral, type Indicador, type LinhaAtendimento, type RetratoCentral, type SituacaoPrazo,
 } from '../../core/comercial/central';
+import { areaNoEscopo, dossieNoEscopo, escopoCentral, solicitacoesTecnicas, type SolicitacaoTecnica } from '../../core/comercial/acesso';
 import { MARCA_DEMONSTRACAO, demonstracaoCentral } from '../../core/comercial/demonstracao';
 import type { EstadoSla } from '../../core/inbox';
 import { pode, useStore } from '../../data/store';
@@ -48,10 +49,13 @@ export default function CentralGestao({ query }: { query: URLSearchParams }) {
   const [busca, setBusca] = useState('');
   const [buscaDossie, setBuscaDossie] = useState('');
   const [responsavel, setResponsavel] = useState('');
-  const area: AreaCentral = ehArea(query.get('area')) ? (query.get('area') as AreaCentral) : 'visao';
-  const chaveDossie = query.get('dossie');
+  // escopo do perfil (src/core/comercial/acesso.ts): área e dossiê pedidos pela URL nunca passam do que o perfil pode ver
+  const escopo = escopoCentral(usuario);
+  const area: AreaCentral = areaNoEscopo(escopo, ehArea(query.get('area')) ? query.get('area') : null) ?? 'projetos';
+  const dossiePedido = query.get('dossie');
+  const chaveDossie = dossieNoEscopo(escopo, dossiePedido);
   const veInbox = pode(usuario, 'inbox');
-  const demonstracaoPermitida = modo !== 'remoto';
+  const demonstracaoPermitida = modo !== 'remoto' && escopo.demonstracao;
   const emDemo = demo && demonstracaoPermitida;
 
   const fontes = useMemo<FontesCentral>(() => {
@@ -63,7 +67,9 @@ export default function CentralGestao({ query }: { query: URLSearchParams }) {
   // um único instante por renderização dos dados (o SLA do Inbox depende do relógio)
   const ctx = useMemo(() => ({ usuario, agoraIso: new Date().toISOString(), hoje: ds.params.dataBase, veInbox }), [usuario, ds.params.dataBase, veInbox, fontes]);
   const retrato = useMemo(() => retratoCentral(fontes, ctx), [fontes, ctx]);
-  const indice = useMemo(() => indiceDossies(fontes, retrato), [fontes, retrato]);
+  // visão técnica: a tela recebe SÓ a projeção técnica (nada do retrato comercial atravessa as props); índice e dossiê só na integral
+  const tecnicas = useMemo(() => (escopo.nivel === 'tecnico' ? solicitacoesTecnicas(retrato.solicitacoes) : []), [escopo.nivel, retrato]);
+  const indice = useMemo(() => (escopo.dossie ? indiceDossies(fontes, retrato) : []), [escopo.dossie, fontes, retrato]);
   // o Revelar esconde o conteúdo durante a entrada (elemento invisível não recebe foco): tenta até a aba aceitar o foco
   useEffect(() => {
     if (!focarAbaAoMontar) return;
@@ -83,6 +89,10 @@ export default function CentralGestao({ query }: { query: URLSearchParams }) {
     </>
   );
 
+  if (escopo.nivel === 'tecnico') {
+    return <div className="cgc">{cabecalho}<TecnicoView linhas={tecnicas} motivo={escopo.motivo} dossieNegado={!!dossiePedido} /></div>;
+  }
+
   if (chaveDossie) {
     return <div className="cgc">{cabecalho}{dossieAberto ? <DossieView d={dossieAberto} /> : <Empty icone="vazio" titulo="Dossiê não encontrado" acao={<Link className="btn sm" to={rotaDe('visao')}>Voltar à Central</Link>}>A chave «{chaveDossie}» não corresponde a uma empresa do Radar nem a uma conversa visível para você.</Empty>}</div>;
   }
@@ -90,7 +100,7 @@ export default function CentralGestao({ query }: { query: URLSearchParams }) {
   return (
     <div className="cgc">
       {cabecalho}
-      <Tabs value={area} onChange={(a) => { focarAbaAoMontar = document.activeElement?.getAttribute('role') === 'tab'; navegar(rotaDe(a)); }} items={AREAS_CENTRAL.map((a) => ({ id: a, label: NOME_AREA[a] }))} />
+      <Tabs value={area} onChange={(a) => { focarAbaAoMontar = document.activeElement?.getAttribute('role') === 'tab'; navegar(rotaDe(a)); }} items={AREAS_CENTRAL.filter((a) => escopo.areas.includes(a)).map((a) => ({ id: a, label: NOME_AREA[a] }))} />
       <div style={{ marginTop: 'var(--space-4)' }}>
         {area === 'visao' && <VisaoGeralView r={retrato} indice={indice} busca={buscaDossie} setBusca={setBuscaDossie} />}
         {area === 'leads' && <LeadsView r={retrato} usuarioId={usuario.id} filtro={filtro} setFiltro={setFiltro} busca={busca} setBusca={setBusca} veInbox={veInbox} responsavel={responsavel} setResponsavel={setResponsavel} />}
@@ -373,6 +383,42 @@ function ProjetosView({ r }: { r: RetratoCentral }) {
         <SemContrato rotulo="Anexar documentos" motivo="Não há armazenamento de documentos comerciais (planta, sondagem, memorial). Os anexos existentes são financeiros." />
       </div>
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------- Visão técnica (Engenharia) */
+
+/**
+ * O que a Engenharia vê: só a projeção técnica dos pedidos de projeto (solicitacoesTecnicas). Sem dossiê, sem links
+ * para a conversa ou para a empresa no Radar, sem valores, sem nome da pessoa, sem observações comerciais.
+ */
+function TecnicoView({ linhas, motivo, dossieNegado }: { linhas: SolicitacaoTecnica[]; motivo: string; dossieNegado: boolean }) {
+  const cols: Coluna<SolicitacaoTecnica>[] = [
+    { titulo: 'Solicitado em', ordenar: (s) => s.solicitadaEm, largura: 110 }, { titulo: 'Cliente', ordenar: (s) => s.cliente }, { titulo: 'Tipo', ordenar: (s) => s.tipo },
+    { titulo: 'Dados técnicos' }, { titulo: 'Origem', ordenar: (s) => s.origem }, { titulo: 'Responsável comercial', ordenar: (s) => s.responsavelComercial ?? '' },
+    { titulo: 'Prazo', ordenar: (s) => s.prazo ?? '' }, { titulo: 'Situação', ordenar: (s) => s.situacao }, { titulo: 'Documentos' },
+  ];
+  return (
+    <>
+      <div className="cgc-lacuna" role="note"><b>Visão técnica.</b> {motivo}</div>
+      {dossieNegado && <div className="cgc-lacuna" role="alert" style={{ marginTop: 8 }}>O dossiê comercial não está disponível para o seu perfil; abrimos a lista de pedidos de projeto.</div>}
+      <div className="card" style={{ marginTop: 'var(--space-4)' }}>
+        <h2>Solicitações de projeto <Badge tone="muted">sinais, sem entidade própria</Badge></h2>
+        <p className="small muted">Dados técnicos como o cliente informou (declaração preliminar, não verificada). Ainda não existe atribuição a um responsável técnico: a E11.2 cria o pedido formal e o encaminhamento.</p>
+        <Tabela colunas={cols} linhas={linhas} chave={(s) => s.id} vazio="Nenhuma solicitação de projeto identificada."
+          linha={(s) => (<>
+            <td className="small">{data(s.solicitadaEm.slice(0, 10))}</td><td><b>{s.cliente}</b></td><td className="small">{s.tipo}</td>
+            <td className="small">{s.dadosTecnicos.length ? s.dadosTecnicos.join(' · ') : <span className="muted">não informados</span>}</td>
+            <td className="small">{NOME_FONTE_SOLICITACAO[s.origem]}</td><td className="small">{s.responsavelComercial ?? <span className="muted">—</span>}</td>
+            <td className="small">{s.prazo ? (s.prazo.length > 10 ? dataHora(s.prazo) : data(s.prazo)) : '—'}</td><td className="small">{s.situacao}</td><td className="small muted">indisponível</td>
+          </>)} />
+        <div className="actions" style={{ marginTop: 10, gap: 16, flexWrap: 'wrap' }}>
+          <SemContrato rotulo="Aceitar na triagem técnica" motivo="Depende do pedido de projeto formal (E11.2): contrato e migration ainda não autorizados." />
+          <SemContrato rotulo="Pedir dados pendentes" motivo="Depende do pedido de projeto formal (E11.2)." />
+          <SemContrato rotulo="Anexar documentos" motivo="Não há armazenamento de documentos de projeto. Os anexos existentes são financeiros." />
+        </div>
+      </div>
+    </>
   );
 }
 
