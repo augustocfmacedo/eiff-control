@@ -1000,5 +1000,5 @@ Persistência versionada e auditável das metas, usando o motor da E1. Sem tela 
   dia ≠ 1, valor zero/negativo/3 casas/acima do teto, retirada sem meta, insert/update diretos, anon lendo e chamando a
   RPC, truncate) num bloco que sempre termina em erro; auditoria 1598 e sequência intactas, dados comerciais e financeiros
   iguais antes e depois; o Radar passou a ler `radar_commercial_goal` com 200. Nenhuma meta real criada.
-- **Próxima etapa (E3)**: livro de desfechos por gatilho; a migration passa a ser a **0070** (a 0069 foi usada pelos
-  widgets do iPad).
+- **Próxima etapa (E3), registro histórico de 14/10/2026**: livro de desfechos por gatilho; a migration passou a ser
+  a **0070** (a 0069 foi usada pelos widgets do iPad). A E3 e a E5 vieram depois (ver §19.9 e o documento da E5).
