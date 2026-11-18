@@ -1,91 +1,109 @@
 /**
  * Classe mínima de release por arquivo (docs/politica-releases.md, seção 2).
  *
- * Regra de NEGAÇÃO POR PADRÃO: todo caminho é VERMELHO, salvo os que estão explicitamente numa lista VERDE ou
- * AMARELA. Uma lista de caminhos perigosos sempre esquece algum (revisão independente de 18/11/2026: chave de serviço
- * em `src/data`, interruptores em `src/core`, runbooks sem "produção" no nome, o próprio classificador...); uma lista
- * de caminhos seguros erra para o lado certo. Caminho novo que ninguém classificou nasce VERMELHO.
+ * NEGAÇÃO POR PADRÃO, com listas permitidas CURTAS. Duas revisões independentes (18/11/2026) mostraram que qualquer
+ * lista de caminhos perigosos esquece algum, e que `src/core` não é "regra pura": metade dele é alcançada pelas funções
+ * Netlify e roda com chave de serviço. Então:
+ * - VERDE: só documentação de leitura em `docs/*.md` (um nível) e `.md` da raiz, menos as exceções nominais;
+ * - AMARELO: só telas e componentes (`src/screens`, `src/ui`), a regra pura da Central Comercial e testes/fixtures
+ *   DESSES arquivos; o teste herda a classe do arquivo que testa;
+ * - VERMELHO: todo o resto, inclusive todo `src/core` e `src/data`, e qualquer caminho fora do formato canônico.
+ * Toda comparação é feita em minúsculas (no Windows `CLAUDE.md` e `claude.md` são o mesmo arquivo).
  *
  * É um PISO, não um veredito: nunca rebaixa a classe declarada pelo orquestrador, só a sobe. A revisão independente
- * confere o resto (efeito financeiro, dependência de migration não aplicada, guarda de teste enfraquecida), que
- * nenhum padrão de caminho enxerga.
+ * continua sendo a única barreira para efeito financeiro ou vazamento dentro de uma tela AMARELA.
  */
 export type Classe = 'VERDE' | 'AMARELO' | 'VERMELHO'
-/** Status do git (`--name-status`): A adicionado, M modificado, D apagado, T tipo mudou. Renomeação vem desligada. */
+/** Status do git com renomeação desligada: A adicionado, M modificado, D apagado, T tipo mudou. */
 export type StatusGit = 'A' | 'M' | 'D' | 'T'
 
 const ORDEM: Record<Classe, number> = { VERDE: 0, AMARELO: 1, VERMELHO: 2 }
-
 export const maiorClasse = (a: Classe, b: Classe): Classe => (ORDEM[a] >= ORDEM[b] ? a : b)
 
-/**
- * Exceções VERMELHAS dentro das listas permitidas: caminhos que pareceriam seguros pelo padrão, mas decidem
- * autorização, segredo, envio externo, dinheiro ou a própria política.
- */
+/** Exceções VERMELHAS dentro das listas permitidas (comparadas em minúsculas). */
 export const VERMELHOS_NOMINAIS: ReadonlyArray<{ padrao: RegExp; motivo: string }> = [
-  { padrao: /^CLAUDE\.md$/, motivo: 'regras de autorização dos agentes' },
+  { padrao: /(^|\/)(claude|agents|gemini)(\.local)?\.md$/, motivo: 'instruções dos agentes' },
   { padrao: /^docs\/politica-releases\.md$/, motivo: 'a própria política de releases' },
-  { padrao: /^docs\/seguranca\//, motivo: 'runbook e evidência de segurança' },
-  { padrao: /^src\/core\/release\//, motivo: 'o próprio classificador' },
-  { padrao: /^src\/core\/(engine|permissoes|chaveServico|erroSeguro)\.ts$/, motivo: 'alçadas, permissões, chave de serviço ou redação de segredos' },
-  { padrao: /^src\/core\/inbox\/(ativacao|emailEnvio)\.ts$/, motivo: 'interruptor ou envio externo' },
-  { padrao: /^src\/core\/central\/metaEnvio\.ts$/, motivo: 'envio externo (WhatsApp)' },
-  { padrao: /^src\/core\/radar\/(canais|formularioAgendado|formularioGravacao|formularioBorda|formularioReconciliacao|formularioTransporte|vibe|vibeServidor)\.ts$/, motivo: 'envio, reconciliação, gravação com chave de serviço ou créditos pagos' },
-  { padrao: /^src\/core\/.*(Servidor|Porta|Llm)\.ts$/, motivo: 'servidor, porta com chave de serviço ou modelo de IA' },
-  { padrao: /^src\/ui\/Paleta\.tsx$/, motivo: 'rotas do menu com a permissão de cada uma' },
+  { padrao: /^docs\/(formulario-site-(go2-go3|ativacao|checkpoint)|publicacao-automatica|implantacao-supabase|fin-reset[^/]*|ci-release-gate|central-db-release|eiff-inbox|widgets-ipad|email-comercial[^/]*)\.md$/, motivo: 'documento operacional (estado ligado/desligado ou runbook)' },
+  { padrao: /^src\/ui\/paleta\.tsx$/, motivo: 'rotas do menu com a permissão de cada uma' },
+  { padrao: /^src\/screens\/(usuarios|widgetsipad)\.tsx$/, motivo: 'tela que mostra senha inicial ou token' },
 ]
 
-/** VERDE: não chega ao bundle, às funções nem ao banco. */
-const VERDES: RegExp[] = [
-  /^docs\/.*\.md$/,
-  /^[^/]+\.md$/, // README e planos na raiz (CLAUDE.md é exceção nominal)
-]
+const VERDES: RegExp[] = [/^docs\/[^/]+\.md$/, /^docs\/propostas\/[^/]+\.md$/, /^[^/]+\.md$/]
 
-/** AMARELO: código do app que muda o que a tela mostra, sem servidor, banco, credencial nem build. */
+/** Pastas e arquivos AMARELOS. A regra pura da Central Comercial entra porque nenhuma função Netlify a importa (teste). */
 const AMARELOS: RegExp[] = [
-  /^src\/screens\/.*\.(tsx?|css)$/,
-  /^src\/ui\/.*\.(tsx?|css)$/,
+  /^src\/screens\/(.+\/)?[^/]+\.(tsx|ts|css)$/,
+  /^src\/ui\/(.+\/)?[^/]+\.(tsx|ts|css)$/,
   /^src\/styles\.css$/,
-  /^src\/core\/.*\.ts$/, // regra pura; as exceções perigosas estão em VERMELHOS_NOMINAIS
-  /^src\/.*\.test\.ts$/, // teste novo ou alterado: a revisão confere que nenhuma guarda foi enfraquecida
-  /^src\/.*\/__fixtures__\//,
-  /^docs\/propostas\/.*\.sql$/, // proposta fora de supabase/migrations: não roda em produção
+  /^src\/core\/comercial\/[^/]+\.ts$/,
+  /^docs\/propostas\/[^/]+\.sql$/,
 ]
+
+const FIXTURE = /^src\/(core\/comercial|screens|ui)\/(.+\/)?__fixtures__\/[^/]+\.json$/
+
+/** Caminho fora do formato canônico nunca é classificado como permitido. */
+export function caminhoCanonico(p: string): boolean {
+  return p !== '' && p === p.trim() && !p.includes('\\') && ![...p].some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127) && !p.startsWith('/') &&
+    !p.split('/').some((s) => s === '' || s === '.' || s === '..') && p === p.normalize('NFC')
+}
 
 export interface ClasseArquivo { arquivo: string; status: StatusGit; classe: Classe; motivo: string }
 
+const resultado = (arquivo: string, status: StatusGit, classe: Classe, motivo: string): ClasseArquivo => ({ arquivo, status, classe, motivo })
+
 export function classeDoArquivo(arquivo: string, status: StatusGit = 'M'): ClasseArquivo {
-  const p = arquivo.trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  if (!caminhoCanonico(arquivo)) return resultado(arquivo, status, 'VERMELHO', 'caminho fora do formato canônico')
+  if (status === 'T') return resultado(arquivo, status, 'VERMELHO', 'mudança de tipo (link simbólico ou submódulo)')
+  const p = arquivo.toLowerCase()
   const nominal = VERMELHOS_NOMINAIS.find((r) => r.padrao.test(p))
-  if (nominal) return { arquivo: p, status, classe: 'VERMELHO', motivo: nominal.motivo }
-  if (status === 'D' && /\.test\.ts$/.test(p)) return { arquivo: p, status, classe: 'VERMELHO', motivo: 'teste apagado (pode ser uma guarda)' }
-  if (VERDES.some((r) => r.test(p))) {
-    return status === 'D'
-      ? { arquivo: p, status, classe: 'AMARELO', motivo: 'documento apagado' }
-      : { arquivo: p, status, classe: 'VERDE', motivo: 'documentação' }
+  if (nominal) return resultado(arquivo, status, 'VERMELHO', nominal.motivo)
+  if (/\.d\.ts$/.test(p)) return resultado(arquivo, status, 'VERMELHO', 'declaração de tipos (pode afrouxar guarda)')
+  const teste = p.match(/^(.*)\.test\.tsx?$/)
+  if (teste) {
+    if (status === 'D') return resultado(arquivo, status, 'VERMELHO', 'teste apagado (pode ser uma guarda)')
+    const alvo = classeDoArquivo(`${arquivo.slice(0, teste[1].length)}.ts`, 'M')
+    return alvo.classe === 'VERMELHO'
+      ? resultado(arquivo, status, 'VERMELHO', 'teste de arquivo VERMELHO (guarda)')
+      : resultado(arquivo, status, 'AMARELO', 'teste de arquivo AMARELO')
   }
-  if (AMARELOS.some((r) => r.test(p))) return { arquivo: p, status, classe: 'AMARELO', motivo: 'código do app: muda comportamento visível' }
-  return { arquivo: p, status, classe: 'VERMELHO', motivo: 'fora das listas VERDE e AMARELA (negação por padrão)' }
+  if (FIXTURE.test(p)) return resultado(arquivo, status, status === 'D' ? 'VERMELHO' : 'AMARELO', status === 'D' ? 'fixture apagada' : 'fixture de tela ou da Central')
+  if (VERDES.some((r) => r.test(p))) {
+    return status === 'D' ? resultado(arquivo, status, 'AMARELO', 'documento apagado') : resultado(arquivo, status, 'VERDE', 'documentação')
+  }
+  if (AMARELOS.some((r) => r.test(p))) return resultado(arquivo, status, 'AMARELO', 'tela, componente ou regra pura da Central')
+  return resultado(arquivo, status, 'VERMELHO', 'fora das listas VERDE e AMARELA (negação por padrão)')
 }
 
-export interface ClasseDoConjunto { classe: Classe; arquivos: ClasseArquivo[] }
+export interface ClasseDoConjunto { classe: Classe; arquivos: ClasseArquivo[]; colisoes: string[] }
 
-/** Classe de um diff inteiro: a maior entre os arquivos. Diff vazio é VERDE (nada a publicar). */
-export function classeDoConjunto(mudancas: Array<{ arquivo: string; status?: StatusGit }>): ClasseDoConjunto {
-  const lidos = mudancas.filter((m) => m.arquivo.trim() !== '').map((m) => classeDoArquivo(m.arquivo, m.status ?? 'M'))
-  return { classe: lidos.reduce<Classe>((c, a) => maiorClasse(c, a.classe), 'VERDE'), arquivos: lidos }
+/**
+ * Classe de um diff inteiro: a maior entre os arquivos. `arvore` (todos os caminhos do candidato) permite recusar
+ * colisão de maiúsculas/minúsculas: no Windows dois caminhos que só diferem na caixa viram o mesmo arquivo.
+ */
+export function classeDoConjunto(mudancas: Array<{ arquivo: string; status?: StatusGit }>, arvore: string[] = []): ClasseDoConjunto {
+  const lidos = mudancas.map((m) => classeDoArquivo(m.arquivo, m.status ?? 'M'))
+  const porChave = new Map<string, Set<string>>()
+  for (const c of arvore) { const k = c.toLowerCase().normalize('NFC'); porChave.set(k, (porChave.get(k) ?? new Set()).add(c)) }
+  const colisoes = lidos.filter((a) => (porChave.get(a.arquivo.toLowerCase().normalize('NFC'))?.size ?? 0) > 1).map((a) => a.arquivo)
+  const classe = colisoes.length > 0 ? 'VERMELHO' : lidos.reduce<Classe>((c, a) => maiorClasse(c, a.classe), 'VERDE')
+  return { classe, arquivos: lidos, colisoes }
 }
 
 /**
- * Lê a saída de `git diff --name-status --no-renames -z`: pares status\0caminho\0. Status desconhecido (C, R, U, X)
- * vira 'T' e o caminho cai nas regras normais; o script nunca pede renomeação, então R não deveria aparecer.
+ * Lê `git diff --raw -z --no-renames`: `:modoA modoB shaA shaB S\0caminho\0`. Falha fechada (lança) com qualquer
+ * coisa fora desse formato. Link simbólico (120000) ou submódulo (160000) em qualquer lado vira status 'T'.
  */
-export function lerNameStatusZ(saida: string): Array<{ arquivo: string; status: StatusGit }> {
-  const partes = saida.split('\0').filter((x) => x !== '')
+export function lerRawZ(saida: string): Array<{ arquivo: string; status: StatusGit }> {
+  const partes = saida.split('\0')
+  if (partes[partes.length - 1] === '') partes.pop()
+  if (partes.length % 2 !== 0) throw new Error('saída do git fora do formato esperado')
   const r: Array<{ arquivo: string; status: StatusGit }> = []
-  for (let i = 0; i + 1 < partes.length; i += 2) {
-    const s = partes[i].trim().charAt(0)
-    r.push({ arquivo: partes[i + 1], status: s === 'A' || s === 'M' || s === 'D' ? s : 'T' })
+  for (let i = 0; i < partes.length; i += 2) {
+    const m = partes[i].match(/^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ ([AMDT])$/)
+    if (!m) throw new Error(`linha do git inesperada: ${partes[i].slice(0, 40)}`)
+    const especial = [m[1], m[2]].some((modo) => modo === '120000' || modo === '160000')
+    r.push({ arquivo: partes[i + 1], status: especial ? 'T' : (m[3] as StatusGit) })
   }
   return r
 }

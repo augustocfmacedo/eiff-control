@@ -1,62 +1,100 @@
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { classeDoArquivo, classeDoConjunto, lerNameStatusZ } from './classe'
+import { caminhoCanonico, classeDoArquivo, classeDoConjunto, lerRawZ } from './classe'
 
-const vermelho = (p: string, s?: 'A' | 'M' | 'D') => expect(classeDoArquivo(p, s).classe, p).toBe('VERMELHO')
+const vermelho = (p: string, s?: 'A' | 'M' | 'D' | 'T') => expect(classeDoArquivo(p, s).classe, p).toBe('VERMELHO')
+const amarelo = (p: string, s?: 'A' | 'M' | 'D') => expect(classeDoArquivo(p, s).classe, p).toBe('AMARELO')
 
 describe('classe mínima de release (negação por padrão)', () => {
-  it('banco, servidor, CI, build, dependências e configuração são VERMELHOS', () => {
+  it('banco, servidor, CI, build, dependências, scripts e configuração são VERMELHOS', () => {
     for (const p of ['supabase/migrations/0077_s3.sql', 'netlify/functions/vibe.ts', 'netlify.toml', '.github/workflows/quality-gate.yml',
-      'package.json', 'package-lock.json', 'public/sw.js', 'public/_headers', 'public/_redirects', 'vite.config.ts', 'index.html', 'tsconfig.json',
-      'eslint.config.js', '.gitattributes', '.mcp.json', '.claude/settings.json', 'src/main.tsx', 'src/App.tsx'])
+      'package.json', 'package-lock.json', 'public/sw.js', 'public/_headers', 'vite.config.ts', 'index.html', 'tsconfig.json', 'eslint.config.js',
+      '.gitattributes', '.mcp.json', '.claude/settings.json', 'src/main.tsx', 'src/App.tsx', 'scripts/fin-reset/executar.sql', 'scripts/release-classe.mts',
+      'scripts/pg-smoke-views.mjs', 'scripts/gerar-build-sha.mjs'])
       vermelho(p)
   })
-  it('src/data inteiro é VERMELHO (persistência, regras de negócio e cliente com chave de serviço)', () => {
-    for (const p of ['src/data/supabase.ts', 'src/data/radar.supabase.ts', 'src/data/store.ts', 'src/data/clienteServidor.ts', 'src/data/offline.ts', 'src/data/ambiente.ts'])
+  it('src/data e src/core são VERMELHOS (salvo a regra pura da Central Comercial)', () => {
+    for (const p of ['src/data/store.ts', 'src/data/clienteServidor.ts', 'src/data/__fixtures__/x.ts', 'src/core/engine.ts', 'src/core/permissoes.ts',
+      'src/core/central/permissoes.ts', 'src/core/inbox/servidor.ts', 'src/core/radar/vibeservidor.ts', 'src/core/central/githubAdapter.ts',
+      'src/core/inbox/emailMensagem.ts', 'src/core/cfo.ts', 'src/core/widgetCaixa.ts', 'src/core/usuarios.ts', 'src/core/release/classe.ts', 'src/core/x.d.ts'])
+      vermelho(p)
+    amarelo('src/core/comercial/central.ts')
+  })
+  it('instruções de agente e documentos operacionais são VERMELHOS em qualquer caixa', () => {
+    for (const p of ['CLAUDE.md', 'claude.md', 'Claude.MD', 'CLAUDE.local.md', 'AGENTS.md', 'docs/CLAUDE.md', 'docs/politica-releases.md',
+      'docs/Politica-Releases.md', 'docs/formulario-site-go2-go3.md', 'docs/fin-reset-01.md', 'docs/eiff-inbox.md', 'docs/seguranca/s3.md', 'docs/Seguranca/s3.md'])
       vermelho(p)
   })
-  it('scripts e runbooks são VERMELHOS, tenham ou não "produção" no nome', () => {
-    for (const p of ['scripts/cno-intake-producao.mts', 'scripts/fin-reset/executar.sql', 'scripts/email-0075/aplicar.mjs', 'scripts/formulario-reconciliar.mts',
-      'scripts/db-query.mjs', 'scripts/gerar-build-sha.mjs', 'scripts/pg-smoke-views.mjs', 'scripts/lib/pgliteFila.mjs', 'scripts/vibe.mjs', 'scripts/release-classe.mts'])
-      vermelho(p)
+  it('teste herda a classe do arquivo que testa; apagar teste ou fixture é VERMELHO', () => {
+    vermelho('src/core/inbox/ativacao.test.ts')
+    vermelho('src/core/engine.test.ts')
+    vermelho('src/data/fotos.store.test.ts')
+    vermelho('src/core/release/classe.test.ts')
+    amarelo('src/core/comercial/central.test.ts')
+    vermelho('src/core/comercial/central.test.ts', 'D')
+    amarelo('src/core/comercial/__fixtures__/x.json')
+    vermelho('src/core/comercial/__fixtures__/x.json', 'D')
+    vermelho('src/core/radar/__fixtures__/cd-1.2-snapshot.json')
   })
-  it('exceções nominais em src/core e na documentação: autorização, segredo, envio, dinheiro e a própria política', () => {
-    for (const p of ['src/core/permissoes.ts', 'src/core/chaveServico.ts', 'src/core/engine.ts', 'src/core/erroSeguro.ts', 'src/core/inbox/ativacao.ts',
-      'src/core/inbox/emailEnvio.ts', 'src/core/central/metaEnvio.ts', 'src/core/radar/canais.ts', 'src/core/radar/formularioAgendado.ts',
-      'src/core/radar/formularioGravacao.ts', 'src/core/radar/vibe.ts', 'src/core/radar/comunicacaoServidor.ts', 'src/core/radar/formularioPorta.ts',
-      'src/core/radar/comunicacaoLlm.ts', 'src/core/inbox/inteligenciaLlm.ts', 'src/core/release/classe.ts', 'src/core/release/classe.test.ts',
-      'src/ui/Paleta.tsx', 'CLAUDE.md', 'docs/politica-releases.md', 'docs/seguranca/s3.md', 'docs/seguranca/s3-0077-retrato.sql'])
-      vermelho(p)
+  it('VERDE só para documentação de leitura; AMARELO para telas e componentes', () => {
+    for (const p of ['docs/radar.md', 'README.md', 'docs/propostas/comercial-acesso.md']) expect(classeDoArquivo(p).classe, p).toBe('VERDE')
+    for (const p of ['src/screens/comercial/CentralGestao.tsx', 'src/screens/comercial/central.css', 'src/ui/Tabela.tsx', 'src/styles.css', 'docs/propostas/pedido-projeto.proposta.sql']) amarelo(p)
+    for (const p of ['src/ui/Paleta.tsx', 'src/screens/Usuarios.tsx', 'src/screens/WidgetsIpad.tsx', 'docs/sub/pasta/x.md']) vermelho(p)
   })
-  it('VERDE só para documentação; AMARELO para telas, componentes, regra pura, testes e propostas SQL', () => {
-    for (const p of ['docs/formulario-site.md', 'README.md', 'docs/propostas/comercial-acesso.md']) expect(classeDoArquivo(p).classe, p).toBe('VERDE')
-    for (const p of ['src/screens/comercial/CentralGestao.tsx', 'src/screens/comercial/central.css', 'src/ui/Tabela.tsx', 'src/core/comercial/central.ts',
-      'src/core/comercial/central.test.ts', 'src/data/fotos.store.test.ts', 'src/core/__fixtures__/x.json', 'docs/propostas/pedido-projeto.proposta.sql', 'src/styles.css'])
-      expect(classeDoArquivo(p).classe, p).toBe('AMARELO')
+  it('caminho fora do formato canônico, mudança de tipo e caminho desconhecido são VERMELHOS', () => {
+    for (const p of ['src\\core\\x.ts', ' docs/a.md', 'docs/a.md\r', 'docs/../CLAUDE.md', 'docs//a.md', '/docs/a.md', 'algo-novo/x.ts']) vermelho(p)
+    vermelho('src/screens/A.tsx', 'T')
+    expect(caminhoCanonico('docs/radar.md')).toBe(true)
   })
-  it('caminho desconhecido nasce VERMELHO', () => {
-    vermelho('docs/propostas/aplicar.mjs')
-    vermelho('algo-novo/qualquer.ts')
-    vermelho('src/qualquer.tsx')
-  })
-  it('apagar teste é VERMELHO (pode ser uma guarda); apagar documento é AMARELO', () => {
-    vermelho('src/core/central/developmentStatus.test.ts', 'D')
-    expect(classeDoArquivo('docs/radar.md', 'D').classe).toBe('AMARELO')
-  })
-  it('o conjunto vale a maior classe', () => {
+  it('o conjunto vale a maior classe; colisão de caixa na árvore é VERMELHA', () => {
     expect(classeDoConjunto([{ arquivo: 'docs/a.md' }, { arquivo: 'src/screens/A.tsx' }]).classe).toBe('AMARELO')
     expect(classeDoConjunto([{ arquivo: 'docs/a.md' }, { arquivo: 'supabase/migrations/0078_x.sql' }]).classe).toBe('VERMELHO')
-    expect(classeDoConjunto([]).classe).toBe('VERDE')
+    const col = classeDoConjunto([{ arquivo: 'docs/Radar.md', status: 'A' }], ['docs/radar.md', 'docs/Radar.md'])
+    expect(col.classe).toBe('VERMELHO')
+    expect(col.colisoes).toEqual(['docs/Radar.md'])
   })
-  it('lê -z com acento, espaço e apagado; renomeação desligada mostra a origem VERMELHA como apagada', () => {
-    const z = 'M\0supabase/migrations/0080_permissão.sql\0D\0supabase/migrations/0077_s3.sql\0A\0docs/propostas/0077_s3.sql\0A\0docs/uma pasta/x.md\0'
-    const m = lerNameStatusZ(z)
-    expect(m.map((x) => x.arquivo)).toEqual(['supabase/migrations/0080_permissão.sql', 'supabase/migrations/0077_s3.sql', 'docs/propostas/0077_s3.sql', 'docs/uma pasta/x.md'])
-    const c = classeDoConjunto(m)
-    expect(c.classe).toBe('VERMELHO')
-    expect(c.arquivos.filter((a) => a.classe === 'VERMELHO').map((a) => a.arquivo)).toEqual(['supabase/migrations/0080_permissão.sql', 'supabase/migrations/0077_s3.sql'])
+  it('lê --raw -z com acento; falha fechada com formato inesperado; link e submódulo viram T', () => {
+    const z = ':100644 100644 aaaa bbbb M\0supabase/migrations/0080_permissão.sql\0:100644 000000 aaaa 0000 D\0docs/a.md\0:000000 120000 0000 cccc A\0src/screens/x.tsx\0'
+    const m = lerRawZ(z)
+    expect(m).toEqual([{ arquivo: 'supabase/migrations/0080_permissão.sql', status: 'M' }, { arquivo: 'docs/a.md', status: 'D' }, { arquivo: 'src/screens/x.tsx', status: 'T' }])
+    expect(() => lerRawZ(':100644 100644 aaaa bbbb R100\0a\0b\0')).toThrow()
+    expect(() => lerRawZ('lixo\0x\0')).toThrow()
   })
-  it('normaliza barra invertida e espaço/CR nas pontas', () => {
-    vermelho('supabase\\migrations\\0077.sql')
-    vermelho('supabase/migrations/0077.sql\r')
+})
+
+/* ---------- fecho de importação das funções Netlify: nada que roda no servidor pode ser VERDE ou AMARELO ---------- */
+
+const RAIZ = path.resolve(__dirname, '../../..')
+const EXT = ['', '.ts', '.tsx', '.mts', '.js', '.mjs', '/index.ts']
+function resolver(de: string, spec: string): string | undefined {
+  if (!spec.startsWith('.')) return undefined
+  const base = path.resolve(path.dirname(de), spec)
+  for (const e of EXT) { const f = base + e; if (existsSync(f) && !f.endsWith(path.sep) && /\.[cm]?[jt]sx?$/.test(f)) return f }
+  return undefined
+}
+function fecho(entradas: string[]): Set<string> {
+  const vistos = new Set<string>(); const fila = [...entradas]
+  while (fila.length) {
+    const f = fila.pop()!
+    if (vistos.has(f)) continue
+    vistos.add(f)
+    const texto = readFileSync(f, 'utf8')
+    for (const m of texto.matchAll(/(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      const alvo = resolver(f, m[1] ?? m[2]); if (alvo) fila.push(alvo)
+    }
+  }
+  return vistos
+}
+
+describe('fecho de importação das funções Netlify', () => {
+  it('todo arquivo alcançado por netlify/functions é VERMELHO', () => {
+    const dir = path.join(RAIZ, 'netlify', 'functions')
+    const entradas = readdirSync(dir).filter((f) => /\.(m?ts)$/.test(f)).map((f) => path.join(dir, f))
+    expect(entradas.length).toBeGreaterThan(5)
+    const alcancados = [...fecho(entradas)].map((f) => path.relative(RAIZ, f).split(path.sep).join('/'))
+    expect(alcancados.length).toBeGreaterThan(entradas.length)
+    const permitidos = alcancados.filter((f) => classeDoArquivo(f).classe !== 'VERMELHO')
+    expect(permitidos, 'arquivo que roda no servidor classificado como VERDE/AMARELO').toEqual([])
   })
 })
