@@ -17,6 +17,7 @@ import {
   type EstadoEntregaEmail, type ModoEmail, type MotivoEntrega, type RespostaGoogle,
 } from './emailEnvio'
 import type { AmbienteEmail, ConversaLida, EntregaCriada, EntregaLida, PortaGoogle, PortaLivro, PortaSessao, RecusaDoLivro, UsuarioDaSessao } from './emailServidor'
+import { cabecalhosServico } from '../chaveServico'
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
@@ -158,7 +159,7 @@ export function entregaDoJson(r: Linha): EntregaCriada | undefined {
 export function portaLivro(cfg: { url: string; chave: string }, fetchFn: typeof fetch): PortaLivro {
   const rpc = async (nome: string, args: Record<string, unknown>): Promise<Linha | null> => {
     try {
-      const r = await fetchFn(`${cfg.url}/rest/v1/rpc/${nome}`, { method: 'POST', headers: { apikey: cfg.chave, authorization: `Bearer ${cfg.chave}`, 'content-type': 'application/json' }, body: JSON.stringify(args) })
+      const r = await fetchFn(`${cfg.url}/rest/v1/rpc/${nome}`, { method: 'POST', headers: cabecalhosServico(cfg.chave, { 'content-type': 'application/json' }), body: JSON.stringify(args) })
       if (!r.ok) return null
       const j: unknown = await r.json().catch(() => null)
       return j && typeof j === 'object' && !Array.isArray(j) ? (j as Linha) : null
