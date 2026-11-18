@@ -3,13 +3,16 @@
  *
  *   npx vite-node scripts/p1-isolamento.mts -- inventario
  *   npx vite-node scripts/p1-isolamento.mts -- troca-preparar   [--executar --confirmar P1_TROCA_PREPARAR]
- *   npx vite-node scripts/p1-isolamento.mts -- troca-desfazer   [--executar --confirmar P1_TROCA_DESFAZER]
- *   npx vite-node scripts/p1-isolamento.mts -- troca-concluir --lead-confirmado [--executar --confirmar P1_TROCA_CONCLUIR]
+ *   npx vite-node scripts/p1-isolamento.mts -- troca-desfazer --site-sem-valor-novo-publicado [--executar --confirmar P1_TROCA_DESFAZER]
+ *   npx vite-node scripts/p1-isolamento.mts -- troca-concluir --chave-observada <a|b> [--executar --confirmar P1_TROCA_CONCLUIR]
  *   npx vite-node scripts/p1-isolamento.mts -- limpar-previews  [--executar --confirmar P1_LIMPAR_PREVIEWS]
  *   npx vite-node scripts/p1-isolamento.mts -- desligar-previews [--executar --confirmar P1_DESLIGAR_PREVIEWS]
  *
  * Sem `--executar` + a frase exata, NADA muda: o script lê metadados e mostra o que faria.
  * Cada fase que muda produção é VERMELHA e só roda com autorização específica da Direção.
+ *
+ * Erros: nenhuma falha de chamada imprime detalhe. O `Error` do execFileSync traz o argv (com o valor novo) e o
+ * stderr; `api()` os descarta e mostra só fase, método e código de saída (`falhaSemSegredo`).
  *
  * Segredo: o valor novo nasce aqui (32 bytes aleatórios), vai para as duas variáveis numa mesma execução e
  * nunca é impresso, gravado em arquivo nem devolvido. Limite conhecido: ele passa como argumento ao processo
@@ -21,8 +24,8 @@ import { randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import {
-  CHAVE_SITE, SITE_CRM, SITE_EIFF, deploysNaoProdutivos, metaDaApi, podeConcluir, siteApto, vagaLivre,
-  valoresNaoProdutivos, type MetaDeploy, type MetaVariavel, type VagaCrm,
+  CHAVE_SITE, LETRA_DA_VAGA, SITE_CRM, SITE_EIFF, deploysNaoProdutivos, falhaSemSegredo, metaDaApi, mudancasInesperadas,
+  podeConcluir, siteApto, vagaLivre, vagasDaTroca, valoresNaoProdutivos, type MetaDeploy, type MetaVaga,
 } from '../src/core/radar/formularioP1'
 
 const CONTA = 'augustocfmacedo'
@@ -44,14 +47,25 @@ const modo = executar ? 'EXECUÇÃO' : 'SIMULAÇÃO'
 const CLI = resolve(import.meta.dirname ?? '.', '..', 'node_modules', 'netlify-cli', 'bin', 'run.js')
 /** Chama a API do Netlify pela CLI já autenticada. O retorno é JSON; quem chama só lê metadados. */
 function api(metodo: string, dados: Record<string, unknown>): unknown {
-  const saida = execFileSync(process.execPath, [CLI, 'api', metodo, '--data', JSON.stringify(dados)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-  return saida.trim() === '' ? null : JSON.parse(saida)
+  let saida: string
+  try {
+    saida = execFileSync(process.execPath, [CLI, 'api', metodo, '--data', JSON.stringify(dados)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (e) {
+    // NUNCA repassar o erro: message e cmd trazem o argv (com o valor), stderr pode ecoar o corpo.
+    console.error(falhaSemSegredo(fase, metodo, e))
+    process.exit(1)
+  }
+  if (saida.trim() === '') return null
+  try { return JSON.parse(saida) } catch {
+    console.error(`falha em ${fase}: ${metodo} — resposta não é JSON (conteúdo omitido)`)
+    process.exit(1)
+  }
 }
-const variaveis = (site: string): MetaVariavel[] => {
+const variaveis = (site: string): MetaVaga[] => {
   const r = api('getEnvVars', { account_id: CONTA, site_id: site })
-  return (Array.isArray(r) ? r : []).map(metaDaApi).filter((x): x is MetaVariavel => x !== undefined)
+  return (Array.isArray(r) ? r : []).map(metaDaApi).filter((x): x is MetaVaga => x !== undefined)
 }
-const resumo = (m: MetaVariavel | undefined) => m === undefined ? '(não existe)' : `${m.isSecret ? 'segredo' : 'COMUM'} · ${m.scopes.join(',')} · ${m.valores.map((x) => x.context).join(',')}`
+const resumo = (m: MetaVaga | undefined) => m === undefined ? '(não existe)' : `${m.isSecret ? 'segredo' : 'COMUM'} · ${m.scopes.join(',')} · ${m.valores.map((x) => x.context).join(',')}`
 
 function deploysDoSite(): { publicado: string; deploys: MetaDeploy[] } {
   const site = api('getSite', { site_id: SITE_EIFF }) as { published_deploy?: { id?: string } }
@@ -100,27 +114,36 @@ function trocaPreparar(): void {
   console.log(`ok 2: ${CHAVE_SITE} de production trocado no site`)
   for (const id of sair) api('deleteEnvVarValue', { account_id: CONTA, site_id: SITE_EIFF, key: CHAVE_SITE, id })
   console.log(`ok 3: ${sair.length} valor(es) não produtivos apagados no site`)
-  const depois = site.length > 0 ? variaveis(SITE_EIFF).find((v) => v.key === CHAVE_SITE) : undefined
-  console.log(`conferência site: ${resumo(depois)}`)
+  console.log(`conferência site: ${resumo(variaveis(SITE_EIFF).find((v) => v.key === CHAVE_SITE))}`)
+  console.log('ATENÇÃO: o site NÃO pode ser publicado antes de o CRM ser republicado (passo 3), senão o valor novo dá 401.')
 }
 
-/** Desfaz o passo 1 quando o 2 falhou: apaga a vaga nova do CRM, que nenhum site manda. */
+/** Desfaz o passo 1 quando o 2 falhou: apaga a vaga NOVA do CRM (derivada do estado), que nenhum site manda. */
 function trocaDesfazer(): void {
-  const crm = variaveis(SITE_CRM)
-  const ambas = ['EIFF_FORM_SECRET', 'EIFF_FORM_SECRET_B'].every((k) => crm.some((v) => v.key === k))
-  if (!ambas) { console.log('nada a desfazer: só uma vaga existe'); return }
-  const nova: VagaCrm = args.includes('--vaga-a') ? 'EIFF_FORM_SECRET' : 'EIFF_FORM_SECRET_B'
-  console.log(`${modo}: apagar ${nova} do CRM (use --vaga-a se a vaga nova for a a). Só se o site AINDA não foi publicado com o valor novo.`)
-  if (executar) { api('deleteEnvVar', { account_id: CONTA, site_id: SITE_CRM, key: nova }); console.log(`ok: ${nova} apagado`) }
+  const v = vagasDaTroca(variaveis(SITE_CRM))
+  if (!v.ok) { console.error(`BLOQUEADO: ${v.motivo}`); process.exit(1) }
+  if (!args.includes('--site-sem-valor-novo-publicado')) {
+    console.error('BLOQUEADO: confirme com --site-sem-valor-novo-publicado que nenhum deploy do site com o valor novo foi publicado (senão desfazer recusa todo lead)')
+    process.exit(1)
+  }
+  console.log(`${modo}: apagar ${v.valor.nova} (a vaga nova) do CRM; fica só ${v.valor.antiga}`)
+  if (executar) { api('deleteEnvVar', { account_id: CONTA, site_id: SITE_CRM, key: v.valor.nova }); console.log(`ok: ${v.valor.nova} apagado`) }
 }
 
+/**
+ * Conclui: apaga a vaga ANTIGA (derivada do estado). Exige a letra que o log da borda registrou para o lead real
+ * depois da publicação do site, e ela tem de ser a da vaga nova (`"etapa":"autenticado","chave":"b"`, por exemplo).
+ */
 function trocaConcluir(): void {
   const crm = variaveis(SITE_CRM)
-  const antiga: VagaCrm = args.includes('--antiga-b') ? 'EIFF_FORM_SECRET_B' : 'EIFF_FORM_SECRET'
-  const d = podeConcluir(crm, antiga, args.includes('--lead-confirmado'))
-  if (!d.ok) { console.error(`BLOQUEADO: ${d.motivo}`); process.exit(1) }
-  console.log(`${modo}: apagar ${antiga} do CRM; depois publicar o CRM. A partir daí todo deploy antigo do site é recusado (401).`)
-  if (executar) { api('deleteEnvVar', { account_id: CONTA, site_id: SITE_CRM, key: antiga }); console.log(`ok: ${antiga} apagado`) }
+  const v = vagasDaTroca(crm)
+  if (!v.ok) { console.error(`BLOQUEADO: ${v.motivo}`); process.exit(1) }
+  const observada = args[args.indexOf('--chave-observada') + 1]
+  const esperada = LETRA_DA_VAGA[v.valor.nova]
+  const d = podeConcluir(crm, v.valor.antiga, args.includes('--chave-observada') && observada === esperada)
+  if (!d.ok) { console.error(`BLOQUEADO: ${d.motivo} — informe --chave-observada ${esperada} (a vaga nova), lida no log de um lead real`); process.exit(1) }
+  console.log(`${modo}: apagar ${v.valor.antiga} (antiga) do CRM; fica ${v.valor.nova}. Depois publicar o CRM: todo deploy antigo do site passa a 401.`)
+  if (executar) { api('deleteEnvVar', { account_id: CONTA, site_id: SITE_CRM, key: v.valor.antiga }); console.log(`ok: ${v.valor.antiga} apagado`) }
 }
 
 function limparPreviews(): void {
@@ -134,10 +157,13 @@ function limparPreviews(): void {
 
 function desligarPreviews(): void {
   console.log(`${modo}: site build_settings.skip_prs = true (sem deploy preview novo); branch deploys seguem só main`)
+  const antes = ((api('getSite', { site_id: SITE_EIFF }) as { build_settings?: Record<string, unknown> }).build_settings) ?? {}
   if (executar) {
     api('updateSite', { site_id: SITE_EIFF, body: { build_settings: { skip_prs: true } } })
-    const s = api('getSite', { site_id: SITE_EIFF }) as { build_settings?: { skip_prs?: unknown } }
-    console.log(`conferência: skip_prs=${JSON.stringify(s.build_settings?.skip_prs ?? null)}`)
+    const depois = ((api('getSite', { site_id: SITE_EIFF }) as { build_settings?: Record<string, unknown> }).build_settings) ?? {}
+    const mudou = mudancasInesperadas(antes, depois)
+    console.log(`conferência: skip_prs=${JSON.stringify(depois['skip_prs'] ?? null)}`)
+    if (mudou.length > 0) { console.error(`ALERTA: o PATCH mudou também ${mudou.join(', ')} — restaurar à mão a partir do 'antes' registrado`); console.error(JSON.stringify(Object.fromEntries(mudou.map((k) => [k, antes[k]])))); process.exit(1) }
   }
 }
 

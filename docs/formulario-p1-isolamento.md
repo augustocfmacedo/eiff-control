@@ -54,12 +54,12 @@ continuaria gerando previews com formulário).
 | --- | --- | --- | --- |
 | 0 | **H-0/H-1 em projeto descartável** (ver §5): contexto chega à função de evento; preview sem formulário não apaga o formulário de produção; envio pelo preview desativado não vira submissão | as três provas | não toca produção |
 | 1 | Mesclar e publicar o CRM com as duas vagas (código só) | `/api/formulario-site` 405 no GET; nenhum 401 novo | sem mudança (só a vaga a existe) |
-| 2 | `troca-preparar`: vaga b no CRM e valor novo no site, só production; valores não produtivos do site apagados | inventário mostra b em production e o site só com production | sem mudança: os deploys no ar ainda usam o valor antigo |
+| 2 | `troca-preparar`: vaga b no CRM e valor novo no site, só production; valores não produtivos do site apagados. **A trava do site segue ligada e nada do site é publicado até o passo 3 terminar** (senão o valor novo dá 401) | inventário mostra b em production e o site só com production | sem mudança: os deploys no ar ainda usam o valor antigo |
 | 3 | Publicar o CRM de novo (passa a ler a vaga b) | inventário + 405 | CRM aceita a e b |
 | 4 | Mesclar e publicar o site P1 (L1 + L2, build novo lê o valor novo) | smoke: `form-name` no ar nas duas páginas; formulários registrados; função presente | site manda b; CRM aceita |
-| 5 | Esperar o **primeiro lead real** depois do passo 4 aparecer no Inbox (prova de que o site entrega com b) | lead no Inbox | — |
+| 5 | Esperar o **primeiro lead real** depois do passo 4 aparecer no Inbox e ler no log da borda do CRM (painel do Netlify) a linha `"etapa":"autenticado","chave":"b"` desse lead; conferir também que não há `"outcome":"bloqueado"` no log da função do site | lead no Inbox + `chave` da vaga nova | — |
 | 6 | `limpar-previews` + `desligar-previews` | inventário: 0 não produtivos; `skip_prs=true` | sem efeito em produção |
-| 7 | `troca-concluir --lead-confirmado` e publicar o CRM | inventário: só b; deploys antigos passam a 401 | site atual (b) segue entrando |
+| 7 | `troca-concluir --chave-observada b` (as vagas antiga e nova são derivadas do estado, nunca de parâmetro) e publicar o CRM | inventário: só b; deploys antigos passam a 401 | site atual (b) segue entrando |
 
 Se o passo 5 demorar, nada se perde: até o passo 7 o CRM aceita as duas vagas.
 
@@ -72,11 +72,13 @@ Se o passo 5 demorar, nada se perde: até o passo 7 o CRM aceita as duas vagas.
 | passo 4: L2 bloqueia tudo (`contexto_ausente` no log) | restaurar o deploy anterior; o lead fica no painel de formulários e entra pela conferência C. É exatamente o que H-0 previne |
 | depois do passo 7 | **restaurar deploy antigo do site deixa de funcionar** (valor antigo recusado). Retorno passa a ser **novo build** do commit anterior (lê o valor atual). Os pontos de retorno anotados hoje (`6af758cc`, `6af3b1ba`, `6af32e64`) ficam inertes para o CRM |
 | CRM fora do ar | inalterado: o site tenta 3 vezes; o lead fica no painel; conferência C |
+| reconciliação manual depois do passo 7 | `scripts/formulario-reconciliar.mts` faz POST na borda com `EIFF_FORM_SECRET` local, e **ninguém conhece o valor novo**: esse caminho manual deixa de autenticar. A recuperação passa a ser a conferência C (desenho B + D + C, CSV no CRM, sem segredo) ou a função agendada, que grava direto por `gravarSubmissao` e não usa o segredo |
+| executor falhou no meio | `api()` sai na primeira falha sem imprimir detalhe; `inventario` mostra o estado e `troca-desfazer` recupera o passo 1 |
 
 ## 5. Provas em ambiente descartável (antes do passo 1)
 
 Projeto Netlify descartável, segredo fictício, endpoint fictício próprio (nunca o CRM), dados fictícios:
-- **H-0**: a função de evento registra só `deploy.context`, `deploy.published` e se `site.id` existe, para uma submissão no deploy de produção do descartável.
+- **H-0**: a função de evento registra só `deploy.context`, `deploy.published` e se `site.id` existe, para uma submissão no deploy de produção do descartável. Inclui: uma chamada HTTP direta, de fora, a `/.netlify/functions/submission-created` do deploy publicado é recusada pela plataforma (assinatura do evento) e não chega ao encaminhador.
 - **H-1**: depois de um deploy preview sem formulário, o formulário de produção do descartável continua listado, com os mesmos campos, e uma submissão no endereço de produção é aceita.
 - **H-2**: o envio pela tela do preview desativado não cria submissão (contagem do formulário não muda).
 
@@ -99,4 +101,5 @@ de produção. Registrado na issue #99. Não alterado (autoridade da Frente B).
 - L2 depende de a plataforma passar `context` à função de evento; sem H-0 não se publica o passo 4.
 - O valor novo passa como argumento ao processo da CLI do Netlify durante a chamada (segundos, nesta máquina).
 - Quem enviar à mão um POST com `form-name` de produção para qualquer endereço do site cria uma submissão — isso já é verdade para o próprio site de produção e não é isolamento de ambiente.
-- Publicar `dist` gerado fora do build do Git sai sem formulário (L1 fail-closed); o smoke de publicação confere `form-name`.
+- Publicar `dist` gerado fora do build do Git sai sem formulário (L1 fail-closed). Por isso o smoke de **toda** publicação do site (não só a do P1) confere `form-name` no ar nas duas páginas e os dois formulários registrados — está na política do site (#98, rito passo 7).
+- Um push novo no eiff-site#11 gera outro deploy preview sem formulário no projeto `eiff`. O primeiro (`6afdc87a`, 18/11) já foi construído e os formulários de produção ficaram intactos (24 e 10 campos, mesmas contagens): metade do H-1 provada no ambiente real, sem envio. O `[skip netlify]` não pulou o build.

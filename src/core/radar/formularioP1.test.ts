@@ -67,3 +67,53 @@ describe('P1 · concluir a troca', () => {
     expect(podeConcluir([v('EIFF_FORM_SECRET', ['production'])], 'EIFF_FORM_SECRET', true).ok).toBe(false)
   })
 })
+
+import { falhaSemSegredo, mudancasInesperadas, vagasDaTroca, type MetaVaga } from './formularioP1'
+
+describe('P1 · vagas da troca derivadas do estado', () => {
+  const vaga = (key: string, em: string | undefined, ctx = ['production']): MetaVaga => ({ key, isSecret: true, scopes: ['functions'], valores: ctx.map((c, i) => ({ id: `${key}${i}`, context: c })), atualizadaEm: em })
+  it('primeira troca: a b é a nova', () => {
+    expect(vagasDaTroca([vaga('EIFF_FORM_SECRET', '2026-11-10T00:00:00Z'), vaga('EIFF_FORM_SECRET_B', '2026-11-20T00:00:00Z')]))
+      .toEqual({ ok: true, valor: { antiga: 'EIFF_FORM_SECRET', nova: 'EIFF_FORM_SECRET_B' } })
+  })
+  it('segunda troca: a a é a nova — sem nenhum parâmetro para esquecer', () => {
+    expect(vagasDaTroca([vaga('EIFF_FORM_SECRET', '2027-01-10T00:00:00Z'), vaga('EIFF_FORM_SECRET_B', '2026-11-20T00:00:00Z')]))
+      .toEqual({ ok: true, valor: { antiga: 'EIFF_FORM_SECRET_B', nova: 'EIFF_FORM_SECRET' } })
+  })
+  it('ambíguo ou sem troca em andamento: recusa', () => {
+    expect(vagasDaTroca([vaga('EIFF_FORM_SECRET', '2026-11-10T00:00:00Z'), vaga('EIFF_FORM_SECRET_B', '2026-11-10T00:00:00Z')]).ok).toBe(false)
+    expect(vagasDaTroca([vaga('EIFF_FORM_SECRET', undefined), vaga('EIFF_FORM_SECRET_B', '2026-11-10T00:00:00Z')]).ok).toBe(false)
+    expect(vagasDaTroca([vaga('EIFF_FORM_SECRET', '2026-11-10T00:00:00Z'), vaga('EIFF_FORM_SECRET_B', '2026-11-20T00:00:00Z', ['deploy-preview'])]).ok).toBe(false)
+  })
+})
+
+describe('P1 · falha da CLI nunca carrega o valor', () => {
+  it('descarta message, cmd e stderr do erro do execFileSync', () => {
+    const NOVO = 'VALOR-NOVO-FICTICIO-QUE-NAO-PODE-SAIR'
+    const erro = Object.assign(new Error(`Command failed: node run.js api createEnvVars --data {"value":"${NOVO}"}`), { status: 1, cmd: `node ... ${NOVO}`, stderr: `erro ${NOVO}` })
+    const m = falhaSemSegredo('troca-preparar', 'createEnvVars', erro)
+    expect(m).not.toContain(NOVO)
+    expect(m).toContain('createEnvVars')
+    expect(m).toContain('código 1')
+    expect(falhaSemSegredo('x', 'y', 'texto qualquer')).not.toContain('texto qualquer')
+  })
+})
+
+describe('P1 · desligar previews não pode mexer no resto do build', () => {
+  it('aponta qualquer campo preservado que mudou', () => {
+    const antes = { allowed_branches: ['main'], stop_builds: false, repo_url: 'r', skip_prs: null }
+    expect(mudancasInesperadas(antes, { ...antes, skip_prs: true })).toEqual([])
+    expect(mudancasInesperadas(antes, { skip_prs: true, repo_url: 'r', stop_builds: false })).toEqual(['allowed_branches'])
+  })
+})
+
+describe('P1 · vaga livre que já existe fora de produção', () => {
+  it('recusa antes de criar (a criação falharia no meio da troca)', () => {
+    const r = vagaLivre([v('EIFF_FORM_SECRET', ['production']), v('EIFF_FORM_SECRET_B', ['deploy-preview'])])
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.motivo).toMatch(/já existe/)
+  })
+  it('a leitura da API guarda a data da última gravação', () => {
+    expect(metaDaApi({ key: 'K', values: [], updated_at: '2026-11-18T00:00:00Z' })?.atualizadaEm).toBe('2026-11-18T00:00:00Z')
+  })
+})

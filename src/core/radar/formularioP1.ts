@@ -31,7 +31,10 @@ export function vagaLivre(crm: readonly MetaVariavel[]): Decisao<{ livre: VagaCr
   if (ocupadas.length === 2) return { ok: false, motivo: 'as duas vagas estão ocupadas: conclua a troca anterior antes de começar outra' }
   if (ocupadas.length === 0) return { ok: false, motivo: 'nenhuma vaga com valor de produção: o CRM recusaria todo lead; não começar troca sobre isso' }
   const emUso = ocupadas[0]!
-  return { ok: true, valor: { emUso, livre: emUso === 'EIFF_FORM_SECRET' ? 'EIFF_FORM_SECRET_B' : 'EIFF_FORM_SECRET' } }
+  const livre: VagaCrm = emUso === 'EIFF_FORM_SECRET' ? 'EIFF_FORM_SECRET_B' : 'EIFF_FORM_SECRET'
+  // A vaga livre não pode existir nem com valor fora de produção: a criação falharia no meio da troca.
+  if (crm.some((v) => v.key === livre)) return { ok: false, motivo: `${livre} já existe (com valor fora de produção): apagar antes de começar a troca` }
+  return { ok: true, valor: { emUso, livre } }
 }
 
 /** Valores do segredo do site fora de `production`: são eles que deixam preview e branch deploy com o segredo. */
@@ -76,7 +79,7 @@ export function podeConcluir(crm: readonly MetaVariavel[], antiga: VagaCrm, lead
 }
 
 /** Reduz a resposta da API a metadados, descartando qualquer `value` que venha (o contexto `dev` de segredo volta legível). */
-export function metaDaApi(bruto: unknown): MetaVariavel | undefined {
+export function metaDaApi(bruto: unknown): (MetaVariavel & { atualizadaEm?: string }) | undefined {
   if (bruto === null || typeof bruto !== 'object') return undefined
   const o = bruto as { key?: unknown; is_secret?: unknown; scopes?: unknown; values?: unknown }
   if (typeof o.key !== 'string') return undefined
@@ -86,10 +89,47 @@ export function metaDaApi(bruto: unknown): MetaVariavel | undefined {
       return typeof v.id === 'string' && typeof v.context === 'string' ? [{ id: v.id, context: v.context }] : []
     })
     : []
+  const atualizadaEm = typeof (o as { updated_at?: unknown }).updated_at === 'string' ? (o as { updated_at: string }).updated_at : undefined
   return {
+    ...(atualizadaEm !== undefined ? { atualizadaEm } : {}),
     key: o.key,
     isSecret: o.is_secret === true,
     scopes: Array.isArray(o.scopes) ? o.scopes.filter((s): s is string => typeof s === 'string') : [],
     valores,
   }
+}
+
+/** Metadado de vaga com a data da última gravação (a API devolve `updated_at`). */
+export interface MetaVaga extends MetaVariavel { atualizadaEm?: string }
+
+/**
+ * Qual vaga é a antiga e qual é a nova, a partir do ESTADO (nunca de parâmetro com padrão).
+ * A nova é a gravada por último. Sem as duas com valor de produção, ou com datas iguais ou ausentes, recusa:
+ * apagar a vaga errada recusaria todo lead.
+ */
+export function vagasDaTroca(crm: readonly MetaVaga[]): Decisao<{ antiga: VagaCrm; nova: VagaCrm }> {
+  const com = VAGAS_CRM.map((k) => crm.find((v) => v.key === k && v.valores.some((x) => x.context === 'production')))
+  const [a, b] = com
+  if (a === undefined || b === undefined) return { ok: false, motivo: 'não há troca em andamento: as duas vagas precisam ter valor de produção' }
+  const ta = Date.parse(a.atualizadaEm ?? ''), tb = Date.parse(b.atualizadaEm ?? '')
+  if (Number.isNaN(ta) || Number.isNaN(tb) || ta === tb) return { ok: false, motivo: 'não dá para saber qual vaga é a nova (datas ausentes ou iguais): decidir à mão' }
+  return ta < tb ? { ok: true, valor: { antiga: 'EIFF_FORM_SECRET', nova: 'EIFF_FORM_SECRET_B' } } : { ok: true, valor: { antiga: 'EIFF_FORM_SECRET_B', nova: 'EIFF_FORM_SECRET' } }
+}
+
+/** A letra que o log da borda registra para cada vaga (`chave` em formularioBorda). */
+export const LETRA_DA_VAGA: Readonly<Record<VagaCrm, 'a' | 'b'>> = Object.freeze({ EIFF_FORM_SECRET: 'a', EIFF_FORM_SECRET_B: 'b' })
+
+/**
+ * Mensagem de falha de uma chamada da CLI SEM nada da chamada: o `Error` do execFileSync traz o argv inteiro
+ * (onde está o valor novo) e o stderr do processo. Só a fase, o método e o código de saída saem.
+ */
+export function falhaSemSegredo(fase: string, metodo: string, e: unknown): string {
+  const status = typeof (e as { status?: unknown })?.status === 'number' ? (e as { status: number }).status : null
+  return `falha em ${fase}: ${metodo}${status === null ? '' : ` (código ${status})`} — detalhe omitido de propósito (pode conter o valor)`
+}
+
+/** Campos de `build_settings` que um PATCH parcial não pode mudar sem querer. */
+export const CAMPOS_BUILD_PRESERVADOS = ['allowed_branches', 'stop_builds', 'repo_url', 'repo_branch', 'cmd', 'dir', 'provider'] as const
+export function mudancasInesperadas(antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
+  return CAMPOS_BUILD_PRESERVADOS.filter((k) => JSON.stringify(antes[k] ?? null) !== JSON.stringify(depois[k] ?? null))
 }
