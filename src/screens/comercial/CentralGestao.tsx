@@ -135,9 +135,9 @@ function VisaoGeralView({ r, indice, busca, setBusca }: { r: RetratoCentral; ind
   return (
     <>
       <div className="hero-grid">
-        <KpiHero label="Precisa de ação agora" value={v.aguardandoPrimeiraResposta.valor === null ? valorDe(v.retornosVencidos) : String((v.aguardandoPrimeiraResposta.valor ?? 0) + (v.retornosVencidos.valor ?? 0))}
+        <KpiHero label="Precisa de ação agora" value={valorDe(v.precisaDeAcao)}
           hint={v.aguardandoPrimeiraResposta.valor === null ? `Só retornos do Radar: ${motivoDe(v.aguardandoPrimeiraResposta)}.` : 'Leads aguardando a 1ª resposta + retornos vencidos'}
-          tone={(v.primeiraRespostaVencida.valor ?? 0) + (v.retornosVencidos.valor ?? 0) > 0 ? 'bad' : 'ok'} to={rotaDe('retornos')}
+          tone={(v.precisaDeAcaoVencida.valor ?? 0) > 0 ? 'bad' : 'ok'} to={rotaDe('retornos')}
           secundarios={[{ label: '1ª resposta vencida', value: valorDe(v.primeiraRespostaVencida), tone: v.primeiraRespostaVencida.valor ? 'neg' : undefined }, { label: 'Sem responsável', value: valorDe(v.semResponsavel) }, { label: 'Sem próxima ação', value: valorDe(v.semProximaAcao), tone: v.semProximaAcao.valor ? 'warn' : undefined }, { label: 'Paradas (CM1-A)', value: valorDe(v.paradas), tone: v.paradas.valor ? 'warn' : undefined }]} />
         <KpiHero label="Em negociação (valor estimado)" value={valorDe(v.valorPipeline, moeda)} hint={motivoDe(v.valorPipeline) ?? `${valorDe(v.oportunidadesAtivas)} oportunidades ativas no Radar; ${valorDe(v.oportunidadesSemValor)} sem valor estimado não somam`} to={rotaDe('pipeline')}
           secundarios={[{ label: 'Ponderado pela probabilidade', value: valorDe(v.valorPonderado, moeda) }, { label: `Ganho (${JANELAS_CENTRAL.desfechosDias} d)`, value: valorDe(v.valorGanho, moeda), tone: 'pos' }, { label: 'Ganhos sem valor', value: valorDe(v.ganhosSemValor) }]} />

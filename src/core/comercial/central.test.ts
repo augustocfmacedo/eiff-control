@@ -83,6 +83,26 @@ describe('Retornos e acompanhamentos', () => {
     expect(r.retornos.find((x) => x.id === 'tarefa:demo-t1')!.diasAtraso).toBe(1)
   })
 
+  it('«precisa de ação agora» conta cada item uma vez: o lead com 1ª resposta vencida não soma de novo como retorno', () => {
+    const r = retratoCentral(fontesDemo(), ctx())
+    const v = r.visao
+    const leadsVencidos = r.retornos.filter((x) => x.tipo === 'primeiro_contato' && x.situacao === 'vencido').length
+    expect(leadsVencidos).toBeGreaterThan(0) // a demonstração tem lead com 1ª resposta vencida: o caso que contava duas vezes
+    expect(v.retornosVencidosSemPrimeiroContato.valor).toBe((v.retornosVencidos.valor ?? 0) - leadsVencidos)
+    expect(v.precisaDeAcao.valor).toBe((v.aguardandoPrimeiraResposta.valor ?? 0) + (v.retornosVencidosSemPrimeiroContato.valor ?? 0))
+    expect(v.precisaDeAcaoVencida.valor).toBe((v.primeiraRespostaVencida.valor ?? 0) + (v.retornosVencidosSemPrimeiroContato.valor ?? 0))
+    // sem o Inbox, só os retornos do Radar (nenhum deles é 1º contato)
+    const s = retratoCentral(fontesDemo(), ctx({ veInbox: false })).visao
+    expect(s.precisaDeAcao.valor).toBe(s.retornosVencidos.valor)
+  })
+
+  it('o 1º contato usa a data de São Paulo, não a de UTC (21h–24h em Brasília)', () => {
+    const noite = ctx({ agoraIso: '2026-11-17T01:30:00.000Z' }) // 16/11 22h30 em São Paulo
+    const r = retratoCentral(fontesDemo(), noite)
+    for (const x of r.retornos.filter((y) => y.tipo === 'primeiro_contato')) expect(x.venceEm <= '2026-11-17').toBe(true)
+    expect(r.retornos.filter((y) => y.tipo === 'primeiro_contato').every((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.venceEm))).toBe(true)
+  })
+
   it('situação do prazo', () => {
     expect(situacaoDoPrazo('2026-11-15', HOJE)).toBe('vencido')
     expect(situacaoDoPrazo('2026-11-16', HOJE)).toBe('hoje')
@@ -256,6 +276,14 @@ describe('Jornada comercial (E11.1)', () => {
     expect(r.visao.negociacoesParadas.valor).toBe(1) // Metalforte, parada pela fila CM1-A
     expect(r.visao.negociacoesAvancando.valor).toBe(1) // Cerrado
     expect(r.visao.analisesEngenharia.valor).toBe(1) // atividade «pediu análise técnica» da Agrovia
+  })
+
+  it('proposta enviada sem valor estimado deixa o valor indisponível, nunca zero', () => {
+    const f = fontesDemo()
+    f.radar = { ...f.radar, oportunidades: f.radar.oportunidades.map((o) => (o.estagio === 'PROPOSAL_SENT' ? { ...o, valorEstimado: undefined } : o)) }
+    const v = retratoCentral(f, ctx()).visao
+    expect(v.propostasAguardandoResposta.valor).toBe(1)
+    expect(v.valorPropostasAguardando.valor).toBeNull()
   })
 })
 
