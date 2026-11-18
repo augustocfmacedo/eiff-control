@@ -174,8 +174,10 @@ begin
   if new.submission_id is not null and not exists (select 1 from inbox_message m where m.external_message_id = new.submission_id and m.organization_id = new.organization_id) then raise exception 'PP:VINCULO_INVALIDO: submissão do simulador não encontrada'; end if;
   if new.source_record_id is not null and not exists (select 1 from radar_source_record r where r.id = new.source_record_id and r.organization_id = new.organization_id and r.intake_status = 'RESOLVED' and r.entity_id = new.company_id) then raise exception 'PP:VINCULO_INVALIDO: evidência do Lead Engine não promovida para esta empresa'; end if;
   if new.estimate_id is not null and not exists (select 1 from estimate e where e.id = new.estimate_id and e.organization_id = new.organization_id) then raise exception 'PP:VINCULO_INVALIDO: orçamento não encontrado'; end if;
-  if not exists (select 1 from profile p where p.id = new.commercial_owner_id and p.organization_id = new.organization_id and p.active and p.role in ('Administrador','Diretoria','Comercial')) then raise exception 'PP:VINCULO_INVALIDO: responsável comercial inválido (gestão comercial ativa da organização)'; end if;
-  if new.technical_owner_id is not null and not exists (select 1 from profile p where p.id = new.technical_owner_id and p.organization_id = new.organization_id and p.active and p.role in ('Engenharia','Administrador','Diretoria')) then raise exception 'PP:VINCULO_INVALIDO: responsável técnico inválido'; end if;
+  -- o responsável comercial é conferido quando nasce ou muda: desativar quem era dono não pode travar a solicitação
+  if (tg_op = 'INSERT' or new.commercial_owner_id is distinct from old.commercial_owner_id)
+     and not exists (select 1 from profile p where p.id = new.commercial_owner_id and p.organization_id = new.organization_id and p.active and p.role in ('Administrador','Diretoria','Comercial')) then raise exception 'PP:VINCULO_INVALIDO: responsável comercial inválido (gestão comercial ativa da organização)'; end if;
+  if new.technical_owner_id is not null and (tg_op = 'INSERT' or new.technical_owner_id is distinct from old.technical_owner_id) and not exists (select 1 from profile p where p.id = new.technical_owner_id and p.organization_id = new.organization_id and p.active and p.role in ('Engenharia','Administrador','Diretoria')) then raise exception 'PP:VINCULO_INVALIDO: responsável técnico inválido'; end if;
   return new;
 end $$;
 drop trigger if exists project_request_coerencia on project_request;
@@ -484,11 +486,13 @@ on conflict (id) do nothing;
 -- quem anexa: o Comercial anexa documentos do cliente; a Engenharia (responsável ou triagem) anexa documentos técnicos e o entregável
 create or replace function pp_pode_anexar(p_id uuid, p_tipo text) returns boolean language sql stable security definer set search_path = public, pg_temp as $$
   select exists (select 1 from project_request r where r.id = p_id and r.organization_id = current_org() and r.status not in ('ENCERRADO','CANCELADO')
-    and (pp_gestao_role() or (pp_engenharia_ve(r.status, r.technical_owner_id) and (r.technical_owner_id is null or r.technical_owner_id = auth.uid()))))
+    and (pp_gestao_role() or (pp_engenharia_ve(r.status, r.technical_owner_id) and (r.technical_owner_id is null or r.technical_owner_id = auth.uid())))
+    -- o entregável é do responsável técnico (ou da gestão); vale aqui, que é a fronteira de pp_doc_preparar E de pp_doc_registrar
+    and (p_tipo is distinct from 'entregavel' or pp_gestao_role() or r.technical_owner_id = auth.uid()))
 $$;
 -- caminho → solicitação (para as políticas do storage)
 create or replace function pp_pedido_do_caminho(p_nome text) returns uuid language sql immutable as $$
-  select case when (storage.foldername(p_nome))[2] ~ '^[0-9a-f-]{36}$' then (storage.foldername(p_nome))[2]::uuid end
+  select case when (storage.foldername(p_nome))[2] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then (storage.foldername(p_nome))[2]::uuid end
 $$;
 drop policy if exists projetos_tecnicos_select on storage.objects;
 create policy projetos_tecnicos_select on storage.objects for select to authenticated using (bucket_id = 'projetos-tecnicos' and pp_ve_pedido(pp_pedido_do_caminho(name)));
@@ -504,7 +508,6 @@ begin
   if p_tipo not in ('arquitetura','implantacao','topografia','sondagem','memorial','complementar','entregavel') then raise exception 'PP:DADOS_INCOMPLETOS: tipo de documento inválido'; end if;
   if p_extensao !~ '^(pdf|png|jpg|jpeg|webp|zip|dwg|dxf)$' then raise exception 'PP:DADOS_INCOMPLETOS: extensão não aceita'; end if;
   if not pp_pode_anexar(p_id, p_tipo) then raise exception 'PP:SEM_PERMISSAO: sem permissão para anexar nesta solicitação'; end if;
-  if p_tipo = 'entregavel' and pp_gestao_role() is false and not exists (select 1 from project_request r where r.id = p_id and r.technical_owner_id = eu.id) then raise exception 'PP:SEM_PERMISSAO: o entregável é do responsável técnico'; end if;
   return eu.organization_id::text || '/' || p_id::text || '/' || gen_random_uuid()::text || '.' || p_extensao;
 end $$;
 
@@ -513,7 +516,9 @@ declare eu profile%rowtype; r project_request%rowtype; v integer; f project_requ
 begin
   eu := pp_eu();
   if coalesce(p_intencao, '') = '' then raise exception 'PP:DADOS_INCOMPLETOS: intenção ausente'; end if;
-  select * into f from project_request_file where storage_path = p_caminho;
+  if p_tipo is null or p_tipo not in ('arquitetura','implantacao','topografia','sondagem','memorial','complementar','entregavel') then raise exception 'PP:DADOS_INCOMPLETOS: tipo de documento inválido'; end if;
+  if not pp_pode_anexar(p_id, p_tipo) then raise exception 'PP:SEM_PERMISSAO: sem permissão para anexar nesta solicitação'; end if;
+  select * into f from project_request_file where storage_path = p_caminho and organization_id = eu.organization_id;
   if f.id is not null then
     if f.request_id <> p_id then raise exception 'PP:VINCULO_INVALIDO: arquivo de outra solicitação'; end if;
     return jsonb_build_object('id', f.id, 'versao', f.version, 'caminho', f.storage_path);

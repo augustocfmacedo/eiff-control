@@ -744,7 +744,7 @@ fora do ambiente do app. A troca da tela para o contrato assíncrono é o primei
 |---|---|
 | Integração do adaptador (11 cenários + 8 adversariais, §14.9 + 5 de privilégios, §14.12): ciclo completo; reinicialização do adaptador e do banco; isolamento por organização e perfil (API e consulta direta, leitura e escrita); payload da Engenharia sem dado comercial; triagem compartilhada e atribuição; concorrência (dois usuários na mesma versão: um passa, o outro recebe conflito), idempotência e versões; histórico imutável; falha forçada no meio da operação desfaz tudo; vínculos por id; pendências; documentos (versões, permissões, tipo, tamanho, remoção lógica, bucket próprio) | 24/24 |
 | Mutação: a projeção devolvendo a oportunidade à Engenharia | o cenário 4 falha (pega) |
-| `scripts/pg-smoke-pedido-projeto.mjs` (pela API do banco) | 16/16 |
+| `scripts/pg-smoke-pedido-projeto.mjs` (pela API do banco) | 19/19 (Q, R e S vêm da revisão independente de 18/11/2026: entregável pelo caminho direto, responsável comercial desativado, pasta que não é uuid) |
 | Guarda: nenhum código do app instancia o adaptador | passa |
 
 ### 14.7 Dependências

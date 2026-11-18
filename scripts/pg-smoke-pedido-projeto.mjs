@@ -184,6 +184,26 @@ try {
   prova('P documentos: bucket próprio, caminho da organização, versão registrada; Financeiro não lê nem envia',
     String(caminho).startsWith(`${org}/${fila.id}/`) && !sobe.erro && reg.valor?.versao === 1 && finLe.valor === 0 && !!finSobe.erro, `${reg.erro ?? 'v' + reg.valor?.versao} · Fin lê ${finLe.valor}`);
 
+  // Q. entregável só do responsável técnico, também pelo caminho direto (upload + pp_doc_registrar, sem pp_doc_preparar)
+  const semDono = (await criar(P.Comercial, { ...pedido, tipo: 'Projeto executivo' })).valor;
+  const direto = `${org}/${semDono.id}/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}.pdf`;
+  const sobeEng = await como(P.Engenharia, async () => db.query(`insert into storage.objects (bucket_id, name) values ('projetos-tecnicos', $1)`, [direto]));
+  const regEng = await como(P.Engenharia, async () => um(`select pp_doc_registrar($1::uuid, 'entregavel', $2, 'e.pdf', 'application/pdf', 10, $3) as r`, [semDono.id, direto, int()]));
+  const prepEng = await como(P.Engenharia, async () => um(`select pp_doc_preparar($1::uuid, 'entregavel', 'pdf') as r`, [semDono.id]));
+  prova('Q entregável: quem não é o responsável técnico não registra, nem pelo caminho direto ao bucket',
+    /SEM_PERMISSAO/.test(regEng.erro ?? '') && /SEM_PERMISSAO/.test(prepEng.erro ?? ''), `upload ${sobeEng.erro ?? 'aceito'} · registrar ${regEng.erro ?? 'ACEITO'} · preparar ${prepEng.erro ?? 'ACEITO'}`);
+
+  // R. responsável comercial desativado não trava a solicitação
+  const travada = (await criar(P.Comercial, { ...pedido, tipo: 'Apoio ao orçamento técnico' })).valor;
+  await db.query(`update profile set active = false where id = $1`, [P.Comercial]);
+  const cancela = await agir(P.Diretoria, travada.id, 'cancelar', { motivo: 'cliente desistiu do galpão' }, await versao(travada.id));
+  await db.query(`update profile set active = true where id = $1`, [P.Comercial]);
+  prova('R responsável comercial desativado não trava a solicitação (a gestão ainda cancela)', !cancela.erro, cancela.erro ?? 'cancelada');
+
+  // S. pasta com formato de uuid inválido não quebra a política do storage
+  const pasta = await um(`select pp_pedido_do_caminho($1) is null as r`, [`${org}/------------------------------------/x.pdf`]);
+  prova('S caminho com pasta que não é uuid devolve nulo (sem erro de conversão)', pasta === true, String(pasta));
+
   res.diagnostico.engenhariaLeRadar_D2 = { oportunidades: (await como(P.Engenharia, async () => um(`select count(*)::int from radar_opportunity`))).valor };
 } catch (e) {
   prova('execução', false, so(e));
