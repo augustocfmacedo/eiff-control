@@ -113,7 +113,17 @@ const limpo = (v: string | undefined): string | undefined => {
   return t === '' ? undefined : t
 }
 
-/** Número em pt-BR ou simples; devolve indefinido em vez de NaN. */
+/**
+ * Número em pt-BR ou simples; devolve indefinido em vez de NaN.
+ *
+ * DÍVIDA CONHECIDA (registrada no PR #97, não corrigida): texto livre com mais
+ * de um número vira um número só — «entre 2 e 3 mil» dá 23 —, e esse valor vai
+ * para `areaM2`, para o título do sinal e do projeto no Lead Engine. A área do
+ * «Iniciar um projeto» é texto livre. Corrigir aqui muda o canônico e, com ele,
+ * a impressão de toda submissão (reenvio deixaria de ser IDEMPOTENTE): é
+ * mudança VERMELHA, para decisão própria. A conversa mostra o texto original
+ * (`CAMPOS_DESCRITOS_DO_BRUTO`).
+ */
 export const numeroDe = (v: string | undefined): number | undefined => {
   const t = limpo(v)
   if (t === undefined) return undefined

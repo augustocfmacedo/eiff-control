@@ -228,6 +228,8 @@ function DetalheLead({ lead, inbox, usuario, nomeUsuario, toast, onFechar }: { l
           <h3>Projeto solicitado</h3>
           {s.mensagem && <blockquote className="leads-mensagem">{s.mensagem}</blockquote>}
           <dl className="kv">
+            {s.tipoObra && <><dt>Tipo de obra</dt><dd>{s.tipoObra}</dd></>}
+            {s.areaInformada && <><dt>Área informada</dt><dd>{s.areaInformada}</dd></>}
             {s.configuracao && <><dt>Configuração</dt><dd>{s.configuracao}</dd></>}
             {s.especificacao && <><dt>Especificação</dt><dd>{s.especificacao}</dd></>}
             {s.medidas && <><dt>Medidas</dt><dd>{s.medidas}</dd></>}
