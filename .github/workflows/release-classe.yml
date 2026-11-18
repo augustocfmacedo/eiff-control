@@ -1,0 +1,72 @@
+name: EIFF Release Class
+
+# Classe mínima de release de cada PR para a main (docs/politica-releases.md, seção 3).
+#
+# Por que pull_request_target: o workflow e o classificador rodam com o código da BASE (main). Um PR não consegue
+# reescrever o classificador para se declarar VERDE: o workflow do PR não é usado aqui.
+#
+# Segurança deste modo:
+#   - nenhum código do PR é executado: o PR é só lido pelo git (`git diff`, `git show`); não há npm install nem
+#     build do PR;
+#   - permissões só de leitura; nenhum segredo é usado;
+#   - o checkout não guarda credencial (persist-credentials: false).
+#
+# Resultado: check verde = VERDE ou AMARELO; check vermelho = VERMELHO (ou erro, que falha fechado).
+# Não é required no ruleset: uma mudança VERMELHA autorizada pela Direção ainda pode ser mesclada por humano.
+# O rito autônomo só mescla com este check verde no MESMO SHA de cabeça.
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-classe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classe:
+    name: Classe mínima
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout da base (código do classificador)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Buscar a cabeça do PR (só objetos; nada é executado)
+        env:
+          NUMERO: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/${NUMERO}/head:refs/remotes/origin/pr-head" "+refs/heads/main:refs/remotes/origin/main"
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install (npm ci da base)
+        run: npm ci
+
+      - name: Classificar
+        shell: bash # -eo pipefail: a saída 2 do script não se perde no tee
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          CABECA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse refs/remotes/origin/pr-head)" = "$CABECA"
+          npx vite-node scripts/release-classe.mts -- pr "$BASE" "$CABECA" | tee release-classe.json
+
+      - name: Guardar o resultado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-classe
+          path: release-classe.json
+          if-no-files-found: ignore
