@@ -40,6 +40,8 @@ import { situacaoPrimeiraResposta, type SituacaoPrimeiraResposta } from '../inbo
 import type { InboxDataset, InboxMessage, InboxThread } from '../inbox/tipos'
 import { ehLeadDoSite, historicoDoLead, leadsDoSite, lerSolicitacao, proximaAcao, type LeadDoSite, type SolicitacaoDoSite } from '../inbox/leadsSite'
 import { construirCommercialQueue, NOME_CATEGORIA_CM, TEXTO_RAZAO_CM, type CategoriaCommercialQueue, type CommercialQueue } from '../radar/commercialMachine'
+import { semProximaAcao } from '../radar/pipeline'
+import { dataLocalDe } from '../radar/leadEngineRevisao'
 import { estagioAtivo, type Atividade, type Empresa, type Estagio, type Oportunidade, type RadarDataset } from '../radar/types'
 
 /* ---------------------------------------------------------------
@@ -349,12 +351,13 @@ export function retornos(fontes: FontesCentral, ctx: ContextoCentral, atendiment
   }
   for (const l of atendimentos ?? []) {
     if (!l.aberta || l.ensaio || l.situacao !== 'aguardando' || !l.prazoAte) continue
-    const hojeLocal = dia(ctx.agoraIso)
+    // Data civil de São Paulo (−03:00), não a de UTC: entre 21h e 24h a de UTC já é amanhã.
+    const hojeLocal = dataLocalDe(ctx.agoraIso)
     itens.push({
       id: `conversa:${l.threadId}`, tipo: 'primeiro_contato', descricao: l.proximaAcao, cliente: l.empresa ? `${l.nome} · ${l.empresa}` : l.nome,
       ...(l.responsavelId ? { responsavelId: l.responsavelId, responsavelNome: l.responsavelNome } : {}),
-      venceEm: dia(l.prazoAte), situacao: l.sla === 'vencido' ? 'vencido' : situacaoDoPrazo(l.prazoAte, hojeLocal),
-      diasAtraso: Math.max(0, diasEntre(l.prazoAte, hojeLocal)), dossie: l.dossie, link: l.link,
+      venceEm: dataLocalDe(l.prazoAte), situacao: l.sla === 'vencido' ? 'vencido' : situacaoDoPrazo(dataLocalDe(l.prazoAte), hojeLocal),
+      diasAtraso: Math.max(0, diasEntre(dataLocalDe(l.prazoAte), hojeLocal)), dossie: l.dossie, link: l.link,
     })
   }
   return itens.sort((a, b) => (a.venceEm < b.venceEm ? -1 : a.venceEm > b.venceEm ? 1 : a.id.localeCompare(b.id)))
@@ -365,7 +368,7 @@ export interface OportunidadeSemAcao { oportunidadeId: string; titulo: string; c
 export function oportunidadesSemProximaAcao(fontes: FontesCentral): OportunidadeSemAcao[] {
   const r = fontes.radar
   return r.oportunidades
-    .filter((o) => estagioAtivo(o.estagio) && !o.proximaAcaoEm && !r.tarefas.some((t) => t.oportunidadeId === o.id && t.status === 'Aberta'))
+    .filter((o) => semProximaAcao(o, r.tarefas))
     .map((o) => { const e = r.empresas.find((x) => x.id === o.empresaId); return { oportunidadeId: o.id, titulo: o.titulo, cliente: e ? nomeEmpresa(e) : 'empresa não encontrada', estagio: o.estagio, responsavelNome: nomeDe(fontes, o.responsavelId), dossie: chaveEmpresa(o.empresaId), link: `/radar/empresas/${o.empresaId}` } })
 }
 
@@ -587,7 +590,13 @@ export function pipeline(fontes: FontesCentral, ctx: Pick<ContextoCentral, 'hoje
 export interface VisaoGeral {
   leadsRecebidos: Indicador; leadsDoSiteRecebidos: Indicador; aguardandoPrimeiraResposta: Indicador; primeiraRespostaVencida: Indicador
   atendimentosPendentes: Indicador; semResponsavel: Indicador
-  retornosVencidos: Indicador; retornosProximos: Indicador; semProximaAcao: Indicador; paradas: Indicador
+  retornosVencidos: Indicador; retornosProximos: Indicador
+  /** Retornos vencidos que NÃO são 1º contato de lead (esses já contam em `aguardandoPrimeiraResposta`). */
+  retornosVencidosSemPrimeiroContato: Indicador
+  /** «Precisa de ação agora»: leads aguardando a 1ª resposta + retornos vencidos, cada item uma vez. */
+  precisaDeAcao: Indicador
+  /** Parte vencida de `precisaDeAcao` (1ª resposta vencida + retornos vencidos), cada item uma vez. */
+  precisaDeAcaoVencida: Indicador; semProximaAcao: Indicador; paradas: Indicador
   propostasEmAndamento: Indicador; orcamentosAguardando: Indicador
   valorPipeline: Indicador; valorPonderado: Indicador; oportunidadesAtivas: Indicador; oportunidadesSemValor: Indicador
   pedidosDeProjeto: Indicador; analisesEngenharia: Indicador
@@ -637,6 +646,8 @@ export function retratoCentral(fontes: FontesCentral, ctx: ContextoCentral): Ret
   const reais = atend?.filter((l) => !l.ensaio)
   const deAtend = (f: (ls: LinhaAtendimento[]) => number): Indicador => (reais ? ind(f(reais)) : indisponivel(MOTIVO_SEM_INBOX))
   const ganhas = janela.filter((d) => d.resultado === 'WON')
+  const vencidosSemLead = ret.filter((r) => r.situacao === 'vencido' && r.tipo !== 'primeiro_contato').length
+  const propostasEnviadas = props.filter((p) => p.estagio === 'PROPOSAL_SENT')
 
   const visao: VisaoGeral = {
     leadsRecebidos: deAtend((ls) => ls.filter((l) => l.recebidoEm >= desde).length),
@@ -647,6 +658,9 @@ export function retratoCentral(fontes: FontesCentral, ctx: ContextoCentral): Ret
     semResponsavel: deAtend((ls) => ls.filter((l) => l.aberta && !l.responsavelId).length),
     retornosVencidos: ind(ret.filter((r) => r.situacao === 'vencido').length),
     retornosProximos: ind(ret.filter((r) => r.situacao === 'hoje' || r.situacao === 'proximo').length),
+    retornosVencidosSemPrimeiroContato: ind(vencidosSemLead),
+    precisaDeAcao: reais ? ind(reais.filter((l) => l.aberta && l.situacao === 'aguardando').length + vencidosSemLead) : ind(ret.filter((r) => r.situacao === 'vencido').length),
+    precisaDeAcaoVencida: reais ? ind(reais.filter((l) => l.aberta && l.sla === 'vencido').length + vencidosSemLead) : ind(ret.filter((r) => r.situacao === 'vencido').length),
     semProximaAcao: ind(sem.length),
     paradas: ind(paradas.length),
     propostasEmAndamento: ind(props.length),
@@ -658,7 +672,7 @@ export function retratoCentral(fontes: FontesCentral, ctx: ContextoCentral): Ret
     pedidosDeProjeto: ind(sols.filter((s) => s.situacao !== 'Conversa encerrada').length),
     analisesEngenharia: ind(fontes.radar.oportunidades.filter((o) => o.estagio === 'ENGINEERING').length + sols.filter((s) => s.fonte === 'atividade' && s.tipo === 'Pediu análise técnica').length),
     propostasAguardandoResposta: ind(props.filter((p) => p.estagio === 'PROPOSAL_SENT').length),
-    valorPropostasAguardando: ind(props.filter((p) => p.estagio === 'PROPOSAL_SENT').reduce((s, p) => s + (p.valorEstimado ?? 0), 0)),
+    valorPropostasAguardando: propostasEnviadas.length > 0 && propostasEnviadas.every((p) => p.valorEstimado === undefined) ? indisponivel('nenhuma proposta enviada tem valor estimado') : ind(propostasEnviadas.reduce((s, p) => s + (p.valorEstimado ?? 0), 0)),
     negociacoesAvancando: ind(props.filter((p) => (p.estagio === 'PROPOSAL_SENT' || p.estagio === 'NEGOTIATION') && !paradas.some((x) => x.oportunidadeId === p.oportunidadeId)).length),
     negociacoesParadas: ind(props.filter((p) => (p.estagio === 'PROPOSAL_SENT' || p.estagio === 'NEGOTIATION') && paradas.some((x) => x.oportunidadeId === p.oportunidadeId)).length),
     ganhos: ind(ganhas.length),
