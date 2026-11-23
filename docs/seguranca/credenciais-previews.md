@@ -11,19 +11,24 @@ nomes, contextos, se o valor está vazio e as datas.
 - **O que é.** Durante cerca de dois meses, os deploys de preview do CRM rodaram com a **chave de serviço do banco de
   produção** (`SUPABASE_SERVICE_ROLE_KEY`) e com as demais chaves privilegiadas. Cada deploy guarda as variáveis do
   momento em que foi construído e continua acessível em endereço público.
-- **O que já mudou.** Os valores fora de production foram **esvaziados entre 16/11 e 17/11/2026**. Os previews
+- **O que já mudou.** Os valores fora de production foram **esvaziados entre 16/11 e 17/11/2026**, **exceto o da
+  Anthropic** (próximo item). Os previews
   construídos desde 17/11 01:27 UTC já nascem **sem** a chave de serviço, comprovado em execução. O texto da #99 (18/11)
   descreve a existência das variáveis nesses contextos, mas elas já estavam vazias.
 - **O que continua exposto.** **73 deploys de preview com a chave de serviço, ainda no ar**, construídos de 14/10 a
-  16/11 para 37 PRs. Outros 110 previews anteriores a 14/10 não puderam ser medidos e devem ser tratados como expostos.
+  16/11 para 37 PRs. Outros **110 previews** (11/09 a 14/10, 54 PRs) também estão no ar. Neles a presença da chave de
+  serviço **não pode ser medida** sem login, então devem ser tratados como expostos.
+- **Achado da revisão de 23/11: a chave da Anthropic nunca saiu dos previews.** `ANTHROPIC_API_KEY` tem o **mesmo valor
+  em todos os contextos**. A sonda comprovou que ela está presente nos **229 previews no ar, inclusive nos 46 construídos
+  depois de 17/11**. Todo preview novo continua recebendo essa chave (2.3).
 - **Comprometimento.** **Nenhuma evidência de uso indevido** nas fontes que pudemos ler. É **exposição potencial, não
   comprometimento comprovado**. A ausência de evidência é limitada: os logs do Supabase e das funções do Netlify não
   foram lidos (seção 4).
 - **Gravidade proposta:** **ALTA.** A chave dá acesso total ao banco de produção e ignora RLS. A probabilidade de uso
   indevido é baixa: o repositório só recebe código do dono, os PRs de fork exigem aprovação e não há sinal de uso.
 - **Recomendação:**
-  1. apagar os previews antigos;
-  2. manter os novos previews sem segredo;
+  1. restringir a chave da Anthropic a production, a única que ainda vai para todo preview novo;
+  2. apagar os previews no ar;
   3. **rotacionar a chave de serviço** numa janela própria;
   4. rotacionar as chaves de terceiros de baixo custo.
 
@@ -57,7 +62,7 @@ Nenhum valor foi lido. "Vazio" quer dizer que o contexto existe, mas sem valor.
 | `GOOGLE_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | sim | com valor | vazio | 16/11 16:01–16:02 UTC |
 | `EIFF_FORM_SECRET` (vaga A) | sim | com valor | vazio | 10/11 16:55 UTC |
 | `EIFF_FORM_SECRET_B` (vaga B) | sim | só production | — | 19/11 21:13 UTC |
-| `ANTHROPIC_API_KEY` | sim | a API devolve vazio **também** em production. Não conclusivo: não se sabe se a chave está ausente ou mascarada | vazio | 04/09 |
+| `ANTHROPIC_API_KEY` | sim | com valor (a API mascara e mostra vazio) | **o mesmo valor de production** (`igual a production` nos quatro contextos). **Presente** em todos os 229 previews, provado em execução (2.3) | 04/09 |
 | `EIFF_INBOX_*`, `EIFF_FORM_SOURCE_ID` | não | só production | — | — |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | não | todos os contextos | idem | públicos por desenho |
 
@@ -76,9 +81,33 @@ A sonda não envia token nem corpo e não grava nada.
 |---|---|---|---|
 | Preview **com** a chave | **73** (37 PRs) | 14/10 03:24 → 16/11 23:34 | **sim** |
 | Preview **sem** a chave | 46 | 17/11 01:27 → 19/11 16:12 | não |
-| Preview sem a função do widget | 110 | 11/09 → 14/10 00:56 | **não medido**: tratar como exposto |
+| Preview anterior à função do widget | 110 (54 PRs) | 11/09 17:18 → 14/10 00:56 | **não mensurável**: tratar como exposto |
 | Production com a chave | 39, entre eles o publicado | 14/10 → 19/11 | sim, legítimo; 22 nunca publicados |
 | Production sem a função do widget | 146 | antes de 14/10 | não medido; legítimo |
+
+**Por que os 110 não são mensuráveis.** Nenhuma função daquele período responde de forma diferente com ou sem a chave
+de serviço **antes** de exigir login: `vibe`, `channel-meta` e `channel-octadesk` pedem o JWT primeiro, e
+`diretor-financeiro` e `assistente` só olham a chave da Anthropic. Medir exigiria uma sessão de usuário, o que está fora
+desta autorização. A presunção conservadora é que a chave estava lá: a `vibe` já a exigia em setembro, e não há registro
+de que algum dia ela tenha sido restrita antes de 17/11.
+
+**Segunda sonda: chave da Anthropic.** Foi feito um POST vazio, sem credencial, em `/api/assistente` de cada um dos 414
+deploys. A função devolve `501 nao_configurado` sem a chave e `401 nao_autenticado` com ela, antes de ler o corpo e sem
+chamar a Anthropic.
+
+| Grupo | Deploys | `ANTHROPIC_API_KEY` |
+|---|---|---|
+| Previews de 11/09 a 14/10 | 110 | **presente** |
+| Previews de 14/10 a 16/11 | 73 | **presente** |
+| Previews **de 17/11 em diante** | 46 (12 PRs) | **presente**: não foi restrita |
+| Production desde 08/09 | 157 | presente (legítimo) |
+| Production de 03 a 04/09 | 28 | sem a chave ou sem a função (início do Assistente) |
+
+**Branch deploys:** **nenhum.** `allowed_branches = [main]`, e todo deploy de `main` é do contexto production. Não há
+branch deploy de outra branch no ar.
+
+**Retenção de 90 dias:** os 110 previews mais antigos expiram sozinhos entre ~10/12/2026 e ~12/01/2027, e os 73 até
+~14/02/2027. Os 46 recentes, que ainda têm a chave da Anthropic, expiram até ~17/02/2027.
 
 Os deploys de production têm a chave por desenho. O ponto de atenção é outro: os endereços permanentes deles continuam
 executando **versões antigas** das funções, inclusive anteriores a correções de segurança, como as do PR #76.
@@ -150,6 +179,28 @@ mostrar uso indevido, isso vira **incidente de segurança** e a rotação passa 
 **Apagar deploys não substitui a rotação.** Só a rotação garante que nenhuma cópia, inclusive fora do Netlify, continue
 valendo.
 
+## 5a. Restrição × rotação, por credencial
+
+Cada deploy **conserva as variáveis da época do build**. Restringir o contexto protege só os deploys **futuros**. As
+cópias já construídas só deixam de valer com a **rotação**, ou deixam de ser executáveis com a exclusão dos deploys.
+
+| Credencial | Restrição a production | Cópias em deploys não produtivos no ar | Precisa rotação? | Por quê |
+|---|---|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | **feita** (17/11 00:32) | 73 provadas + 110 presumidas | **sim** | acesso total ao banco, ignorando RLS; cópias em 183 deploys |
+| `ANTHROPIC_API_KEY` | **não feita**: ainda vai para todo preview novo | 229 provadas | **sim, depois de restringir** | só restringir deixaria 229 cópias. O dano possível é custo de uso |
+| `GOOGLE_OAUTH_*` (refresh token) | feita (16/11 16:01) | presumidas nos previews até 16/11 | **sim** | permite enviar e-mail como a conta comercial |
+| `VIBE_API_KEY` | feita (17/11 00:21) | presumidas nos previews até 16/11 | **sim** | consumo de créditos pagos |
+| `GITHUB_READ_TOKEN` | feita (16/11 23:54) | presumidas nos previews até 16/11 | recomendável | repositório já é público. O escopo do token não foi conferido |
+| `EIFF_FORM_SECRET` (vaga A) | feita (10/11 16:55) | presumidas nos previews até 10/11 | sai na J6 | serve de retorno do site enquanto a J6 não vier |
+| `EIFF_FORM_SECRET_B` (vaga B) | nasceu só em production | nenhuma | não | — |
+| `VITE_SUPABASE_ANON_KEY` | não se aplica | pública por desenho | não | protegida por RLS |
+
+"Presumidas" significa que a credencial não tem função que a revele sem login. Como o contexto foi esvaziado só em
+16–17/11, a presunção é que estava nos previews anteriores.
+
+**A remoção futura da vaga A não resolve as demais credenciais.** Ela trata só o segredo do formulário. A chave de
+serviço, a da Anthropic, a da Google e a da Vibe seguem o plano abaixo, independentemente da J6.
+
 ## 6. Dependências: o que pode parar
 
 **`SUPABASE_SERVICE_ROLE_KEY`** é usada por `usuarios`, `widget-caixa`, `vibe`, `email-comercial`,
@@ -174,7 +225,8 @@ locais (`.env.local`).
 | Vibe | aba Vibe indisponível até a chave nova |
 | GitHub | `development-status` para até o token novo |
 
-**Formulário do site:** **não tocar na vaga A** até a J6 do P1, porque ela é o retorno do site `6afda685`. A vaga B
+**Formulário do site:** **preservar a vaga A** enquanto ela for necessária ao retorno do site `6afda685`, isto é, até a
+J6 do P1. A vaga B
 (production) não é afetada por nenhuma das ações acima.
 
 **Recebimento de leads:** depende de `/api/formulario-site` no deploy publicado. Apagar previews e deploys antigos de
@@ -183,50 +235,92 @@ minutos, dentro da janela.
 
 ## 7. Sequência recomendada
 
-**Fase 0 — leitura de confirmação, sem efeito.**
-- ler os logs e painéis listados na seção 4;
-- se houver uso indevido, **parar e tratar como incidente**: rotação imediata, fora desta sequência.
+Cada fase tem critério GO/NO-GO **antes**, parada **durante** e recuperação **depois**. Nenhuma começa sem a decisão
+correspondente da seção 9.
 
-**Fase 1 — apagar os previews antigos (C).** Baixo risco operacional.
-- Pré-condições:
-  - nenhuma janela crítica aberta no CRM;
-  - lista fechada dos IDs, gerada no dia, com os previews anteriores a 17/11 01:27 UTC;
-  - o publicado e os retornos ficam **fora** da lista.
-- Parada: qualquer ID que não seja `deploy-preview` aborta a fase.
-- Validação:
+**Pré-condições comuns a todas as fases (NO-GO se faltar qualquer uma):**
+- publicado conhecido e travado (hoje `6aff669c`, retorno `6afda676`);
+- nenhuma janela crítica aberta na Frente A (implantação, J5/J6 do formulário, lead em atendimento);
+- leitura do estado no dia (variáveis por contexto e lista de deploys), sem valores;
+- autorização específica da Direção para a fase.
+
+**Fase 0 — leitura de confirmação, sem efeito (D1).**
+- Ler os logs e painéis da seção 4: Supabase API, funções do Netlify, auditoria da conta Netlify, Anthropic, Google e
+  Vibe.
+- **GO** para as fases seguintes: nenhum uso fora do padrão.
+- **Parada:** qualquer uso indevido. Nesse caso abre-se **incidente de segurança**, a rotação da credencial afetada vira
+  imediata e sai desta sequência.
+- Recuperação: não se aplica, porque nada muda.
+
+**Fase 1 — restringir a chave da Anthropic a production (D8).** É a única credencial que ainda nasce em todo preview.
+- **GO:** fase 0 sem alerta.
+- **Passo:** gravar valor só em production, deixando os demais contextos vazios. É mudança de configuração do Netlify e
+  não exige build.
+- **Validação:** o próximo preview responde `501 nao_configurado` em `/api/assistente`; um deploy de production responde
+  `401`.
+- **Parada:** production passar a responder 501. Nesse caso, recolocar o valor no contexto production.
+- **Recuperação:** voltar o escopo anterior. Até a fase 4 o valor é o mesmo, então nada quebra.
+- **Efeito operacional:** os previews perdem o Assistente por IA e passam a usar a busca local. Production não muda.
+
+**Fase 2 — apagar os previews antigos (D2).** Remove as 183 cópias da chave de serviço e as 229 da chave da Anthropic.
+- **GO:**
+  - lista fechada de IDs gerada no dia, **só `context = deploy-preview`**;
+  - nenhum ID igual ao publicado ou aos retornos;
+  - fase 1 concluída, para que nenhum preview novo nasça com a chave da Anthropic.
+- **NO-GO:** qualquer ID de production na lista; divergência entre a contagem e o inventário do dia.
+- **Parada:** a primeira exclusão que não seja de preview interrompe a fase.
+- **Validação:**
   - o publicado continua `6aff669c` e travado;
   - as rotas públicas respondem os códigos de sempre;
   - os endereços apagados respondem 404.
-- Retorno: **não há**, porque apagar é irreversível. Por isso a lista é fechada e conferida antes.
+- **Recuperação:** **não há**, porque apagar é irreversível. Um preview necessário à revisão de um PR aberto se
+  reconstrói com novo push no PR, já sem segredo.
 
-**Fase 2 — limpeza de configuração (A, e B se a Direção quiser).**
-- remover os contextos vazios das variáveis privilegiadas;
-- decidir se os previews ficam ligados;
-- retorno: recriar o contexto vazio ou religar.
+**Fase 3 — limpeza de configuração (D3).**
+- Remover os contextos vazios das variáveis privilegiadas e decidir se os previews ficam ligados.
+- Recuperação: recriar o contexto vazio ou religar os previews.
 
-**Fase 3 — rotação da chave de serviço (E, caminho i), em janela própria.**
-- Pré-condições:
-  - teste do formato novo em PostgreSQL ou deploy descartável;
-  - aviso à Frente A, por causa do formulário;
-  - publicado conhecido e trava ligada.
-- Passos:
+**Fase 4 — rotação da chave de serviço pelo caminho (i) (D4).**
+- **GO:**
+  - formato novo (`sb_secret_…`) testado nas funções (SDK e REST) num deploy descartável **sem** dados reais, ou em
+    PostgreSQL local;
+  - Frente A avisada, por causa do formulário;
+  - `PRODUCTION AUTORIZADA` para publicar a `main` com a chave nova.
+- **Passos:**
   1. criar a chave nova no Supabase;
-  2. gravar no Netlify, **só em production**;
-  3. construir e publicar a `main` sob `PRODUCTION AUTORIZADA`;
+  2. gravá-la no Netlify **só em production**;
+  3. construir e publicar a `main`;
   4. validar;
   5. revogar a chave legada.
-- Validação, só por leitura e sem gravar:
+- **Validação**, só por leitura e sem gravar:
   - `/api/widget-caixa` sem token responde 401;
   - Usuários lista;
   - formulário: POST sem segredo responde 401;
-  - telas do app iguais.
-- Parada: qualquer 5xx nas funções antes de revogar. Retorno: republicar o deploy anterior, porque a chave legada ainda
-  vale até a revogação.
+  - as telas do app não mudam.
+- **Parada:** qualquer 5xx numa função entre o passo 3 e o passo 5.
+- **Recuperação:**
+  - **antes da revogação:** republicar o deploy anterior. A chave legada ainda vale;
+  - **depois da revogação:** gerar outra chave nova e repetir a partir do passo 2. Os deploys antigos ficam sem banco
+    de propósito, inclusive os retornos, então o retorno passa a exigir rebuild.
+- **Efeito operacional:** minutos de indisponibilidade das funções com chave de serviço entre a troca e a publicação.
+  Leads que chegarem nesse intervalo ficam no Netlify Forms e no e-mail.
 
-**Fase 4 — chaves de terceiros.** Anthropic, Vibe, GitHub e Google OAuth, uma por vez, cada uma com o seu teste.
+**Fase 5 — chaves de terceiros (D5).** Uma por vez, cada uma com o seu teste de leitura:
+1. **Anthropic:** nova chave em production e revogar a antiga.
+2. **Google OAuth:** revogar o refresh token e reautorizar.
+3. **Vibe:** nova chave.
+4. **GitHub:** novo token com escopo mínimo.
 
-**Fase 5 (opcional) — deploys de production antigos (C2).** Só depois da rotação, que já os neutraliza, e mantendo os
-retornos.
+- **Parada:** a função correspondente passa a responder erro de configuração em production.
+- **Recuperação:** voltar a chave anterior, enquanto ainda não foi revogada.
+
+**Fase 6 (opcional) — deploys de production antigos (D6).** Só depois da fase 4, que já os neutraliza. Manter o
+publicado e os dois retornos.
+
+**Ordem e justificativa:**
+- **1 antes de 2:** sem a fase 1, novos previews continuariam nascendo com a chave da Anthropic.
+- **2 antes de 4:** reduz a superfície já, sem efeito operacional.
+- **4 é a única que garante:** depois dela nenhuma cópia antiga da chave de serviço vale, inclusive fora do Netlify.
 
 ## 8. Risco residual depois da contenção
 
@@ -244,12 +338,26 @@ retornos.
 
 | # | Decisão | Proposta |
 |---|---|---|
-| D1 | Autorizar a fase 0, leitura dos logs e painéis de terceiros | sim, sem efeito |
-| D2 | Autorizar a fase 1: apagar os previews do CRM anteriores a 17/11 01:27 UTC | sim |
+| D1 | Fase 0: ler logs e painéis de terceiros | sim, sem efeito |
+| D8 | Fase 1: restringir `ANTHROPIC_API_KEY` a production | **sim, primeiro**: é a única credencial que ainda vai para todo preview |
+| D2 | Fase 2: apagar os previews do CRM anteriores a 17/11 e os 46 recentes com a chave da Anthropic, isto é, **todos os 229 previews no ar** | sim, depois da D8 |
 | D3 | Previews do CRM: manter ligados (sem segredo) ou desligar | manter, com a checagem periódica |
-| D4 | Autorizar a fase 3: rotação da chave de serviço pelo caminho (i), em janela própria | sim, depois do teste do formato |
-| D5 | Rotação das chaves de terceiros (fase 4) | sim, de baixo custo |
-| D6 | Apagar deploys antigos de production (fase 5) | opcional, depois da fase 3 |
-| D7 | Vaga A do formulário | **não tocar** antes da J6 do P1 |
+| D4 | Fase 4: rotação da chave de serviço pelo caminho (i), em janela própria | sim, depois do teste do formato |
+| D5 | Fase 5: rotação das chaves de terceiros | sim |
+| D6 | Fase 6: apagar deploys antigos de production | opcional, depois da fase 4 |
+| D7 | Vaga A do formulário | **preservar** enquanto for necessária ao retorno do site. A remoção (J6) volta à Direção coordenada com este plano, e **não substitui** as fases 1 a 5 |
 
 Nenhuma dessas ações está autorizada por este documento.
+
+## 10. Revisões
+
+- **23/11/2026, primeira versão:** inventário, sonda da chave de serviço e varredura dos arquivos públicos.
+- **23/11/2026, revisão:**
+  - segunda sonda, da chave da Anthropic, nos 414 deploys. A leitura anterior "não conclusivo" estava errada: a chave
+    está presente em todos os contextos, inclusive nos previews novos;
+  - justificativa de por que os 110 previews de 11/09 a 14/10 não são mensuráveis sem login;
+  - branch deploys: nenhum;
+  - quadro de restrição × rotação por credencial (5a);
+  - GO/NO-GO, parada e recuperação por fase;
+  - a decisão D8;
+  - a vaga A tratada como retorno do site, não como solução para as demais credenciais.
