@@ -164,7 +164,12 @@ As evidências estão em `scratch/seguranca-previews-d2/`, que o git ignora, com
 |---|---|---|---|
 | **A — D2 base** | `deploy-preview`, criado antes de 17/11 01:27 UTC, com PR | **182** (91 PRs, 11/09 → 16/11 23:34) | `4649eb4a…d8df3` |
 | B — anomalia | `deploy-preview` sem PR: rascunho por linha de comando na `main`, `6ac3e85e`, 05/10 | 1 | `26f1d412…5b7` |
-| C — depois do marco | `deploy-preview` criado a partir de 17/11 01:27 UTC | 50 (14 PRs, 10 deles de PRs abertos) | `8be32f51…fbb4` |
+| C — depois do marco | `deploy-preview` criado a partir de 17/11 01:27 UTC | 50 às 15:32 UTC (14 PRs, 10 abertos); **cresce a cada push**: 51 às 15:37 | `8be32f51…fbb4` (15:32) |
+
+**Segunda revisão independente (15:37 UTC), por outro agente:**
+- reconstruiu A, B e C do zero, com os mesmos hashes;
+- confirmou que nenhum deploy de production, nem o publicado ou os retornos, está nas listas;
+- registrou 1 preview novo em C, do próprio PR #106.
 
 **Revisão independente da lista A:** outro agente montou a lista do zero, sem ver a primeira, paginando de duas formas
 (100 e 50 por página). Chegou aos mesmos 182 ids, ao mesmo hash e à mesma anomalia. O registro de deployments do GitHub
@@ -309,6 +314,15 @@ por trocar também a chave do navegador. O caminho certo é o roteiro R1 → R6 
   do repositório.
 - É decisão separada, depois da R6, e **não** está proposta agora.
 
+**R7 — revogar o segredo JWT legado (passo explícito, depois da R6).** A guia da Supabase sobre chave vazada manda, para
+`service_role` exposta, também revogar o segredo JWT legado: o que ainda confia no segredo pode aceitar a chave vazada.
+- **Custo:** todas as sessões são encerradas, e todos fazem login de novo.
+- **Não afeta:** o widget do iPad, porque o token dele é do banco.
+- **Autorização:** própria, com aviso prévio.
+
+Desativar as legadas (R6) é **reversível**, mas reativá-las **devolve a validade da chave comprometida**. Por isso o
+retorno «reativar as legadas» só vale até a R7.
+
 **Pontos de retorno que não dependem de chave revogada.** Até a R6, o retorno é republicar o deploy anterior, porque a
 legada ainda vale. **Depois da R6**, todo deploy construído com a legada fica sem banco, inclusive os retornos de hoje
 (`6aff669c`, `6afda676`). O ponto de retorno passa a ser o deploy da R5, e o retorno mais profundo exige reativar as
@@ -369,6 +383,16 @@ contextos. O que chega aos previews é a injeção do AI Gateway. Há três opç
 | b) Bloquear a injeção só fora de production | dar a `ANTHROPIC_API_KEY` um valor-sentinela não secreto (`bloqueado-fora-de-producao`) **só** nos contextos `deploy-preview` e `branch-deploy`; production continua vazia, então o gateway continua injetando lá | nenhum esperado | a IA dos previews passa a falhar, e o app cai para o modo determinístico | sim: apagar o valor desses dois contextos |
 | c) Desligar o AI Gateway | desativar «AI Features» no time do Netlify | **para** Assistente, Comunicação e Diretor Financeiro por IA em production, até haver chave própria | idem | sim |
 
+**Limites da opção (b), apontados pela revisão independente:**
+- **Só atinge previews novos.** Cada deploy guarda o ambiente do build, e os 234 previews no ar não mudam. A documentação
+  não diz se a injeção é decidida a cada chamada.
+- **Não corta o gateway.** O Netlify injeta sempre `NETLIFY_AI_GATEWAY_KEY`, então «bloquear a injeção» exagera: o
+  sentinela só troca a `ANTHROPIC_API_KEY`.
+- **Risco para production na própria mudança.** `updateEnvVar` substitui a lista inteira de valores. Um pedido com só os
+  dois contextos apagaria os de production e dev. A mudança tem de ser feita contexto a contexto, relendo os cinco
+  contextos depois.
+- **Erro descoberto tarde.** Um sentinela gravado em production por engano só apareceria no próximo deploy de production.
+
 **Procedimento da opção (b), se a Direção escolher:**
 - **GO:**
   - D1 sem alerta;
@@ -379,8 +403,9 @@ contextos. O que chega aos previews é a injeção do AI Gateway. Há três opç
 - **Passo:** uma única mudança de configuração no Netlify, de valor por contexto, sem build e sem tocar production.
 - **Validação:**
   - a sonda sem credencial **não basta**, porque o sentinela também faz a função responder 401;
-  - a prova exige uma chamada autenticada num preview (login de teste do Augusto), que deve falhar com `ia_indisponivel`;
-  - em production, a mesma chamada responde normalmente.
+  - **antes:** linha de base autenticada em production, pela `comunicacao`, a única função que usa o gateway pelo SDK;
+  - **depois:** a mesma chamada num preview construído depois da mudança, comparando o `detalhe` do erro;
+  - reler os cinco contextos e a configuração `ai_gateway_disabled`.
 - **Parada:** qualquer mudança de comportamento em production.
 - **Recuperação:** remover o valor dos dois contextos.
 - **Incerteza declarada:** a documentação do Netlify diz que o gateway não sobrescreve uma variável «já definida». Ela
@@ -423,7 +448,7 @@ contextos. O que chega aos previews é a injeção do AI Gateway. Há três opç
   - Frente A avisada;
   - janela anunciada.
 - **Ordem:** R2 → R4 (Functions, `PRODUCTION AUTORIZADA`) → observação → R5 (navegador, `PRODUCTION AUTORIZADA`) →
-  observação → R6 (desativar as legadas).
+  observação → R6 (desativar as legadas) → R7 (revogar o segredo JWT legado).
 - **Parada:** qualquer 5xx nas funções ou falha de login entre R4 e R6.
 - **Recuperação:**
   - antes da R6: republicar o deploy anterior;
@@ -499,3 +524,11 @@ Nenhuma dessas ações está autorizada por este documento.
   - D2 ampliada não recomendada;
   - D2 não executada;
   - D3: guarda de build no PR #107 (rascunho).
+- **23/11/2026, terceira revisão:**
+  - segunda revisão independente, que concorda com as listas e com a atribuição ao AI Gateway;
+  - limites da D8(b);
+  - R7 explícita.
+- **Achado lateral (não verificado; follow-up fora deste plano):** `assistente`, `diretor-financeiro` e
+  `inbox/inteligenciaLlm` chamam `api.anthropic.com` diretamente. A chave do AI Gateway só vale pela URL do gateway. Se
+  for assim, essas três funções já falham em production com `ia_indisponivel`, e só a `comunicacao` funciona. Conferir
+  exige uma chamada autenticada.
