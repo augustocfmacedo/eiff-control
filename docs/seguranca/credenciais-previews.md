@@ -206,7 +206,7 @@ conversa da Frente B. As listas B e C ficaram fora desta operação.
 | Retornos | `6afda676` e `6afdd7da` presentes e prontos; `6afda676` responde 200 |
 | Rotas do CRM, antes e depois | iguais: `/` 200; `formulario-site`, `usuarios` e `diretor-financeiro` 405; `widget-caixa` 401 |
 | Previews restantes com a chave de serviço | **nenhum provado**: os 52 da lista C responderam `nao_configurado`. O único preview anterior ao marco que restou é o rascunho B (`6ac3e85e`), da faixa não mensurável |
-| Lista B | **mantida**: a revisão independente confirmou a classificação nas quatro condições, mas a B ficou fora desta autorização |
+| Lista B | mantida nesta operação; excluída depois, em operação própria (abaixo) |
 | Lista C | **preservada** (52) |
 | Formulário e leads | conferência independente pela Frente A |
 
@@ -218,6 +218,38 @@ conversa da Frente B. As listas B e C ficaram fora desta operação.
 - `inventario-pos-execucao.json`;
 - `sonda-C-pos.txt`;
 - `SHA256SUMS`.
+
+**Lista B: EXECUTADA em 23/11/2026, por volta das 22:19 UTC.** Foi uma operação própria, com autorização expressa e
+específica da Direção, limitada ao id exato `6ac3e85ea051f35d456871c0`.
+
+**Condições conferidas antes da exclusão** (`excluir-b.mjs`):
+- projeto do CRM;
+- contexto `deploy-preview`;
+- anterior ao marco;
+- sem PR e sem commit;
+- nunca publicado;
+- não é publicado nem retorno;
+- `6aff669c` travado.
+
+Uma revisão independente confirmou as quatro condições da classificação. Não há nenhuma referência ao deploy no
+repositório, no histórico, nos PRs ou issues nem na auditoria da conta. A Frente A confirmou que não havia operação
+concorrente.
+
+**Verificação às 22:20 UTC:**
+
+| Item | Resultado |
+|---|---|
+| Endereço excluído | **404** |
+| Deploys | **238**: 53 `deploy-preview` e 185 production. Saiu só `6ac3e85e`; entrou só o preview novo do próprio #106 |
+| Previews anteriores a 17/11 01:27 UTC | **0** |
+| Lista C | preservada integralmente; hoje são 53 previews, porque o push do #106 gerou mais um |
+| Publicado | `6aff669c`, travado |
+| Retornos | `6afda676` e `6afdd7da` prontos; `6afda676` responde 200 |
+| Rotas do CRM | iguais às de antes da D2 |
+
+Divergências: nenhuma. A conferência independente fica com a Frente A.
+
+**Total da D2:** 183 previews excluídos (182 da A e 1 da B). Nenhum preview anterior ao marco continua acessível.
 
 ## 3. Avaliação de risco
 
@@ -569,3 +601,4 @@ Nenhuma dessas ações está autorizada por este documento.
   for assim, essas três funções já falham em production com `ia_indisponivel`, e só a `comunicacao` funciona. Conferir
   exige uma chamada autenticada.
 - **23/11/2026, execução da D2:** lista A excluída (182) e verificada; B mantida; C preservada.
+- **23/11/2026, lista B:** `6ac3e85e` excluído em operação própria e verificado. Não resta preview anterior ao marco.
