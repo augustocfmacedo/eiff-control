@@ -11,26 +11,33 @@ nomes, contextos, se o valor está vazio e as datas.
 - **O que é.** Durante cerca de dois meses, os deploys de preview do CRM rodaram com a **chave de serviço do banco de
   produção** (`SUPABASE_SERVICE_ROLE_KEY`) e com as demais chaves privilegiadas. Cada deploy guarda as variáveis do
   momento em que foi construído e continua acessível em endereço público.
-- **O que já mudou.** Os valores fora de production foram **esvaziados entre 16/11 e 17/11/2026**, **exceto o da
-  Anthropic** (próximo item). Os previews
+- **O que já mudou.** Os valores fora de production foram **esvaziados entre 16/11 e 17/11/2026**. Os previews
   construídos desde 17/11 01:27 UTC já nascem **sem** a chave de serviço, comprovado em execução. O texto da #99 (18/11)
   descreve a existência das variáveis nesses contextos, mas elas já estavam vazias.
 - **O que continua exposto.** **73 deploys de preview com a chave de serviço, ainda no ar**, construídos de 14/10 a
-  16/11 para 37 PRs. Outros **110 previews** (11/09 a 14/10, 54 PRs) também estão no ar. Neles a presença da chave de
-  serviço **não pode ser medida** sem login, então devem ser tratados como expostos.
-- **Achado da revisão de 23/11: a chave da Anthropic nunca saiu dos previews.** `ANTHROPIC_API_KEY` tem o **mesmo valor
-  em todos os contextos**. A sonda comprovou que ela está presente nos **229 previews no ar, inclusive nos 46 construídos
-  depois de 17/11**. Todo preview novo continua recebendo essa chave (2.3).
+  16/11 para 37 PRs. Outros **110 previews** (11/09 a 14/10) também estão no ar. Neles a presença da chave de serviço
+  **não pode ser medida** sem login, então devem ser tratados como expostos.
+- **Correção de 23/11 (tarde): a «chave da Anthropic» dos previews não é da EIFF.** A variável `ANTHROPIC_API_KEY` do
+  site está **vazia em todos os contextos, inclusive production**. A chave que as funções enxergam é injetada em tempo
+  de execução pelo **AI Gateway do Netlify** (`ai_gateway_disabled = false` no site), que, segundo a documentação do
+  Netlify, preenche `ANTHROPIC_API_KEY` e `ANTHROPIC_BASE_URL` em todas as funções quando o usuário não define a
+  variável. Três provas:
+  - o build do PR #107 passou pela guarda, que recusaria qualquer `ANTHROPIC_API_KEY` visível no build;
+  - a função do mesmo deploy responde como se tivesse a chave;
+  - a API devolve vazio em todos os contextos.
+
+  Não existe, portanto, chave da Anthropic da EIFF exposta nos previews. A versão anterior deste documento, que pedia
+  restringi-la primeiro (D8), está corrigida na seção 7.
 - **Comprometimento.** **Nenhuma evidência de uso indevido** nas fontes que pudemos ler. É **exposição potencial, não
   comprometimento comprovado**. A ausência de evidência é limitada: os logs do Supabase e das funções do Netlify não
   foram lidos (seção 4).
 - **Gravidade proposta:** **ALTA.** A chave dá acesso total ao banco de produção e ignora RLS. A probabilidade de uso
   indevido é baixa: o repositório só recebe código do dono, os PRs de fork exigem aprovação e não há sinal de uso.
 - **Recomendação:**
-  1. restringir a chave da Anthropic a production, a única que ainda vai para todo preview novo;
-  2. apagar os previews no ar;
-  3. **rotacionar a chave de serviço** numa janela própria;
-  4. rotacionar as chaves de terceiros de baixo custo.
+  1. apagar os 182 previews antigos de PR com a chave de serviço (D2 base);
+  2. reconciliar e mesclar o #95 e seguir o roteiro R4 → R5 → R6. **Só a R6** (desativar as chaves legadas) invalida a
+     chave antiga, e ela desliga junto a chave pública legada;
+  3. rotacionar as chaves de terceiros de baixo custo.
 
   Cada passo depende de autorização da Direção (seção 9).
 
@@ -62,7 +69,7 @@ Nenhum valor foi lido. "Vazio" quer dizer que o contexto existe, mas sem valor.
 | `GOOGLE_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | sim | com valor | vazio | 16/11 16:01–16:02 UTC |
 | `EIFF_FORM_SECRET` (vaga A) | sim | com valor | vazio | 10/11 16:55 UTC |
 | `EIFF_FORM_SECRET_B` (vaga B) | sim | só production | — | 19/11 21:13 UTC |
-| `ANTHROPIC_API_KEY` | sim | com valor (a API mascara e mostra vazio) | **o mesmo valor de production** (`igual a production` nos quatro contextos). **Presente** em todos os 229 previews, provado em execução (2.3) | 04/09 |
+| `ANTHROPIC_API_KEY` | sim | **vazia** | vazia. A chave que as funções veem em **todos** os contextos é a do **AI Gateway do Netlify**, injetada em tempo de execução (2.3) | 04/09 |
 | `EIFF_INBOX_*`, `EIFF_FORM_SOURCE_ID` | não | só production | — | — |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | não | todos os contextos | idem | públicos por desenho |
 
@@ -91,7 +98,8 @@ de serviço **antes** de exigir login: `vibe`, `channel-meta` e `channel-octades
 desta autorização. A presunção conservadora é que a chave estava lá: a `vibe` já a exigia em setembro, e não há registro
 de que algum dia ela tenha sido restrita antes de 17/11.
 
-**Segunda sonda: chave da Anthropic.** Foi feito um POST vazio, sem credencial, em `/api/assistente` de cada um dos 414
+**Segunda sonda: chave da Anthropic.** Esta sonda mede o que a função enxerga em tempo de execução, e isso inclui a
+injeção do AI Gateway. Ela não distingue a chave da EIFF da do Netlify; a distinção está no resumo. Foi feito um POST vazio, sem credencial, em `/api/assistente` de cada um dos 414
 deploys. A função devolve `501 nao_configurado` sem a chave e `401 nao_autenticado` com ela, antes de ler o corpo e sem
 chamar a Anthropic.
 
@@ -99,7 +107,7 @@ chamar a Anthropic.
 |---|---|---|
 | Previews de 11/09 a 14/10 | 110 | **presente** |
 | Previews de 14/10 a 16/11 | 73 | **presente** |
-| Previews **de 17/11 em diante** | 46 (12 PRs) | **presente**: não foi restrita |
+| Previews **de 17/11 em diante** | 46 (12 PRs) | presente, **injetada pelo AI Gateway**, não é variável da EIFF |
 | Production desde 08/09 | 157 | presente (legítimo) |
 | Production de 03 a 04/09 | 28 | sem a chave ou sem a função (início do Assistente) |
 
@@ -107,7 +115,7 @@ chamar a Anthropic.
 branch deploy de outra branch no ar.
 
 **Retenção de 90 dias:** os 110 previews mais antigos expiram sozinhos entre ~10/12/2026 e ~12/01/2027, e os 73 até
-~14/02/2027. Os 46 recentes, que ainda têm a chave da Anthropic, expiram até ~17/02/2027.
+~14/02/2027. Os 50 recentes, sem a chave de serviço, expiram até ~21/02/2027.
 
 Os deploys de production têm a chave por desenho. O ponto de atenção é outro: os endereços permanentes deles continuam
 executando **versões antigas** das funções, inclusive anteriores a correções de segurança, como as do PR #76.
@@ -121,6 +129,54 @@ Foram varridos os `.js` públicos dos 73 previews com a chave e dos 3 deploys de
 procurou o papel `service_role` em base64url nos três alinhamentos e decodificou todo JWT encontrado. Resultado:
 **nenhuma assinatura de chave de serviço em nenhum dos 76 deploys** (de 49 a 52 arquivos por deploy). As variáveis sem prefixo `VITE_` não entram no pacote do navegador. O Netlify também marca essas
 variáveis como segredo e tem varredura de segredos no build.
+
+### 2.5 Resultado da D1 (investigação somente leitura, 23/11/2026)
+
+| Fonte | O que foi lido | Resultado |
+|---|---|---|
+| Auditoria da conta Netlify | 303 eventos, de 23/06 a 19/11/2026 (`listAccountAuditEvents`); guardados só tipo, ação, data, autor e nomes de variáveis | toda mudança de variável desde 14/10 foi feita pela conta do Augusto. O esvaziamento de 16–17/11 está registrado (atualizações das variáveis com todos os contextos). Um membro novo, **«operacao netlify»** (`eiff.com.br`), foi convidado em 16/11 23:39 (Reviewer) e passou a **Internal Builder** em 17/11 16:35; ação do próprio Augusto, coerente com a regra de não usar a sessão pessoal como credencial permanente. Desde 14/10, nenhum evento de crédito esgotado, uso excedido ou site desativado; só falhas de cobrança e pagamentos |
+| Netlify, outra conta | `eiff-staging` (Free) | 0 eventos |
+| Banco (somente leitura, só contagens) | `auth.users`, `auth.sessions`, `profile`, `widget_token`, `audit_log`, `storage.objects`, `financial_entry`, `radar_vibe_operation` | nenhum usuário criado desde 14/10 (3 no total); sessões de 2 usuários; perfis 2 Administradores e 1 Solicitante; tokens de widget só os 2 de 14/10; `audit_log` desde 14/10: `app` 335, `db` 762, `rpc` 2, **todos com autor**, nenhuma gravação anônima; 3 exclusões lógicas de lançamento entre 14 e 16/10; ledger da Vibe vazio; 104 anexos financeiros, todos pelo fluxo do app |
+| GitHub | webhooks, chaves de deploy, colaboradores, forks | nenhum webhook, nenhuma chave de deploy, só o dono como colaborador, 0 forks |
+
+**O que não pôde ser lido**, e por isso a conclusão não é definitiva:
+- **logs das funções do Netlify:** a API não expõe histórico, só o painel, com retenção curta;
+- **logs da API do Supabase:** exigem token de gerenciamento, que não se lê por regra;
+- **auditoria do Auth:** `auth.audit_log_entries` está vazia, porque o Supabase não grava lá;
+- **painéis da Google e da Vibe:** exigem login do Augusto;
+- **uso do token do GitHub:** não exposto para contas pessoais;
+- **consumo do AI Gateway por deploy:** não exposto na API.
+
+**Conclusão da D1:** nenhuma evidência concreta de uso indevido nas fontes lidas. Isso **não** prova ausência de uso. Não
+há gatilho para tratar como incidente.
+
+### 2.6 Listas fechadas (inventário de 23/11/2026, 15:32 UTC)
+
+**Inventário:**
+- 418 deploys no site do CRM: 233 `deploy-preview` e 185 production;
+- nenhum outro contexto e nenhum id duplicado;
+- publicado `6aff669c`, travado;
+- os retornos `6afda676` e `6afdd7da` são production e ficam fora de qualquer lista.
+
+As evidências estão em `scratch/seguranca-previews-d2/`, que o git ignora, com `SHA256SUMS`, e contêm só metadados.
+
+| Lista | Critério | Deploys | sha256 dos ids (sem quebra final) |
+|---|---|---|---|
+| **A — D2 base** | `deploy-preview`, criado antes de 17/11 01:27 UTC, com PR | **182** (91 PRs, 11/09 → 16/11 23:34) | `4649eb4a…d8df3` |
+| B — anomalia | `deploy-preview` sem PR: rascunho por linha de comando na `main`, `6ac3e85e`, 05/10 | 1 | `26f1d412…5b7` |
+| C — depois do marco | `deploy-preview` criado a partir de 17/11 01:27 UTC | 50 (14 PRs, 10 deles de PRs abertos) | `8be32f51…fbb4` |
+
+**Revisão independente da lista A:** outro agente montou a lista do zero, sem ver a primeira, paginando de duas formas
+(100 e 50 por página). Chegou aos mesmos 182 ids, ao mesmo hash e à mesma anomalia. O registro de deployments do GitHub
+está vazio, então não serviu de segunda fonte.
+
+**D2 ampliada (A + B + C = 233): não recomendada.**
+- A lista C não tem a chave de serviço (provado em execução) nem chave da EIFF da Anthropic (2.3).
+- Apagá-la só tiraria a revisão visual de 10 PRs abertos, sem ganho de segurança.
+- O deploy B tem o mesmo risco da lista A e entra por decisão própria, porque não tem PR de origem.
+
+**Estado da D2:** **não executada.** A conferência a seco relê cada deploy da lista A pelos mesmos critérios, sem
+apagar. A execução está parada até a Direção reconfirmar os 182 diante da diretriz de 23/11 sobre a lista ampliada.
 
 ## 3. Avaliação de risco
 
@@ -141,7 +197,7 @@ das funções e não é devolvida por nenhuma delas. Explorar isso exige uma das
 |---|---|---|
 | `VIBE_API_KEY` | consumo de créditos pagos | **nenhuma** operação no ledger `radar_vibe_operation` |
 | Google OAuth (refresh token) | enviar e-mail como a conta comercial | não lido. Conferir na conta Google (seção 4) |
-| `ANTHROPIC_API_KEY` | consumo de tokens | não lido. Conferir no console da Anthropic |
+| `ANTHROPIC_API_KEY` | não há chave da EIFF; a das funções é do AI Gateway do Netlify. Uso exigiria passar pelo login do app (as funções autenticam antes) | sem evento de crédito esgotado ou uso excedido na conta Netlify desde 14/10 |
 | `GITHUB_READ_TOKEN` | leitura do repositório, que já é público | baixo impacto |
 | `EIFF_FORM_SECRET` (vaga A) | enviar lead falso ao CRM | sai na J6 (P1) |
 
@@ -187,7 +243,7 @@ cópias já construídas só deixam de valer com a **rotação**, ou deixam de s
 | Credencial | Restrição a production | Cópias em deploys não produtivos no ar | Precisa rotação? | Por quê |
 |---|---|---|---|---|
 | `SUPABASE_SERVICE_ROLE_KEY` | **feita** (17/11 00:32) | 73 provadas + 110 presumidas | **sim** | acesso total ao banco, ignorando RLS; cópias em 183 deploys |
-| `ANTHROPIC_API_KEY` | **não feita**: ainda vai para todo preview novo | 229 provadas | **sim, depois de restringir** | só restringir deixaria 229 cópias. O dano possível é custo de uso |
+| `ANTHROPIC_API_KEY` | não se aplica: a variável da EIFF está vazia em todos os contextos | nenhuma chave da EIFF; a das funções é do AI Gateway | não | ver D8 (seção 7) |
 | `GOOGLE_OAUTH_*` (refresh token) | feita (16/11 16:01) | presumidas nos previews até 16/11 | **sim** | permite enviar e-mail como a conta comercial |
 | `VIBE_API_KEY` | feita (17/11 00:21) | presumidas nos previews até 16/11 | **sim** | consumo de créditos pagos |
 | `GITHUB_READ_TOKEN` | feita (16/11 23:54) | presumidas nos previews até 16/11 | recomendável | repositório já é público. O escopo do token não foi conferido |
@@ -199,7 +255,7 @@ cópias já construídas só deixam de valer com a **rotação**, ou deixam de s
 16–17/11, a presunção é que estava nos previews anteriores.
 
 **A remoção futura da vaga A não resolve as demais credenciais.** Ela trata só o segredo do formulário. A chave de
-serviço, a da Anthropic, a da Google e a da Vibe seguem o plano abaixo, independentemente da J6.
+serviço, a da Google e a da Vibe seguem o plano abaixo, independentemente da J6.
 
 ## 6. Dependências: o que pode parar
 
@@ -207,14 +263,64 @@ serviço, a da Anthropic, a da Google e a da Vibe seguem o plano abaixo, indepen
 `diretor-financeiro` (veredito), `channel-octadesk`, pelo formulário do site e a ingestão do Inbox, e pelos scripts
 locais (`.env.local`).
 
-**Rotação da chave de serviço.** Há dois caminhos:
-- **(i) Chaves novas do Supabase** (`sb_secret_…`), recomendado. Cria-se uma chave secreta nova, ela substitui a antiga
-  no Netlify, publica-se e só então se **revoga** a chave legada. **Não mexe** na chave pública (`anon`) nem nas sessões
-  dos usuários. Pré-condição: conferir se o SDK e as chamadas REST das funções aceitam o formato novo. Isso não foi
-  testado.
-- **(ii) Trocar o segredo JWT do projeto.** Invalida também a chave `anon` e **todas as sessões**: exige trocar
-  `VITE_SUPABASE_ANON_KEY`, reconstruir e publicar o app, e todos fazem login de novo. O widget do iPad continua, porque
-  o token dele é do banco. **Não recomendado.**
+**Rotação da chave de serviço: corrigida em 23/11/2026 e reconciliada com o PR #95.** A versão anterior desta seção
+dizia que o caminho (i) «não mexe na chave pública». **Estava errado.** A chave legada `service_role` é um JWT e só deixa
+de valer quando as chaves legadas são **desativadas** no painel do Supabase. Desativar as legadas desliga **`service_role`
+e `anon` juntas** (documentação da Supabase, conferida no PR #95 em 17/11/2026). Então a rotação passa obrigatoriamente
+por trocar também a chave do navegador. O caminho certo é o roteiro R1 → R6 do PR #95
+(`docs/s1-chave-servico-supabase.md` e `docs/s1-r4-plano-operacional.md` na branch `feature/s1-r1-chave-servico`):
+
+| Passo | O que é | Estado em 23/11/2026 |
+|---|---|---|
+| R1 | código compatível com a legada (JWT) e a nova (`sb_secret_…`, só no cabeçalho `apikey`, nunca em `Authorization: Bearer`); com a legada, cada requisição sai com os mesmos cabeçalhos de antes (provado por teste) | PR #95 aberto, sem merge. **Reconciliação com a `main`:** a branch está 21 commits atrás e 8 à frente (base `e55b3d6`, de antes da S3 e da P1); a fusão simulada (`git merge-tree`) não tem conflito, e nenhum arquivo do #95 foi alterado na `main` depois da base |
+| R2 | criar as chaves novas no painel (não revoga nada) | não feito |
+| R3A | homologação sem escrita em produção | homologada (17/11) |
+| R3B | escritas do Auth admin num projeto descartável | **parcialmente homologada** (17/11): criar, buscar e atualizar usuário com `sb_secret`; **convite e recuperação de senha sem homologação de envio e entrega** |
+| R4 | trocar a chave nas Functions, só em production | plano em `s1-r4-plano-operacional.md`; não autorizado |
+| R5 | `VITE_SUPABASE_ANON_KEY` recebe a `sb_publishable_…`; build e publicação; conferir login, telas e tempo real | não autorizado |
+| R6 | desativar as legadas no painel (derruba `service_role` **e** `anon` legadas) | não autorizado; ordem obrigatória R4 → R5 → R6 |
+
+**Inventário de quem usa a chave de serviço na `main` (23/11/2026):**
+- As nove portas que fazem a chamada estão todas cobertas pelo #95: `diretor-financeiro`, `email-comercial`,
+  `widget-caixa`, `vibe`, `usuariosServidor`, `inbox/ingestaoPorta`, `inbox/roteamentoPorta`, `radar/canaisServidor` e
+  `radar/formularioPorta`.
+- Os demais arquivos que citam a chave só a leem do ambiente e a repassam a essas portas: `formulario-site`,
+  `formulario-reconciliar`, `channel-octadesk`, `usuarios`, `inbox/ativacao` e `radar/vibeServidor`.
+- Os scripts `pg-smoke-*` e `s3*` usam `service_role` como **papel do PostgreSQL**, não como chave.
+- **A conferir antes do merge do #95:**
+  - repetir esse inventário na branch reconciliada;
+  - os scripts locais que leem `.env.local`.
+- A chave pública (`VITE_SUPABASE_ANON_KEY`, ou `SUPABASE_ANON_KEY` nas funções) aparece em 16 arquivos da `main`. A R5
+  troca o valor. O código precisa aceitar `sb_publishable_…` também como `apikey` do usuário, o que o #95 trata.
+
+**Compatibilidade a provar antes da R4** (nenhum destes foi provado contra produção):
+- PostgREST e RPC com `sb_secret` no `apikey`;
+- Auth admin: criar, buscar e atualizar homologados no descartável; convite e recuperação **pendentes**;
+- supabase-js 2.114 real: provado em teste sem rede no #95;
+- Storage (bucket `fotos-campo`, `anexos-financeiros`) com a chave nova;
+- tempo real e login no navegador com a `sb_publishable_…` (R5).
+
+**Segredo JWT legado.**
+- Desativar as chaves legadas (R6) não é o mesmo que trocar o segredo JWT que assina as sessões.
+- Trocar o segredo, ou migrar para chaves de assinatura assimétricas, invalida as sessões em curso: todos fazem login de
+  novo.
+- O widget do iPad não depende disso, porque o token dele é do banco.
+- Integrações que validem JWT com o segredo antigo quebram. Nenhuma foi encontrada no código, mas não houve varredura fora
+  do repositório.
+- É decisão separada, depois da R6, e **não** está proposta agora.
+
+**Pontos de retorno que não dependem de chave revogada.** Até a R6, o retorno é republicar o deploy anterior, porque a
+legada ainda vale. **Depois da R6**, todo deploy construído com a legada fica sem banco, inclusive os retornos de hoje
+(`6aff669c`, `6afda676`). O ponto de retorno passa a ser o deploy da R5, e o retorno mais profundo exige reativar as
+legadas no painel, que a Supabase permite. Por isso a R6 só entra depois de um período de observação da R5, com critérios
+em `s1-r4-plano-operacional.md` §8.
+
+**Indisponibilidade.**
+- Não há prova de troca sem interrupção.
+- O que se espera, sem prova:
+  - minutos nas funções entre gravar a chave nova e publicar o build (R4);
+  - risco de sessão no navegador na R5.
+- A janela precisa ser anunciada à Frente A e ao uso interno.
 
 **Demais chaves:**
 
@@ -252,81 +358,104 @@ correspondente da seção 9.
   imediata e sai desta sequência.
 - Recuperação: não se aplica, porque nada muda.
 
-**Fase 1 — restringir a chave da Anthropic a production (D8).** É a única credencial que ainda nasce em todo preview.
-- **GO:** fase 0 sem alerta.
-- **Passo:** gravar valor só em production, deixando os demais contextos vazios. É mudança de configuração do Netlify e
-  não exige build.
-- **Validação:** o próximo preview responde `501 nao_configurado` em `/api/assistente`; um deploy de production responde
-  `401`.
-- **Parada:** production passar a responder 501. Nesse caso, recolocar o valor no contexto production.
-- **Recuperação:** voltar o escopo anterior. Até a fase 4 o valor é o mesmo, então nada quebra.
-- **Efeito operacional:** os previews perdem o Assistente por IA e passam a usar a busca local. Production não muda.
+**Fase 1 — D8, AI Gateway fora de production: procedimento preparado, NÃO AUTORIZADO.**
 
-**Fase 2 — apagar os previews antigos (D2).** Remove as 183 cópias da chave de serviço e as 229 da chave da Anthropic.
+A diretriz pedia «Anthropic só em Production». Não há variável da EIFF para restringir: ela está vazia em todos os
+contextos. O que chega aos previews é a injeção do AI Gateway. Há três opções:
+
+| Opção | Como | Efeito em production | Efeito nos previews | Reversível |
+|---|---|---|---|---|
+| **a) Manter (recomendado agora)** | nada | nenhum | as funções dos previews usam o gateway, mas só depois do login do app | — |
+| b) Bloquear a injeção só fora de production | dar a `ANTHROPIC_API_KEY` um valor-sentinela não secreto (`bloqueado-fora-de-producao`) **só** nos contextos `deploy-preview` e `branch-deploy`; production continua vazia, então o gateway continua injetando lá | nenhum esperado | a IA dos previews passa a falhar, e o app cai para o modo determinístico | sim: apagar o valor desses dois contextos |
+| c) Desligar o AI Gateway | desativar «AI Features» no time do Netlify | **para** Assistente, Comunicação e Diretor Financeiro por IA em production, até haver chave própria | idem | sim |
+
+**Procedimento da opção (b), se a Direção escolher:**
 - **GO:**
-  - lista fechada de IDs gerada no dia, **só `context = deploy-preview`**;
-  - nenhum ID igual ao publicado ou aos retornos;
-  - fase 1 concluída, para que nenhum preview novo nasça com a chave da Anthropic.
-- **NO-GO:** qualquer ID de production na lista; divergência entre a contagem e o inventário do dia.
-- **Parada:** a primeira exclusão que não seja de preview interrompe a fase.
+  - D1 sem alerta;
+  - Frente A sem janela crítica;
+  - publicado `6aff669c` travado;
+  - **o #107 ajustado antes**, para aceitar o sentinela; sem o ajuste, a guarda recusaria o build dos previews, porque
+    ela recusa qualquer valor não vazio.
+- **Passo:** uma única mudança de configuração no Netlify, de valor por contexto, sem build e sem tocar production.
 - **Validação:**
+  - a sonda sem credencial **não basta**, porque o sentinela também faz a função responder 401;
+  - a prova exige uma chamada autenticada num preview (login de teste do Augusto), que deve falhar com `ia_indisponivel`;
+  - em production, a mesma chamada responde normalmente.
+- **Parada:** qualquer mudança de comportamento em production.
+- **Recuperação:** remover o valor dos dois contextos.
+- **Incerteza declarada:** a documentação do Netlify diz que o gateway não sobrescreve uma variável «já definida». Ela
+  não diz se um valor vazio conta como definido; o comportamento em production mostra que não conta. A opção (b) depende
+  de um valor não vazio impedir a injeção, o que não foi testado.
+
+**Fase 2 — apagar os previews antigos (D2): lista A, 182 deploys.** Remove as cópias da chave de serviço.
+- **GO:**
+  - lista A fechada (2.6), com o hash conferido na execução;
+  - reconfirmação da Direção diante da diretriz de 23/11;
+  - Frente A sem janela crítica (confirmado às 15:31 UTC de 23/11, válido por 2 h);
+  - publicado travado.
+- **NO-GO:**
+  - qualquer id fora da lista;
+  - qualquer id de production, sem PR ou posterior ao marco;
+  - hash diferente;
+  - publicado destravado.
+- **Execução:** `scratch/seguranca-previews-d2/excluir.mjs <hash> --executar`. Antes de cada exclusão, o script relê o
+  deploy e confere site, contexto, data, PR, se foi publicado e se é retorno. Ele para na primeira divergência e grava um
+  log por item.
+- **Validação:**
+  - os 182 endereços respondem 404;
   - o publicado continua `6aff669c` e travado;
+  - os retornos existem;
   - as rotas públicas respondem os códigos de sempre;
-  - os endereços apagados respondem 404.
-- **Recuperação:** **não há**, porque apagar é irreversível. Um preview necessário à revisão de um PR aberto se
-  reconstrói com novo push no PR, já sem segredo.
+  - o novo inventário tem exatamente 182 deploys a menos que o do dia.
+- **Recuperação:** **não há**, porque apagar é irreversível. Um PR antigo que precise de preview gera outro com um push,
+  já sem segredo.
 
 **Fase 3 — limpeza de configuração (D3).**
 - Remover os contextos vazios das variáveis privilegiadas e decidir se os previews ficam ligados.
 - Recuperação: recriar o contexto vazio ou religar os previews.
 
-**Fase 4 — rotação da chave de serviço pelo caminho (i) (D4).**
-- **GO:**
-  - formato novo (`sb_secret_…`) testado nas funções (SDK e REST) num deploy descartável **sem** dados reais, ou em
-    PostgreSQL local;
-  - Frente A avisada, por causa do formulário;
-  - `PRODUCTION AUTORIZADA` para publicar a `main` com a chave nova.
-- **Passos:**
-  1. criar a chave nova no Supabase;
-  2. gravá-la no Netlify **só em production**;
-  3. construir e publicar a `main`;
-  4. validar;
-  5. revogar a chave legada.
-- **Validação**, só por leitura e sem gravar:
-  - `/api/widget-caixa` sem token responde 401;
-  - Usuários lista;
-  - formulário: POST sem segredo responde 401;
-  - as telas do app não mudam.
-- **Parada:** qualquer 5xx numa função entre o passo 3 e o passo 5.
+**Fase 4 — rotação da chave de serviço (D4): NÃO AUTORIZADA; segue o roteiro R1 → R6 do PR #95 (seção 6).**
+- **GO para pedir autorização:**
+  - #95 reconciliado com a `main` e mesclado sob `MERGE AUTORIZADO`;
+  - inventário de chaves refeito na branch reconciliada;
+  - compatibilidade provada (PostgREST, RPC, Auth admin, Storage, supabase-js);
+  - convite e recuperação homologados, ou aceitos como pendência pela Direção;
+  - Frente A avisada;
+  - janela anunciada.
+- **Ordem:** R2 → R4 (Functions, `PRODUCTION AUTORIZADA`) → observação → R5 (navegador, `PRODUCTION AUTORIZADA`) →
+  observação → R6 (desativar as legadas).
+- **Parada:** qualquer 5xx nas funções ou falha de login entre R4 e R6.
 - **Recuperação:**
-  - **antes da revogação:** republicar o deploy anterior. A chave legada ainda vale;
-  - **depois da revogação:** gerar outra chave nova e repetir a partir do passo 2. Os deploys antigos ficam sem banco
-    de propósito, inclusive os retornos, então o retorno passa a exigir rebuild.
-- **Efeito operacional:** minutos de indisponibilidade das funções com chave de serviço entre a troca e a publicação.
-  Leads que chegarem nesse intervalo ficam no Netlify Forms e no e-mail.
+  - antes da R6: republicar o deploy anterior;
+  - depois da R6: reativar as legadas no painel e republicar o deploy da R5.
+- **Efeito:** só a R6 invalida as cópias antigas da chave de serviço, e com ela a `anon` legada.
 
-**Fase 5 — chaves de terceiros (D5).** Uma por vez, cada uma com o seu teste de leitura:
-1. **Anthropic:** nova chave em production e revogar a antiga.
-2. **Google OAuth:** revogar o refresh token e reautorizar.
-3. **Vibe:** nova chave.
-4. **GitHub:** novo token com escopo mínimo.
+**Fase 5 — chaves de terceiros (D5): plano por fornecedor, NÃO AUTORIZADO.** Uma por vez, cada uma em janela própria
+e sempre **só em production**.
 
-- **Parada:** a função correspondente passa a responder erro de configuração em production.
-- **Recuperação:** voltar a chave anterior, enquanto ainda não foi revogada.
+| Fornecedor | Onde a chave nova nasce | Passos | Validação, sem gravar | Retorno | Efeito durante a troca |
+|---|---|---|---|---|---|
+| Anthropic | — | **não se aplica**: não há chave da EIFF; production usa o AI Gateway do Netlify. Se um dia houver chave própria, ela nasce só em production | — | — | — |
+| Google OAuth (`GOOGLE_OAUTH_*`) | Google Cloud Console + nova autorização da conta comercial | 1. criar segredo novo do cliente; 2. reautorizar e obter refresh token novo; 3. gravar; 4. publicar; 5. revogar o segredo e o token antigos | teste de saúde do e-mail comercial (envio segue DESLIGADO) | voltar os valores antigos antes da revogação | `email-comercial` para até a reautorização; o envio já está desligado |
+| Vibe (`VIBE_API_KEY`) | painel da Explorium | chave nova, gravar, publicar, revogar a antiga | consultar saldo pela aba Vibe (sem consumo) | voltar o valor | aba Vibe indisponível alguns minutos |
+| GitHub (`GITHUB_READ_TOKEN`) | GitHub › tokens finos (escopo mínimo: leitura deste repositório) | token novo, gravar, publicar, revogar o antigo | `development-status` responde | voltar o valor | painel de desenvolvimento sem dados alguns minutos |
+| Formulário, vaga A (`EIFF_FORM_SECRET`) | — | **fora da D5**: preservada até a J6 (D7) | — | — | — |
 
 **Fase 6 (opcional) — deploys de production antigos (D6).** Só depois da fase 4, que já os neutraliza. Manter o
 publicado e os dois retornos.
 
 **Ordem e justificativa:**
-- **1 antes de 2:** sem a fase 1, novos previews continuariam nascendo com a chave da Anthropic.
-- **2 antes de 4:** reduz a superfície já, sem efeito operacional.
-- **4 é a única que garante:** depois dela nenhuma cópia antiga da chave de serviço vale, inclusive fora do Netlify.
+- **2 primeiro:** reduz a superfície já, sem efeito operacional.
+- **4 é a única que invalida a chave antiga, e só no passo R6:** antes da R6, toda cópia antiga continua valendo,
+  inclusive fora do Netlify.
+- A D8 é independente e não precede a D2.
 
 ## 8. Risco residual depois da contenção
 
-- **Depois das fases 1 e 2:** sem cópia da chave em deploy não produtivo. Restam as cópias legítimas em production e
-  qualquer cópia fora do Netlify, só eliminável pela rotação.
-- **Depois da fase 3:** nenhuma cópia antiga da chave de serviço vale.
+- **Depois da fase 2:** nenhum preview com a chave de serviço no ar. Restam as cópias legítimas em production e qualquer
+  cópia fora do Netlify.
+- **Depois da R6 (fase 4):** nenhuma cópia antiga da chave de serviço vale, e a chave pública legada também deixa de
+  valer.
 - **Permanente:**
   - os deploys de production publicados mantêm versões antigas das funções em endereço permanente, até a retenção de 90
     dias ou a fase 5;
@@ -339,10 +468,10 @@ publicado e os dois retornos.
 | # | Decisão | Proposta |
 |---|---|---|
 | D1 | Fase 0: ler logs e painéis de terceiros | sim, sem efeito |
-| D8 | Fase 1: restringir `ANTHROPIC_API_KEY` a production | **sim, primeiro**: é a única credencial que ainda vai para todo preview |
-| D2 | Fase 2: apagar os previews do CRM anteriores a 17/11 e os 46 recentes com a chave da Anthropic, isto é, **todos os 229 previews no ar** | sim, depois da D8 |
+| D8 | AI Gateway fora de production: (a) manter, (b) sentinela só nos previews, (c) desligar o gateway | **(a) manter agora**; (b) só com o #107 ajustado e uma prova autenticada |
+| D2 | Fase 2: apagar a **lista A** (182 previews de PR anteriores a 17/11 01:27 UTC). Lista B (1 rascunho sem PR) por decisão própria. D2 ampliada (233) **não recomendada** | reconfirmar a lista A |
 | D3 | Previews do CRM: manter ligados (sem segredo) ou desligar | manter, com a checagem periódica |
-| D4 | Fase 4: rotação da chave de serviço pelo caminho (i), em janela própria | sim, depois do teste do formato |
+| D4 | Fase 4: rotação da chave de serviço pelo roteiro R1 → R6 do #95 (o caminho (i) da versão anterior estava errado) | primeiro reconciliar e mesclar o #95; depois R4, R5 e R6, cada um com autorização própria |
 | D5 | Fase 5: rotação das chaves de terceiros | sim |
 | D6 | Fase 6: apagar deploys antigos de production | opcional, depois da fase 4 |
 | D7 | Vaga A do formulário | **preservar** enquanto for necessária ao retorno do site. A remoção (J6) volta à Direção coordenada com este plano, e **não substitui** as fases 1 a 5 |
@@ -361,3 +490,12 @@ Nenhuma dessas ações está autorizada por este documento.
   - GO/NO-GO, parada e recuperação por fase;
   - a decisão D8;
   - a vaga A tratada como retorno do site, não como solução para as demais credenciais.
+- **23/11/2026, segunda revisão (diretriz «Prioridades — comercial e segurança»):**
+  - a «chave da Anthropic» dos previews é a injeção do AI Gateway do Netlify, não uma variável da EIFF; D8 reescrita;
+  - seção 6 corrigida: só a R6 invalida a chave antiga, e ela desliga também a `anon` legada; roteiro do #95, que funde
+    com a `main` sem conflito;
+  - D1 executada (2.5);
+  - listas fechadas A/B/C com hash e revisão independente da lista A (2.6);
+  - D2 ampliada não recomendada;
+  - D2 não executada;
+  - D3: guarda de build no PR #107 (rascunho).
