@@ -353,6 +353,30 @@ por trocar também a chave do navegador. O caminho certo é o roteiro R1 → R6 
 | R5 | `VITE_SUPABASE_ANON_KEY` recebe a `sb_publishable_…`; build e publicação; conferir login, telas e tempo real | não autorizado |
 | R6 | desativar as legadas no painel (derruba `service_role` **e** `anon` legadas) | não autorizado; ordem obrigatória R4 → R5 → R6 |
 
+**Reconciliação de teste do #95 com a `main` (23/11/2026, ~22:30 UTC; só local, nada enviado ao GitHub):**
+- **Estado das branches:** `feature/s1-r1-chave-servico` (`8994dd3`) está 21 commits atrás e 8 à frente da `main`
+  (`213887d`), com base comum `e55b3d6`.
+- **Fusão:** a fusão local da `main` na branch foi limpa, sem conflito.
+- **Verificações sobre o resultado:**
+
+  | Verificação | Resultado |
+  |---|---|
+  | `tsc --noEmit` | OK |
+  | `eslint src` | OK |
+  | `vitest` | 3716 aprovados, 8 pendentes e **1 falha** |
+
+- **A falha:** é o teste de deriva de contrato com o `eiff-dev-factory` (`src/core/central/workItem.test.ts`). Ele
+  **falha igual na `main` pura** nesta máquina, porque depende do repositório irmão local, então não vem do #95.
+- **Depois da fusão, todas as chamadas com a chave de serviço passam por `chaveServico`:**
+  - quatro funções: `diretor-financeiro`, `email-comercial`, `vibe` e `widget-caixa`;
+  - as portas `usuariosServidor`, `inbox/emailPorta`, `inbox/ingestaoPorta`, `inbox/roteamentoPorta`,
+    `radar/canaisServidor` e `radar/formularioPorta`, além de `data/clienteServidor`.
+
+  Nenhum `Authorization`/`apikey` com a chave de serviço é montado à mão fora desse módulo. Os únicos scripts que leem a
+  chave são os do próprio #95 (`scripts/s1/`).
+- **Pendência antes de pedir `MERGE AUTORIZADO`:** atualizar a branch do #95 com a `main`, num commit de merge na própria
+  branch, e rodar o Quality Gate do CI. Isso não foi feito, porque mexer na branch não estava autorizado.
+
 **Inventário de quem usa a chave de serviço na `main` (23/11/2026):**
 - As nove portas que fazem a chamada estão todas cobertas pelo #95: `diretor-financeiro`, `email-comercial`,
   `widget-caixa`, `vibe`, `usuariosServidor`, `inbox/ingestaoPorta`, `inbox/roteamentoPorta`, `radar/canaisServidor` e
@@ -602,3 +626,4 @@ Nenhuma dessas ações está autorizada por este documento.
   exige uma chamada autenticada.
 - **23/11/2026, execução da D2:** lista A excluída (182) e verificada; B mantida; C preservada.
 - **23/11/2026, lista B:** `6ac3e85e` excluído em operação própria e verificado. Não resta preview anterior ao marco.
+- **23/11/2026, reconciliação de teste do #95:** fusão limpa; tsc, eslint e vitest OK, exceto a falha de deriva da fábrica, que também ocorre na `main`.
