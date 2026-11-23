@@ -5,6 +5,14 @@
   command = "npm run build"
   publish = "dist"
 
+# Fora de production o build so roda depois da guarda de credenciais (docs/seguranca/credenciais-previews.md, D3):
+# credencial privilegiada visivel no contexto recusa o build e o preview nao e publicado. Production nao muda.
+[context.deploy-preview]
+  command = "node scripts/guarda-credenciais-contexto.mjs && npm run build"
+
+[context.branch-deploy]
+  command = "node scripts/guarda-credenciais-contexto.mjs && npm run build"
+
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--no-audit --no-fund"
