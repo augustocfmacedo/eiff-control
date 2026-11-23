@@ -180,8 +180,44 @@ está vazio, então não serviu de segunda fonte.
 - Apagá-la só tiraria a revisão visual de 10 PRs abertos, sem ganho de segurança.
 - O deploy B tem o mesmo risco da lista A e entra por decisão própria, porque não tem PR de origem.
 
-**Estado da D2:** **não executada.** A conferência a seco relê cada deploy da lista A pelos mesmos critérios, sem
-apagar. A execução está parada até a Direção reconfirmar os 182 diante da diretriz de 23/11 sobre a lista ampliada.
+**Estado da D2: lista A EXECUTADA em 23/11/2026, de 16:06 a 16:50 UTC**, com autorização expressa da Direção dada na
+conversa da Frente B. As listas B e C ficaram fora desta operação.
+
+**Pré-checagem às 16:02 UTC, toda conforme:**
+- inventário com 420 deploys;
+- os 182 ids batem com o hash `4649eb4a…`, e as duas revisões independentes chegaram à mesma lista;
+- todos são `deploy-preview` do CRM, com PR, anteriores ao marco e nunca publicados;
+- publicado `6aff669c` travado e retornos presentes;
+- Frente A sem operação concorrente;
+- evidências guardadas com hash.
+
+**Execução:**
+- `excluir.mjs` releu cada deploy antes de apagá-lo;
+- **182 excluídos**, 0 paradas, 0 erros;
+- o conjunto excluído é idêntico à lista A.
+
+**Verificação às 16:52 UTC:**
+
+| Item | Resultado |
+|---|---|
+| Endereços dos 182 excluídos | **182 × 404** |
+| Inventário depois | **238** deploys = 420 − 182: 53 `deploy-preview` e 185 production. Nenhum id da lista A restou, nenhum deploy fora dela sumiu e nenhum deploy novo apareceu durante a operação |
+| Publicado | `6aff669c`, **travado**, responde 200 |
+| Retornos | `6afda676` e `6afdd7da` presentes e prontos; `6afda676` responde 200 |
+| Rotas do CRM, antes e depois | iguais: `/` 200; `formulario-site`, `usuarios` e `diretor-financeiro` 405; `widget-caixa` 401 |
+| Previews restantes com a chave de serviço | **nenhum provado**: os 52 da lista C responderam `nao_configurado`. O único preview anterior ao marco que restou é o rascunho B (`6ac3e85e`), da faixa não mensurável |
+| Lista B | **mantida**: a revisão independente confirmou a classificação nas quatro condições, mas a B ficou fora desta autorização |
+| Lista C | **preservada** (52) |
+| Formulário e leads | conferência independente pela Frente A |
+
+**Divergências:** nenhuma. Os resultados ficam em `scratch/seguranca-previews-d2/`, que o git ignora:
+- `exclusao-log.jsonl`;
+- `excluidos-A.txt`;
+- `http-pos-A.txt`;
+- `rotas-antes.txt` e `rotas-depois.txt`;
+- `inventario-pos-execucao.json`;
+- `sonda-C-pos.txt`;
+- `SHA256SUMS`.
 
 ## 3. Avaliação de risco
 
@@ -532,3 +568,4 @@ Nenhuma dessas ações está autorizada por este documento.
   `inbox/inteligenciaLlm` chamam `api.anthropic.com` diretamente. A chave do AI Gateway só vale pela URL do gateway. Se
   for assim, essas três funções já falham em production com `ia_indisponivel`, e só a `comunicacao` funciona. Conferir
   exige uma chamada autenticada.
+- **23/11/2026, execução da D2:** lista A excluída (182) e verificada; B mantida; C preservada.
