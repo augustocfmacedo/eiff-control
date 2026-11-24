@@ -47,6 +47,8 @@ export function siteApto(v: MetaVariavel | undefined): Decisao<true> {
   if (v === undefined) return { ok: false, motivo: `${CHAVE_SITE} não existe no site` }
   if (!v.isSecret) return { ok: false, motivo: `${CHAVE_SITE} do site não está marcado como segredo` }
   if (v.scopes.length !== 1 || v.scopes[0] !== 'functions') return { ok: false, motivo: `${CHAVE_SITE} do site deveria ter só o escopo functions` }
+  if (v.valores.some((x) => x.context === 'all')) return { ok: false, motivo: `${CHAVE_SITE} do site tem valor no contexto all: o passo 3 o apagaria; separar por contexto antes` }
+  if (!v.valores.some((x) => x.context === 'production')) return { ok: false, motivo: `${CHAVE_SITE} do site sem valor de production` }
   return { ok: true, valor: true }
 }
 
@@ -128,8 +130,8 @@ export function falhaSemSegredo(fase: string, metodo: string, e: unknown): strin
   return `falha em ${fase}: ${metodo}${status === null ? '' : ` (código ${status})`} — detalhe omitido de propósito (pode conter o valor)`
 }
 
-/** Campos de `build_settings` que um PATCH só de `skip_prs` pode mudar: só ele. */
-export const CAMPOS_BUILD_ALTERAVEIS = ['skip_prs'] as const
+/** Campos de `build_settings` que um PATCH só de `skip_prs` pode mudar: ele e o carimbo da própria mudança. */
+export const CAMPOS_BUILD_ALTERAVEIS = ['skip_prs', 'updated_at'] as const
 /** Todo campo de `build_settings`, além de `skip_prs`, que mudou entre antes e depois. */
 export function mudancasInesperadas(antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
   const chaves = [...new Set([...Object.keys(antes), ...Object.keys(depois)])].sort()
