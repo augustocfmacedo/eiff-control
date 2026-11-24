@@ -22,6 +22,20 @@ import type { VersaoMetaComercial } from '../core/radar/metaComercial';
 import { carregarInbox, persistirInbox } from './inbox.supabase';
 import { datasetSolicitante, type AlteracaoJson, type AnexoJson, type ContextoSolicitante, type NovoPedidoSolicitante, type PedidoSolicitante } from './solicitante';
 import { hojeLocal } from '../core/engine';
+import { ENTIDADE as ENTIDADE_MONITOR_FORMULARIO } from '../core/radar/formularioMonitorPorta';
+
+/** Quantas linhas da auditoria o app carrega para a tela de Auditoria. */
+export const LIMITE_AUDITORIA = 500;
+
+/**
+ * A consulta da tela de Auditoria: as mais recentes, SEM as linhas operacionais do monitor da reconciliação do
+ * formulário (rodadas a cada 10 min tomariam as 500 vagas em ~3 dias e esconderiam a auditoria de negócio).
+ * O filtro é aplicado NO BANCO, antes do `order` e do `limit` — não depois de trazer as linhas. Nada é apagado:
+ * as linhas do monitor continuam na `audit_log` e são lidas pelo próprio monitor (`formularioMonitorPorta.ts`).
+ */
+// Mesma assinatura do filtro de `sel`: o tipo do construtor do supabase-js é profundo demais para um genérico aqui.
+export const consultaAuditoria = (q: any): any =>
+  q.neq('entity_type', ENTIDADE_MONITOR_FORMULARIO).order('occurred_at', { ascending: false }).limit(LIMITE_AUDITORIA);
 
 // URL e chave publica vem de src/data/ambiente.ts (importado so pelo main.tsx): este modulo nao le import.meta.env, para o
 // servidor poder reaproveitar a carga (carregarComoServidor). Sem a configuracao (testes, servidor) o modulo fica em modo local.
@@ -304,7 +318,7 @@ export async function carregarRemoto(): Promise<{ ds: Dataset; usuario: Usuario 
     sel('comment', '*', (q) => q.order('created_at')),
     sel('task', '*', (q) => q.order('created_at')),
     sel('period_close'),
-    sel('audit_log', '*', (q) => q.order('occurred_at', { ascending: false }).limit(500)),
+    sel('audit_log', '*', consultaAuditoria),
     sel('user_scope'),
   ]);
   const [servicosRows, demandasRows, conclusoesRows, ordensRows, etapasRows] = await Promise.all([

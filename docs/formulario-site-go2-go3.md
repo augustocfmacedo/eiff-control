@@ -485,6 +485,7 @@ Cada etapa tem autorização própria. Nenhuma foi iniciada.
 | 2 | Usuário técnico: verificações da seção 3.2, criação, token com expiração, registro da data de rotação | variável nova no painel do CRM (feita pela Direção) | D1 |
 | 3 | PR de código: nova frequência (D2) e ajustes de lote, se houver | só com merge e deploy autorizados | D2, etapa 1 |
 | 4 | Alertas: canal (D3), regras da seção 4.4, testes | credencial de envio, se for canal próprio | D3, etapa 1 |
+| 3–4 (E10.15/E10.17) | **Implementado localmente, não publicado**: frequência de 10 min, monitor, observador independente, canais desacoplados (registro e webhook), contrato para a Central e prova em PostgreSQL descartável. Relatório: `formulario-site-go3-monitor.md` | não | branch `feature/formulario-monitor-go3` |
 | 5 | Ativação: `EIFF_FORM_MARCO`, `EIFF_FORM_NETLIFY_SITE`, token, `FORMULARIO_RECONCILIACAO=ativa`, novo deploy do CRM | sim | etapas 1 a 4 homologadas |
 | 6 | Acompanhamento de 15 dias e parecer do GO-3 | leitura | etapa 5 |
 

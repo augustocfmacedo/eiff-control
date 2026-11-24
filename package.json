@@ -21,6 +21,7 @@
     "smoke:solicitante": "node scripts/pg-smoke-solicitante.mjs",
     "smoke:views": "node scripts/pg-smoke-views.mjs",
     "smoke:formulario": "vite-node scripts/pg-smoke-formulario.mts",
+    "smoke:monitor": "vite-node scripts/pg-smoke-monitor.mts",
     "smoke:email": "node scripts/pg-smoke-email.mjs",
     "deploy:sql": "node scripts/build-deploy-sql.mjs",
     "db:query": "supabase db query --linked --project-ref dduobppgomqyagjviwpx",
