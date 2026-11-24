@@ -77,7 +77,7 @@ const esperado = (chave: string) => (chave === LEGADA ? { apikey: LEGADA, author
 
 const porChave = [['legada', LEGADA], ['nova', SECRETA]] as const
 
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
 
 describe('ressalva B: cabeçalhos exatos das portas sem teste', () => {
   it.each(porChave)('RPC de entrega do canaisServidor (%s)', async (_n, chave) => {
