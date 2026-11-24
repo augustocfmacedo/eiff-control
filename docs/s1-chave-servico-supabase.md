@@ -7,6 +7,16 @@
 > «MERGE AUTORIZADO» (este PR), R2 (criar as chaves novas), R3A (validar sem escrita), R3B (escritas em ambiente descartável), R4 em diante (trocar, publicar, desativar
 > as legadas), cada um com autorização própria da Direção.
 
+> **Estado em 24/11/2026:** R1 **mesclada** na `main` (`24455a8`, PR #95, head `3ef1467`, Quality Gate verde, duas revisões
+> independentes sem bloqueador); produção continua em `6aff669c`, travada, com a chave legada — nada mudou em cabeçalho.
+> A Direção registrou **duas pendências obrigatórias antes da R4**, tratadas no PR das ressalvas (sem merge automático):
+> - **A — JWT de outro papel aceito como chave de serviço.** `tipoChaveServico` tratava qualquer valor fora de `sb_` como legada,
+>   inclusive a `anon` legada. Agora lê o papel do payload (sem verificar assinatura) e recusa com `papel_nao_servico` quando não é
+>   `service_role`; JWT ilegível vira `formato_desconhecido`. Efeito: a `anon` colada no lugar errado dá 501 `nao_configurado`
+>   em vez de erros de permissão silenciosos.
+> - **B — portas sem teste de cabeçalho.** `vibe`, `widget-caixa`, `diretor-financeiro` e a RPC de entrega do `canaisServidor`
+>   ganharam teste com as duas chaves, conferindo o VALOR exato (`chaveServico.portas.test.ts`).
+
 ## 1. Contexto
 
 - **Fase A (concluída em 17/11/2026):** `SUPABASE_SERVICE_ROLE_KEY`, `VIBE_API_KEY` e `GITHUB_READ_TOKEN` passaram a ter valor
