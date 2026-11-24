@@ -362,8 +362,8 @@ async function reconstruirEnvio(comunicacaoId: string, sessao: Sessao, provider:
   return { comunicacao: com, contato, telefone, texto, entregabilidade, conversa, remetentes, templates, coerencia, modoEnvio, autorizacao: autorizarDestino(telefone, modoEnvio, d.canaryNumeros ?? []) };
 }
 
-/** RPC server-only (service_role) — a unica porta de escrita no ledger de entrega. */
-async function rpcEntrega(nome: 'radar_delivery_create' | 'radar_delivery_transition', args: Record<string, unknown>, d: DepsCanal): Promise<Row | undefined> {
+/** RPC server-only (service_role) — a unica porta de escrita no ledger de entrega. Exportada so para o teste de cabecalhos. */
+export async function rpcEntrega(nome: 'radar_delivery_create' | 'radar_delivery_transition', args: Record<string, unknown>, d: DepsCanal): Promise<Row | undefined> {
   if (!d.serviceKey || !chaveServicoValida(d.serviceKey)) return undefined;
   const r = await d.fetch(`${d.supabaseUrl}/rest/v1/rpc/${nome}`, {
     method: 'POST',

@@ -4,13 +4,18 @@
 // Por que existe (S1/R1, 16/11/2026): a chave nova não é JWT. A documentação da Supabase manda enviá-la SÓ no cabeçalho
 // `apikey`; no `Authorization: Bearer` ela é aceita apenas por compatibilidade, e só se for idêntica ao `apikey`.
 // O código mandava as duas chaves nos dois cabeçalhos. Aqui:
-//   - legada (JWT, ou qualquer valor que não comece por `sb_`) → `apikey` + `Authorization: Bearer <chave>`, EXATAMENTE
+//   - legada (JWT de papel service_role, ou valor que não é JWT nem `sb_`) → `apikey` + `Authorization: Bearer <chave>`, EXATAMENTE
 //                       como antes: nada muda em produção hoje (a chave atual é JWT) nem nos testes (chaves fictícias);
 //   - nova (sb_secret) → banco (PostgREST/RPC): só `apikey` (o caminho recomendado);
 //                       Auth admin (/auth/v1/admin, convites): `apikey` + `Authorization` IDÊNTICO — o mesmo que o
 //                       supabase-js 2.114 faz para o Auth (a regra de compatibilidade documentada);
 //   - vazia, `sb_publishable_…`, `sb_temp_…` ou outro `sb_…` desconhecido → ERRO: falha fechada.
 //     Uma chave publicável no lugar da de serviço nunca vira chamada «anônima» silenciosa.
+//   - JWT legado cujo papel não é `service_role` (a chave `anon` legada colada no lugar errado) ou JWT ilegível → ERRO.
+//     O papel é lido do payload SEM verificar a assinatura: isto não autentica nada (quem autentica é a Supabase), só
+//     impede que uma chave de outro papel seja tratada como de serviço. Valor que não é JWT nem `sb_…` continua no
+//     caminho antigo (é o formato das chaves fictícias dos testes; a Supabase recusa qualquer outro valor com 401).
+//     Ressalva A da revisão do PR #95 (24/11/2026).
 // O token do USUÁRIO (JWT da sessão) não passa por aqui: as chamadas feitas com o JWT de quem pediu continuam iguais.
 
 export type TipoChaveServico = 'legada' | 'secreta'
@@ -19,12 +24,27 @@ export type TipoChaveServico = 'legada' | 'secreta'
 const SECRETA = /^sb_secret_[A-Za-z0-9_-]{8,}$/
 
 export class ErroChaveServico extends Error {
-  constructor(public readonly motivo: 'ausente' | 'publicavel' | 'formato_desconhecido') {
+  constructor(public readonly motivo: 'ausente' | 'publicavel' | 'papel_nao_servico' | 'formato_desconhecido') {
     super(motivo === 'ausente' ? 'chave de serviço ausente'
       : motivo === 'publicavel' ? 'a chave configurada é PUBLICÁVEL, não de serviço'
-        : 'chave de serviço em formato desconhecido')
+        : motivo === 'papel_nao_servico' ? 'a chave legada configurada não tem o papel service_role'
+          : 'chave de serviço em formato desconhecido')
     this.name = 'ErroChaveServico'
   }
+}
+
+/** JWT compacto: três partes base64url (a assinatura pode ser vazia). */
+const JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/
+
+/** Papel declarado no payload de um JWT, sem verificar a assinatura. `null` = payload ilegível. */
+function papelDoJwt(jwt: string): string | null | undefined {
+  try {
+    const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const json = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))) as unknown
+    if (json === null || typeof json !== 'object' || Array.isArray(json)) return null
+    const papel = (json as Record<string, unknown>).role
+    return typeof papel === 'string' ? papel : undefined
+  } catch { return null }
 }
 
 /** Classifica a chave SEM nunca devolvê-la nem registrá-la. Erro = falha fechada. */
@@ -34,6 +54,11 @@ export function tipoChaveServico(chave: string | undefined | null): TipoChaveSer
   if (SECRETA.test(c)) return 'secreta'
   if (c.startsWith('sb_publishable_')) throw new ErroChaveServico('publicavel')
   if (c.startsWith('sb_')) throw new ErroChaveServico('formato_desconhecido')
+  if (JWT.test(c)) {
+    const papel = papelDoJwt(c)
+    if (papel === null) throw new ErroChaveServico('formato_desconhecido')
+    if (papel !== 'service_role') throw new ErroChaveServico('papel_nao_servico')
+  }
   return 'legada'
 }
 
