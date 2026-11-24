@@ -385,7 +385,10 @@ export const MODULOS_CONSTRUCAO: ModuloConstrucao[] = [
   }),
   m({
     id: 'MAQUINA_COMERCIAL', titulo: 'Máquina Comercial', dominio: 'COMERCIAL', rota: '/radar/hoje', dependeDe: ['RADAR'],
-    rotas: ['/radar/hoje'],
+    // E11: a Central de Gestão Comercial (/comercial/gestao) é LEITURA consolidada do comercial (Inbox + Radar + CM1-A +
+    // Orçamentos), sem regra própria: só as ROTAS entram aqui (a guarda de superfícies exige classificar). Nenhum componente
+    // novo de propósito — um componente com evidência apareceria como CONCLUÍDO no Mission Control antes da homologação.
+    rotas: ['/radar/hoje', '/comercial', '/comercial/gestao'],
     descricao: 'Fila comercial por regra pura (CM1), cadência (CM2) e as superfícies Panorama e Modo Foco.',
     componentes: [
       { id: 'CM1', titulo: 'Commercial Queue (CM1)', evidencias: [mod('src/core/radar/commercialMachine.ts', 'CATEGORIAS_COMMERCIAL_QUEUE')] },
