@@ -54,6 +54,36 @@ import type { RegistroFonte } from './types'
 export const CAMPOS_EXIBIDOS_DO_BRUTO: readonly string[] = Object.freeze(['leitura'])
 
 /**
+ * Campo de uma linha só. Quebra de linha num `<select>` ou `<input>` só chega
+ * por POST montado à mão, e numa linha rotulada ela forjaria outra linha
+ * («Origem:», «Prazo informado:») que o atendente e a tela Leads do Site
+ * leriam como do sistema. Vira espaço; o texto original segue na evidência.
+ */
+export function umaLinha(v: string | undefined): string | undefined {
+  const t = (v ?? '').replace(/[\s\x85]+/g, ' ').trim()
+  return t === '' ? undefined : t
+}
+
+/**
+ * Campos que a pessoa preencheu e que o canônico não traz para a conversa,
+ * com o rótulo que a página mostra. Vêm do BRUTO, como a pessoa escreveu:
+ *
+ *   tipo   «Tipo de obra», obrigatório em `iniciar-projeto` — sem esta linha
+ *          o atendente não sabia se o pedido era galpão, CD, loja ou agro
+ *   area   «Área aproximada», texto livre em `iniciar-projeto` («2.400»,
+ *          «entre 2 e 3 mil»): vai como escrito, porque convertê-lo em número
+ *          aqui seria inventar uma leitura. Quando a página já montou o
+ *          resumo (`simular-galpao`), a área está nele e a linha não se repete.
+ *
+ * Nada disto entra no canônico: mudá-lo mudaria a impressão de toda
+ * submissão e quebraria a idempotência dos reenvios.
+ */
+export const CAMPOS_DESCRITOS_DO_BRUTO: ReadonlyArray<{ campo: string; rotulo: string; omitirComResumo?: true }> = Object.freeze([
+  { campo: 'tipo', rotulo: 'Tipo de obra' },
+  { campo: 'area', rotulo: 'Área aproximada informada', omitirComResumo: true },
+])
+
+/**
  * Linhas de `observacoesDoLead` que `textoDaMensagem` já escreve a partir dos
  * campos próprios (`resumo` e `mensagem`). Sem este filtro a conversa mostra
  * a configuração duas vezes e repete a mensagem da pessoa logo abaixo dela.
@@ -102,6 +132,13 @@ export function resumoParaOInbox(s: SubmissaoFormulario): ResumoDaSubmissao {
   // menos as que a própria mensagem já escreve pelos campos `resumo` e `mensagem`.
   const linhas = observacoesDoLead(c).split('\n').slice(1)
     .filter((l) => !LINHAS_JA_ESCRITAS.some((p) => l.startsWith(p)))
+  const descritas = CAMPOS_DESCRITOS_DO_BRUTO
+    .filter((d) => !(d.omitirComResumo && c.resumo !== undefined))
+    .flatMap((d) => {
+      const v = umaLinha(s.campos[d.campo])
+      return v !== undefined ? [`${d.rotulo}: ${v}`] : []
+    })
+  linhas.unshift(...descritas)
   for (const campo of CAMPOS_EXIBIDOS_DO_BRUTO) {
     const v = s.campos[campo]?.trim()
     if (v !== undefined && v !== '') linhas.push(`${ROTULO_LEITURA_DA_PAGINA}: ${v}`)
